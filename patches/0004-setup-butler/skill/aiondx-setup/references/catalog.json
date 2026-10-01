@@ -1,0 +1,271 @@
+{
+  "about": "Catalog of where 28 AI coding and desktop tools keep user-level instructions, agents, commands, skills, rules, MCP servers, settings and hooks, built on 2026-09-24 from 2026-09-24_ai-tool-locations-catalog_final.md and 2026-09-24_ai-tool-locations-catalog.md, with rows those reports marked unconfirmed included here as \"unconfirmed\": true.",
+  "version": 1,
+  "tools": [
+    {
+      "id": "claude-code", "name": "Claude Code",
+      "docs": "https://docs.claude.com/en/docs/claude-code/",
+      "locations": [
+        { "kind": "instructions", "win": "~/.claude/CLAUDE.md", "mac": "~/.claude/CLAUDE.md", "note": "user memory, loaded in every project" },
+        { "kind": "agents", "win": "~/.claude/agents", "mac": "~/.claude/agents" },
+        { "kind": "commands", "win": "~/.claude/commands", "mac": "~/.claude/commands" },
+        { "kind": "skills", "win": "~/.claude/skills", "mac": "~/.claude/skills" },
+        { "kind": "settings", "win": "~/.claude/settings.json", "mac": "~/.claude/settings.json", "note": "hooks and permissions; its env block can hold secrets and is never read; CLAUDE_CONFIG_DIR relocates the whole folder" },
+        { "kind": "mcp", "win": "~/.claude.json", "mac": "~/.claude.json", "mcpKeys": ["mcpServers"], "note": "user-scope MCP servers; same file also holds session and trust state. Credentials live in a sibling ~/.claude/.credentials.json, not surveyed" }
+      ]
+    },
+    {
+      "id": "claude-desktop", "name": "Claude Desktop",
+      "docs": "https://claude.com/docs/third-party/claude-desktop/configuration",
+      "locations": [
+        { "kind": "mcp", "win": "%APPDATA%/Claude/claude_desktop_config.json", "mac": "~/Library/Application Support/Claude/claude_desktop_config.json", "linux": "~/.config/Claude/claude_desktop_config.json", "mcpKeys": ["mcpServers"], "note": "Linux path is community-reported, not from official docs. Custom Project instructions live in the user's Anthropic cloud account, not a local file" }
+      ]
+    },
+    {
+      "id": "codex", "name": "OpenAI Codex CLI",
+      "docs": "https://learn.chatgpt.com/codex/agent-configuration/agents-md",
+      "locations": [
+        { "kind": "instructions", "win": "~/.codex/AGENTS.md", "mac": "~/.codex/AGENTS.md", "note": "also reads AGENTS.override.md; CODEX_HOME relocates the whole folder" },
+        { "kind": "mcp", "win": "~/.codex/config.toml", "mac": "~/.codex/config.toml", "note": "[mcp_servers.<name>] tables; the same file also holds approval_policy and sandbox_mode settings" }
+      ]
+    },
+    {
+      "id": "gemini-cli", "name": "Gemini CLI",
+      "docs": "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md",
+      "locations": [
+        { "kind": "instructions", "win": "~/.gemini/GEMINI.md", "mac": "~/.gemini/GEMINI.md", "note": "default filename, configurable via context.fileName in settings.json; GEMINI_CLI_HOME relocates the whole folder" },
+        { "kind": "commands", "win": "~/.gemini/commands", "mac": "~/.gemini/commands", "note": "*.toml custom command files" },
+        { "kind": "mcp", "win": "~/.gemini/settings.json", "mac": "~/.gemini/settings.json", "mcpKeys": ["mcpServers"], "note": "same file also holds general settings, sandbox config (tools.sandbox) and hooks (hooks key, a newer feature worth checking against the installed version)" }
+      ]
+    },
+    {
+      "id": "qwen-code", "name": "Qwen Code",
+      "docs": "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/",
+      "locations": [
+        { "kind": "instructions", "win": "~/.qwen/QWEN.md", "mac": "~/.qwen/QWEN.md" },
+        { "kind": "skills", "win": "~/.qwen/skills", "mac": "~/.qwen/skills" },
+        { "kind": "mcp", "win": "~/.qwen/settings.json", "mac": "~/.qwen/settings.json", "mcpKeys": ["mcpServers"] },
+        { "kind": "mcp", "win": "~/.qwen/client_config.json", "mac": "~/.qwen/client_config.json", "note": "CLI-managed fallback file used when settings.json has no MCP block, confirmed via AionDX's own qwen.rs adapter; its exact JSON key was not confirmed, so default key detection applies" }
+      ]
+    },
+    {
+      "id": "opencode", "name": "OpenCode",
+      "docs": "https://opencode.ai/docs/rules/",
+      "locations": [
+        { "kind": "instructions", "win": "~/.config/opencode/AGENTS.md", "mac": "~/.config/opencode/AGENTS.md", "unconfirmed": true, "note": "global AGENTS.md is not fully confirmed by the research. Windows base folder also disagrees between sources: this entry uses ~/.config/opencode, the paired entry below uses %APPDATA%/opencode" },
+        { "kind": "instructions", "win": "%APPDATA%/opencode/AGENTS.md", "mac": "~/.config/opencode/AGENTS.md", "unconfirmed": true, "note": "global AGENTS.md is not fully confirmed by the research. Windows base folder also disagrees between sources: this entry uses %APPDATA%/opencode, the paired entry above uses ~/.config/opencode" },
+        { "kind": "agents", "win": "~/.config/opencode/agents", "mac": "~/.config/opencode/agents", "note": "Windows base folder disagrees between sources; paired with an %APPDATA%/opencode/agents entry below" },
+        { "kind": "agents", "win": "%APPDATA%/opencode/agents", "mac": "~/.config/opencode/agents", "note": "Windows base folder disagrees between sources; paired with a ~/.config/opencode/agents entry above" },
+        { "kind": "commands", "win": "~/.config/opencode/commands", "mac": "~/.config/opencode/commands", "note": "Windows base folder disagrees between sources; paired with an %APPDATA%/opencode/commands entry below" },
+        { "kind": "commands", "win": "%APPDATA%/opencode/commands", "mac": "~/.config/opencode/commands", "note": "Windows base folder disagrees between sources; paired with a ~/.config/opencode/commands entry above" },
+        { "kind": "mcp", "win": "~/.config/opencode/opencode.json", "mac": "~/.config/opencode/opencode.json", "mcpKeys": ["mcp"], "note": "also holds the permission key. Windows base folder disagrees between sources; paired with an %APPDATA%/opencode/opencode.json entry below" },
+        { "kind": "mcp", "win": "%APPDATA%/opencode/opencode.json", "mac": "~/.config/opencode/opencode.json", "mcpKeys": ["mcp"], "note": "also holds the permission key. Path confirmed via AionDX's own opencode.rs adapter. Windows base folder disagrees between sources; paired with a ~/.config/opencode/opencode.json entry above" }
+      ]
+    },
+    {
+      "id": "cursor", "name": "Cursor",
+      "docs": "https://cursor.com/docs",
+      "locations": [
+        { "kind": "rules", "win": "~/.cursor/rules", "mac": "~/.cursor/rules", "note": "local, unsynced global rule files (*.mdc); separate from Cursor's UI-only, account-synced User Rules, which have no local file" },
+        { "kind": "mcp", "win": "~/.cursor/mcp.json", "mac": "~/.cursor/mcp.json", "mcpKeys": ["mcpServers"] },
+        { "kind": "skills", "win": "~/.cursor/skills", "mac": "~/.cursor/skills" },
+        { "kind": "skills", "win": "~/.agents/skills", "mac": "~/.agents/skills", "note": "shared cross-tool skills folder Cursor also reads" },
+        { "kind": "settings", "win": "~/.cursor/permissions.json", "mac": "~/.cursor/permissions.json", "note": "auto-run and permissions config" },
+        { "kind": "settings", "win": "~/.cursor/cli-config.json", "mac": "~/.cursor/cli-config.json", "note": "Cursor CLI settings, everything except permissions" },
+        { "kind": "hooks", "win": "~/.cursor/hooks.json", "mac": "~/.cursor/hooks.json" },
+        { "kind": "settings", "win": "%APPDATA%/Cursor/User/settings.json", "mac": "~/Library/Application Support/Cursor/User/settings.json", "linux": "~/.config/Cursor/User/settings.json", "note": "VS Code-fork editor settings; not documented by Cursor itself, inherited VS Code convention" }
+      ]
+    },
+    {
+      "id": "windsurf", "name": "Windsurf",
+      "docs": "https://docs.devin.ai/desktop/cascade/memories",
+      "locations": [
+        { "kind": "instructions", "win": "~/.codeium/windsurf/memories/global_rules.md", "mac": "~/.codeium/windsurf/memories/global_rules.md", "note": "Windsurf's docs moved to docs.devin.ai under Devin Desktop branding after Cognition's acquisition; on-disk folders still say .codeium/windsurf" },
+        { "kind": "mcp", "win": "%APPDATA%/devin/mcp_config.json", "mac": "~/.config/devin/mcp_config.json", "mcpKeys": ["mcpServers"], "note": "current path" },
+        { "kind": "mcp", "win": "~/.codeium/windsurf/mcp_config.json", "mac": "~/.codeium/windsurf/mcp_config.json", "mcpKeys": ["mcpServers"], "note": "legacy pre-rebrand path, confirmed present on this machine" }
+      ]
+    },
+    {
+      "id": "cline", "name": "Cline",
+      "docs": "https://docs.cline.bot",
+      "locations": [
+        { "kind": "rules", "win": "~/Documents/Cline/Rules", "mac": "~/Documents/Cline/Rules" },
+        { "kind": "hooks", "win": "~/Documents/Cline/Hooks", "mac": "~/Documents/Cline/Hooks" },
+        { "kind": "mcp", "win": "~/.cline/data/settings/cline_mcp_settings.json", "mac": "~/.cline/data/settings/cline_mcp_settings.json", "mcpKeys": ["mcpServers"], "note": "current path" },
+        { "kind": "mcp", "win": "%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json", "mac": "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json", "linux": "~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json", "mcpKeys": ["mcpServers"], "note": "legacy path from when Cline was a VS Code extension only" }
+      ]
+    },
+    {
+      "id": "roo-code", "name": "Roo Code",
+      "docs": "https://docs.roocode.com",
+      "locations": [
+        { "kind": "rules", "win": "~/.roo/rules", "mac": "~/.roo/rules" },
+        { "kind": "agents", "win": "%APPDATA%/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/custom_modes.yaml", "mac": "~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/custom_modes.yaml", "linux": "~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/custom_modes.yaml", "note": "custom modes, Roo's equivalent of subagents" },
+        { "kind": "mcp", "win": "%APPDATA%/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json", "mac": "~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json", "linux": "~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json", "mcpKeys": ["mcpServers"] }
+      ]
+    },
+    {
+      "id": "continue", "name": "Continue",
+      "docs": "https://docs.continue.dev",
+      "locations": [
+        { "kind": "mcp", "win": "~/.continue/config.yaml", "mac": "~/.continue/config.yaml", "note": "modern format, holds rules, prompts and MCP server references together as YAML, so this script's JSON parser will not read it, only report its size. Legacy ~/.continue/config.json (JSON) loads instead if config.yaml is absent. Continue.dev's site now says it joined Cursor; docs.continue.dev was still serving normally when checked" }
+      ]
+    },
+    {
+      "id": "aider", "name": "Aider",
+      "docs": "https://aider.chat/docs",
+      "locations": [
+        { "kind": "settings", "win": "~/.aider.conf.yml", "mac": "~/.aider.conf.yml", "note": "a project .aider.conf.yml in the git root loads after this one and wins. Aider also optionally reads ~/.env for API keys and conventions, not surveyed since it is a credentials file. No confirmed MCP support" }
+      ]
+    },
+    {
+      "id": "github-copilot", "name": "GitHub Copilot",
+      "docs": "https://code.visualstudio.com/docs/agent-customization/custom-instructions",
+      "locations": [
+        { "kind": "prompts", "win": "%APPDATA%/Code/User/prompts", "mac": "~/Library/Application Support/Code/User/prompts", "linux": "~/.config/Code/User/prompts", "note": "personal *.instructions.md and *.prompt.md files" },
+        { "kind": "mcp", "win": "%APPDATA%/Code/User/mcp.json", "mac": "~/Library/Application Support/Code/User/mcp.json", "linux": "~/.config/Code/User/mcp.json", "mcpKeys": ["servers"] }
+      ]
+    },
+    {
+      "id": "devin", "name": "Devin",
+      "docs": "https://docs.devin.ai",
+      "locations": [
+        { "kind": "instructions", "win": "%APPDATA%/Devin/AGENTS.md", "mac": "~/Library/Application Support/Devin/AGENTS.md", "note": "confirmed present on this machine; Devin's own docs do not document a separate global file, but the desktop app creates and reads this path directly" },
+        { "kind": "skills", "win": "%APPDATA%/Devin/skills", "mac": "~/.config/devin/skills" },
+        { "kind": "mcp", "win": "%APPDATA%/Devin/mcp_config.json", "mac": "~/.config/devin/mcp_config.json", "mcpKeys": ["mcpServers"] },
+        { "kind": "settings", "win": "%APPDATA%/Devin/config.json", "mac": "~/.config/devin/config.json", "note": "permissions.allow/deny/ask and sandbox settings" }
+      ]
+    },
+    {
+      "id": "kiro", "name": "Kiro",
+      "docs": "https://kiro.dev/docs",
+      "locations": [
+        { "kind": "rules", "win": "~/.kiro/steering", "mac": "~/.kiro/steering", "note": "global steering documents" },
+        { "kind": "mcp", "win": "~/.kiro/settings/mcp.json", "mac": "~/.kiro/settings/mcp.json", "mcpKeys": ["mcpServers"] },
+        { "kind": "settings", "win": "~/.kiro/settings/permissions.yaml", "mac": "~/.kiro/settings/permissions.yaml" }
+      ]
+    },
+    {
+      "id": "amp", "name": "Amp",
+      "docs": "https://ampcode.com/docs",
+      "locations": [
+        { "kind": "instructions", "win": "~/.config/amp/AGENTS.md", "mac": "~/.config/amp/AGENTS.md", "note": "also reads AGENT.md and CLAUDE.md in that order; project cwd walks up to home before this file" },
+        { "kind": "skills", "win": "~/.config/agents/skills", "mac": "~/.agents/skills", "note": "Amp also reads project .agents/skills/ and .claude/skills/" },
+        { "kind": "mcp", "win": "~/.config/amp/settings.json", "mac": "~/.config/amp/settings.json", "mcpKeys": ["amp.mcpServers"] }
+      ]
+    },
+    {
+      "id": "goose", "name": "Goose",
+      "docs": "https://goose-docs.ai/docs",
+      "locations": [
+        { "kind": "instructions", "win": "%APPDATA%/Block/goose/config/.goosehints", "mac": "~/.config/goose/.goosehints", "unconfirmed": true, "note": "the Windows path is an analogous guess, not confirmed in Goose's docs. The mac/Linux path is documented" },
+        { "kind": "mcp", "win": "%APPDATA%/Block/goose/config/config.yaml", "mac": "~/.config/goose/config.yaml", "mcpKeys": ["extensions"], "note": "YAML, so this script's JSON parser will not read it, only report its size. Permission mode is set via the GOOSE_MODE env var, not this file" }
+      ]
+    },
+    {
+      "id": "zed", "name": "Zed",
+      "docs": "https://zed.dev/docs/ai/instructions",
+      "locations": [
+        { "kind": "instructions", "win": "%APPDATA%/Zed/AGENTS.md", "mac": "~/.config/zed/AGENTS.md" },
+        { "kind": "skills", "win": "~/.agents/skills", "mac": "~/.agents/skills" },
+        { "kind": "mcp", "win": "%APPDATA%/Zed/settings.json", "mac": "~/.config/zed/settings.json", "mcpKeys": ["context_servers"], "note": "same file also holds agent_servers (external agents via ACP) and general editor settings" }
+      ]
+    },
+    {
+      "id": "jetbrains-junie", "name": "JetBrains AI Assistant / Junie",
+      "docs": "https://junie.jetbrains.com/docs/guidelines-and-memory.html",
+      "locations": [
+        { "kind": "instructions", "win": "~/.junie/AGENTS.md", "mac": "~/.junie/AGENTS.md" },
+        { "kind": "commands", "win": "~/.junie/commands", "mac": "~/.junie/commands" },
+        { "kind": "agents", "win": "~/.junie/agents", "mac": "~/.junie/agents" },
+        { "kind": "mcp", "win": "~/.junie/mcp/mcp.json", "mac": "~/.junie/mcp/mcp.json", "mcpKeys": ["mcpServers"], "note": "Junie CLI's MCP config. The separate AI Assistant IDE plugin manages its own MCP settings through the UI, with no published file path" }
+      ]
+    },
+    {
+      "id": "warp", "name": "Warp",
+      "docs": "https://docs.warp.dev",
+      "locations": [
+        { "kind": "mcp", "win": "~/.warp/.mcp.json", "mac": "~/.warp/.mcp.json", "mcpKeys": ["mcpServers"] },
+        { "kind": "settings", "win": "%LOCALAPPDATA%/warp/Warp/config/settings.toml", "mac": "~/.warp/settings.toml", "note": "global rules live in Warp Drive, cloud and UI managed, with no local file" }
+      ]
+    },
+    {
+      "id": "aionui", "name": "AionUi",
+      "docs": "https://github.com/iOfficeAI/AionUi",
+      "locations": [
+        { "kind": "rules", "win": "%APPDATA%/AionUi/aionui/assistant-rules", "mac": "~/Library/Application Support/AionUi/aionui/assistant-rules", "note": "the installed desktop app's real data folder when launched normally, confirmed via the live aioncore --data-dir command line. The same folder also holds conversations/ and session-skills/ alongside assistant-rules/ and builtin-skills/. mac/Linux path inferred from Electron's standard userData convention, not independently confirmed" },
+        { "kind": "skills", "win": "%APPDATA%/AionUi/aionui/builtin-skills", "mac": "~/Library/Application Support/AionUi/aionui/builtin-skills", "note": "bundled reference skills shipped with the app. mac/Linux path inferred from Electron convention, not independently confirmed" },
+        { "kind": "settings", "win": "%APPDATA%/AionUi/aionui/aionui-backend.db", "mac": "~/Library/Application Support/AionUi/aionui/aionui-backend.db", "note": "SQLite database holding mcp_servers, agent_metadata and oauth_tokens tables. This script only reports its size and modified time, it does not parse SQLite. mac/Linux path inferred from Electron convention, not independently confirmed" },
+        { "kind": "rules", "win": "~/.aionui/assistant-rules", "mac": "~/.aionui/assistant-rules", "note": "the standalone AionUi CLI's default data root when no --data-dir is given. The installed desktop app instead uses %APPDATA%/AionUi/aionui above, and this folder will not exist when only the desktop app has run" },
+        { "kind": "skills", "win": "~/.aionui/assistant-skills", "mac": "~/.aionui/assistant-skills" },
+        { "kind": "settings", "win": "~/.aionui/aionui-backend.db", "mac": "~/.aionui/aionui-backend.db", "note": "SQLite database, same table layout as the desktop app's copy above" }
+      ]
+    },
+    {
+      "id": "lm-studio", "name": "LM Studio",
+      "docs": "https://lmstudio.ai/docs/app/mcp",
+      "locations": [
+        { "kind": "settings", "win": "~/.lmstudio", "mac": "~/.lmstudio", "note": "app root; holds config-presets/ and models/ subfolders" },
+        { "kind": "mcp", "win": "~/.lmstudio/mcp.json", "mac": "~/.lmstudio/mcp.json", "mcpKeys": ["mcpServers"] },
+        { "kind": "mcp", "mac": "~/.cache/lm-studio/mcp.json", "mcpKeys": ["mcpServers"], "unconfirmed": true, "note": "a filed LM Studio bug reports macOS sometimes actually using this path instead of ~/.lmstudio/mcp.json; not confirmed which is authoritative, and no Windows equivalent was reported" }
+      ]
+    },
+    {
+      "id": "ollama", "name": "Ollama",
+      "docs": "https://docs.ollama.com/faq",
+      "locations": [
+        { "kind": "settings", "win": "~/.ollama/server.json", "mac": "~/.ollama/server.json" },
+        { "kind": "settings", "win": "~/.ollama/models", "mac": "~/.ollama/models", "note": "model storage; the OLLAMA_MODELS env var overrides this default. A Linux systemd service install instead uses /usr/share/ollama/.ollama/models. No built-in MCP host as of this research; only a REST API at localhost:11434" }
+      ]
+    },
+    {
+      "id": "codebuddy", "name": "CodeBuddy",
+      "docs": "https://codebuddy.ai/docs/cli",
+      "locations": [
+        { "kind": "instructions", "win": "~/.codebuddy/CODEBUDDY.md", "mac": "~/.codebuddy/CODEBUDDY.md" },
+        { "kind": "agents", "win": "~/.codebuddy/agents", "mac": "~/.codebuddy/agents" },
+        { "kind": "rules", "win": "~/.codebuddy/rules", "mac": "~/.codebuddy/rules" },
+        { "kind": "skills", "win": "~/.codebuddy/skills", "mac": "~/.codebuddy/skills" },
+        { "kind": "commands", "win": "~/.codebuddy/commands", "mac": "~/.codebuddy/commands" },
+        { "kind": "mcp", "win": "~/.codebuddy/.mcp.json", "mac": "~/.codebuddy/.mcp.json", "mcpKeys": ["mcpServers"] },
+        { "kind": "settings", "win": "~/.codebuddy/settings.json", "mac": "~/.codebuddy/settings.json" }
+      ]
+    },
+    {
+      "id": "droid", "name": "Droid",
+      "docs": "https://docs.factory.ai/cli",
+      "locations": [
+        { "kind": "instructions", "win": "~/.factory/AGENTS.md", "mac": "~/.factory/AGENTS.md", "note": "also checks ~/.agents/ and ~/.agent/ as alternates" },
+        { "kind": "agents", "win": "~/.factory/droids", "mac": "~/.factory/droids", "note": "Droid's term for custom subagents" },
+        { "kind": "skills", "win": "~/.factory/skills", "mac": "~/.factory/skills" },
+        { "kind": "mcp", "win": "~/.factory/mcp.json", "mac": "~/.factory/mcp.json", "mcpKeys": ["mcpServers"], "note": "3-tier config that merges user, project and local files" },
+        { "kind": "settings", "win": "~/.factory/settings.json", "mac": "~/.factory/settings.json" }
+      ]
+    },
+    {
+      "id": "auggie", "name": "Auggie",
+      "docs": "https://docs.augmentcode.com/cli",
+      "locations": [
+        { "kind": "commands", "win": "~/.augment/commands", "mac": "~/.augment/commands" },
+        { "kind": "mcp", "win": "~/.augment/settings.json", "mac": "~/.augment/settings.json", "mcpKeys": ["mcpServers"], "note": "also holds permissions config. Rules precedence otherwise runs --rules, then CLAUDE.md, then AGENTS.md, then .augment-guidelines, then .augment/rules/, all project-level" }
+      ]
+    },
+    {
+      "id": "openclaw", "name": "OpenClaw",
+      "docs": "https://docs.openclaw.ai",
+      "locations": [
+        { "kind": "settings", "win": "~/.openclaw/openclaw.json", "mac": "~/.openclaw/openclaw.json", "note": "gateway.mode key configures its agent gateway; see docs.openclaw.ai/gateway/config-agents for agent configuration within this file" }
+      ]
+    },
+    {
+      "id": "pinokio", "name": "Pinokio",
+      "docs": "https://github.com/pinokiocomputer/docs.pinokio.computer",
+      "locations": [
+        { "kind": "settings", "win": "~/pinokio", "mac": "~/pinokio", "note": "not a coding agent; installs and runs other projects' scripts under api/ and bin/" }
+      ]
+    }
+  ],
+  "registries": [
+    { "win": "~/.agents/SCRIPT-REGISTRY.md", "mac": "~/.agents/SCRIPT-REGISTRY.md", "note": "hand-kept registry of agent-created scripts" }
+  ]
+}

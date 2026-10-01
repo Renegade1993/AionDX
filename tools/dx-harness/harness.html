@@ -1,0 +1,525 @@
+<!doctype html>
+<!--
+  AionDX render and behavior harness for patch 0001.
+
+  Loads AionUi's own shipped stylesheets (extracted from app.asar into vendor\) and rebuilds the
+  composer's action row with the DOM and classes AcpSendBox renders, then loads the real
+  aionui-dx.js. Nothing is installed and the running AionUi is never touched.
+
+  A stub backend replaces window.fetch before the patch loads. It serves the response shapes the
+  patch relies on, each checked against AionCore v0.2.2 source, and records every call in
+  window.__calls so a test can assert what the loop sent and where.
+
+  Query options:
+    ?theme=dark     dark theme
+    ?open=1         open the loop menu after load (screenshot use)
+    ?on=1           start with the loop armed (screenshot use)
+    ?team=1         team page: #/team/team1 with two member columns, data-slot-id slotA (leader,
+                    "running" in the stub) and slotB (member, "idle")
+    ?welcome=1      a first run: the store has no aiondx.welcome record, so the Welcome screen opens
+                    (every other load stands in for a machine that has been through it)
+    ?setup=1        window.aiondxSetup (patch 0009's one-click setup) with a made-up survey of two apps
+    ?plugins=1      window.aiondxPlugins (patch 0009's claude plugin commands): one plugin installed, four offered
+    ?sends=1        Enter in a message box sends the way AionUi does (unless something prevented it): the
+                    solo chat's messages route, the lead's team route, a member's agent route; the box
+                    empties. A running lead's queued count goes up with each message it is sent
+  Driven by tools\dx-harness\click-test.js (real mouse input) and by headless screenshots.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../vendor/extracted/out/renderer/assets/vendor-DMNS9Ldg.css">
+<link rel="stylesheet" href="../../vendor/extracted/out/renderer/assets/vendor-diff-BgE3edmZ.css">
+<link rel="stylesheet" href="../../vendor/extracted/out/renderer/assets/index-BEz1sAg6.css">
+<link rel="stylesheet" href="../../vendor/extracted/out/renderer/assets/conversationTurnClock-CxGr9fVm.css">
+<link rel="stylesheet" href="../../vendor/extracted/out/renderer/assets/index-BWtwkMmO.css">
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--color-bg-1, #fff); font-family: -apple-system, 'Segoe UI', sans-serif; }
+  .stage { position: absolute; left: 24px; right: 24px; bottom: 24px; }
+  .team { position: absolute; left: 0; right: 0; bottom: 0; top: 60px; display: flex; }
+  .col { flex: 1 1 400px; position: relative; border-inline-end: 1px solid var(--color-border-2, #e5e6eb); }
+  .col .stage { left: 12px; right: 12px; bottom: 16px; }
+  .colname { position: absolute; top: 12px; left: 16px; color: var(--color-text-2); font-size: 13px; }
+  .msg { position: absolute; left: 24px; right: 24px; top: 24px; color: var(--color-text-2); font-size: 14px; line-height: 22px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+  .gap-1r { display: flex; align-items: center; gap: 4px; }
+  .gap-8r { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .ta { display: block; width: 100%; box-sizing: border-box; border: none; outline: none; resize: none; background: transparent;
+        color: var(--color-text-1); font: inherit; font-size: 14px; line-height: 20px; padding: 4px 0 12px; }
+  .ta::placeholder { color: #a1a2aa; }
+  .panel { padding: 16px; border: 3px solid var(--color-border-2, #e5e6eb); border-radius: 20px; background: var(--color-bg-2, #fff); }
+  .inner { display: flex; align-items: center; gap: 6px; line-height: 1; }
+  .ico { width: 14px; height: 14px; display: inline-flex; color: var(--text-secondary); }
+  .ico svg, .caret svg { width: 100%; height: 100%; display: block; }
+  .caret { width: 12px; height: 12px; display: inline-flex; color: var(--color-text-3); }
+</style>
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search);
+    window.__team = q.get('team') === '1';
+    if (q.get('theme') === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      document.addEventListener('DOMContentLoaded', function () { document.body.setAttribute('arco-theme', 'dark'); });
+    }
+    if (q.get('keepls') !== '1') localStorage.clear();   // keepls=1: a reload that keeps what the app saved
+    if (q.get('on') === '1') {
+      localStorage.setItem('aionui.dx.harness1', JSON.stringify({ on: true, fires: 2, lastFired: Date.now() - 180000 }));
+    }
+    location.hash = window.__team ? '#/team/team1' : '#/conversation/harness1';
+
+    // ---- stub backend: shapes checked against AionCore v0.2.2 ----
+    // Well past the loop's 20 s quiet time, and older than any error a test adds (tests backdate
+    // errors up to 25 min), so an added error stays the newest message, as it would be for real.
+    var OLD = Date.now() - 60 * 60 * 1000;
+    function items(list) { return { success: true, data: { items: list, has_more_before: false, has_more_after: false } }; }
+    var routes = {
+      'GET /api/conversations/harness1': { success: true, data: { id: 'harness1', name: 'Harness', status: 'finished',
+        extra: { backend: 'claude', agent_id: 'cc33dd44', workspace: 'C:\\work\\harness' } } },
+      // The new-chat screen's list (GET /api/assistants, aionui-assistant list_for_user): two Claude agents on
+      // two accounts, Codex, Antigravity, and the Butler switched off.
+      'GET /api/assistants': { success: true, data: [
+        { id: 'bare:cc33dd44', source: 'generated', name: 'Claude Code (Main)', enabled: true, sort_order: 1500, agent_id: 'cc33dd44',
+          agent: { type: 'acp', source: 'custom', acp_backend: 'claude' }, agent_status: 'online' },
+        { id: 'bare:aa11bb22', source: 'generated', name: 'Claude Code (Second)', enabled: true, sort_order: 1500, agent_id: 'aa11bb22',
+          agent: { type: 'acp', source: 'custom', acp_backend: 'claude' }, agent_status: 'online' },
+        { id: 'bare:codex', source: 'generated', name: 'Codex', enabled: true, sort_order: 1600, agent_id: 'codex',
+          agent: { type: 'acp', source: 'builtin', acp_backend: 'codex' }, agent_status: 'online' },
+        { id: 'bare:a9f3c21e', source: 'generated', name: 'Antigravity', enabled: true, sort_order: 1700, agent_id: 'a9f3c21e',
+          agent: { type: 'antigravity', source: 'builtin' }, agent_status: 'online' },
+        { id: 'aionui-assistant', source: 'builtin', name: 'Butler', enabled: false, sort_order: 0, agent_id: 'aionrs',
+          agent: { type: 'aionrs', source: 'internal' }, agent_status: 'online' }
+      ] },
+      // A new chat (POST /api/conversations answers 201 with the conversation) and its first message.
+      'POST /api/conversations': { success: true, data: { id: 'newconv1', name: 'New chat' } },
+      'GET /api/conversations/newconv1': { success: true, data: { id: 'newconv1', name: 'New chat', status: 'finished', extra: { backend: 'codex', agent_id: 'codex' } } },
+      'GET /api/conversations/newconv1/messages': items([]),
+      'POST /api/conversations/newconv1/messages': { success: true, data: { msg_id: 'n1' } },
+      // Stopping a turn: a solo chat's, a member's through the interrupt route, the lead's through its run.
+      'POST /api/conversations/harness1/cancel': { success: true },
+      // First-run setup: the MCP list and create routes, the Butler switch (AionCore mcp and assistant routes).
+      'GET /api/mcp/servers': { success: true, data: [] },
+      'POST /api/mcp/servers': { success: true, data: { id: 'mcp-loop', name: 'aiondx-loop', enabled: true } },
+      'PATCH /api/assistants/aionui-assistant/state': { success: true },
+      'POST /api/conversations/convA/cancel': { success: true },
+      'POST /api/teams/team1/agents/slotB/interrupt': { success: true, data: { outcome: 'interrupted', message_id: 'mb9' } },
+      'POST /api/teams/team1/runs/run1/agents/slotA/cancel': { success: true },
+      // Team members' own chats, and the restart routes the account pill calls.
+      'GET /api/conversations/convA': { success: true, data: { id: 'convA', name: 'Lead', status: 'finished', extra: { backend: 'claude', agent_id: 'cc33dd44' } } },
+      'GET /api/conversations/convB': { success: true, data: { id: 'convB', name: 'Worker', status: 'finished', extra: { backend: 'claude', agent_id: 'aa11bb22' } } },
+      'POST /api/conversations/harness1/runtime/restart': { success: true, data: { recovered: true } },
+      // One message sent mid-turn, still "pending" (Unread): its row, as GET .../messages/{id} returns it.
+      'GET /api/conversations/harness1/messages/m-77': { success: true, data: { id: 'm-77', msg_id: '7f3c2a10-0000-4000-8000-000000000077',
+        position: 'right', status: 'pending', content: { content: 'use the R8 build' } } },
+      'POST /api/teams/team1/agents/slotB/runtime/restart': { success: true, data: { recovered: true } },
+      'GET /api/conversations/harness1/messages': items([
+        { id: 'm1', position: 'right', created_at: OLD - 2000, hidden: false, content: '{"content":"hello"}' },
+        { id: 'm2', position: 'left', created_at: OLD, hidden: false, content: '{"content":"hi"}' }
+      ]),
+      'POST /api/conversations/harness1/messages': { success: true, data: { msg_id: 'x' } },
+      'GET /api/teams/team1': { success: true, data: { id: 'team1', name: 'Harness Team', assistants: [
+        { slot_id: 'slotA', conversation_id: 'convA', role: 'lead', name: 'Lead', assistant_name: 'Lead', assistant_id: 'bare:cc33dd44' },
+        { slot_id: 'slotB', conversation_id: 'convB', role: 'teammate', name: 'Worker', assistant_name: 'Worker', assistant_id: 'bare:aa11bb22' }
+      ] } },
+      // The team list (aionui-team list_teams), for the chat colours' team picker.
+      'GET /api/teams': { success: true, data: [ { id: 'team1', name: 'Harness Team', assistants: [
+        { slot_id: 'slotA', conversation_id: 'convA', role: 'lead', name: 'Lead', assistant_name: 'Lead', assistant_id: 'bare:cc33dd44' },
+        { slot_id: 'slotB', conversation_id: 'convB', role: 'teammate', name: 'Worker', assistant_name: 'Worker', assistant_id: 'bare:aa11bb22' } ] } ] },
+      'GET /api/teams/team1/run-state': { success: true, data: { session_generation: 'g1', active_run: null, slot_work: [
+        { slot_id: 'slotA', role: 'lead', state: 'running', queued_foreground_count: 0, queued_background_count: 0, active_turn_id: 't1', blocked_reason: null, team_run_id: 'run1' },
+        { slot_id: 'slotB', role: 'teammate', state: 'idle', queued_foreground_count: 0, queued_background_count: 0, active_turn_id: null, blocked_reason: null }
+      ] } },
+      'GET /api/conversations/convA/messages': items([{ id: 'a1', position: 'left', created_at: OLD, hidden: false, content: '{"content":"planning"}' }]),
+      'GET /api/conversations/convB/messages': items([{ id: 'b1', position: 'left', created_at: OLD, hidden: false, content: '{"content":"done"}' }]),
+      'POST /api/teams/team1/agents/slotA/messages': { success: true, data: { status: 'accepted' } },
+      'POST /api/teams/team1/agents/slotB/messages': { success: true, data: { status: 'accepted' } },
+      // The lead's own send route (the team page's lead box posts here; aionui-team routes.rs).
+      'POST /api/teams/team1/messages': { success: true, data: { enqueue_status: 'accepted', message_id: 'mb1' } },
+      // The team page's warmup call (useTeamWarmup); aionui-team routes.rs ensure_session answers { success: true }.
+      'POST /api/teams/team1/session': { success: true },
+      // Each agent's slash commands, as GET /api/conversations/{id}/slash-commands lists them
+      // (checked live on 2026-09-24: a Claude chat lists compact, clear, context, ...). The worker
+      // stands in for an agent with no compact command.
+      'GET /api/conversations/harness1/slash-commands': { success: true, data: [
+        { command: 'compact', description: 'Free up context by summarizing the conversation so far' }, { command: 'clear', description: '' } ] },
+      'GET /api/conversations/convA/slash-commands': { success: true, data: [ { command: 'compact', description: '' } ] },
+      'GET /api/conversations/convB/slash-commands': { success: true, data: [ { command: 'init', description: '' } ] }
+    };
+    // GET/PUT /api/settings/client: aioncore's per-user key-value store (aionui-system
+    // client_pref.rs), where the Loop and the agents' Loop tool share each Loop's settings. GET takes
+    // an optional ?keys= list; PUT upserts each key, null deletes. ?nostore=1 leaves it out, the way
+    // an older backend would.
+    var store = {};
+    var noStore = q.get('nostore') === '1';
+    // ?seeddraft=<text>: the settings store already holds a saved draft for the solo chat, newer than any
+    // local copy (a crash lost localStorage, say).
+    if (q.get('seeddraft')) store['aiondx.draft.conv.harness1'] = { text: q.get('seeddraft'), at: Date.now() };
+    // A machine that has already been through the Welcome screen, unless ?welcome=1.
+    if (q.get('welcome') !== '1') store['aiondx.welcome'] = { mode: 'later', at: Date.now() - 86400000 };
+    // ?noagy=1: Antigravity is not installed, so it is missing from the new-chat list.
+    if (q.get('noagy') === '1') routes['GET /api/assistants'].data = routes['GET /api/assistants'].data.filter(function (a) { return a.id !== 'bare:a9f3c21e'; });
+    // Like the real backend, a posted message becomes the newest user-side message in that
+    // conversation's history. Without this the loop's own sends are invisible to it, and its
+    // "did the user type?" check misfires in a way the real app never would. Timestamps sit 25 s
+    // back so the loop's 20 s quiet window reads as elapsed, matching tests that backdate lastFired.
+    var histories = {
+      newconv1: routes['GET /api/conversations/newconv1/messages'].data.items,
+      harness1: routes['GET /api/conversations/harness1/messages'].data.items,
+      convA: routes['GET /api/conversations/convA/messages'].data.items,
+      convB: routes['GET /api/conversations/convB/messages'].data.items
+    };
+    var slotConv = { slotA: 'convA', slotB: 'convB' };
+    function recordSent(convId, text) {
+      var h = histories[convId];
+      if (h) h.push({ id: 'sent' + h.length, position: 'right', created_at: Date.now() - 25000, hidden: false,
+                      content: JSON.stringify({ content: text }) });
+    }
+    // ?backend=gemini: the solo chat is not a Claude chat (no account pill, no Unsend). Set here, before
+    // the patch loads, because the patch reads a chat's type as soon as the page is up.
+    if (q.get('backend')) routes['GET /api/conversations/harness1'].data.extra = { backend: q.get('backend'), agent_id: 'x' };
+    // ?claude=1: both team members are Claude agents (their spacing is 20 s, not 2 min). Set before the page
+    // reads the team, which it does as soon as it is up.
+    if (q.get('claude') === '1') routes['GET /api/teams/team1'].data.assistants.forEach(function (a) { a.backend = 'claude'; });
+    // ?setup=1: the main process's one-click setup (patch 0009's window.aiondxSetup), with a made-up survey of two apps.
+    // Calls are kept in window.__setupCalls; window.__setupScanAnswer and __setupApplyAnswer replace the answers.
+    if (q.get('setup') === '1') {
+      var HOME = 'C:\\Users\\tester';
+      window.__setupCalls = [];
+      window.__setupSurvey = { at: '2026-09-26T12:00:00Z', home: HOME, platform: 'win', tools: [
+        { id: 'claude-code', name: 'Claude Code', installed: true, locations: [
+          { kind: 'instructions', path: HOME + '\\.claude\\CLAUDE.md', exists: true, type: 'file', size: 120, modified: '2026-09-20 10:00' },
+          { kind: 'agents', path: HOME + '\\.claude\\agents', exists: true, type: 'dir', count: 3, modified: '2026-09-19 10:00' },
+          { kind: 'commands', path: HOME + '\\.claude\\commands', exists: true, type: 'dir', count: 0 },
+          { kind: 'settings', path: HOME + '\\.claude\\settings.json', exists: true, type: 'file', size: 900 },
+          { kind: 'mcp', path: HOME + '\\.claude.json', exists: true, type: 'file', size: 4000, mcp: { servers: [
+            { name: 'github', command: 'npx', args: ['-y', 'server-github', '--token', 'abc123'], envNames: ['GITHUB_TOKEN'] } ] } } ] },
+        { id: 'codex', name: 'OpenAI Codex CLI', installed: true, locations: [
+          { kind: 'instructions', path: HOME + '\\.codex\\AGENTS.md', exists: true, type: 'file', size: 40, modified: '2026-09-01 10:00' } ] },
+        { id: 'cursor', name: 'Cursor', installed: false, locations: [ { kind: 'rules', path: HOME + '\\.cursor\\rules', exists: false } ] },
+        { id: 'aionui', name: 'AionUi', installed: true, locations: [ { kind: 'skills', path: HOME + '\\AppData\\Roaming\\AionUi\\aionui\\skills', exists: true, type: 'dir', count: 5 } ] } ],
+        breadcrumbs: {} };
+      window.__setupResult = { ok: true, date: '2026-09-26', aiondx: HOME + '\\.aiondx', aiondxMd: HOME + '\\.aiondx\\AIONDX.md',
+        report: HOME + '\\.aiondx\\harvest\\2026-09-26\\report.md',
+        copied: [{ tool: 'claude-code', kind: 'instructions', files: 1 }, { tool: 'claude-code', kind: 'agents', files: 3 }],
+        wired: [{ agent: 'claude-code', name: 'Claude Code', file: HOME + '\\.claude\\CLAUDE.md' }, { agent: 'antigravity', name: 'Antigravity', file: HOME + '\\.gemini\\config\\AGENTS.md', created: true }],
+        mcp: { file: HOME + '\\.aiondx\\mcp\\servers.json', added: ['github'], same: [], renamed: [], failed: [], placeholders: ['GITHUB_TOKEN', 'OTHER_KEY'], fromEnvironment: ['GITHUB_TOKEN'] },
+        secretsRemoved: 1, notes: [] };
+      window.aiondxSetup = {
+        scan: function () { window.__setupCalls.push({ op: 'scan' }); return new Promise(function (r) { setTimeout(function () { r(window.__setupScanAnswer || { ok: true, survey: window.__setupSurvey }); }, 250); }); },
+        apply: function (plan) { window.__setupCalls.push({ op: 'apply', plan: plan }); return new Promise(function (r) { setTimeout(function () { r(window.__setupApplyAnswer || { ok: true, result: window.__setupResult }); }, 250); }); }
+      };
+    }
+    // ?plugins=1: Claude Code's plugin commands through the main process (patch 0009's window.aiondxPlugins), in the
+    // shapes claude 2.1 answers with (measured 2026-09-26). Calls go to window.__pluginCalls; the state is
+    // window.__pluginState; window.__pluginAnswer(args) can answer a command instead.
+    if (q.get('plugins') === '1') {
+      window.__pluginCalls = [];
+      window.__pluginState = {
+        installed: [{ id: 'agent-sdk-dev@claude-plugins-official', version: 'fa59bc903774', scope: 'user', enabled: true,
+          installPath: 'C:\\Users\\tester\\.claude\\plugins\\cache\\claude-plugins-official\\agent-sdk-dev\\fa59bc903774',
+          installedAt: '2026-09-27T01:49:05.839Z', lastUpdated: '2026-09-27T01:49:05.839Z' }],
+        available: [
+          { pluginId: 'agent-sdk-dev@claude-plugins-official', name: 'agent-sdk-dev', description: 'Development kit for working with the Claude Agent SDK', marketplaceName: 'claude-plugins-official', installCount: 51000 },
+          { pluginId: 'code-review@claude-plugins-official', name: 'code-review', description: 'Reviews a change for bugs and style', marketplaceName: 'claude-plugins-official', installCount: 120400 },
+          { pluginId: 'dataviz@claude-plugins-official', name: 'dataviz', description: 'Charts and dashboards from your data', marketplaceName: 'claude-plugins-official', installCount: 800 },
+          { pluginId: 'shell-helper@tools-market', name: 'shell-helper', description: 'Installs through its marketplace command', marketplaceName: 'tools-market', installCount: 12 }] };
+      var pluginAnswer = function (args) {
+        var st = window.__pluginState;
+        var custom = window.__pluginAnswer && window.__pluginAnswer(args);
+        if (custom) return custom;
+        var line = function (o) { return { ok: o.outcome === 'ok', code: o.outcome === 'ok' ? 0 : 1, out: JSON.stringify(o) + '\n', err: '' }; };
+        if (args[0] === 'list') return { ok: true, code: 0, out: JSON.stringify(args.indexOf('--available') >= 0 ? { installed: st.installed, available: st.available } : st.installed), err: '' };
+        if (args[0] === 'marketplace' && args[1] === 'list') return { ok: true, code: 0, out: 'Configured marketplaces:\n\n  \u276f claude-plugins-official\n    Source: GitHub (anthropics/claude-plugins-official)\n', err: '' };
+        if (args[0] === 'marketplace' && args[1] === 'add') return { ok: true, code: 0, out: 'Successfully added marketplace: ' + args[2] + '\n', err: '' };
+        var id = args[1];
+        var found = st.installed.filter(function (p) { return p.id === id; })[0];
+        if (args[0] === 'install') {
+          if (/@tools-market$/.test(id) && args.indexOf('--accept-command') < 0) {
+            return line({ command: 'install', outcome: 'needs-accept', plugin: id, message: 'This marketplace installs shell-helper by running a command.', shownCommand: { command: 'npx shell-helper-setup', sha256: 'abc123def' } });
+          }
+          st.installed.push({ id: id, version: '1', scope: 'user', enabled: true });
+          return line({ command: 'install', outcome: 'ok', plugin: id, pluginId: id, scope: 'user', message: 'Successfully installed plugin: ' + id + ' (scope: user)' });
+        }
+        if (!found) return line({ command: args[0], outcome: 'error', plugin: id, message: 'Plugin ' + id + ' is not installed' });
+        if (args[0] === 'disable') { found.enabled = false; return line({ command: 'disable', outcome: 'ok', plugin: id, message: 'Successfully disabled plugin: ' + id.split('@')[0] + ' (scope: user)' }); }
+        if (args[0] === 'enable') { found.enabled = true; return line({ command: 'enable', outcome: 'ok', plugin: id, message: 'Successfully enabled plugin: ' + id.split('@')[0] + ' (scope: user)' }); }
+        if (args[0] === 'uninstall') { st.installed = st.installed.filter(function (p) { return p !== found; }); return line({ command: 'uninstall', outcome: 'ok', plugin: id, message: 'Successfully uninstalled plugin: ' + id.split('@')[0] + ' (scope: user)' }); }
+        if (args[0] === 'update') return line({ command: 'update', outcome: 'ok', plugin: id, message: id.split('@')[0] + ' is already at the latest version' });
+        return { ok: false, error: 'not a plugin command: ' + args[0] };
+      };
+      window.aiondxPlugins = {
+        run: function (args) { window.__pluginCalls.push(args.slice()); return new Promise(function (r) { setTimeout(function () { r(pluginAnswer(args)); }, 120); }); }
+      };
+    }
+    // Model options as a Claude chat's runtime/ensure answers with them (the descriptions carry the versions).
+    routes['POST /api/conversations/harness1/runtime/ensure'] = { success: true, data: { recovered: false, runtime: {}, config_options: [
+      { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'opus', options: [
+        { value: 'default', name: 'Default (recommended)', description: 'Use the default model (currently Opus 5.5) · $4/$20 per Mtok' },
+        { value: 'opus', name: 'Opus', description: 'Opus 5.5 with 1M context · $4/$20 per Mtok' },
+        { value: 'opus[1m]', name: 'Opus (1M context)', description: 'Opus 5.5 with 1M context · $4/$20 per Mtok' },
+        { value: 'sonnet', name: 'Sonnet', description: 'Sonnet 5 · Best for everyday tasks' },
+        { value: 'claude-fable-5-1', name: 'Fable', description: 'Fable 5.1 · Fast' },
+        { value: 'claude-opus-4-8', name: 'Opus 4.8', description: 'Newer version available · select Opus for Opus 5.5' } ] } ] } };
+    // Tests reach into the stub to pause a member or add an agent error to a history.
+    window.__stub = { routes: routes, histories: histories, store: store };
+    window.__calls = [];
+    function json(status, obj) {
+      return Promise.resolve(new Response(JSON.stringify(obj), { status: status, headers: { 'Content-Type': 'application/json' } }));
+    }
+    window.fetch = function (url, opts) {
+      var method = (opts && opts.method) || 'GET';
+      // The desktop app sends absolute URLs (http://127.0.0.1:<port>/api/...); routes are keyed by path.
+      var path = String(url).replace(/^https?:\/\/[^/]+/, '').split('?')[0];
+      var body = null;
+      try { body = opts && opts.body ? JSON.parse(opts.body) : null; } catch (e) { body = opts.body; }
+      window.__calls.push({ method: method, path: path, url: String(url), body: body });
+      if (path === '/api/settings/client' && !noStore) {
+        if (method === 'PUT') {
+          Object.keys(body || {}).forEach(function (k) { if (body[k] === null) delete store[k]; else store[k] = body[k]; });
+          return json(200, { success: true });
+        }
+        var km = /[?&]keys=([^&]*)/.exec(String(url));
+        var keys = km ? decodeURIComponent(km[1]).split(',') : Object.keys(store);
+        var out = {};
+        keys.forEach(function (k) { if (k in store) out[k] = store[k]; });
+        return json(200, { success: true, data: out });
+      }
+      var m;
+      if (method === 'POST' && (m = path.match(/^\/api\/conversations\/([^/]+)\/messages$/)) && body) recordSent(m[1], body.content);
+      if (method === 'POST' && (m = path.match(/^\/api\/teams\/[^/]+\/agents\/([^/]+)\/messages$/)) && body) recordSent(slotConv[m[1]], body.content);
+      if (method === 'POST' && /^\/api\/teams\/[^/]+\/messages$/.test(path) && body) {
+        recordSent('convA', body.content);
+        var lead = routes['GET /api/teams/team1/run-state'].data.slot_work[0];
+        if (lead.state === 'running') lead.queued_foreground_count = (lead.queued_foreground_count || 0) + 1;
+      }
+      var hit = routes[method + ' ' + path];
+      return Promise.resolve(new Response(JSON.stringify(hit || { success: false }), {
+        status: hit ? 200 : 404, headers: { 'Content-Type': 'application/json' }
+      }));
+    };
+  })();
+</script>
+</head>
+<body>
+  <div class="msg" id="banner">Harness: composer action row rebuilt from AcpSendBox markup, styled by AionUi's shipped CSS.</div>
+  <!-- A user message row as MessageList renders one sent mid-turn: id message-<id>, the text, and the
+       "Unread" badge (MessageText.tsx, data-testid message-status-badge). Solo page only. -->
+  <div id="message-m-77" data-testid="message-text-right" style="position:absolute;right:24px;top:80px;max-width:420px;text-align:right">
+    <div class="bubble" style="display:inline-block;padding:8px 12px;border-radius:10px;background:var(--color-fill-2)"><div data-testid="message-text-content"><p style="margin:0">use the R8 build</p></div></div>
+    <div class="text-12px text-t-secondary mt-4px select-none" data-testid="message-status-badge">Unread</div>
+  </div>
+  <div class="stage" id="solo">
+    <!-- AionUi's model picker (RuntimeSelectorPill, AcpModelSelector.tsx) as the chat header and each
+         team column's header render it; the AionDX account pill goes just before it. -->
+    <div class="hdr" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <button type="button" data-testid="acp-model-selector" class="arco-btn arco-btn-secondary arco-btn-size-small arco-btn-shape-round sendbox-model-btn header-model-btn agent-mode-compact-pill">Sonnet · High</button>
+    </div>
+    <div class="sendbox-panel panel">
+      <textarea class="ta" data-testid="sendbox-input" rows="1" placeholder="Send message to Claude Code (Main)..."></textarea>
+      <div class="row">
+        <div class="sendbox-tools">
+          <span class="sendbox-left-tool-group">
+            <button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small arco-btn-shape-circle"><span>+</span></button>
+          </span>
+        </div>
+        <div class="sendbox-actions gap-1r">
+          <div class="gap-8r">
+            <!-- AgentModeSelector compact mode as RuntimeSelectorPill renders it in AionUi 2.2.2:
+                 shield wrapper, MarqueePillLabel (measure, static and marquee spans), icon-park Down. -->
+            <span data-testid="mode-selector" data-current-mode="bypassPermissions" class="inline-flex">
+              <button type="button" data-testid="agent-mode-selector-claude" class="arco-btn arco-btn-secondary arco-btn-size-small arco-btn-shape-round sendbox-model-btn agent-mode-compact-pill" style="opacity:1;transition:opacity 0.2s;cursor:pointer">
+                <span class="flex items-center gap-6px min-w-0 leading-none">
+                  <span class="shrink-0 inline-flex items-center"><span class="i-icon i-icon-shield ico"><svg viewBox="0 0 48 48" fill="none"><path d="M6 9.256L24.009 4L42 9.256v10.778A26.316 26.316 0 0 1 24.003 45A26.32 26.32 0 0 1 6 20.029V9.256Z" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/></svg></span></span>
+                  <span class="inline-block overflow-hidden whitespace-nowrap leading-none min-w-0 relative"><span class="invisible absolute whitespace-nowrap leading-none pointer-events-none" aria-hidden="true">Permission · Bypass Permissions</span><span class="leading-none">Permission · Bypass Permissions</span><span class="invisible whitespace-nowrap leading-none absolute start-0 top-0">Permission · Bypass Permissions<span class="inline-block" style="width:32px"></span>Permission · Bypass Permissions</span></span>
+                  <span class="i-icon i-icon-down text-t-tertiary shrink-0 caret"><svg viewBox="0 0 48 48" fill="none"><path d="M36 18L24 30 12 18" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                </span>
+              </button>
+            </span>
+          </div>
+          <!-- AionUi's ContextUsageIndicator: a 20px ring, progress circle second; 30% full here (circumference 56.5487). -->
+          <div class="context-usage-indicator cursor-pointer flex items-center justify-center" style="width:32px;height:32px"><svg width="20" height="20" viewBox="0 0 20 20" style="transform:rotate(-90deg)"><circle cx="10" cy="10" r="9" fill="none" stroke="var(--color-fill-3)" stroke-width="2"></circle><circle cx="10" cy="10" r="9" fill="none" stroke="rgb(var(--primary-6))" stroke-width="2" stroke-linecap="round" stroke-dasharray="56.5487" stroke-dashoffset="39.584" style="transition:stroke-dashoffset 0.3s ease, stroke 0.3s ease"></circle></svg></div>
+          <span class="sendbox-draft-tooltip-anchor"><button type="button" data-testid="sendbox-add-to-draft-btn" class="arco-btn arco-btn-secondary arco-btn-size-default arco-btn-shape-circle sendbox-draft-tool-action sendbox-draft-tool-action--enabled"><span>&#8801;</span></button></span>
+          <span class="sendbox-send-tooltip-anchor">
+            <button type="button" data-testid="sendbox-send-btn" class="arco-btn arco-btn-primary arco-btn-size-default arco-btn-shape-circle send-button-custom send-button-custom--enabled"><span>&#8593;</span></button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Team page: two member columns, each a copy of the composer above, as TeamPage.tsx lays out
+    // div[data-slot-id][data-role] columns side by side.
+    // ?team=1&single=1: AionUi's single view of a team (TeamPage view mode "single"): tabs above, one message box, no
+    // member columns. The tab in front is localStorage team-active-slot-team1 (?front=slotB puts the worker there).
+    if (window.__team && new URLSearchParams(location.search).get('single') === '1') {
+      window.__team = false;
+      var front = new URLSearchParams(location.search).get('front');
+      if (front) localStorage.setItem('team-active-slot-team1', front); else localStorage.removeItem('team-active-slot-team1');
+      var tabs = document.createElement('div');
+      tabs.className = 'team-tabs';
+      tabs.style.cssText = 'display:flex;gap:8px;margin-bottom:8px';
+      [['slotA', 'leader', 'Lead'], ['slotB', 'teammate', 'Worker']].forEach(function (c) {
+        var tab = document.createElement('div');
+        tab.setAttribute('data-testid', 'team-tab-' + c[0]);
+        tab.setAttribute('data-team-tab-role', c[1]);
+        tab.style.cssText = 'padding:4px 10px;border:1px solid var(--color-border-2);border-radius:6px;cursor:pointer';
+        tab.innerHTML = '<span data-testid="team-tab-name-' + c[0] + '">' + c[2] + '</span>';
+        tab.addEventListener('click', function () { localStorage.setItem('team-active-slot-team1', c[0]); });
+        tabs.appendChild(tab);
+      });
+      var soloBox = document.getElementById('solo');
+      soloBox.parentNode.insertBefore(tabs, soloBox);
+      document.getElementById('banner').textContent = 'Harness: team page #/team/team1 in the single view, one message box, tabs above.';
+    }
+    if (window.__team) {
+      var solo = document.getElementById('solo');
+      var team = document.createElement('div');
+      team.className = 'team';
+      [['slotA', 'leader', 'Lead (running in the stub)'], ['slotB', 'member', 'Worker (idle in the stub)']].forEach(function (c) {
+        var col = document.createElement('div');
+        col.className = 'col';
+        col.setAttribute('data-slot-id', c[0]);
+        col.setAttribute('data-role', c[1]);
+        var name = document.createElement('div');
+        name.className = 'colname';
+        name.textContent = c[2];
+        col.appendChild(name);
+        var copy = solo.cloneNode(true);
+        copy.removeAttribute('id');
+        var hdr = copy.querySelector('.hdr');
+        var picker = hdr.querySelector('[data-testid="acp-model-selector"]');
+        var box = document.createElement('div');
+        box.className = 'lane-picker';
+        box.style.cssText = 'min-width:0;max-width:140px';
+        hdr.insertBefore(box, picker);
+        box.appendChild(picker);
+        var more = document.createElement('div');
+        more.className = 'lane-more';
+        more.innerHTML = '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small arco-btn-shape-circle">&#8943;</button>';
+        hdr.appendChild(more);
+        // A message of yours the member has not reached yet (worker column only).
+        if (c[0] === 'slotB') {
+          var row = document.createElement('div');
+          row.id = 'message-b-9';
+          row.setAttribute('data-testid', 'message-text-right');
+          row.style.cssText = 'position:absolute;right:16px;top:44px;display:flex;align-items:center';
+          row.innerHTML = '<div class="bubble" style="padding:6px 10px;border-radius:10px;background:var(--color-fill-2)"><div data-testid="message-text-content">check the logs first</div></div>';
+          col.appendChild(row);
+        }
+        col.appendChild(copy);
+        team.appendChild(col);
+      });
+      solo.parentNode.removeChild(solo);
+      document.body.appendChild(team);
+      document.getElementById('banner').textContent = 'Harness: team page #/team/team1, one composer per member column.';
+
+      // ?wide=1: columns wider than the window, so the team view scrolls sideways, plus what
+      // TeamPage.tsx does: focusing a member's message box makes it the active member, and an
+      // effect then scrolls that column to the far left. The arrow stands in for the page's
+      // side arrows, which scroll the next column into view.
+      if (new URLSearchParams(location.search).get('wide') === '1') {
+        team.style.overflowX = 'auto';
+        team.id = 'team-scroller';
+        [].forEach.call(team.querySelectorAll('.col'), function (col) { col.style.flex = '0 0 640px'; });
+        team.addEventListener('focusin', function (ev) {
+          var col = ev.target.closest('[data-slot-id]');
+          if (col) requestAnimationFrame(function () { col.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'start' }); });
+        });
+        var arrow = document.createElement('button');
+        arrow.id = 'next-arrow';
+        arrow.textContent = '>';
+        arrow.style.cssText = 'position:absolute;right:8px;top:24px;z-index:5';
+        arrow.addEventListener('click', function () {
+          document.querySelector('[data-slot-id="slotB"]').scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'start' });
+        });
+        document.body.appendChild(arrow);
+      }
+    }
+  </script>
+  <script src="../../patches/0001-renderer-dx/aionui-dx.js"></script>
+  <script>
+    // The draft-queue button, as AionUi's own onClick (bubble phase): window.__draftAdds counts what it queued.
+    document.addEventListener('click', function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('[data-testid="sendbox-add-to-draft-btn"]') && !ev.defaultPrevented) window.__draftAdds = (window.__draftAdds || 0) + 1;
+    });
+    // ?sends=1: AionUi's own send on Enter, after the patch's capture-phase handlers have had their say.
+    if (new URLSearchParams(location.search).get('sends') === '1') {
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Enter' || ev.shiftKey || ev.defaultPrevented) return;
+        // Ctrl+Enter puts it in the draft queue, as AionUi does (window.__draftAdds counts them).
+        if (ev.ctrlKey || ev.metaKey) { ev.preventDefault(); window.__draftAdds = (window.__draftAdds || 0) + 1; return; }
+        var ta = ev.target && ev.target.closest ? ev.target.closest('[data-testid="sendbox-input"]') : null;
+        if (!ta || !ta.value.trim()) return;
+        ev.preventDefault();
+        var col = ta.closest('[data-slot-id]');
+        var url = !col ? '/api/conversations/harness1/messages'
+          : col.getAttribute('data-role') === 'leader' ? '/api/teams/team1/messages'
+          : '/api/teams/team1/agents/' + col.getAttribute('data-slot-id') + '/messages';
+        var text = ta.value;
+        var d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+        d.set.call(ta, '');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text }) });
+      });
+    }
+  </script>
+  <script>
+    if (new URLSearchParams(location.search).get('open') === '1') {
+      setTimeout(function () {
+        var b = document.querySelector('.aiondx-loop button');
+        if (b) b.click();
+      }, 400);
+    }
+  </script>
+  <script>
+    // ?bubbles=1: message rows as AionUi 2.2.2 renders them (MessageList.tsx MessageItem, MessageText.tsx; research
+    // 2026-09-26_chat-bubble-dom-and-colours.md): yours, a Loop nudge, a cross-chat delivery, an agent's reply (its
+    // Markdown in an open shadow root whose :host copies --text-primary as a literal, as ShadowView does), and on a
+    // team page the member's column wrapper with its name, plus a message from the lead to that member.
+    if (new URLSearchParams(location.search).get('bubbles') === '1') {
+      var rowHtml = function (id, pos, inner) {
+        return '<div id="message-' + id + '" class="message-item text chat-surface-fluid ' + (pos === 'right' ? 'justify-end' : 'justify-start') +
+          '" data-testid="message-text-' + pos + '" data-message-type="text" data-message-position="' + pos + '" style="display:flex;margin:6px 0">' +
+          '<div class="min-w-0 flex flex-col group ' + (pos === 'right' ? 'items-end' : 'items-start') + '">' + inner + '</div></div>';
+      };
+      var mine = function (text) {
+        return '<div class="bg-aou-2 p-6px" style="border-radius:8px 0 8px 8px;color:var(--text-primary)"><div data-testid="message-text-content"><div class="whitespace-pre-wrap">' + text + '</div></div></div>';
+      };
+      var reply = '<div class="w-full"><div data-testid="message-text-content"><div class="markdown-shadow"></div></div></div>';
+      var attachShadow = function (root, text) {
+        Array.prototype.forEach.call(root.querySelectorAll('.markdown-shadow'), function (host) {
+          if (host.shadowRoot) return;
+          var sr = host.attachShadow({ mode: 'open' });
+          var lit = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim() || '#1d2129';
+          sr.innerHTML = '<style>:host{--text-primary:' + lit + '}.markdown-shadow-body{color:var(--text-primary)}</style><div class="markdown-shadow-body">' + text + '</div>';
+        });
+      };
+      var list = document.createElement('div');
+      list.id = 'bubble-list';
+      list.style.cssText = 'padding:8px 16px;max-width:640px';
+      list.innerHTML = rowHtml('u1', 'right', mine('Run the map tests.')) +
+        rowHtml('u2', 'right', mine('[AionDX Loop: sent automatically, not typed by the user] CONTINUE WORKING.')) +
+        rowHtml('u3', 'right', '<div class="mb-4px flex items-center gap-4px text-12px text-t-secondary self-end"><span role="button" aria-label="Mention conversation Project Team in the message box">From conversation Project Team</span></div>' + mine('Status: 3 of 5 done.')) +
+        rowHtml('a1', 'left', reply);
+      if (!window.__team) {
+        var stage = document.getElementById('solo');
+        stage.parentNode.insertBefore(list, stage);
+        attachShadow(list, 'The map tests pass.');
+      } else {
+        var col = document.querySelector('[data-slot-id="slotB"]');
+        var wrap = document.createElement('div');
+        wrap.className = 'flex flex-col h-full';
+        wrap.style.background = 'color-mix(in srgb, #5c9ea4 4%, var(--bg-base))';
+        wrap.innerHTML = '<div class="flex items-center h-40px"><span class="min-w-0 flex-1 truncate text-13px font-600" style="color:#5c9ea4">Worker</span></div>';
+        var rows = document.createElement('div');
+        rows.innerHTML = rowHtml('w1', 'left', reply) +
+          rowHtml('w2', 'left', '<div class="flex items-center gap-6px mb-4px"><span class="text-12px" style="color:var(--brand)">Lead</span></div>' +
+            '<div class="bg-3 p-6px" style="border-radius:0 8px 8px 8px;border-left:3px solid #5c9ea4"><div data-testid="message-text-content"><div class="markdown-shadow"></div></div></div>');
+        wrap.appendChild(rows);
+        col.insertBefore(wrap, col.firstChild);
+        attachShadow(wrap, 'Worker: map tests pass.');
+      }
+    }
+  </script>
+</body>
+</html>

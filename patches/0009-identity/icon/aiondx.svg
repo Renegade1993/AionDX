@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- AionDX mark, 2026-09-25: a loop (the feature AionDX is known for) around a bright core, on a
+       near-black grey tile (navy until 2026-09-25; K saw purple in it). Teal is the default accent of the AionDX themes. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b1b1b"/>
+      <stop offset="1" stop-color="#070707"/>
+    </linearGradient>
+    <linearGradient id="loop" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#7cf5e2"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0.42" cy="0.38" r="0.7">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#b8fff4"/>
+    </radialGradient>
+  </defs>
+  <rect x="24" y="24" width="976" height="976" rx="228" fill="url(#tile)"/>
+  <rect x="30" y="30" width="964" height="964" rx="222" fill="none" stroke="#2dd4bf" stroke-opacity="0.35" stroke-width="12"/>
+  <!-- 300 degrees of a circle, centre (512,512), radius 290: from the top, clockwise, to the upper left -->
+  <path d="M 512 222 A 290 290 0 1 1 260.9 367" fill="none" stroke="url(#loop)" stroke-width="92" stroke-linecap="round"/>
+  <!-- arrowhead continuing the loop clockwise from its end -->
+  <path d="M 327 262 L 181.4 321.2 L 354.6 421.2 Z" fill="#5eead4" stroke="#5eead4" stroke-width="18" stroke-linejoin="round"/>
+  <circle cx="512" cy="512" r="104" fill="url(#core)"/>
+</svg>

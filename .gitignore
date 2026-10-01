@@ -1,0 +1,10 @@
+# Reference clones, the unpacked app and build output.
+vendor/
+upstream/
+upstream-aioncore/
+work-*/
+*.log
+dist/
+*.exe
+__pycache__/
+*.pyc

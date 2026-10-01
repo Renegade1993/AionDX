@@ -1,0 +1,26 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+#  AionUi account router shim, POSIX form (Git Bash, MSYS, WSL-on-Windows paths).
+#  Rebuilt by AionDX patch 0002 on 2026-09-22, alongside claude.cmd.
+#
+#  Same contract as claude.cmd: route through claude-account-router.js when it and
+#  node are both present, otherwise launch the native build unmodified.
+#
+#  To revert:  rm "$(dirname "$0")/claude"
+# ---------------------------------------------------------------------------
+basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
+
+if [ -f "$basedir/claude-account-router.js" ] && command -v node >/dev/null 2>&1; then
+  exec node "$basedir/claude-account-router.js" "$@"
+fi
+
+if [ -x "$HOME/.local/bin/claude.exe" ]; then
+  exec "$HOME/.local/bin/claude.exe" "$@"
+fi
+
+if [ -x "$basedir/node_modules/@anthropic-ai/claude-code/bin/claude.exe" ]; then
+  exec "$basedir/node_modules/@anthropic-ai/claude-code/bin/claude.exe" "$@"
+fi
+
+echo "claude: no Claude Code binary found. Run: claude install latest" >&2
+exit 1

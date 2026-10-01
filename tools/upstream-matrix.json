@@ -1,0 +1,539 @@
+{
+  "about": "AionDX harvest matrix: what AionDX takes from upstream AionUi and AionCore, and what it does not. Configuration for tools/upstream-sync.js; explained in UPSTREAM-MATRIX.md. Set by K's directive of 2026-09-24. Changing a decision is K's call.",
+  "decisions": {
+    "harvest": "take upstream as it ships, no AionDX change",
+    "harvest+patch": "take upstream; an AionDX patch rides on it, so upstream changes here are checked before a rebuild",
+    "strip": "remove or disable it in AionDX",
+    "hold": "not decided; K's call"
+  },
+  "repos": {
+    "frontend": {
+      "dir": "upstream",
+      "branch": "main",
+      "url": "https://github.com/iOfficeAI/AionUi",
+      "releasesApi": "https://api.github.com/repos/iOfficeAI/AionUi/releases/latest"
+    },
+    "backend": {
+      "dir": "upstream-aioncore",
+      "branch": "main",
+      "url": "https://github.com/iOfficeAI/AionCore",
+      "releasesApi": "https://api.github.com/repos/iOfficeAI/AionCore/releases/latest"
+    }
+  },
+  "rows": [
+    {
+      "id": "F1",
+      "repo": "frontend",
+      "area": "Multi-agent core: agent backends, conversations, teams, cron, skills, assistants, MCP settings",
+      "decision": "harvest",
+      "patches": [],
+      "why": "Directive 1: AionUi's core, every agent type, stays intact."
+    },
+    {
+      "id": "F2",
+      "repo": "frontend",
+      "area": "Composer action row: send box, Draft queue, agent mode (Permission) pill",
+      "decision": "harvest+patch",
+      "patches": [
+        "0001"
+      ],
+      "why": "The Loop button sits in this row and the Permission pill is restyled as a circle. Since 2026-09-25 the outbox catches Enter and the send button before AionUi, and steps aside for attached files (HorizontalFileList's scrollbar-hide) and an open slash or @ menu (sendbox-panel overflow-visible).",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/components/chat/SendBox/",
+          "packages/desktop/src/renderer/pages/conversation/platforms/acp/AcpSendBox.tsx",
+          "packages/desktop/src/renderer/components/agent/AgentModeSelector.tsx",
+          "packages/desktop/src/renderer/components/agent/RuntimeSelectorPill.tsx",
+          "packages/desktop/src/renderer/components/agent/MarqueePillLabel.tsx",
+          "packages/desktop/src/renderer/components/media/HorizontalFileList.tsx",
+          "packages/desktop/src/renderer/hooks/chat/useCompositionInput.ts"
+        ],
+        "content": [
+          "agent-mode-compact-pill|sendbox-model-btn|sendbox-actions|mode-selector|sendbox-input|sendbox-send-btn|sendbox-panel|overflow-visible|scrollbar-hide"
+        ]
+      }
+    },
+    {
+      "id": "F3",
+      "repo": "frontend",
+      "area": "Team page: member columns, arrows, active-member scroll",
+      "decision": "harvest+patch",
+      "patches": [
+        "0001"
+      ],
+      "why": "Loop buttons per column, agent dots, and the click-in scroll guard read data-slot-id and wrap scrollIntoView.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/pages/team/TeamPage.tsx",
+          "packages/desktop/src/renderer/pages/team/components/TeamChatView.tsx"
+        ],
+        "content": [
+          "scrollIntoView|data-slot-id|activeSlotId"
+        ]
+      }
+    },
+    {
+      "id": "F4",
+      "repo": "frontend",
+      "area": "AionPro account and the aionui.com sign-in (AuthManager, /login, Settings > Account, balance)",
+      "decision": "strip",
+      "patches": [
+        "0003"
+      ],
+      "why": "K: remove the sign-in, not necessary for our fork. Not in the public source; patch 0003's anchors in the shipped bundle are the check.",
+      "watch": {
+        "content": [
+          "CORE_IDENTITY_MODE|identityMode|identity-mode|AuthManager|coreUserBridge"
+        ]
+      }
+    },
+    {
+      "id": "F5",
+      "repo": "frontend",
+      "area": "First-run onboarding carousel",
+      "decision": "harvest",
+      "patches": [],
+      "why": "Kept until the AionDX setup screen (P-009) replaces it.",
+      "watch": {
+        "content": [
+          "onboarding"
+        ]
+      }
+    },
+    {
+      "id": "F6",
+      "repo": "frontend",
+      "area": "Telemetry: page-view analytics, analytics identity alias, Sentry crash and install-failure reports",
+      "decision": "hold",
+      "patches": [],
+      "why": "Sends usage events and crash data to AionUi's services. Not decided.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/sentry.ts",
+          "packages/desktop/src/process/utils/analyticsId.ts"
+        ],
+        "content": [
+          "page_view|identity-alias|Sentry\\.init"
+        ]
+      }
+    },
+    {
+      "id": "F7",
+      "repo": "frontend",
+      "area": "Auto-update from GitHub releases (electron-updater)",
+      "decision": "hold",
+      "patches": [],
+      "why": "electron-updater is set to autoDownload=false and autoInstallOnAppQuit=true (main index.js 42408): it checks, AionUi offers the update, and K's click downloads it; it then installs on quit. That replaces app.asar, so patches 0001, 0003 and 0006 drop out until AionDX Apply Update rebuilds them, and after October 7th, 2026 the stock build would ask for a sign-in. Taking updates through AionDX Apply Update only is the alternative. Not decided.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/process/services/autoUpdaterService.ts"
+        ],
+        "content": [
+          "autoInstallOnAppQuit|autoDownload"
+        ]
+      }
+    },
+    {
+      "id": "F8",
+      "repo": "frontend",
+      "area": "Discontinued-build flag and the move-to-AionPro dialog",
+      "decision": "strip",
+      "patches": [],
+      "why": "Only AionUi's final open-source build sets it. Stripped if it ever reaches an installed build.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/utils/discontinuedBuild.ts",
+          "packages/desktop/electron.vite.config.ts"
+        ],
+        "content": [
+          "IS_DISCONTINUED_BUILD|UpdateMigrationDialog|MigrationInviteCapsule"
+        ]
+      }
+    },
+    {
+      "id": "F9",
+      "repo": "frontend",
+      "area": "WebUI remote access, pairing and QR login",
+      "decision": "harvest",
+      "patches": [],
+      "why": "Works with patch 0003, because the local account keeps the real account id."
+    },
+    {
+      "id": "F10",
+      "repo": "frontend",
+      "area": "Builtin MCP servers (browser, image generation)",
+      "decision": "harvest",
+      "patches": [],
+      "why": "Upstream tools for every agent. They reach sessions through a per-conversation snapshot only; the Loop tool must not copy that path."
+    },
+    {
+      "id": "F11",
+      "repo": "frontend",
+      "area": "Backend launcher: port and identity flags",
+      "decision": "harvest",
+      "patches": [],
+      "why": "aionui_base.py finds the port this launcher picks; patch 0003 relies on it passing --identity-mode aionpro.",
+      "watch": {
+        "paths": [
+          "packages/web-host/src/backend-launcher.ts"
+        ],
+        "content": [
+          "--port|--local|identityMode"
+        ]
+      }
+    },
+    {
+      "id": "F12",
+      "repo": "frontend",
+      "area": "Renderer entry index.html",
+      "decision": "harvest+patch",
+      "patches": [
+        "0001",
+        "0003"
+      ],
+      "why": "0001 adds its script tag, 0003 its style tag.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/index.html"
+        ]
+      }
+    },
+    {
+      "id": "F13",
+      "repo": "frontend",
+      "area": "The Butler in the interface: via-chat buttons (useTalkToButler), onboarding cast, English labels",
+      "decision": "strip",
+      "patches": [
+        "0006"
+      ],
+      "why": "K: remove it from the UI everywhere and use Antigravity in its place. The hook's target constant and the English strings are patched; new Butler entry points upstream would need adding.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/hooks/assistant/useTalkToButler.ts",
+          "packages/desktop/src/renderer/components/base/TalkToButlerButton.tsx",
+          "packages/desktop/src/renderer/components/base/ButlerDiagnoseButton.tsx"
+        ],
+        "content": [
+          "useTalkToButler|aionui-assistant|talkToButler|letButlerSetup|onboarding.cast"
+        ]
+      }
+    },
+    {
+      "id": "B1",
+      "repo": "backend",
+      "area": "aioncore binary, bundled with each app release",
+      "decision": "harvest",
+      "patches": [],
+      "why": "AionDX never builds the backend; it takes the binary the app ships."
+    },
+    {
+      "id": "B2",
+      "repo": "backend",
+      "area": "Team runtime: queue, pause and resume, run-state, delivery-failure notices",
+      "decision": "harvest",
+      "patches": [],
+      "why": "The Loop resumes paused members and shows a red dot; the Loop and the agent dots read run-state.",
+      "watch": {
+        "paths": [
+          "crates/aionui-team/src/"
+        ]
+      }
+    },
+    {
+      "id": "B3",
+      "repo": "backend",
+      "area": "Conversation API and events: messages, status, extra, turn.completed",
+      "decision": "harvest",
+      "patches": [],
+      "why": "The Loop sends and reads messages here. Loop state is NOT in conversation extra: a PATCH stamps updated_at and reorders the sidebar.",
+      "watch": {
+        "paths": [
+          "crates/aionui-conversation/src/routes.rs",
+          "crates/aionui-conversation/src/stream_persistence.rs",
+          "crates/aionui-api-types/src/conversation.rs"
+        ]
+      }
+    },
+    {
+      "id": "B4",
+      "repo": "backend",
+      "area": "Identity modes, auth, CSRF, runtime-token channel",
+      "decision": "harvest",
+      "patches": [],
+      "why": "Patch 0003 depends on aionpro mode and the internal provisioning routes; the Loop tool will authenticate through the runtime-token headers.",
+      "watch": {
+        "paths": [
+          "crates/aionui-auth/src/",
+          "crates/aionui-app/src/bootstrap/environment.rs",
+          "crates/aionui-app/src/cli.rs"
+        ]
+      }
+    },
+    {
+      "id": "B5",
+      "repo": "backend",
+      "area": "MCP injection into agent sessions",
+      "decision": "harvest",
+      "patches": [],
+      "why": "Patch 0007's MCP row reaches only chats created with it selected: each chat freezes its MCP list at creation from the assistant's binding (build_runtime_mcp_snapshot). The shell program and skill cover the rest.",
+      "watch": {
+        "paths": [
+          "crates/aionui-mcp/src/",
+          "crates/aionui-ai-agent/src/mcp_resolve.rs",
+          "crates/aionui-ai-agent/src/factory/"
+        ]
+      }
+    },
+    {
+      "id": "B6",
+      "repo": "backend",
+      "area": "Agent error classification",
+      "decision": "harvest",
+      "patches": [],
+      "why": "The Devin proxy re-codes rate limits to match it.",
+      "watch": {
+        "paths": [
+          "crates/aionui-ai-agent/src/protocol/send_error.rs"
+        ]
+      }
+    },
+    {
+      "id": "B7",
+      "repo": "backend",
+      "area": "Process Job objects: an agent's children die with it",
+      "decision": "harvest",
+      "patches": [],
+      "why": "Why installs and daemons launch through Task Scheduler or WMI.",
+      "watch": {
+        "paths": [
+          "crates/aionui-process/src/"
+        ]
+      }
+    },
+    {
+      "id": "B8",
+      "repo": "backend",
+      "area": "Registry agents (new backends)",
+      "decision": "harvest",
+      "patches": [],
+      "why": "Directive 1: each new backend must work with every AionDX feature.",
+      "watch": {
+        "paths": [
+          "crates/aionui-ai-agent/src/registry.rs",
+          "crates/aionui-db/migrations/"
+        ]
+      }
+    },
+    {
+      "id": "B9",
+      "repo": "backend",
+      "area": "WebSocket event bus",
+      "decision": "harvest",
+      "patches": [],
+      "why": "turn.completed and team.agentStatusChanged can repaint the Loop at once instead of polling.",
+      "watch": {
+        "paths": [
+          "crates/aionui-realtime/",
+          "crates/aionui-team/src/events.rs"
+        ]
+      }
+    },
+    {
+      "id": "B10",
+      "repo": "backend",
+      "area": "Claude launch: how the claude program is found and which arguments it gets",
+      "decision": "harvest+patch",
+      "patches": [
+        "0005"
+      ],
+      "why": "Patch 0005 exists because the bare name resolves to a .cmd shim and cmd.exe cut the multi-line arguments; a change to program resolution or argument order changes whether it is still needed.",
+      "watch": {
+        "paths": [
+          "crates/aionui-ai-agent/src/session_agent.rs",
+          "crates/aionui-session/src/backend/claude_conn.rs",
+          "crates/aionui-session/src/adapter/claude.rs",
+          "crates/aionui-runtime/src/resolver.rs"
+        ],
+        "content": [
+          "resolve_session_cli_program|append-system-prompt|permission-mode|windows_shim_fallback"
+        ]
+      }
+    },
+    {
+      "id": "B11",
+      "repo": "backend",
+      "area": "Builtin skills: copied out per version, auto-inject offered to every conversation",
+      "decision": "harvest+patch",
+      "patches": [
+        "0004"
+      ],
+      "why": "The setup skill is a folder in builtin-skills/auto-inject; it depends on the .version gate and on injection sending an index, not full content.",
+      "watch": {
+        "paths": [
+          "crates/aionui-extension/src/startup_materialize.rs",
+          "crates/aionui-extension/src/skill_service.rs",
+          "crates/aionui-ai-agent/src/capability/first_message_injector.rs",
+          "crates/aionui-app/assets/builtin-skills/"
+        ]
+      }
+    },
+    {
+      "id": "B12",
+      "repo": "backend",
+      "area": "Assistants API and the builtin Butler",
+      "decision": "harvest",
+      "patches": [
+        "0004"
+      ],
+      "why": "The Butler runs on Gemini through a per-user PUT /api/assistants/aionui-assistant; the Butler's builtin definition and rules come from here.",
+      "watch": {
+        "paths": [
+          "crates/aionui-assistant/src/",
+          "crates/aionui-app/assets/builtin-assistants/"
+        ]
+      }
+    },
+    {
+      "id": "B13",
+      "repo": "backend",
+      "area": "Client preferences store: GET/PUT /api/settings/client",
+      "decision": "harvest",
+      "patches": [
+        "0001",
+        "0007"
+      ],
+      "why": "The Loop's shared state (aiondx.loop.*, aiondx.loopstatus.*, aiondx.engine) lives here, written by the renderer and by agents' runtime tokens.",
+      "watch": {
+        "paths": [
+          "crates/aionui-system/src/client_pref.rs",
+          "crates/aionui-system/src/routes.rs"
+        ]
+      }
+    },
+    {
+      "id": "F14",
+      "repo": "frontend",
+      "area": "Team page warmup: POST /api/teams/{id}/session on open",
+      "decision": "strip",
+      "patches": [
+        "0001"
+      ],
+      "why": "Directive 6, P-011: for a team with no session it starts one and drains the lead's mailbox, so opening a page woke the team. The Loop script answers the call locally while no session exists.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/pages/team/hooks/useTeamWarmup.ts",
+          "packages/desktop/src/renderer/pages/team/hooks/TeamPermissionContext.tsx"
+        ],
+        "content": [
+          "ensureSession"
+        ]
+      }
+    },
+    {
+      "id": "B14",
+      "repo": "backend",
+      "area": "Agent CLI version-drift card (verified releases compiled into aioncore)",
+      "decision": "strip",
+      "patches": [
+        "0001"
+      ],
+      "why": "Directive 6: patch 0002 keeps Claude Code current, so every new Claude chat shows 'newer than the version AionUi verified' (0.2.2 verified claude 2.1.236, codex 0.151.0, agy 1.1.28). Built September 26th, 2026 in patch 0001 (hideDriftNotices, build 2026-09-26.1): the chat notice, and its Chinese forms, is hidden; Settings' version advisory stays. A change in the notice's wording upstream needs DRIFT_RE updated.",
+      "watch": {
+        "paths": [
+          "crates/aionui-session/src/backend/cli_version.rs"
+        ],
+        "content": [
+          "VERIFIED_CLAUDE_VERSION|VERIFIED_CODEX_VERSION|VERIFIED_AGY_VERSION"
+        ]
+      }
+    },
+    {
+      "id": "F15",
+      "repo": "frontend",
+      "area": "Chat header and team column header: the model picker (AcpModelSelector, RuntimeSelectorPill)",
+      "decision": "harvest+patch",
+      "patches": [
+        "0001"
+      ],
+      "why": "2026-09-25: AionDX's account pill sits just before [data-testid^=acp-model-selector] in Claude chats; the team page marks columns data-role leader or member.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/components/agent/AcpModelSelector.tsx",
+          "packages/desktop/src/renderer/pages/conversation/components/ChatConversation.tsx",
+          "packages/desktop/src/renderer/pages/team/TeamPage.tsx"
+        ],
+        "content": [
+          "acp-model-selector|data-role"
+        ]
+      }
+    },
+    {
+      "id": "B15",
+      "repo": "backend",
+      "area": "Conversation runtime state (runtime.is_processing, supports_midturn_delivery), runtime/restart routes, client_preferences",
+      "decision": "harvest+patch",
+      "patches": [
+        "0001",
+        "0002"
+      ],
+      "why": "2026-09-25: the Loop and the outbox read runtime.is_processing (status can say finished mid-turn) and supports_midturn_delivery; the account pill restarts through runtime/restart; the account router reads client_preferences by user_id.",
+      "watch": {
+        "paths": [
+          "crates/aionui-api-types/src/conversation.rs",
+          "crates/aionui-session/src/capability.rs",
+          "crates/aionui-conversation/src/routes.rs",
+          "crates/aionui-system/src/client_pref.rs"
+        ],
+        "content": [
+          "is_processing|supports_midturn_delivery|runtime/restart|client_preferences"
+        ]
+      }
+    },
+    {
+      "id": "F16",
+      "repo": "frontend",
+      "area": "New-chat agent list, message box and message rows, the Opening guide",
+      "decision": "harvest+patch",
+      "patches": [
+        "0001",
+        "0009"
+      ],
+      "why": "2026-09-26: the agent control lists GET /api/assistants as the new-chat screen does (assistants.enabledOrder) and makes chats with POST /api/conversations; Respond now's tick box sits in .sendbox-panel and its bolt on the box around message-text-content next to message-status-badge; the team column wraps the model picker in a 140 px box; patch 0009 marks onboarding.openingGuideSeen_v1 before the app reads it.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/pages/guid/hooks/useCustomAgentsLoader.ts",
+          "packages/desktop/src/renderer/pages/guid/hooks/useGuidSend.ts",
+          "packages/desktop/src/renderer/utils/model/assistantSelection.ts",
+          "packages/desktop/src/renderer/components/chat/SendBox/index.tsx",
+          "packages/desktop/src/renderer/pages/conversation/Messages/components/MessageText.tsx",
+          "packages/desktop/src/renderer/pages/team/TeamPage.tsx"
+        ],
+        "content": [
+          "assistants.enabledOrder|sendbox-panel|message-text-content|message-status-badge|openingGuideSeen|max-w-140px"
+        ]
+      }
+    },
+    {
+      "id": "B16",
+      "repo": "backend",
+      "area": "Stopping turns and queue order: conversation cancel, team interrupt and child-turn cancel, the work coordinator's lanes; assistants list and conversation create",
+      "decision": "harvest, watched",
+      "patches": [
+        "0001"
+      ],
+      "why": "2026-09-26: Respond now relies on POST /api/conversations/{id}/cancel {turn_id}, POST /api/teams/{id}/agents/{slot}/interrupt {message, queued_policy} (does not wake the lead), POST /api/teams/{id}/runs/{run}/agents/{slot}/cancel (the lead; wakes the lead for a teammate), and the coordinator serving the foreground lane first; the agent control relies on /api/assistants and POST /api/conversations with assistant.id.",
+      "watch": {
+        "paths": [
+          "crates/aionui-team/src/session.rs",
+          "crates/aionui-team/src/work_coordinator/coordinator.rs",
+          "crates/aionui-team/src/routes.rs",
+          "crates/aionui-conversation/src/routes.rs",
+          "crates/aionui-assistant/src/service.rs"
+        ],
+        "content": [
+          "interrupt_agent_message|cancel_child_turn|queued_ids|discard_queued_except|notify_leader_child_interrupted|list_for_user"
+        ]
+      }
+    }
+  ]
+}

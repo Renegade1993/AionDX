@@ -1,0 +1,1060 @@
+diff --git a/crates/aionui-api-types/src/lib.rs b/crates/aionui-api-types/src/lib.rs
+index e01ecf95..68ce8900 100644
+--- a/crates/aionui-api-types/src/lib.rs
++++ b/crates/aionui-api-types/src/lib.rs
+@@ -206,6 +206,7 @@ pub use system::{
+ };
+ pub use team::{
+     AddAgentRequest, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamRequest, InterruptTeamAgentRequest,
++    SteerTeamAgentRequest, TeamSteerAgentResponse, TeamSteerOutcome,
+     PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest, SendAgentMessageRequest, SendTeamMessageRequest,
+     TeamActivityCursor, TeamActivityItemResponse, TeamActivityKind, TeamActivityPageResponse, TeamAgentInput,
+     TeamAgentRemovedPayload, TeamAgentRenamedPayload, TeamAgentResponse, TeamAgentRuntimeStatus,
+diff --git a/crates/aionui-api-types/src/team.rs b/crates/aionui-api-types/src/team.rs
+index ae04a670..c135de8d 100644
+--- a/crates/aionui-api-types/src/team.rs
++++ b/crates/aionui-api-types/src/team.rs
+@@ -415,6 +415,9 @@ pub struct TeamSlotWorkPayload {
+     pub role: TeamRunTargetRole,
+     pub state: TeamSlotWorkState,
+     pub queued_foreground_count: usize,
++    /// AionDX core-0002: the mailbox ids of the user's queued messages, in the order the slot will read them.
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub queued_foreground_message_ids: Vec<String>,
+     pub queued_background_count: usize,
+     pub active_turn_id: Option<String>,
+     pub active_turn_started_at_ms: Option<TimestampMs>,
+@@ -463,6 +466,40 @@ pub struct TeamChildTurnPayload {
+     pub replacement_message_id: Option<String>,
+ }
+ 
++/// AionDX core-0002: a message from the user that goes ahead of everything a member has queued, without
++/// stopping what it is doing. `message_id` names a message of the user's that is already waiting in the queue;
++/// without it `content` is a new message.
++#[derive(Debug, Default, Deserialize)]
++pub struct SteerTeamAgentRequest {
++    #[serde(default)]
++    pub content: String,
++    #[serde(default)]
++    pub files: Option<Vec<ChatFileRef>>,
++    #[serde(default)]
++    pub message_id: Option<String>,
++}
++
++/// AionDX core-0002: what became of a steered message.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
++#[serde(rename_all = "snake_case")]
++pub enum TeamSteerOutcome {
++    /// The member's running turn took it; the agent reads it at its next step.
++    DeliveredMidturn,
++    /// A new message, queued at the front: the member's next turn opens with it.
++    QueuedFirst,
++    /// A queued message moved to the front of the queue.
++    MovedToFront,
++    /// That message is not waiting in the queue (already read, or not there).
++    NotQueued,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++pub struct TeamSteerAgentResponse {
++    pub outcome: TeamSteerOutcome,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub message_id: Option<String>,
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+ pub struct TeamInterruptAgentResponse {
+     pub outcome: TeamInterruptOutcome,
+@@ -1708,6 +1745,7 @@ mod tests {
+             role: TeamRunTargetRole::Lead,
+             state: TeamSlotWorkState::Running,
+             queued_foreground_count: 2,
++            queued_foreground_message_ids: Vec::new(),
+             queued_background_count: 1,
+             active_turn_id: Some("turn-1".into()),
+             active_turn_started_at_ms: Some(10),
+diff --git a/crates/aionui-app/src/router/team_conversation_adapters.rs b/crates/aionui-app/src/router/team_conversation_adapters.rs
+index be8edd12..59884fe3 100644
+--- a/crates/aionui-app/src/router/team_conversation_adapters.rs
++++ b/crates/aionui-app/src/router/team_conversation_adapters.rs
+@@ -8,13 +8,13 @@ use aionui_api_types::{
+ use aionui_common::AgentType;
+ use aionui_conversation::{
+     ConversationAgentTurnRequest, ConversationAgentTurnStarted, ConversationAgentTurnStatus, ConversationError,
+-    ConversationService,
++    ConversationService, SteerActiveTurn,
+ };
+ use aionui_db::models::{AgentMetadataRow, MessageRow};
+ use aionui_db::{IAgentMetadataRepository, IConversationRepository};
+ use aionui_team::{
+     AgentTurnCancellationPort, AgentTurnExecutionError, AgentTurnExecutionPort, AgentTurnOutcome, AgentTurnRequest,
+-    AgentTurnStarted, AgentTurnStatus, NativeSlashCommandPort, SlashCatalogSource, SlashCommandRecognition,
++    AgentTurnStarted, AgentTurnStatus, AgentTurnSteerOutcome, NativeSlashCommandPort, SlashCatalogSource, SlashCommandRecognition,
+     TeamConversationBindingLookup, TeamConversationCreateRequest, TeamConversationCreateResult,
+     TeamConversationLookupPort, TeamConversationModelFacts, TeamConversationProvisioningPort, TeamError,
+     TeamMcpSnapshotResolution, TeamProjectionMessageStore,
+@@ -158,6 +158,26 @@ impl AgentTurnCancellationPort for TeamConversationAdapters {
+             .map(|_| ())
+             .map_err(map_conversation_turn_error)
+     }
++
++    /// AionDX core-0002: the member's running turn takes the message at its next step, as a solo chat's does.
++    async fn steer_agent_turn(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        content: &str,
++        files: Vec<String>,
++        record_message: bool,
++    ) -> Result<AgentTurnSteerOutcome, AgentTurnExecutionError> {
++        match self
++            .conversation_service
++            .steer_active_turn(user_id, conversation_id, content, files, record_message, &self.task_manager)
++            .await
++            .map_err(map_conversation_turn_error)?
++        {
++            SteerActiveTurn::Delivered { turn_id } => Ok(AgentTurnSteerOutcome::Delivered { turn_id }),
++            SteerActiveTurn::NotAvailable { reason } => Ok(AgentTurnSteerOutcome::NotAvailable { reason }),
++        }
++    }
+ }
+ 
+ #[async_trait]
+diff --git a/crates/aionui-conversation/src/lib.rs b/crates/aionui-conversation/src/lib.rs
+index 4895497b..a1820663 100644
+--- a/crates/aionui-conversation/src/lib.rs
++++ b/crates/aionui-conversation/src/lib.rs
+@@ -41,7 +41,7 @@ pub use runtime_routes::{ConversationRuntimeRouterState, conversation_runtime_ro
+ pub use service::is_temp_session_workspace;
+ pub use service::{
+     ConversationAgentTurnOutcome, ConversationAgentTurnRequest, ConversationAgentTurnStarted,
+-    ConversationAgentTurnStartedCallback, ConversationAgentTurnStatus, ConversationService,
++    ConversationAgentTurnStartedCallback, ConversationAgentTurnStatus, ConversationService, SteerActiveTurn,
+ };
+ pub use state::ConversationRouterState;
+ 
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index 5e995896..2f1bc186 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -3605,6 +3605,16 @@ enum MidturnOutcome {
+     TurnEnded { user_msg_id: Option<String> },
+ }
+ 
++/// AionDX core-0002: the answer to "hand this message to the running turn".
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum SteerActiveTurn {
++    /// The message is in the running turn; the agent reads it at its next step.
++    Delivered { turn_id: String },
++    /// Nothing was delivered, and nothing was changed: no running turn, an agent that cannot take a
++    /// message mid-turn, or a turn waiting on a permission card.
++    NotAvailable { reason: &'static str },
++}
++
+ /// Is this delivery error codex's "the turn already ended" steer rejection?
+ /// codex returns a bare -32600 for both steer rejections; the message text is
+ /// the ONLY discriminator (verified 0.144.6, design spec §6甲.1). Locked by
+@@ -3820,6 +3830,110 @@ impl ConversationService {
+             }
+         }
+     }
++    /// AionDX core-0002: hand a message to the conversation's RUNNING turn without stopping it, the delivery a
++    /// solo chat's own send takes while its agent works (see `send_message`, "Mid-turn delivery"). A team
++    /// member's conversation cannot be sent to through the ordinary route, so the team layer asks for it here.
++    ///
++    /// `record_message` true writes the user's message into the chat first (a new message from the user);
++    /// false leaves the chat as it is (a message already shown there, moved up from the team's queue).
++    /// Whatever is not possible is reported as `NotAvailable` before anything is written.
++    pub async fn steer_active_turn(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        content: &str,
++        files: Vec<String>,
++        record_message: bool,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) -> Result<SteerActiveTurn, ConversationError> {
++        if content.trim().is_empty() {
++            return Err(ConversationError::BadRequest {
++                reason: "Message content must not be empty".into(),
++            });
++        }
++        self.conversation_repo
++            .get(user_id, conversation_id)
++            .await?
++            .ok_or_else(|| ConversationError::NotFound {
++                id: conversation_id.to_owned(),
++            })?;
++        let Some(active_turn_id) = self.runtime_state.active_turn_id_for(conversation_id) else {
++            return Ok(SteerActiveTurn::NotAvailable {
++                reason: "no running turn",
++            });
++        };
++        let Some(agent) = task_manager.get_task(conversation_id) else {
++            return Ok(SteerActiveTurn::NotAvailable {
++                reason: "agent not running",
++            });
++        };
++        if !agent.supports_midturn_delivery() {
++            return Ok(SteerActiveTurn::NotAvailable {
++                reason: "agent cannot take a message mid-turn",
++            });
++        }
++        // §4.6, as in `send_message`: a turn blocked on a permission card is answered through the card.
++        if !agent.get_confirmations().is_empty() {
++            return Ok(SteerActiveTurn::NotAvailable {
++                reason: "turn is waiting for a permission answer",
++            });
++        }
++        if record_message {
++            let resolved = ResolvedChatMessage {
++                content: content.to_owned(),
++                files,
++            };
++            return match self
++                .deliver_midturn_message(
++                    user_id,
++                    conversation_id,
++                    &resolved,
++                    false,
++                    agent,
++                    active_turn_id.clone(),
++                    Vec::new(),
++                )
++                .await?
++            {
++                MidturnOutcome::Delivered(response) if response.delivered_midturn => Ok(SteerActiveTurn::Delivered {
++                    turn_id: active_turn_id,
++                }),
++                MidturnOutcome::Delivered(_) => Err(ConversationError::BadRequest {
++                    reason: "the message could not be delivered into the running turn".into(),
++                }),
++                MidturnOutcome::TurnEnded { .. } => Ok(SteerActiveTurn::NotAvailable {
++                    reason: "the turn ended first",
++                }),
++            };
++        }
++        let data = aionui_ai_agent::types::SendMessageData {
++            content: content.to_owned(),
++            msg_id: Self::mint_msg_id(),
++            turn_id: Some(active_turn_id.clone()),
++            files,
++            inject_skills: Vec::new(),
++        };
++        match agent.deliver_midturn(data).await {
++            Ok(()) => {
++                info!(
++                    conversation_id = %conversation_id,
++                    route = "midturn_delivery",
++                    active_turn_id = %active_turn_id,
++                    "queued message delivered into the active turn"
++                );
++                Ok(SteerActiveTurn::Delivered {
++                    turn_id: active_turn_id,
++                })
++            }
++            Err(e) if steer_rejection_is_turn_ended(&e) => Ok(SteerActiveTurn::NotAvailable {
++                reason: "the turn ended first",
++            }),
++            Err(e) => Err(ConversationError::BadRequest {
++                reason: format!("mid-turn delivery failed: {e}"),
++            }),
++        }
++    }
++
+     /// Send a user message to the conversation.
+     ///
+     /// 1. Validates the conversation belongs to the user
+diff --git a/crates/aionui-conversation/src/service_test.rs b/crates/aionui-conversation/src/service_test.rs
+index b1a23a1f..a6cf541d 100644
+--- a/crates/aionui-conversation/src/service_test.rs
++++ b/crates/aionui-conversation/src/service_test.rs
+@@ -4168,6 +4168,120 @@ async fn midturn_send_delivers_into_the_active_turn() {
+     assert_eq!(rows[0].status.as_deref(), Some("pending"));
+ }
+ 
++/// AionDX core-0002: a team hands a message to a member's running turn. A new message is written into the chat
++/// (pending receipt) and delivered into the active turn, whose claim is not touched.
++#[tokio::test]
++async fn steer_active_turn_records_and_delivers_a_new_message() {
++    let (svc, broadcaster, repo, _d) = make_service();
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    let _claim = svc
++        .runtime_state()
++        .try_claim_turn(&conv.id, "turn_active")
++        .expect("claim the active turn");
++    let agent = Arc::new(MidturnMockAgent::new(&conv.id));
++    let task_mgr = Arc::new(MockTaskManager::new());
++    task_mgr.insert_agent(&conv.id, AgentInstance::Mock(agent.clone()));
++    let task_mgr_dyn: Arc<dyn IWorkerTaskManager> = task_mgr;
++    broadcaster.take_events();
++
++    let outcome = svc
++        .steer_active_turn("user_1", &conv.id, "look at the build first", Vec::new(), true, &task_mgr_dyn)
++        .await
++        .expect("steer must not fail");
++
++    assert_eq!(
++        outcome,
++        crate::SteerActiveTurn::Delivered {
++            turn_id: "turn_active".into()
++        }
++    );
++    let delivered = agent.delivered.lock().unwrap().clone();
++    assert_eq!(delivered.len(), 1);
++    assert_eq!(delivered[0].content, "look at the build first");
++    assert_eq!(delivered[0].turn_id.as_deref(), Some("turn_active"));
++    assert_eq!(
++        svc.runtime_state().active_turn_id_for(&conv.id).as_deref(),
++        Some("turn_active"),
++        "the running turn is neither stopped nor replaced"
++    );
++    assert!(broadcaster.take_events().iter().any(|e| e.name == "message.userCreated"));
++    let rows: Vec<_> = repo
++        .messages
++        .lock()
++        .unwrap()
++        .iter()
++        .filter(|m| m.msg_id.as_deref() == Some(delivered[0].msg_id.as_str()))
++        .cloned()
++        .collect();
++    assert_eq!(rows.len(), 1);
++    assert_eq!(rows[0].status.as_deref(), Some("pending"));
++}
++
++/// AionDX core-0002: a message that is already shown in the chat (it waited in the team's queue) is delivered
++/// without a second row or a second bubble.
++#[tokio::test]
++async fn steer_active_turn_for_a_queued_message_writes_nothing_to_the_chat() {
++    let (svc, broadcaster, repo, _d) = make_service();
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    let _claim = svc
++        .runtime_state()
++        .try_claim_turn(&conv.id, "turn_active")
++        .expect("claim the active turn");
++    let agent = Arc::new(MidturnMockAgent::new(&conv.id));
++    let task_mgr = Arc::new(MockTaskManager::new());
++    task_mgr.insert_agent(&conv.id, AgentInstance::Mock(agent.clone()));
++    let task_mgr_dyn: Arc<dyn IWorkerTaskManager> = task_mgr;
++    broadcaster.take_events();
++    let before = repo.messages.lock().unwrap().len();
++
++    let outcome = svc
++        .steer_active_turn("user_1", &conv.id, "check the logs first", Vec::new(), false, &task_mgr_dyn)
++        .await
++        .expect("steer must not fail");
++
++    assert!(matches!(outcome, crate::SteerActiveTurn::Delivered { .. }));
++    assert_eq!(agent.delivered.lock().unwrap().len(), 1);
++    assert_eq!(repo.messages.lock().unwrap().len(), before, "no row is written");
++    assert!(!broadcaster.take_events().iter().any(|e| e.name == "message.userCreated"));
++}
++
++/// AionDX core-0002: nothing is delivered, written or changed when there is no running turn, or the turn is
++/// waiting on a permission card.
++#[tokio::test]
++async fn steer_active_turn_reports_what_is_not_available_and_changes_nothing() {
++    let (svc, broadcaster, repo, _d) = make_service();
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    let agent = Arc::new(MidturnMockAgent::new(&conv.id));
++    let task_mgr = Arc::new(MockTaskManager::new());
++    task_mgr.insert_agent(&conv.id, AgentInstance::Mock(agent.clone()));
++    let task_mgr_dyn: Arc<dyn IWorkerTaskManager> = task_mgr;
++    broadcaster.take_events();
++    let before = repo.messages.lock().unwrap().len();
++
++    // No running turn.
++    let none = svc
++        .steer_active_turn("user_1", &conv.id, "hello", Vec::new(), true, &task_mgr_dyn)
++        .await
++        .unwrap();
++    assert_eq!(none, crate::SteerActiveTurn::NotAvailable { reason: "no running turn" });
++
++    // A running turn, but it is waiting for a permission answer.
++    let _claim = svc
++        .runtime_state()
++        .try_claim_turn(&conv.id, "turn_active")
++        .expect("claim the active turn");
++    agent.confirmations.lock().unwrap().push(Confirmation { id: "c1".into(), call_id: "call-1".into(), title: None, action: Some("edit_file".into()), description: "Edit main.rs".into(), command_type: None, questions: None, options: vec![] });
++    let card = svc
++        .steer_active_turn("user_1", &conv.id, "hello", Vec::new(), true, &task_mgr_dyn)
++        .await
++        .unwrap();
++    assert!(matches!(card, crate::SteerActiveTurn::NotAvailable { .. }));
++
++    assert!(agent.delivered.lock().unwrap().is_empty());
++    assert_eq!(repo.messages.lock().unwrap().len(), before);
++    assert!(broadcaster.take_events().is_empty());
++}
++
+ /// B5 fallback (spec §6甲.1): codex rejected the steer because the turn ended
+ /// → the send falls back to opening a NEW turn; the already-persisted message
+ /// is reused (no duplicate row) and its status leaves the pending state.
+diff --git a/crates/aionui-team/src/events.rs b/crates/aionui-team/src/events.rs
+index eb02bcfa..b86f4186 100644
+--- a/crates/aionui-team/src/events.rs
++++ b/crates/aionui-team/src/events.rs
+@@ -455,6 +455,7 @@ mod tests {
+                 role: aionui_api_types::TeamRunTargetRole::Lead,
+                 state: aionui_api_types::TeamSlotWorkState::Idle,
+                 queued_foreground_count: 0,
++                queued_foreground_message_ids: Vec::new(),
+                 queued_background_count: 0,
+                 active_turn_id: None,
+                 active_turn_started_at_ms: None,
+@@ -491,6 +492,7 @@ mod tests {
+                 role: aionui_api_types::TeamRunTargetRole::Lead,
+                 state: aionui_api_types::TeamSlotWorkState::Running,
+                 queued_foreground_count: 0,
++                queued_foreground_message_ids: Vec::new(),
+                 queued_background_count: 0,
+                 active_turn_id: Some("turn-1".into()),
+                 active_turn_started_at_ms: Some(1),
+diff --git a/crates/aionui-team/src/lib.rs b/crates/aionui-team/src/lib.rs
+index 5a86d7a5..e8674b2d 100644
+--- a/crates/aionui-team/src/lib.rs
++++ b/crates/aionui-team/src/lib.rs
+@@ -42,7 +42,7 @@ pub use message_projection::{
+ };
+ pub use ports::{
+     AgentTurnCancellationPort, AgentTurnExecutionError, AgentTurnExecutionPort, AgentTurnOutcome, AgentTurnRequest,
+-    AgentTurnSource, AgentTurnStarted, AgentTurnStartedCallback, AgentTurnStatus, NativeSlashCommandPort,
++    AgentTurnSource, AgentTurnStarted, AgentTurnStartedCallback, AgentTurnStatus, AgentTurnSteerOutcome, NativeSlashCommandPort,
+     NoopNativeSlashCommandPort, SlashCatalogSource, SlashCommandRecognition, TeamAssistantCatalogEntry,
+     TeamAssistantCatalogPort, TeamConversationBindingLookup, TeamConversationLookupPort, TeamToolCapabilityPort,
+     UnknownTeamToolCapabilityPort,
+diff --git a/crates/aionui-team/src/mcp/server.rs b/crates/aionui-team/src/mcp/server.rs
+index 5a593dfe..ffd47ab8 100644
+--- a/crates/aionui-team/src/mcp/server.rs
++++ b/crates/aionui-team/src/mcp/server.rs
+@@ -1825,6 +1825,7 @@ mod tests {
+                 role: TeamRunTargetRole::Teammate,
+                 state: TeamSlotWorkState::Queued,
+                 queued_foreground_count: 0,
++                queued_foreground_message_ids: Vec::new(),
+                 queued_background_count: 1,
+                 active_turn_id: None,
+                 active_turn_started_at_ms: None,
+diff --git a/crates/aionui-team/src/ports.rs b/crates/aionui-team/src/ports.rs
+index 7f94c658..c7f8b023 100644
+--- a/crates/aionui-team/src/ports.rs
++++ b/crates/aionui-team/src/ports.rs
+@@ -245,6 +245,16 @@ pub trait AgentTurnExecutionPort: Send + Sync {
+     async fn run_agent_turn(&self, request: AgentTurnRequest) -> Result<AgentTurnOutcome, AgentTurnExecutionError>;
+ }
+ 
++/// AionDX core-0002: the answer to "hand this message to the member's running turn".
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum AgentTurnSteerOutcome {
++    /// The message is in the running turn; the agent reads it at its next step.
++    Delivered { turn_id: String },
++    /// Nothing was delivered and nothing changed: no running turn, an agent that cannot take a message
++    /// mid-turn, or a turn waiting on a permission answer.
++    NotAvailable { reason: &'static str },
++}
++
+ #[async_trait]
+ pub trait AgentTurnCancellationPort: Send + Sync {
+     async fn cancel_agent_turn(
+@@ -253,4 +263,20 @@ pub trait AgentTurnCancellationPort: Send + Sync {
+         conversation_id: &str,
+         turn_id: &str,
+     ) -> Result<(), AgentTurnExecutionError>;
++
++    /// AionDX core-0002: deliver a message into the conversation's running turn without stopping it.
++    /// `record_message` writes it into the chat as a new message from the user; false leaves the chat as it is.
++    /// The default says it cannot (ports that never steer need no change).
++    async fn steer_agent_turn(
++        &self,
++        _user_id: &str,
++        _conversation_id: &str,
++        _content: &str,
++        _files: Vec<String>,
++        _record_message: bool,
++    ) -> Result<AgentTurnSteerOutcome, AgentTurnExecutionError> {
++        Ok(AgentTurnSteerOutcome::NotAvailable {
++            reason: "not supported by this port",
++        })
++    }
+ }
+diff --git a/crates/aionui-team/src/routes.rs b/crates/aionui-team/src/routes.rs
+index 0b47b708..ec8ec9e3 100644
+--- a/crates/aionui-team/src/routes.rs
++++ b/crates/aionui-team/src/routes.rs
+@@ -13,7 +13,7 @@ use aionui_api_types::{
+     AddAgentRequest, ApiResponse, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamRequest,
+     GetConfigOptionsResponse, InterruptTeamAgentRequest, PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest,
+     SendAgentMessageRequest, SendTeamMessageRequest, SetConfigOptionRequest, SetConfigOptionResponse, SetModeRequest,
+-    SetModelRequest, TeamActivityPageResponse, TeamAgentResponse, TeamContextResetAvailability,
++    SetModelRequest, SteerTeamAgentRequest, TeamSteerAgentResponse, TeamActivityPageResponse, TeamAgentResponse, TeamContextResetAvailability,
+     TeamContextResetResponse, TeamInterruptAgentResponse, TeamListResponse, TeamMailboxMessageResponse, TeamResponse,
+     TeamRunAckResponse, TeamRunStateResponse, TeamTaskResponse,
+ };
+@@ -198,6 +198,7 @@ pub fn team_routes(state: TeamRouterState) -> Router {
+         .route("/api/teams/{id}/messages", post(send_message))
+         .route("/api/teams/{id}/agents/{slot_id}/messages", post(send_message_to_agent))
+         .route("/api/teams/{id}/agents/{slot_id}/interrupt", post(interrupt_agent))
++        .route("/api/teams/{id}/agents/{slot_id}/steer", post(steer_agent))
+         .route("/api/teams/{id}/agents/{slot_id}/attach", post(attach_agent))
+         .route(
+             "/api/teams/{id}/agents/{slot_id}/runtime/restart",
+@@ -544,6 +545,21 @@ async fn interrupt_agent(
+     Ok(Json(ApiResponse::ok(response)))
+ }
+ 
++/// AionDX core-0002: a message that goes ahead of the member's queue without stopping its turn.
++async fn steer_agent(
++    State(state): State<TeamRouterState>,
++    Extension(user): Extension<CurrentUser>,
++    Path(params): Path<AgentPathParams>,
++    body: Result<Json<SteerTeamAgentRequest>, JsonRejection>,
++) -> Result<Json<ApiResponse<TeamSteerAgentResponse>>, ApiError> {
++    let Json(req) = body.map_err(ApiError::from)?;
++    let response = state
++        .service
++        .steer_agent(&user.id, &params.id, &params.slot_id, req)
++        .await?;
++    Ok(Json(ApiResponse::ok(response)))
++}
++
+ async fn cancel_run(
+     State(state): State<TeamRouterState>,
+     Extension(user): Extension<CurrentUser>,
+diff --git a/crates/aionui-team/src/service.rs b/crates/aionui-team/src/service.rs
+index 2f2eba50..057b3874 100644
+--- a/crates/aionui-team/src/service.rs
++++ b/crates/aionui-team/src/service.rs
+@@ -10,12 +10,13 @@ use aionui_ai_agent::{ActiveLeaseRegistry, AgentError, AgentInstance, IWorkerTas
+ use aionui_api_types::ChatFileRef;
+ use aionui_api_types::{
+     AddAgentRequest, AssistantMcpBindingChanged, CreateTeamRequest, GetConfigOptionsResponse,
+-    InterruptTeamAgentRequest, SetConfigOptionRequest, SetConfigOptionResponse, TeamActivityCursor,
++    InterruptTeamAgentRequest, SetConfigOptionRequest, SetConfigOptionResponse, SteerTeamAgentRequest, TeamActivityCursor,
+     TeamActivityPageResponse, TeamAgentResponse, TeamAgentRuntimeStatus, TeamContextResetAvailability,
+     TeamContextResetResponse, TeamContextResetRuntimeStatus, TeamContextResetStatus, TeamInterruptAgentResponse,
+     TeamMailboxMessageResponse, TeamResponse, TeamRunAckResponse, TeamRunStateResponse, TeamSessionBinding,
+     TeamSessionPhase, TeamSessionStatus, TeamSessionStatusPayload, TeamTaskResponse, TeamToolCall,
+-    TeamToolContextResponse, TeamToolErrorCode, TeamToolErrorPayload, TeamToolTransport, WebSocketMessage,
++    TeamSteerAgentResponse, TeamToolContextResponse, TeamToolErrorCode, TeamToolErrorPayload, TeamToolTransport,
++    WebSocketMessage,
+ };
+ use aionui_common::{AgentKillReason, ConversationStatus, TimestampMs, generate_id, now_ms};
+ use aionui_db::models::TeamRow;
+@@ -2537,6 +2538,27 @@ impl TeamSessionService {
+             .await
+     }
+ 
++    /// AionDX core-0002: send a message that goes ahead of everything a member has queued, or move one that is
++    /// already queued, without stopping what the member is doing (see `TeamSession::steer_agent_from_user`).
++    pub async fn steer_agent(
++        &self,
++        user_id: &str,
++        team_id: &str,
++        slot_id: &str,
++        request: SteerTeamAgentRequest,
++    ) -> Result<TeamSteerAgentResponse, TeamError> {
++        self.load_owned_team(user_id, team_id).await?;
++        self.ensure_session_inner(team_id, Some(user_id)).await?;
++        let session = self.published_session(team_id)?;
++        if let Some(message_id) = request.message_id.as_deref().filter(|id| !id.trim().is_empty()) {
++            return session.promote_queued_message_from_user(slot_id, message_id).await;
++        }
++        let (content, files) = self
++            .resolve_message_attachments(user_id, &request.content, request.files)
++            .await?;
++        session.steer_agent_from_user(slot_id, &content, files).await
++    }
++
+     fn published_session(&self, team_id: &str) -> Result<Arc<TeamSession>, TeamError> {
+         self.sessions
+             .get(team_id)
+diff --git a/crates/aionui-team/src/session.rs b/crates/aionui-team/src/session.rs
+index adbbea88..e70998a3 100644
+--- a/crates/aionui-team/src/session.rs
++++ b/crates/aionui-team/src/session.rs
+@@ -7,12 +7,12 @@ use aionui_ai_agent::IWorkerTaskManager;
+ use aionui_api_types::{
+     TeamAgentRuntimeStatus, TeamChildTurnPayload, TeamContextResetNotice, TeamContextResetRuntimeStatus,
+     TeamInterruptAgentResponse, TeamInterruptOutcome, TeamMessageEnqueueStatus, TeamQueuedPolicy, TeamRunAckResponse,
+-    TeamRunStatus, TeamRunTargetRole, TeamSlotWorkPayload, TeamToolTransport,
++    TeamRunStatus, TeamRunTargetRole, TeamSlotWorkPayload, TeamSteerAgentResponse, TeamSteerOutcome, TeamToolTransport,
+ };
+ use aionui_common::{AgentKillReason, generate_id};
+ use aionui_db::ITeamRepository;
+ use aionui_realtime::EventBroadcaster;
+-use tracing::{info, warn};
++use tracing::{debug, info, warn};
+ 
+ use crate::error::TeamError;
+ use crate::event_loop::EventLoopRegistry;
+@@ -27,8 +27,8 @@ use crate::message_projection::{
+     TeamMessageProjection, TeamProjectionMessageStore, TeamProjectionRequest, TeamProjectionSource, teammate_dedupe_key,
+ };
+ use crate::ports::{
+-    AgentTurnCancellationPort, AgentTurnExecutionPort, NativeSlashCommandPort, NoopNativeSlashCommandPort,
+-    SlashCommandRecognition,
++    AgentTurnCancellationPort, AgentTurnExecutionPort, AgentTurnSteerOutcome, NativeSlashCommandPort,
++    NoopNativeSlashCommandPort, SlashCommandRecognition,
+ };
+ use crate::prompt_dump::{TeamPromptDumpConfig, TeamWakePromptDump, dump_team_wake_prompt};
+ use crate::prompts::{build_lead_prompt_for_transport, build_teammate_prompt_for_transport, build_wake_payload};
+@@ -1608,6 +1608,126 @@ impl TeamSession {
+             .await
+     }
+ 
++    /// AionDX core-0002: a message from the user that goes ahead of everything the member has queued, without
++    /// stopping what it is doing.
++    ///
++    /// A running turn that can take a message mid-turn (Claude, Codex) gets it at its next step, as a solo chat
++    /// does; the message is written into the chat and never queued. Otherwise it is queued like any message of
++    /// the user's, at the front: the member's next turn opens with it.
++    pub async fn steer_agent_from_user(
++        &self,
++        slot_id: &str,
++        content: &str,
++        files: Option<Vec<String>>,
++    ) -> Result<TeamSteerAgentResponse, TeamError> {
++        if content.trim().is_empty() {
++            return Err(TeamError::InvalidRequest("message must not be empty".into()));
++        }
++        if slot_id == "*" {
++            return Err(TeamError::InvalidRequest("a message cannot be steered to every agent".into()));
++        }
++        let agent = self.scheduler.get_agent(slot_id).await?;
++        match self
++            .cancellation_port
++            .steer_agent_turn(
++                &self.user_id,
++                &agent.conversation_id,
++                content,
++                files.clone().unwrap_or_default(),
++                true,
++            )
++            .await
++        {
++            Ok(AgentTurnSteerOutcome::Delivered { turn_id }) => {
++                info!(
++                    team_id = %self.team.id,
++                    slot_id,
++                    turn_id = %turn_id,
++                    "user message delivered into the running turn"
++                );
++                return Ok(TeamSteerAgentResponse {
++                    outcome: TeamSteerOutcome::DeliveredMidturn,
++                    message_id: None,
++                });
++            }
++            Ok(AgentTurnSteerOutcome::NotAvailable { reason }) => {
++                debug!(team_id = %self.team.id, slot_id, reason, "no mid-turn delivery; queuing the message first");
++            }
++            Err(error) => return Err(TeamError::InvalidRequest(error.to_string())),
++        }
++        let ack = self
++            .enqueue_user_message(slot_id, target_role_for(agent.role), content, files)
++            .await?;
++        self.work_coordinator.promote_queued_message(slot_id, &ack.message_id);
++        Ok(TeamSteerAgentResponse {
++            outcome: TeamSteerOutcome::QueuedFirst,
++            message_id: Some(ack.message_id),
++        })
++    }
++
++    /// AionDX core-0002: one of the user's messages already waiting in a member's queue goes to the front, and
++    /// when the member's running turn can take a message mid-turn it is handed over now and leaves the queue.
++    /// Nothing is stopped.
++    pub async fn promote_queued_message_from_user(
++        &self,
++        slot_id: &str,
++        message_id: &str,
++    ) -> Result<TeamSteerAgentResponse, TeamError> {
++        let agent = self.scheduler.get_agent(slot_id).await?;
++        let rows = self
++            .mailbox
++            .peek_unread_by_ids(&self.team.id, slot_id, &[message_id.to_owned()])
++            .await?;
++        let Some(row) = rows.into_iter().next() else {
++            return Ok(TeamSteerAgentResponse {
++                outcome: TeamSteerOutcome::NotQueued,
++                message_id: Some(message_id.to_owned()),
++            });
++        };
++        if row.from_agent_id != "user" {
++            return Err(TeamError::InvalidRequest(
++                "only a message from the user can be moved to the front".into(),
++            ));
++        }
++        let steered = self
++            .cancellation_port
++            .steer_agent_turn(
++                &self.user_id,
++                &agent.conversation_id,
++                &row.content,
++                row.files.clone().unwrap_or_default(),
++                false,
++            )
++            .await
++            .map_err(|error| TeamError::InvalidRequest(error.to_string()))?;
++        if let AgentTurnSteerOutcome::Delivered { turn_id } = steered {
++            // Handed to the running turn: it leaves the queue so the next turn does not read it again.
++            if self.work_coordinator.take_queued_message(slot_id, message_id) {
++                self.mailbox.mark_read_batch(&self.team.id, &[message_id.to_owned()]).await?;
++            }
++            info!(
++                team_id = %self.team.id,
++                slot_id,
++                turn_id = %turn_id,
++                message_id,
++                "queued user message delivered into the running turn"
++            );
++            return Ok(TeamSteerAgentResponse {
++                outcome: TeamSteerOutcome::DeliveredMidturn,
++                message_id: Some(message_id.to_owned()),
++            });
++        }
++        let moved = self.work_coordinator.promote_queued_message(slot_id, message_id);
++        Ok(TeamSteerAgentResponse {
++            outcome: if moved {
++                TeamSteerOutcome::MovedToFront
++            } else {
++                TeamSteerOutcome::NotQueued
++            },
++            message_id: Some(message_id.to_owned()),
++        })
++    }
++
+     pub(crate) async fn interrupt_agent_from_agent(
+         &self,
+         from_slot_id: &str,
+@@ -2591,6 +2711,164 @@ mod tests {
+         }
+     }
+ 
++    /// AionDX core-0002: a port that answers every steer the same way, records what it was asked, and fails any
++    /// attempt to stop a turn (Respond now must never stop one).
++    struct SteeringPort {
++        outcome: crate::ports::AgentTurnSteerOutcome,
++        steered: Mutex<Vec<(String, bool)>>,
++    }
++
++    impl SteeringPort {
++        fn new(outcome: crate::ports::AgentTurnSteerOutcome) -> Arc<Self> {
++            Arc::new(Self {
++                outcome,
++                steered: Mutex::new(Vec::new()),
++            })
++        }
++    }
++
++    #[async_trait::async_trait]
++    impl crate::ports::AgentTurnCancellationPort for SteeringPort {
++        async fn cancel_agent_turn(
++            &self,
++            _user_id: &str,
++            _conversation_id: &str,
++            _turn_id: &str,
++        ) -> Result<(), crate::ports::AgentTurnExecutionError> {
++            Err(crate::ports::AgentTurnExecutionError::Failed {
++                reason: "a steer must never stop a turn".into(),
++            })
++        }
++
++        async fn steer_agent_turn(
++            &self,
++            _user_id: &str,
++            _conversation_id: &str,
++            content: &str,
++            _files: Vec<String>,
++            record_message: bool,
++        ) -> Result<crate::ports::AgentTurnSteerOutcome, crate::ports::AgentTurnExecutionError> {
++            self.steered.lock().unwrap().push((content.to_owned(), record_message));
++            Ok(self.outcome.clone())
++        }
++    }
++
++    async fn session_with_running_worker(
++        port: Arc<SteeringPort>,
++    ) -> (Arc<TeamSession>, tokio::sync::oneshot::Sender<()>, String) {
++        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
++        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
++        let repo: Arc<dyn ITeamRepository> = Arc::new(MockTeamRepo::new());
++        let broadcaster: Arc<dyn EventBroadcaster> = Arc::new(NullBroadcaster);
++        let session = Arc::new(
++            TeamSession::start(
++                make_team(),
++                repo,
++                broadcaster,
++                backend_path(),
++                empty_task_manager(),
++                Arc::new(BlockingRunningTurnPort::new(started_tx, release_rx)),
++                port,
++                noop_projection_store(),
++                "user-test".into(),
++                Weak::<TeamSessionService>::new(),
++            )
++            .await
++            .unwrap(),
++        );
++        register_test_event_loop(&session, "worker-1");
++        let first = session
++            .send_message_to_agent("worker-1", "the work in progress", None)
++            .await
++            .unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(2), started_rx)
++            .await
++            .expect("worker turn should start")
++            .expect("start signal should be sent");
++        (session, release_tx, first.message_id)
++    }
++
++    #[tokio::test]
++    async fn steer_hands_the_message_to_the_running_turn_and_stops_nothing() {
++        let port = SteeringPort::new(crate::ports::AgentTurnSteerOutcome::Delivered {
++            turn_id: "turn-background".into(),
++        });
++        let (session, release_tx, _first) = session_with_running_worker(port.clone()).await;
++
++        let response = session.steer_agent_from_user("worker-1", "look at the build first", None).await.unwrap();
++
++        assert_eq!(response.outcome, TeamSteerOutcome::DeliveredMidturn);
++        assert_eq!(*port.steered.lock().unwrap(), vec![("look at the build first".to_owned(), true)]);
++        // The turn goes on, and the message is not also waiting in the queue.
++        assert_eq!(
++            session.work_coordinator.slot_snapshot("worker-1").unwrap().active_turn_id.as_deref(),
++            Some("turn-background")
++        );
++        let unread = session.mailbox.peek_unread("t1", "worker-1").await.unwrap();
++        assert!(!unread.iter().any(|message| message.content == "look at the build first"));
++
++        release_tx.send(()).unwrap();
++        session.stop();
++    }
++
++    #[tokio::test]
++    async fn steer_without_a_mid_turn_route_queues_the_message_and_stops_nothing() {
++        let port = SteeringPort::new(crate::ports::AgentTurnSteerOutcome::NotAvailable {
++            reason: "agent cannot take a message mid-turn",
++        });
++        let (session, release_tx, _first) = session_with_running_worker(port).await;
++
++        let response = session.steer_agent_from_user("worker-1", "look at the build first", None).await.unwrap();
++
++        assert_eq!(response.outcome, TeamSteerOutcome::QueuedFirst);
++        let queued_id = response.message_id.expect("a queued message has an id");
++        assert_eq!(
++            session.work_coordinator.slot_snapshot("worker-1").unwrap().active_turn_id.as_deref(),
++            Some("turn-background")
++        );
++        let unread = session.mailbox.peek_unread("t1", "worker-1").await.unwrap();
++        assert!(unread.iter().any(|message| message.id == queued_id));
++
++        release_tx.send(()).unwrap();
++        session.stop();
++    }
++
++    #[tokio::test]
++    async fn promote_moves_a_queued_message_up_or_hands_it_over_without_stopping_the_turn() {
++        // No mid-turn route: it moves to the front and stays queued.
++        let port = SteeringPort::new(crate::ports::AgentTurnSteerOutcome::NotAvailable {
++            reason: "agent cannot take a message mid-turn",
++        });
++        let (session, release_tx, _first) = session_with_running_worker(port.clone()).await;
++        let queued = session.send_message_to_agent("worker-1", "please do this next", None).await.unwrap();
++        let moved = session.promote_queued_message_from_user("worker-1", &queued.message_id).await.unwrap();
++        assert_eq!(moved.outcome, TeamSteerOutcome::MovedToFront);
++        assert!(session.mailbox.peek_unread("t1", "worker-1").await.unwrap().iter().any(|m| m.id == queued.message_id));
++        assert_eq!(*port.steered.lock().unwrap(), vec![("please do this next".to_owned(), false)]);
++        release_tx.send(()).unwrap();
++        session.stop();
++
++        // A mid-turn route: it is handed to the running turn and leaves the queue.
++        let port = SteeringPort::new(crate::ports::AgentTurnSteerOutcome::Delivered {
++            turn_id: "turn-background".into(),
++        });
++        let (session, release_tx, _first) = session_with_running_worker(port).await;
++        let queued = session.send_message_to_agent("worker-1", "please do this next", None).await.unwrap();
++        let handed = session.promote_queued_message_from_user("worker-1", &queued.message_id).await.unwrap();
++        assert_eq!(handed.outcome, TeamSteerOutcome::DeliveredMidturn);
++        assert!(!session.mailbox.peek_unread("t1", "worker-1").await.unwrap().iter().any(|m| m.id == queued.message_id));
++        assert_eq!(
++            session.work_coordinator.slot_snapshot("worker-1").unwrap().active_turn_id.as_deref(),
++            Some("turn-background")
++        );
++
++        // A message that is not waiting is reported, not an error.
++        let missing = session.promote_queued_message_from_user("worker-1", &queued.message_id).await.unwrap();
++        assert_eq!(missing.outcome, TeamSteerOutcome::NotQueued);
++        release_tx.send(()).unwrap();
++        session.stop();
++    }
++
+     #[derive(Default)]
+     struct NoopProjectionStore;
+ 
+diff --git a/crates/aionui-team/src/team_run/manager.rs b/crates/aionui-team/src/team_run/manager.rs
+index e0aba236..d3f93afe 100644
+--- a/crates/aionui-team/src/team_run/manager.rs
++++ b/crates/aionui-team/src/team_run/manager.rs
+@@ -287,6 +287,7 @@ impl TeamRunManager {
+                 SlotPhase::Blocked => TeamSlotWorkState::Blocked,
+             },
+             queued_foreground_count: slot.queued_foreground_count,
++            queued_foreground_message_ids: slot.queued_foreground_message_ids.clone(),
+             queued_background_count: slot.queued_background_count,
+             active_turn_id: slot.active_turn_id.clone(),
+             active_turn_started_at_ms: slot.active_turn_started_at_ms,
+diff --git a/crates/aionui-team/src/work_coordinator/coordinator.rs b/crates/aionui-team/src/work_coordinator/coordinator.rs
+index 51da6414..f84bc62a 100644
+--- a/crates/aionui-team/src/work_coordinator/coordinator.rs
++++ b/crates/aionui-team/src/work_coordinator/coordinator.rs
+@@ -992,6 +992,60 @@ impl SlotWorkCoordinator {
+         terminal_message_ids
+     }
+ 
++    /// The queued foreground intent that carries this mailbox message, if it is still waiting.
++    fn queued_foreground_intent(state: &CoordinatorState, slot_id: &str, mailbox_message_id: &str) -> Option<String> {
++        let slot = state.slots.get(slot_id)?;
++        slot.foreground
++            .iter()
++            .find(|intent_id| {
++                state
++                    .intents
++                    .get(*intent_id)
++                    .is_some_and(|intent| intent.mailbox_message_id.as_deref() == Some(mailbox_message_id))
++            })
++            .cloned()
++    }
++
++    /// AionDX core-0002: put one of the user's queued messages at the front of the slot's foreground queue, so
++    /// the slot's next turn opens with it. The turn running now is not touched. False when no such message is
++    /// waiting in the queue (it was already claimed, or never queued here).
++    pub(crate) fn promote_queued_message(&self, slot_id: &str, mailbox_message_id: &str) -> bool {
++        let mut state = self.lock_state();
++        let Some(intent_id) = Self::queued_foreground_intent(&state, slot_id, mailbox_message_id) else {
++            return false;
++        };
++        let Some(slot) = state.slots.get_mut(slot_id) else {
++            return false;
++        };
++        slot.foreground.retain(|candidate| candidate != &intent_id);
++        slot.foreground.push_front(intent_id);
++        let slot_snapshot = Self::slot_snapshot_locked(&state, slot_id);
++        drop(state);
++        self.publish_slot_work_snapshot(slot_snapshot);
++        true
++    }
++
++    /// AionDX core-0002: take one of the user's queued messages out of the queue because it was handed to the
++    /// running turn instead. True when it was queued: the caller marks its mailbox row read.
++    pub(crate) fn take_queued_message(&self, slot_id: &str, mailbox_message_id: &str) -> bool {
++        let mut state = self.lock_state();
++        let Some(intent_id) = Self::queued_foreground_intent(&state, slot_id, mailbox_message_id) else {
++            return false;
++        };
++        if let Some(intent) = state.intents.get_mut(&intent_id) {
++            intent.state = WorkIntentState::Cancelled {
++                classification: "delivered_midturn",
++            };
++        }
++        if let Some(slot) = state.slots.get_mut(slot_id) {
++            slot.remove_queued(&intent_id);
++        }
++        let slot_snapshot = Self::slot_snapshot_locked(&state, slot_id);
++        drop(state);
++        self.publish_slot_work_snapshot(slot_snapshot);
++        true
++    }
++
+     pub(crate) fn cancel_run(&self, team_run_id: &str) -> CancelRunWorkResult {
+         let mut state = self.lock_state();
+         let mut cancel_targets = Vec::new();
+diff --git a/crates/aionui-team/src/work_coordinator/model.rs b/crates/aionui-team/src/work_coordinator/model.rs
+index 9815c2c5..8888d5c8 100644
+--- a/crates/aionui-team/src/work_coordinator/model.rs
++++ b/crates/aionui-team/src/work_coordinator/model.rs
+@@ -236,6 +236,8 @@ pub(crate) struct SlotWorkSnapshot {
+     pub(crate) role: TeamRunTargetRole,
+     pub(crate) state: SlotPhase,
+     pub(crate) queued_foreground_count: usize,
++    /// AionDX core-0002: the mailbox ids of the user's queued messages, in the order the slot will read them.
++    pub(crate) queued_foreground_message_ids: Vec<String>,
+     pub(crate) queued_background_count: usize,
+     pub(crate) active_batch: Option<WorkBatch>,
+     pub(crate) active_turn_id: Option<String>,
+diff --git a/crates/aionui-team/src/work_coordinator/snapshot.rs b/crates/aionui-team/src/work_coordinator/snapshot.rs
+index 2ee28f47..72aaaa2c 100644
+--- a/crates/aionui-team/src/work_coordinator/snapshot.rs
++++ b/crates/aionui-team/src/work_coordinator/snapshot.rs
+@@ -149,6 +149,11 @@ impl SlotWorkCoordinator {
+             role: slot.role.clone(),
+             state: state_phase,
+             queued_foreground_count: slot.foreground.len(),
++            queued_foreground_message_ids: slot
++                .foreground
++                .iter()
++                .filter_map(|intent_id| state.intents.get(intent_id).and_then(|intent| intent.mailbox_message_id.clone()))
++                .collect(),
+             queued_background_count: slot.directed.len() + slot.control.len() + slot.background.len(),
+             active_batch,
+             active_turn_id,
+diff --git a/crates/aionui-team/src/work_coordinator/tests.rs b/crates/aionui-team/src/work_coordinator/tests.rs
+index 19579d9d..177b1873 100644
+--- a/crates/aionui-team/src/work_coordinator/tests.rs
++++ b/crates/aionui-team/src/work_coordinator/tests.rs
+@@ -1139,6 +1139,57 @@ fn discard_policy_exempts_control_lane_work() {
+     }
+ }
+ 
++// AionDX core-0002: Respond now moves a queued message of the user's to the front without stopping the turn.
++#[test]
++fn a_promoted_user_message_is_claimed_before_the_ones_ahead_of_it() {
++    let coordinator = coordinator();
++    coordinator.set_runtime_constraint("lead-1", RuntimeConstraint::Ready);
++    enqueue(&coordinator, WorkSource::UserMessage, "first");
++    enqueue(&coordinator, WorkSource::UserMessage, "second");
++    enqueue(&coordinator, WorkSource::UserMessage, "third");
++
++    assert!(coordinator.promote_queued_message("lead-1", "third"));
++
++    let ReconcileDecision::Claim(batch) = coordinator.next("lead-1") else {
++        panic!("queued messages must be claimable");
++    };
++    assert_eq!(batch.mailbox_message_ids, vec!["third", "first", "second"]);
++}
++
++#[test]
++fn promoting_a_message_that_is_not_queued_changes_nothing() {
++    let coordinator = coordinator();
++    coordinator.set_runtime_constraint("lead-1", RuntimeConstraint::Ready);
++    enqueue(&coordinator, WorkSource::UserMessage, "first");
++    enqueue(&coordinator, WorkSource::McpSendMessage, "from-a-teammate");
++
++    assert!(!coordinator.promote_queued_message("lead-1", "nobody"));
++    // Teammates' messages are not the user's to move up: the foreground queue holds only the user's.
++    assert!(!coordinator.promote_queued_message("lead-1", "from-a-teammate"));
++    assert!(!coordinator.promote_queued_message("other-slot", "first"));
++
++    let ReconcileDecision::Claim(batch) = coordinator.next("lead-1") else {
++        panic!("queued messages must be claimable");
++    };
++    assert_eq!(batch.mailbox_message_ids, vec!["first"]);
++}
++
++#[test]
++fn a_taken_message_leaves_the_queue_and_is_not_claimed() {
++    let coordinator = coordinator();
++    coordinator.set_runtime_constraint("lead-1", RuntimeConstraint::Ready);
++    enqueue(&coordinator, WorkSource::UserMessage, "first");
++    enqueue(&coordinator, WorkSource::UserMessage, "second");
++
++    assert!(coordinator.take_queued_message("lead-1", "first"));
++    assert!(!coordinator.take_queued_message("lead-1", "first"), "a message can only be taken once");
++
++    let ReconcileDecision::Claim(batch) = coordinator.next("lead-1") else {
++        panic!("the remaining message must be claimable");
++    };
++    assert_eq!(batch.mailbox_message_ids, vec!["second"]);
++}
++
+ // ── ELECTRON-3RN: recognized slash commands batch alone (FIFO, no preempt) ──
+ 
+ // AC3: when a command shares the queue with other unread messages, it is claimed

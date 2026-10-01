@@ -1,0 +1,2471 @@
+diff --git a/crates/aionui-api-types/src/conversation.rs b/crates/aionui-api-types/src/conversation.rs
+index 38c47e14280696186733054920e4bedaf5ea51e5..313bbcc06d649e266883d55a4dc59ce9d12e5bbf 100644
+--- a/crates/aionui-api-types/src/conversation.rs
++++ b/crates/aionui-api-types/src/conversation.rs
+@@ -47,6 +47,126 @@ pub struct McpRuntimeSnapshot {
+     pub mcp_statuses: Vec<ConversationMcpStatus>,
+ }
+ 
++/// `extra` key that marks a conversation as owning its MCP selection. Written
++/// only by `PUT /api/conversations/{id}/mcp`, as
++/// `{ "source": "conversation", "server_ids": [...] }`. While it is present a
++/// team member keeps this selection across re-attach and assistant binding
++/// changes instead of being reset to its assistant's binding.
++pub const CONVERSATION_MCP_SELECTION_KEY: &str = "mcp_selection";
++
++/// WebSocket event broadcast after `PUT /api/conversations/{id}/mcp` replaced a
++/// conversation's MCP selection. Payload: [`ConversationMcpChanged`].
++pub const CONVERSATION_MCP_CHANGED_EVENT: &str = "conversation.mcpChanged";
++
++/// WebSocket event broadcast when a running agent reports a change in the live
++/// state of one of its MCP servers. Payload: [`ConversationMcpStatusChangedPayload`].
++pub const CONVERSATION_MCP_STATUS_CHANGED_EVENT: &str = "conversation.mcpStatusChanged";
++
++/// Fingerprint of the MCP selection a conversation owns (see
++/// [`CONVERSATION_MCP_SELECTION_KEY`]), or `None` when the conversation follows
++/// its assistant binding. Uses the assistant binding fingerprint, so the same
++/// set of ids never restarts a team member twice.
++pub fn conversation_mcp_selection_fingerprint(extra: &serde_json::Value) -> Option<String> {
++    let ids = extra
++        .get(CONVERSATION_MCP_SELECTION_KEY)?
++        .get("server_ids")?
++        .as_array()?
++        .iter()
++        .filter_map(|id| id.as_str().map(str::to_owned))
++        .collect::<Vec<_>>();
++    Some(crate::assistant_mcp_binding_fingerprint(&ids))
++}
++
++/// Body for `PUT /api/conversations/{id}/mcp`: replace a conversation's MCP
++/// selection after creation. Send exactly one of the two fields.
++#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
++pub struct UpdateConversationMcpRequest {
++    /// MCP server row ids from `GET /api/mcp/servers`, builtin rows included:
++    /// the ids creation takes in `extra.selected_mcp_server_ids` or
++    /// `assistant.conversation_overrides.mcp_ids`. `[]` selects no server.
++    #[serde(default, alias = "selected_mcp_server_ids", alias = "mcp_ids")]
++    pub server_ids: Option<Vec<String>>,
++    /// `true` drops the conversation's own selection and picks again the way
++    /// creation does without one: the assistant's MCP binding, else every
++    /// enabled server. A team member without an assistant gets none.
++    #[serde(default)]
++    pub inherit: bool,
++}
++
++/// What happened to the agent runtime after a conversation's MCP selection
++/// changed.
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ConversationMcpRuntimeAction {
++    /// No agent was running. The next session start loads the new selection.
++    NextStart,
++    /// The idle agent was restarted with the new selection.
++    Restarted,
++    /// The agent was working. It restarts with the new selection once idle.
++    Deferred,
++    /// Team member with an assistant. The team runtime restarts it now when
++    /// idle, after its current work otherwise, or at its next attach when
++    /// dormant. (A team member without an assistant reports `next_start`.)
++    Team,
++}
++
++/// Response for `PUT /api/conversations/{id}/mcp`.
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct UpdateConversationMcpResponse {
++    /// The conversation as `GET /api/conversations/{id}` returns it after the change.
++    pub conversation: ConversationResponse,
++    pub runtime_action: ConversationMcpRuntimeAction,
++}
++
++/// Payload of [`CONVERSATION_MCP_CHANGED_EVENT`].
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++pub struct ConversationMcpChanged {
++    pub user_id: String,
++    pub conversation_id: String,
++    /// Set when the conversation belongs to a team member.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub team_id: Option<String>,
++    /// The frozen user-row ids (`extra.mcp_server_ids`).
++    pub mcp_server_ids: Vec<String>,
++    /// Display names of every selected server (`extra.mcp_servers`).
++    pub mcp_servers: Vec<String>,
++    pub runtime_action: ConversationMcpRuntimeAction,
++}
++
++/// Live state of one MCP server inside a running agent session, as the agent
++/// itself reported it.
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum McpServerLiveState {
++    /// Still starting (claude `pending`, codex `starting`).
++    Pending,
++    /// Connected and its tools are available (claude `connected`, codex `ready`).
++    Connected,
++    /// Up but unusable as configured: claude `needs-auth`, codex `cancelled`, or
++    /// a failed codex OAuth login. `error` says which.
++    Degraded,
++    /// Did not start or connect (claude and codex `failed`).
++    Failed,
++}
++
++/// One MCP server's live status, as listed in `runtime.mcp_servers`.
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++pub struct McpServerLiveStatus {
++    pub name: String,
++    pub status: McpServerLiveState,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub error: Option<String>,
++}
++
++/// Payload of [`CONVERSATION_MCP_STATUS_CHANGED_EVENT`].
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++pub struct ConversationMcpStatusChangedPayload {
++    pub user_id: String,
++    pub conversation_id: String,
++    /// Every server the agent has reported so far, including the one that changed.
++    pub mcp_servers: Vec<McpServerLiveStatus>,
++}
++
+ // ── Request types ──────────────────────────────────────────────────
+ 
+ #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+@@ -242,6 +362,16 @@ pub struct ConversationRuntimeSummary {
+     /// `accepts_proactive_input` must never be exposed.
+     #[serde(default)]
+     pub supports_midturn_delivery: bool,
++    /// Live MCP server status the running agent reported, one entry per
++    /// server. Absent when no agent is running or its backend reports none:
++    /// only the claude and codex sessions report today, and claude's first
++    /// report arrives when its first turn starts.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub mcp_servers: Option<Vec<McpServerLiveStatus>>,
++    /// A changed MCP selection is waiting for the agent's current work to end
++    /// before the runtime restarts with it.
++    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++    pub mcp_restart_pending: bool,
+ }
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+@@ -643,6 +773,112 @@ mod tests {
+         assert_eq!(req.status, ConversationArtifactStatus::Dismissed);
+     }
+ 
++    // ── Conversation MCP ────────────────────────────────────────────
++
++    #[test]
++    fn deserialize_update_mcp_request_accepts_the_creation_field_names() {
++        let req: UpdateConversationMcpRequest = serde_json::from_value(json!({ "server_ids": ["mcp-a"] })).unwrap();
++        assert_eq!(req.server_ids, Some(vec!["mcp-a".to_owned()]));
++        assert!(!req.inherit);
++
++        let req: UpdateConversationMcpRequest =
++            serde_json::from_value(json!({ "selected_mcp_server_ids": ["mcp-b"] })).unwrap();
++        assert_eq!(req.server_ids, Some(vec!["mcp-b".to_owned()]));
++
++        let req: UpdateConversationMcpRequest = serde_json::from_value(json!({ "mcp_ids": [] })).unwrap();
++        assert_eq!(req.server_ids, Some(Vec::new()), "an empty list selects no server");
++
++        let req: UpdateConversationMcpRequest = serde_json::from_value(json!({ "inherit": true })).unwrap();
++        assert!(req.server_ids.is_none());
++        assert!(req.inherit);
++    }
++
++    #[test]
++    fn conversation_mcp_selection_fingerprint_matches_the_assistant_fingerprint() {
++        let extra = json!({
++            "mcp_selection": { "source": "conversation", "server_ids": ["mcp-b", "mcp-a", "mcp-b"] }
++        });
++        assert_eq!(
++            conversation_mcp_selection_fingerprint(&extra),
++            Some(crate::assistant_mcp_binding_fingerprint(&[
++                "mcp-a".to_owned(),
++                "mcp-b".to_owned()
++            ]))
++        );
++        assert_eq!(
++            conversation_mcp_selection_fingerprint(&json!({ "mcp_server_ids": ["mcp-a"] })),
++            None,
++            "a conversation without its own selection follows its assistant"
++        );
++    }
++
++    #[test]
++    fn runtime_summary_mcp_fields_are_additive() {
++        let summary = ConversationRuntimeSummary {
++            state: ConversationRuntimeStateKind::Idle,
++            can_send_message: true,
++            has_task: true,
++            task_status: None,
++            is_processing: false,
++            pending_confirmations: 0,
++            turn_id: None,
++            supports_midturn_delivery: true,
++            mcp_servers: None,
++            mcp_restart_pending: false,
++        };
++        let raw = serde_json::to_value(&summary).unwrap();
++        assert!(raw.get("mcp_servers").is_none(), "absent live status is omitted");
++        assert!(raw.get("mcp_restart_pending").is_none(), "false is omitted");
++
++        let live = ConversationRuntimeSummary {
++            mcp_servers: Some(vec![McpServerLiveStatus {
++                name: "airtable".into(),
++                status: McpServerLiveState::Degraded,
++                error: Some("mcp server 'airtable' needs auth".into()),
++            }]),
++            mcp_restart_pending: true,
++            ..summary.clone()
++        };
++        let raw = serde_json::to_value(&live).unwrap();
++        assert_eq!(
++            raw["mcp_servers"][0],
++            json!({ "name": "airtable", "status": "degraded", "error": "mcp server 'airtable' needs auth" })
++        );
++        assert_eq!(raw["mcp_restart_pending"], true);
++        let back: ConversationRuntimeSummary = serde_json::from_value(raw).unwrap();
++        assert_eq!(back, live);
++
++        let older: ConversationRuntimeSummary = serde_json::from_value(json!({
++            "state": "idle",
++            "can_send_message": true,
++            "has_task": false,
++            "task_status": null,
++            "is_processing": false,
++            "pending_confirmations": 0,
++            "turn_id": null
++        }))
++        .unwrap();
++        assert!(older.mcp_servers.is_none());
++        assert!(!older.mcp_restart_pending);
++    }
++
++    #[test]
++    fn conversation_mcp_changed_payload_round_trip() {
++        let payload = ConversationMcpChanged {
++            user_id: "user_1".into(),
++            conversation_id: "conv_1".into(),
++            team_id: None,
++            mcp_server_ids: vec!["mcp-a".into()],
++            mcp_servers: vec!["alpha".into()],
++            runtime_action: ConversationMcpRuntimeAction::NextStart,
++        };
++        let raw = serde_json::to_value(&payload).unwrap();
++        assert_eq!(raw["runtime_action"], "next_start");
++        assert!(raw.get("team_id").is_none());
++        let back: ConversationMcpChanged = serde_json::from_value(raw).unwrap();
++        assert_eq!(back, payload);
++    }
++
+     // ── CloneConversationRequest ────────────────────────────────────
+ 
+     #[test]
+diff --git a/crates/aionui-api-types/src/lib.rs b/crates/aionui-api-types/src/lib.rs
+index 6bb062a70257528f907073699a54bb913d8bf1f7..e01ecf95cbba09816f3a8fb3eaedaf38f039d4f1 100644
+--- a/crates/aionui-api-types/src/lib.rs
++++ b/crates/aionui-api-types/src/lib.rs
+@@ -94,14 +94,18 @@ pub use confirmation::{ApprovalCheckQuery, ApprovalCheckResponse, ConfirmRequest
+ pub use connection_test::TestBedrockConnectionRequest;
+ pub use conversation::{
+     ActiveCountResponse, AssistantConversationOverridesRequest, AssistantConversationRequest,
++    CONVERSATION_MCP_CHANGED_EVENT, CONVERSATION_MCP_SELECTION_KEY, CONVERSATION_MCP_STATUS_CHANGED_EVENT,
+     CancelConversationRequest, CancelConversationResponse, CloneConversationRequest, ConversationArtifactKind,
+     ConversationArtifactListResponse, ConversationArtifactResponse, ConversationArtifactStatus,
+-    ConversationAssistantIdentityResponse, ConversationListResponse, ConversationMcpStatus, ConversationMcpStatusKind,
+-    ConversationNameUpdatedPayload, ConversationResponse, ConversationRuntimeStateKind, ConversationRuntimeSummary,
+-    CreateConversationRequest, EnsureConversationRuntimeResponse, ForkCapabilityView, ForkConversationRequest,
+-    ListConversationsQuery, ListMessagesQuery, McpRuntimeSnapshot, MessageListResponse, MessageResponse,
+-    MessageSearchItem, MessageSearchResponse, MessageStatusChangedPayload, PromptCapabilityView, SearchMessagesQuery,
+-    SendMessageRequest, SendMessageResponse, SessionRef, UpdateConversationArtifactRequest, UpdateConversationRequest,
++    ConversationAssistantIdentityResponse, ConversationListResponse, ConversationMcpChanged,
++    ConversationMcpRuntimeAction, ConversationMcpStatus, ConversationMcpStatusChangedPayload,
++    ConversationMcpStatusKind, ConversationNameUpdatedPayload, ConversationResponse, ConversationRuntimeStateKind,
++    ConversationRuntimeSummary, CreateConversationRequest, EnsureConversationRuntimeResponse, ForkCapabilityView,
++    ForkConversationRequest, ListConversationsQuery, ListMessagesQuery, McpRuntimeSnapshot, McpServerLiveState,
++    McpServerLiveStatus, MessageListResponse, MessageResponse, MessageSearchItem, MessageSearchResponse,
++    MessageStatusChangedPayload, PromptCapabilityView, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
++    SessionRef, UpdateConversationArtifactRequest, UpdateConversationMcpRequest, UpdateConversationMcpResponse,
++    UpdateConversationRequest, conversation_mcp_selection_fingerprint,
+ };
+ pub use conversation_tools::{
+     CONVERSATION_TOOLS_SCHEMA_VERSION, ConversationCliEnvelope, ConversationCliMeta, ConversationCreateAssistant,
+diff --git a/crates/aionui-session/src/event.rs b/crates/aionui-session/src/event.rs
+index 423ee2fd241c533bd4e5c20b28613b28fd9dd6f5..1ba6450a7f745e7366dcbba04ef5e4b37de53037 100644
+--- a/crates/aionui-session/src/event.rs
++++ b/crates/aionui-session/src/event.rs
+@@ -339,7 +339,15 @@ pub enum SessionEvent {
+     },
+ 
+     /// MCP / tool provisioning as a LIVE event (Addendum 5 / U16). Reducer no-op.
+-    Provisioning { phase: ProvisioningPhase },
++    Provisioning {
++        phase: ProvisioningPhase,
++        /// The MCP server this report is about, when it is about one (claude
++        /// `system/init.mcp_servers[].name`, codex `mcpServer/*` `params.name`).
++        /// `None` for a provisioning signal that names no server (codex `hook/*`).
++        /// Lets the conversation layer keep a live per-server status.
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        server: Option<String>,
++    },
+ 
+     /// Backend receipt of a `Command::Rewind` (Addendum 6 / U24). `to_turn` =
+     /// post-rollback history-end turn_gen. Reducer no-op; TRIGGERS the
+@@ -1376,6 +1384,7 @@ mod additive_tests {
+                 "Provisioning",
+                 SessionEvent::Provisioning {
+                     phase: ProvisioningPhase::ToolsWaiting,
++                    server: None,
+                 },
+                 BackendProduced,
+                 Display,
+@@ -1650,6 +1659,14 @@ mod additive_tests {
+             },
+             SessionEvent::Provisioning {
+                 phase: ProvisioningPhase::ToolsWaiting,
++                server: None,
++            },
++            // The per-server name must survive the persisted round-trip too.
++            SessionEvent::Provisioning {
++                phase: ProvisioningPhase::LoadFailed {
++                    reason: "mcp server 'fs' failed".into(),
++                },
++                server: Some("fs".into()),
+             },
+             SessionEvent::Rewound { to_turn: 3 },
+             SessionEvent::ConfigChanged {
+diff --git a/crates/aionui-session/src/reducer.rs b/crates/aionui-session/src/reducer.rs
+index 4f9bee021cea596d0f689c7eefe7d273cfef441e..1f700effe07b3c105f1c78c3ccd4f5d0a1495d27 100644
+--- a/crates/aionui-session/src/reducer.rs
++++ b/crates/aionui-session/src/reducer.rs
+@@ -1074,6 +1074,7 @@ mod tests {
+             // use the payload-carrying phase (stronger than the proptest's nullary ToolsReady)
+             SessionEvent::Provisioning {
+                 phase: ProvisioningPhase::LoadFailed { reason: "x".into() },
++                server: Some("x".into()),
+             },
+             SessionEvent::Rewound { to_turn: 3 },
+             SessionEvent::ConfigChanged {
+@@ -1228,6 +1229,7 @@ mod tests {
+             },
+             SessionEvent::Provisioning {
+                 phase: ProvisioningPhase::ToolsWaiting,
++                server: None,
+             },
+             SessionEvent::Rewound { to_turn: 3 },
+             SessionEvent::ConfigChanged {
+@@ -2237,7 +2239,8 @@ mod proptest_totality {
+                 breakdown: Default::default(),
+             }),
+             Just(SessionEvent::Provisioning {
+-                phase: ProvisioningPhase::ToolsReady
++                phase: ProvisioningPhase::ToolsReady,
++                server: None
+             }),
+             (0u64..3).prop_map(|t| SessionEvent::Rewound { to_turn: t }),
+             Just(SessionEvent::ConfigChanged {
+diff --git a/crates/aionui-session/src/backend/claude_conn.rs b/crates/aionui-session/src/backend/claude_conn.rs
+index 40cf76912dcc49fb104092a1ee5f88a0b2726325..b751aa3d61a6207bd47d5e592ad58ee422833d4d 100644
+--- a/crates/aionui-session/src/backend/claude_conn.rs
++++ b/crates/aionui-session/src/backend/claude_conn.rs
+@@ -2394,7 +2394,10 @@ fn sniff_init(
+             let _ = event_tx.send(SessionEnvelope {
+                 session_id: session_id.to_string(),
+                 turn_gen,
+-                event: SessionEvent::Provisioning { phase },
++                event: SessionEvent::Provisioning {
++                    phase,
++                    server: (!name.is_empty()).then(|| name.to_string()),
++                },
+             });
+         }
+     }
+@@ -6164,10 +6167,12 @@ mod tests {
+ 
+         // Collect the Provisioning events the reader emits from the init mcp_servers.
+         let mut phases = Vec::new();
++        let mut servers = Vec::new();
+         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+             while let Some(env) = events.next().await {
+-                if let SessionEvent::Provisioning { phase } = env.event {
++                if let SessionEvent::Provisioning { phase, server } = env.event {
+                     phases.push(phase);
++                    servers.push(server);
+                     if phases.len() == 3 {
+                         return;
+                     }
+@@ -6176,6 +6181,17 @@ mod tests {
+         })
+         .await;
+         assert_eq!(phases.len(), 3, "one Provisioning per mcp server, got {phases:?}");
++        // Each report names its server, so the conversation layer can keep a
++        // per-server live status (init order is preserved).
++        assert_eq!(
++            servers,
++            vec![Some("ok".to_owned()), Some("bad".to_owned()), Some("auth".to_owned())],
++            "every Provisioning carries its mcp server name"
++        );
++        assert!(
++            matches!(phases[0], crate::event::ProvisioningPhase::ToolsReady),
++            "`ok` is the connected server"
++        );
+         assert!(
+             phases
+                 .iter()
+diff --git a/crates/aionui-session/src/backend/codex_conn.rs b/crates/aionui-session/src/backend/codex_conn.rs
+index aac22b9cbc7b1018b3e0b38bbdb37235640d6f53..d249e2d64740364397438f6130a4c7b0d9c5d24b 100644
+--- a/crates/aionui-session/src/backend/codex_conn.rs
++++ b/crates/aionui-session/src/backend/codex_conn.rs
+@@ -2893,7 +2893,10 @@ fn map_notification(method: &str, params: &Value) -> Vec<SessionEvent> {
+                 // Unknown future status → conservative non-terminal (never panic).
+                 _ => ProvisioningPhase::ToolsWaiting,
+             };
+-            vec![SessionEvent::Provisioning { phase }]
++            vec![SessionEvent::Provisioning {
++                phase,
++                server: mcp_server_name(params),
++            }]
+         }
+         // MCP OAuth completion: success=false means the server is up but unauthorized
+         // → Degraded (mirrors claude's needs-auth → Degraded). success=true carries no
+@@ -2907,6 +2910,7 @@ fn map_notification(method: &str, params: &Value) -> Vec<SessionEvent> {
+                     .unwrap_or_default();
+                 vec![SessionEvent::Provisioning {
+                     phase: ProvisioningPhase::Degraded { reason },
++                    server: mcp_server_name(params),
+                 }]
+             } else {
+                 vec![]
+@@ -2993,6 +2997,8 @@ fn map_notification(method: &str, params: &Value) -> Vec<SessionEvent> {
+         m if m.starts_with("hook/") => {
+             vec![SessionEvent::Provisioning {
+                 phase: ProvisioningPhase::ToolsWaiting,
++                // A hook names no MCP server.
++                server: None,
+             }]
+         }
+         // Unknown notification → opaque (never panic, never drop silently).
+@@ -3003,6 +3009,16 @@ fn map_notification(method: &str, params: &Value) -> Vec<SessionEvent> {
+     }
+ }
+ 
++/// The MCP server a codex `mcpServer/*` notification is about (`params.name`),
++/// carried on `Provisioning` so the conversation layer can track it per server.
++fn mcp_server_name(params: &Value) -> Option<String> {
++    params
++        .get("name")
++        .and_then(Value::as_str)
++        .filter(|name| !name.is_empty())
++        .map(str::to_string)
++}
++
+ /// Build a [`SessionEvent::Notice`] message from a codex `deprecationNotice` /
+ /// `configWarning` params object: `{summary, details?, ...}`. Joins summary +
+ /// details (when present) so the user sees the actionable guidance, not just the
+@@ -6096,7 +6112,7 @@ mod tests {
+         let phases: Vec<&ProvisioningPhase> = events
+             .iter()
+             .filter_map(|e| match e {
+-                SessionEvent::Provisioning { phase } => Some(phase),
++                SessionEvent::Provisioning { phase, .. } => Some(phase),
+                 _ => None,
+             })
+             .collect();
+@@ -6105,6 +6121,16 @@ mod tests {
+             4,
+             "one Provisioning per startup notification, got {phases:?}"
+         );
++        // Each notification's `params.name` rides along, so the conversation layer
++        // can keep a per-server live status.
++        let servers: Vec<Option<&str>> = events
++            .iter()
++            .filter_map(|e| match e {
++                SessionEvent::Provisioning { server, .. } => Some(server.as_deref()),
++                _ => None,
++            })
++            .collect();
++        assert_eq!(servers, vec![Some("fs"), Some("fs"), Some("bad"), Some("oauth")]);
+         assert!(
+             matches!(phases[0], ProvisioningPhase::ToolsWaiting),
+             "starting→ToolsWaiting"
+@@ -6132,8 +6158,9 @@ mod tests {
+         .await;
+         assert!(
+             failed.iter().any(|e| matches!(e,
+-                SessionEvent::Provisioning { phase: ProvisioningPhase::Degraded { reason } } if reason == "token expired")),
+-            "oauth success:false → Degraded{{reason}}, got {failed:?}"
++                SessionEvent::Provisioning { phase: ProvisioningPhase::Degraded { reason }, server }
++                    if reason == "token expired" && server.as_deref() == Some("gh"))),
++            "oauth success:false → Degraded{{reason}} for the named server, got {failed:?}"
+         );
+         let ok = drive_codex(&[
+             r#"{"jsonrpc":"2.0","method":"mcpServer/oauthLogin/completed","params":{"name":"gh","success":true}}"#,
+diff --git a/crates/aionui-ai-agent/src/session_agent.rs b/crates/aionui-ai-agent/src/session_agent.rs
+index 9c62c546d4d6808fc5a3c1183702584a2f223a87..e9f993536868b89ff354a8b8bd2b392dd119270d 100644
+--- a/crates/aionui-ai-agent/src/session_agent.rs
++++ b/crates/aionui-ai-agent/src/session_agent.rs
+@@ -130,6 +130,11 @@ struct SessionRuntime {
+     /// place holding both the backend handle and the same fallback order.
+     /// Order is `override → this`, identical to REST.
+     caps_fallback: std::sync::Mutex<CapsFallback>,
++    /// Live MCP server status as the backend reported it (claude's
++    /// `system/init.mcp_servers[]`, codex `mcpServer/*` notifications), one entry
++    /// per server in first-report order. `None` until the first report. It lives
++    /// and dies with this runtime, so a restart starts from nothing again.
++    mcp_servers: std::sync::Mutex<Option<Vec<aionui_api_types::McpServerLiveStatus>>>,
+ }
+ 
+ /// Backend-reported current values, mirrored out of `capabilities()` so the
+@@ -201,6 +206,20 @@ impl SessionRuntime {
+     fn caps_fallback(&self) -> CapsFallback {
+         self.caps_fallback.lock().ok().map(|g| g.clone()).unwrap_or_default()
+     }
++    /// Record one server's reported status. Returns the whole list when it
++    /// changed, `None` when the report repeated what was already known (claude
++    /// re-reports every server at each turn's init).
++    fn record_mcp_server_status(
++        &self,
++        status: aionui_api_types::McpServerLiveStatus,
++    ) -> Option<Vec<aionui_api_types::McpServerLiveStatus>> {
++        let mut guard = self.mcp_servers.lock().unwrap_or_else(|e| e.into_inner());
++        let servers = guard.get_or_insert_with(Vec::new);
++        upsert_mcp_live_status(servers, status).then(|| servers.clone())
++    }
++    fn mcp_servers(&self) -> Option<Vec<aionui_api_types::McpServerLiveStatus>> {
++        self.mcp_servers.lock().ok().and_then(|g| g.clone())
++    }
+ 
+     /// Atomic clean-converge frame: if not already `Finished`, set status ←
+     /// `Finished` AND broadcast a clean `Finish` on `tx`. Idempotent in the
+@@ -494,6 +513,7 @@ impl SessionAgentTask {
+             effort_override: std::sync::Mutex::new(None),
+             last_catalog: std::sync::Mutex::new(None),
+             caps_fallback: std::sync::Mutex::new(CapsFallback::default()),
++            mcp_servers: std::sync::Mutex::new(None),
+         });
+         // Subscribe to the backend's event stream HERE (sync), then hand ONLY the
+         // stream to the pump — never a backend Arc (see `spawn_event_pump` for why
+@@ -525,6 +545,13 @@ impl SessionAgentTask {
+         self.command_seq.fetch_add(1, Ordering::Relaxed) as u64
+     }
+ 
++    /// Live MCP server status this session's backend reported, one entry per
++    /// server; `None` until the first report (claude reports when its first turn
++    /// starts, codex while its servers start).
++    pub fn mcp_server_statuses(&self) -> Option<Vec<aionui_api_types::McpServerLiveStatus>> {
++        self.runtime.mcp_servers()
++    }
++
+     /// Build the multimodal `ContentBlock` vector for a prompt: partition
+     /// attachments by the backend's declared prompt blocks — capable media
+     /// becomes native Image/Audio blocks; everything else keeps the
+@@ -3009,6 +3036,29 @@ fn spawn_event_pump(
+                 }
+             }
+ 
++            // Live MCP status. Every report that names a server is kept on the runtime
++            // (read back by `GET /api/conversations/{id}` as `runtime.mcp_servers`), and
++            // an actual change is pushed to the UI straight from the pump, which outlives
++            // the per-turn relay just as it does for usage. claude re-reports every
++            // server at each turn's init, so a repeat is swallowed. No `continue`: the
++            // event still flows to `translate_event`, which drops it as before.
++            if let SessionEvent::Provisioning {
++                phase,
++                server: Some(name),
++            } = &env.event
++                && let Some(servers) = runtime.record_mcp_server_status(mcp_live_status(name, phase))
++            {
++                tracing::info!(
++                    conv_id = %conversation_id,
++                    server = %name,
++                    phase = ?phase,
++                    "session-pump: MCP server status changed"
++                );
++                if let Some(bus) = broadcaster.as_ref() {
++                    broadcast_mcp_status_frame(bus.as_ref(), &conversation_id, &user_id, servers);
++                }
++            }
++
+             // Project a running workflow's roster to the UI. Everything a workflow
+             // does after launch arrives ONLY as these task frames, so without this
+             // the conversation shows nothing at all for the whole flight.
+@@ -3624,6 +3674,70 @@ fn broadcast_usage_frame(bus: &dyn EventBroadcaster, conversation_id: &str, user
+     bus.broadcast(aionui_api_types::WebSocketMessage::new("message.stream", payload));
+ }
+ 
++/// Map one MCP provisioning report to the API's live status for that server.
++/// claude's `needs-auth` arrives as `Degraded` with the reason "mcp server '<name>'
++/// needs auth"; codex's `cancelled` and failed OAuth logins arrive as `Degraded`
++/// with codex's own error text.
++fn mcp_live_status(name: &str, phase: &aionui_session::ProvisioningPhase) -> aionui_api_types::McpServerLiveStatus {
++    use aionui_api_types::McpServerLiveState;
++    use aionui_session::ProvisioningPhase;
++    let reason = |text: &String| Some(text.clone()).filter(|text| !text.is_empty());
++    let (status, error) = match phase {
++        ProvisioningPhase::Injecting | ProvisioningPhase::ToolsWaiting => (McpServerLiveState::Pending, None),
++        ProvisioningPhase::ToolsReady => (McpServerLiveState::Connected, None),
++        ProvisioningPhase::Degraded { reason: text } => (McpServerLiveState::Degraded, reason(text)),
++        ProvisioningPhase::LoadFailed { reason: text } => (McpServerLiveState::Failed, reason(text)),
++    };
++    aionui_api_types::McpServerLiveStatus {
++        name: name.to_owned(),
++        status,
++        error,
++    }
++}
++
++/// Insert or replace one server's live status, matched by name. `true` when the
++/// list changed.
++fn upsert_mcp_live_status(
++    servers: &mut Vec<aionui_api_types::McpServerLiveStatus>,
++    status: aionui_api_types::McpServerLiveStatus,
++) -> bool {
++    match servers.iter().position(|existing| existing.name == status.name) {
++        Some(index) if servers[index] == status => false,
++        Some(index) => {
++            servers[index] = status;
++            true
++        }
++        None => {
++            servers.push(status);
++            true
++        }
++    }
++}
++
++/// Push a conversation's live MCP status to the UI as
++/// `conversation.mcpStatusChanged`, carrying every server reported so far. Keyed
++/// by `user_id` like every other conversation event, so the WebSocket layer
++/// routes it to the owner's connections.
++fn broadcast_mcp_status_frame(
++    bus: &dyn EventBroadcaster,
++    conversation_id: &str,
++    user_id: &str,
++    mcp_servers: Vec<aionui_api_types::McpServerLiveStatus>,
++) {
++    let payload = aionui_api_types::ConversationMcpStatusChangedPayload {
++        user_id: user_id.to_owned(),
++        conversation_id: conversation_id.to_owned(),
++        mcp_servers,
++    };
++    match serde_json::to_value(&payload) {
++        Ok(value) => bus.broadcast(aionui_api_types::WebSocketMessage::new(
++            aionui_api_types::CONVERSATION_MCP_STATUS_CHANGED_EVENT,
++            value,
++        )),
++        Err(err) => tracing::warn!(conversation_id, error = %err, "mcp status broadcast: serialize failed"),
++    }
++}
++
+ /// Merge one usage report into `acp_session.session_config.runtime.context_usage`.
+ ///
+ /// Shape is the ACP `UsageUpdate` the frontend already consumes:
+@@ -7339,6 +7453,138 @@ mod pump_tests {
+         }
+     }
+ 
++    #[test]
++    fn mcp_live_status_maps_every_provisioning_phase() {
++        use aionui_api_types::McpServerLiveState;
++        use aionui_session::ProvisioningPhase;
++        let cases = [
++            (ProvisioningPhase::Injecting, McpServerLiveState::Pending, None),
++            (ProvisioningPhase::ToolsWaiting, McpServerLiveState::Pending, None),
++            (ProvisioningPhase::ToolsReady, McpServerLiveState::Connected, None),
++            (
++                ProvisioningPhase::Degraded {
++                    reason: "mcp server 'fs' needs auth".into(),
++                },
++                McpServerLiveState::Degraded,
++                Some("mcp server 'fs' needs auth"),
++            ),
++            // codex may report a failure with no error text: no empty `error`.
++            (
++                ProvisioningPhase::LoadFailed { reason: String::new() },
++                McpServerLiveState::Failed,
++                None,
++            ),
++        ];
++        for (phase, state, error) in cases {
++            let status = mcp_live_status("fs", &phase);
++            assert_eq!(status.name, "fs");
++            assert_eq!(status.status, state, "{phase:?}");
++            assert_eq!(status.error.as_deref(), error, "{phase:?}");
++        }
++    }
++
++    // Live MCP status: every Provisioning report that names a server lands on the
++    // runtime (read back through `mcp_server_statuses`, i.e. the conversation's
++    // `runtime.mcp_servers`), and only an actual change is pushed to the UI.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn mcp_provisioning_is_kept_per_server_and_broadcast_on_change() {
++        use aionui_api_types::McpServerLiveState;
++        use aionui_session::ProvisioningPhase;
++
++        #[derive(Default)]
++        struct Recorder(std::sync::Mutex<Vec<aionui_api_types::WebSocketMessage<serde_json::Value>>>);
++        impl EventBroadcaster for Recorder {
++            fn broadcast(&self, event: aionui_api_types::WebSocketMessage<serde_json::Value>) {
++                self.0.lock().unwrap().push(event);
++            }
++        }
++
++        let gate = Arc::new(tokio::sync::Notify::new());
++        let script = vec![
++            env(SessionEvent::Provisioning {
++                phase: ProvisioningPhase::ToolsWaiting,
++                server: Some("docs".into()),
++            }),
++            env(SessionEvent::Provisioning {
++                phase: ProvisioningPhase::ToolsReady,
++                server: Some("docs".into()),
++            }),
++            env(SessionEvent::Provisioning {
++                phase: ProvisioningPhase::Degraded {
++                    reason: "mcp server 'airtable' needs auth".into(),
++                },
++                server: Some("airtable".into()),
++            }),
++            // claude re-reports every server at each turn's init: not a change.
++            env(SessionEvent::Provisioning {
++                phase: ProvisioningPhase::ToolsReady,
++                server: Some("docs".into()),
++            }),
++            // A provisioning signal that names no server (codex `hook/*`) is no MCP server.
++            env(SessionEvent::Provisioning {
++                phase: ProvisioningPhase::ToolsWaiting,
++                server: None,
++            }),
++        ];
++        let backend: Arc<dyn SessionBackend> = Arc::new(HeldOpenScriptBackend {
++            script,
++            gate: gate.clone(),
++        });
++        let recorder = Arc::new(Recorder::default());
++        let task = SessionAgentTask::new_with_preload(
++            AgentType::Acp,
++            "conv-1".into(),
++            "user-1".into(),
++            "/w".into(),
++            backend,
++            None,
++            &aionui_api_types::AgentHandshake::default(),
++            None,
++            Some(recorder.clone() as Arc<dyn EventBroadcaster>),
++        );
++        assert!(
++            task.mcp_server_statuses().is_none(),
++            "nothing is reported before the backend speaks"
++        );
++
++        gate.notify_one();
++        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
++        while recorder.0.lock().unwrap().len() < 3 && tokio::time::Instant::now() < deadline {
++            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
++        }
++        // Let the trailing repeat and the nameless report drain as well.
++        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
++
++        let statuses = task.mcp_server_statuses().expect("servers were reported");
++        assert_eq!(statuses.len(), 2, "one entry per named server: {statuses:?}");
++        assert_eq!(statuses[0].name, "docs");
++        assert_eq!(statuses[0].status, McpServerLiveState::Connected);
++        assert_eq!(statuses[0].error, None);
++        assert_eq!(statuses[1].name, "airtable");
++        assert_eq!(statuses[1].status, McpServerLiveState::Degraded);
++        assert_eq!(statuses[1].error.as_deref(), Some("mcp server 'airtable' needs auth"));
++
++        let frames: Vec<aionui_api_types::WebSocketMessage<serde_json::Value>> = recorder
++            .0
++            .lock()
++            .unwrap()
++            .iter()
++            .filter(|frame| frame.name == aionui_api_types::CONVERSATION_MCP_STATUS_CHANGED_EVENT)
++            .cloned()
++            .collect();
++        assert_eq!(
++            frames.len(),
++            3,
++            "pending, connected and degraded are changes; the repeat is not"
++        );
++        let last = frames.last().expect("a frame");
++        assert_eq!(last.data["user_id"], "user-1", "routed to the owner's connections");
++        assert_eq!(last.data["conversation_id"], "conv-1");
++        assert_eq!(last.data["mcp_servers"][0]["status"], "connected");
++        assert_eq!(last.data["mcp_servers"][1]["status"], "degraded");
++        drop(task);
++    }
++
+     // SessionTitle (claude generate_session_title, spec 2026-08-04) maps to the
+     // SAME AcpSessionInfo frame the ACP bridge emits for session_info_update, so
+     // the StreamRelay's guarded consumer handles both backends through one path.
+diff --git a/crates/aionui-ai-agent/src/agent_task.rs b/crates/aionui-ai-agent/src/agent_task.rs
+index 193ab4c9569c112c494d01b4603db232071ea344..fc00c151fa7537f3ccbb2787fe13bda056cff5f0 100644
+--- a/crates/aionui-ai-agent/src/agent_task.rs
++++ b/crates/aionui-ai-agent/src/agent_task.rs
+@@ -271,6 +271,19 @@ impl AgentInstance {
+         self.as_task().supports_midturn_delivery()
+     }
+ 
++    /// Live MCP server status the running agent itself reported, one entry per
++    /// server. Only the direct-CLI session backends report it (claude, codex),
++    /// so ACP-manager and aionrs agents return `None`, as does a session whose
++    /// backend has not reported yet.
++    pub fn mcp_server_statuses(&self) -> Option<Vec<aionui_api_types::McpServerLiveStatus>> {
++        match self {
++            Self::Acp(_) | Self::Aionrs(_) => None,
++            Self::Session(m) => m.mcp_server_statuses(),
++            #[cfg(any(test, feature = "test-support"))]
++            Self::Mock(_) => None,
++        }
++    }
++
+     /// Send a user message to the agent.
+     pub async fn send_message(&self, data: SendMessageData) -> Result<(), AgentSendError> {
+         self.as_task().send_message(data).await
+diff --git a/crates/aionui-ai-agent/src/mcp_resolve.rs b/crates/aionui-ai-agent/src/mcp_resolve.rs
+index ffd79294abd790dc4285424d4d1190850145e97d..3f45b332c93033097c5e80fc3e2b5a9f01a52b1a 100644
+--- a/crates/aionui-ai-agent/src/mcp_resolve.rs
++++ b/crates/aionui-ai-agent/src/mcp_resolve.rs
+@@ -60,7 +60,11 @@ pub async fn resolve_session_mcp_servers(
+         // `aionui-team` is a reserved wire-level name: the team coordination MCP
+         // must win, so a user row that collides with it is skipped (never
+         // injected), regardless of selection state.
+-        if !selected || row.builtin || row.name == TEAM_MCP_SERVER_NAME {
++        //
++        // A soft-deleted row still comes back from `list_by_ids_any`, so a
++        // conversation whose frozen selection lists it would keep launching a
++        // server Settings no longer shows. Deleting a server must stop it.
++        if !selected || row.builtin || row.name == TEAM_MCP_SERVER_NAME || row.deleted_at.is_some() {
+             continue;
+         }
+         match row_to_session_mcp_server(&row).await {
+@@ -325,4 +329,21 @@ mod tests {
+         assert_eq!(servers.len(), 1);
+         assert_eq!(servers[0].name, "docs");
+     }
++
++    #[tokio::test]
++    async fn resolve_skips_soft_deleted_rows_in_a_frozen_selection() {
++        let mut deleted = make_row("gone", true);
++        deleted.deleted_at = Some(1);
++        let repo = MockRepo {
++            rows: vec![make_row("docs", false), deleted],
++            fail: false,
++        };
++        // The frozen selection still lists the deleted server; the by-id lookup
++        // returns it anyway, so the resolver has to drop it.
++        let selected = vec!["mcp_docs".to_owned(), "mcp_gone".to_owned()];
++        let servers =
++            resolve_session_mcp_servers(&repo, TEST_USER_ID, Some(&selected), "conv-1", test_broadcaster()).await;
++        assert_eq!(servers.len(), 1);
++        assert_eq!(servers[0].name, "docs");
++    }
+ }
+diff --git a/crates/aionui-ai-agent/src/factory/acp.rs b/crates/aionui-ai-agent/src/factory/acp.rs
+index 10023c9a1cdb54036f5a3871beae4a6296e617f1..ad32e978104f78bdc776dccf806c5a60ba7ea0a0 100644
+--- a/crates/aionui-ai-agent/src/factory/acp.rs
++++ b/crates/aionui-ai-agent/src/factory/acp.rs
+@@ -442,8 +442,9 @@ async fn load_user_mcp_servers(
+             .unwrap_or(row.enabled);
+         // `aionui-team` is the reserved team coordination MCP name; a user row
+         // that collides with it is never injected here (the team bridge is
+-        // folded in separately and must win).
+-        if !selected || row.builtin || row.name == TEAM_MCP_SERVER_NAME {
++        // folded in separately and must win). A soft-deleted row still comes back
++        // from `list_by_ids_any`; deleting a server must stop it launching.
++        if !selected || row.builtin || row.name == TEAM_MCP_SERVER_NAME || row.deleted_at.is_some() {
+             continue;
+         }
+         if !row_supported_by_capabilities(&row, capabilities) {
+@@ -1256,6 +1257,31 @@ mod tests {
+         }
+     }
+ 
++    #[tokio::test]
++    async fn load_user_mcp_servers_skips_soft_deleted_rows_in_a_frozen_selection() {
++        let stdio_config = stdio_config_for_existing_command();
++        let caps = AcpMcpCapabilities {
++            stdio: true,
++            http: true,
++            sse: true,
++        };
++        let mut deleted = make_row("deleted-picked", "stdio", &stdio_config, true, false);
++        deleted.deleted_at = Some(1);
++        let repo: Arc<dyn IMcpServerRepository> = Arc::new(MockRepo {
++            rows: vec![make_row("live-picked", "stdio", &stdio_config, true, false), deleted],
++            fail: false,
++        });
++
++        let selected = vec!["mcp_live-picked".to_owned(), "mcp_deleted-picked".to_owned()];
++        let servers = load_user_mcp_servers(repo.as_ref(), Some(&selected), TEST_USER_ID, "conv-1", &caps).await;
++
++        assert_eq!(servers.len(), 1, "a deleted server must not launch");
++        match &servers[0] {
++            McpServer::Stdio(s) => assert_eq!(s.name, "live-picked"),
++            _ => panic!("expected stdio"),
++        }
++    }
++
+     #[tokio::test]
+     async fn load_user_mcp_servers_skips_rows_unsupported_by_capabilities() {
+         let caps = AcpMcpCapabilities {
+diff --git a/crates/aionui-ai-agent/src/factory/aionrs.rs b/crates/aionui-ai-agent/src/factory/aionrs.rs
+index d4c09cde6733d4c7b028247ca063081bef047a17..d65033f08d4ff9b4e84d8e122236cc0fa85cfc78 100644
+--- a/crates/aionui-ai-agent/src/factory/aionrs.rs
++++ b/crates/aionui-ai-agent/src/factory/aionrs.rs
+@@ -580,8 +580,9 @@ async fn load_user_mcp_servers(
+             .unwrap_or(row.enabled);
+         // `aionui-team` is the reserved team coordination MCP name; a user row
+         // that collides with it is never injected here (the team bridge is
+-        // folded in separately and must win).
+-        if !selected || row.builtin || row.name == TEAM_MCP_SERVER_NAME {
++        // folded in separately and must win). A soft-deleted row still comes back
++        // from `list_by_ids_any`; deleting a server must stop it launching.
++        if !selected || row.builtin || row.name == TEAM_MCP_SERVER_NAME || row.deleted_at.is_some() {
+             continue;
+         }
+ 
+@@ -1113,6 +1114,46 @@ mod tests {
+         assert_eq!(extra_mcp_servers["mcp-docs"].transport, TransportType::StreamableHttp);
+     }
+ 
++    #[tokio::test]
++    async fn aionrs_skips_soft_deleted_rows_in_a_frozen_selection() {
++        let mut live = make_row(
++            "mcp-docs",
++            "http",
++            r#"{"url":"http://localhost:54321/mcp"}"#,
++            false,
++            false,
++        );
++        live.id = "mcp-docs".into();
++        let mut deleted = make_row(
++            "mcp-gone",
++            "http",
++            r#"{"url":"http://localhost:54322/mcp"}"#,
++            true,
++            false,
++        );
++        deleted.id = "mcp-gone".into();
++        deleted.deleted_at = Some(1);
++        let repo = MockMcpRepo {
++            rows: vec![live, deleted],
++        };
++        let selected = vec!["mcp-docs".to_owned(), "mcp-gone".to_owned()];
++
++        let extra_mcp_servers = load_user_mcp_servers(
++            &repo,
++            Some(&selected),
++            TEST_USER_ID,
++            "conv-deleted-mcp",
++            test_broadcaster(),
++        )
++        .await;
++
++        assert!(extra_mcp_servers.contains_key("mcp-docs"));
++        assert!(
++            !extra_mcp_servers.contains_key("mcp-gone"),
++            "a deleted server must not launch"
++        );
++    }
++
+     #[cfg(unix)]
+     #[tokio::test]
+     async fn row_to_mcp_server_config_flattens_resolved_npx_command() {
+diff --git a/crates/aionui-conversation/src/runtime_state.rs b/crates/aionui-conversation/src/runtime_state.rs
+index 1d525c713888d5afdc52638a73ef4d8dec1d1e4b..76b28a0e59154d56f8c7497262613770905fa9b9 100644
+--- a/crates/aionui-conversation/src/runtime_state.rs
++++ b/crates/aionui-conversation/src/runtime_state.rs
+@@ -29,6 +29,10 @@ struct ConversationRuntimeState {
+     /// One entry per pair, overwritten as turns advance, so it cannot grow with
+     /// time. See [`ConversationRuntimeStateService::should_log_once_for_turn`].
+     logged_once_per_turn: HashMap<(OncePerTurn, String), String>,
++    /// Conversations whose MCP selection changed while their agent was busy;
++    /// the runtime restarts once the agent is idle. At most one waiter per
++    /// conversation: its restart reads the newest selection anyway.
++    pending_mcp_restarts: HashSet<String>,
+     shutting_down: bool,
+ }
+ 
+@@ -189,6 +193,27 @@ impl ConversationRuntimeStateService {
+         }
+     }
+ 
++    /// Wait until the conversation has no claimed turn and no restart in
++    /// flight. Same wake source as [`Self::wait_until_unclaimed`]: releasing a
++    /// turn and clearing a restart both notify `release_notify`.
++    pub async fn wait_until_idle(&self, conversation_id: &str) {
++        loop {
++            let notified = self.release_notify.notified();
++            let busy = self
++                .state
++                .lock()
++                .map(|state| {
++                    state.active_turns.contains_key(conversation_id)
++                        || state.restarting_conversations.contains(conversation_id)
++                })
++                .unwrap_or(false);
++            if !busy {
++                return;
++            }
++            notified.await;
++        }
++    }
++
+     pub fn mark_deleting(&self, conversation_id: &str) -> bool {
+         match self.state.lock() {
+             Ok(mut state) => {
+@@ -329,6 +354,71 @@ impl ConversationRuntimeStateService {
+         Ok(())
+     }
+ 
++    /// Take the restart gate only while no turn is claimed, atomically with
++    /// that check, so a turn and this restart cannot both win: `try_claim_turn`
++    /// refuses while the gate is held.
++    ///
++    /// `Ok(true)`: the gate is held; release it with [`Self::clear_restarting`].
++    /// `Ok(false)`: a turn is claimed and nothing was taken. `Err`: the same
++    /// refusals as [`Self::begin_restart`] (shutting down, deleting, or a
++    /// restart already in flight).
++    pub fn try_begin_idle_restart(&self, conversation_id: &str) -> Result<bool, ConversationError> {
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| ConversationError::internal("conversation runtime state lock poisoned"))?;
++        if state.shutting_down {
++            return Err(ConversationError::Busy {
++                reason: "conversation runtime is shutting down".into(),
++            });
++        }
++        if state.deleting_conversations.contains(conversation_id) {
++            return Err(ConversationError::Busy {
++                reason: format!("conversation {conversation_id} is being deleted"),
++            });
++        }
++        if state.restarting_conversations.contains(conversation_id) {
++            return Err(ConversationError::RuntimeRestarting {
++                conversation_id: conversation_id.to_owned(),
++            });
++        }
++        if state.active_turns.contains_key(conversation_id) {
++            return Ok(false);
++        }
++        state.restarting_conversations.insert(conversation_id.to_owned());
++        info!(conversation_id, "conversation runtime marked restarting while idle");
++        Ok(true)
++    }
++
++    /// Record that a changed MCP selection waits for this conversation's agent
++    /// to go idle. `false` when one is already pending: that restart reads the
++    /// newest selection, so a second waiter is not needed.
++    pub fn mark_pending_mcp_restart(&self, conversation_id: &str) -> bool {
++        match self.state.lock() {
++            Ok(mut state) => state.pending_mcp_restarts.insert(conversation_id.to_owned()),
++            Err(_) => {
++                warn!(
++                    conversation_id,
++                    "conversation runtime state lock poisoned while marking a pending MCP restart"
++                );
++                false
++            }
++        }
++    }
++
++    pub fn clear_pending_mcp_restart(&self, conversation_id: &str) {
++        if let Ok(mut state) = self.state.lock() {
++            state.pending_mcp_restarts.remove(conversation_id);
++        }
++    }
++
++    pub fn has_pending_mcp_restart(&self, conversation_id: &str) -> bool {
++        self.state
++            .lock()
++            .map(|state| state.pending_mcp_restarts.contains(conversation_id))
++            .unwrap_or(false)
++    }
++
+     /// Whether this event is still worth an `info` line for this turn.
+     ///
+     /// True once per (event, conversation, turn), then false. Both events it
+@@ -417,6 +507,7 @@ impl ConversationRuntimeStateService {
+                 let had_cancelling = state.cancelling_conversations.remove(conversation_id);
+                 let had_restarting = state.restarting_conversations.remove(conversation_id);
+                 state.deferred_cancels.remove(conversation_id);
++                state.pending_mcp_restarts.remove(conversation_id);
+                 state
+                     .logged_once_per_turn
+                     .retain(|(_, conversation), _| conversation != conversation_id);
+@@ -492,7 +583,7 @@ impl ConversationRuntimeStateService {
+         pending_confirmations: usize,
+         supports_midturn_delivery: bool,
+     ) -> ConversationRuntimeSummary {
+-        let (active_turn_id, cancelling, restarting) = self
++        let (active_turn_id, cancelling, restarting, mcp_restart_pending) = self
+             .state
+             .lock()
+             .map(|state| {
+@@ -500,9 +591,10 @@ impl ConversationRuntimeStateService {
+                     state.active_turns.get(conversation_id).cloned(),
+                     state.cancelling_conversations.contains(conversation_id),
+                     state.restarting_conversations.contains(conversation_id),
++                    state.pending_mcp_restarts.contains(conversation_id),
+                 )
+             })
+-            .unwrap_or((None, false, true));
++            .unwrap_or((None, false, true, false));
+         let claimed = active_turn_id.is_some();
+ 
+         let state = if restarting {
+@@ -530,6 +622,9 @@ impl ConversationRuntimeStateService {
+             pending_confirmations,
+             turn_id: active_turn_id,
+             supports_midturn_delivery,
++            // Filled by `ConversationService::runtime_summary_for`, which holds the agent.
++            mcp_servers: None,
++            mcp_restart_pending,
+         }
+     }
+ 
+@@ -860,6 +955,121 @@ mod tests {
+         assert!(state.try_claim_turn("conv-1", "turn-during-restart").is_err());
+     }
+ 
++    #[test]
++    fn idle_restart_gate_waits_for_the_claimed_turn_then_blocks_new_ones() {
++        let state = Arc::new(ConversationRuntimeStateService::default());
++        let claim = state
++            .try_claim_turn("conv-1", "turn-1")
++            .expect("claim should be created");
++
++        assert!(
++            !state
++                .try_begin_idle_restart("conv-1")
++                .expect("a running turn is not an error"),
++            "a claimed turn keeps the gate open"
++        );
++        assert!(!state.is_restarting("conv-1"));
++
++        drop(claim);
++        assert!(
++            state
++                .try_begin_idle_restart("conv-1")
++                .expect("an idle conversation takes the gate")
++        );
++        assert!(state.is_restarting("conv-1"));
++        assert!(matches!(
++            state.try_begin_idle_restart("conv-1"),
++            Err(ConversationError::RuntimeRestarting { .. })
++        ));
++        assert!(
++            state.try_claim_turn("conv-1", "turn-2").is_err(),
++            "the gate refuses new turns until the restart is done"
++        );
++
++        state.clear_restarting("conv-1");
++        assert!(state.try_claim_turn("conv-1", "turn-3").is_ok());
++    }
++
++    #[test]
++    fn idle_restart_gate_refuses_a_deleting_conversation() {
++        let state = ConversationRuntimeStateService::default();
++        state.mark_deleting("conv-1");
++        assert!(matches!(
++            state.try_begin_idle_restart("conv-1"),
++            Err(ConversationError::Busy { .. })
++        ));
++        assert!(!state.is_restarting("conv-1"));
++    }
++
++    #[test]
++    fn pending_mcp_restart_is_marked_once_and_shows_in_the_summary() {
++        let state = ConversationRuntimeStateService::default();
++        assert!(state.mark_pending_mcp_restart("conv-1"));
++        assert!(
++            !state.mark_pending_mcp_restart("conv-1"),
++            "a second change reuses the pending restart"
++        );
++        assert!(state.has_pending_mcp_restart("conv-1"));
++        assert!(
++            state
++                .summary_from_parts("conv-1", None, false, 0, false)
++                .mcp_restart_pending
++        );
++        assert!(
++            !state
++                .summary_from_parts("conv-2", None, false, 0, false)
++                .mcp_restart_pending
++        );
++
++        state.clear_pending_mcp_restart("conv-1");
++        assert!(
++            !state
++                .summary_from_parts("conv-1", None, false, 0, false)
++                .mcp_restart_pending
++        );
++
++        assert!(state.mark_pending_mcp_restart("conv-1"));
++        state.clear_conversation("conv-1");
++        assert!(
++            !state.has_pending_mcp_restart("conv-1"),
++            "clearing a conversation drops its pending restart"
++        );
++    }
++
++    #[tokio::test]
++    async fn wait_until_idle_outlasts_the_turn_and_the_restart_after_it() {
++        let state = Arc::new(ConversationRuntimeStateService::default());
++        let claim = state
++            .try_claim_turn("conv-1", "turn-1")
++            .expect("claim should be created");
++        state.begin_restart("conv-1").expect("restart gate");
++
++        let waiter = {
++            let state = state.clone();
++            let (tx, rx) = tokio::sync::oneshot::channel();
++            tokio::spawn(async move {
++                state.wait_until_idle("conv-1").await;
++                let _ = tx.send(());
++            });
++            rx
++        };
++        tokio::pin!(waiter);
++
++        drop(claim);
++        assert!(
++            tokio::time::timeout(std::time::Duration::from_millis(20), &mut waiter)
++                .await
++                .is_err(),
++            "the turn ended but the restart still owns the runtime"
++        );
++
++        state.clear_restarting("conv-1");
++        tokio::time::timeout(std::time::Duration::from_secs(1), &mut waiter)
++            .await
++            .expect("waiter should finish once the restart is cleared")
++            .expect("waiter task should send completion");
++    }
++
+     #[test]
+     fn summary_uses_claim_as_starting_state() {
+         let state = Arc::new(ConversationRuntimeStateService::default());
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index 601850df1a0f20f9147c3b2bb267eefd3ee86c4c..5e99589602865708e37b1c9beadbf4c4a5d2d61c 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -16,14 +16,16 @@ use crate::runtime_persistence::{RuntimePersistenceCoordinator, RuntimeWriteKind
+ use crate::runtime_state::ConversationRuntimeStateService;
+ use aionui_api_types::{
+     ASSISTANT_MCP_BINDING_CHANGED_EVENT, ApprovalCheckResponse, AssistantConversationOverridesRequest,
+-    AssistantMcpBindingChanged, CancelConversationResponse, CloneConversationRequest, ConfirmRequest,
+-    ConfirmationListResponse, ConversationArtifactKind, ConversationArtifactListResponse, ConversationArtifactResponse,
+-    ConversationArtifactStatus, ConversationListResponse, ConversationMcpStatus, ConversationMcpStatusKind,
+-    ConversationNameUpdatedPayload, ConversationResponse, ConversationRuntimeSummary, CreateConversationRequest,
+-    EnsureConversationRuntimeResponse, ForkCapabilityView, ForkConversationRequest, ListConversationsQuery,
+-    ListMessagesQuery, McpRuntimeSnapshot, MessageListResponse, MessageResponse, MessageSearchResponse,
+-    PromptCapabilityView, SearchMessagesQuery, SendMessageRequest, SendMessageResponse, SessionMcpServer,
+-    SessionMcpTransport, TEAM_MCP_SERVER_NAME, TeamMcpSelection, TeamSessionBinding, UpdateConversationArtifactRequest,
++    AssistantMcpBindingChanged, CONVERSATION_MCP_CHANGED_EVENT, CONVERSATION_MCP_SELECTION_KEY,
++    CancelConversationResponse, CloneConversationRequest, ConfirmRequest, ConfirmationListResponse,
++    ConversationArtifactKind, ConversationArtifactListResponse, ConversationArtifactResponse,
++    ConversationArtifactStatus, ConversationListResponse, ConversationMcpChanged, ConversationMcpRuntimeAction,
++    ConversationMcpStatus, ConversationMcpStatusKind, ConversationNameUpdatedPayload, ConversationResponse,
++    ConversationRuntimeSummary, CreateConversationRequest, EnsureConversationRuntimeResponse, ForkCapabilityView,
++    ForkConversationRequest, ListConversationsQuery, ListMessagesQuery, McpRuntimeSnapshot, MessageListResponse,
++    MessageResponse, MessageSearchResponse, PromptCapabilityView, SearchMessagesQuery, SendMessageRequest,
++    SendMessageResponse, SessionMcpServer, SessionMcpTransport, TEAM_MCP_SERVER_NAME, TeamMcpSelection,
++    TeamSessionBinding, UpdateConversationArtifactRequest, UpdateConversationMcpRequest, UpdateConversationMcpResponse,
+     UpdateConversationRequest, WebSocketMessage, assistant_avatar_response_value,
+     assistant_avatar_response_value_with_version, assistant_mcp_binding_fingerprint,
+ };
+@@ -67,6 +69,9 @@ use std::sync::RwLock;
+ 
+ pub(crate) const MAX_SYSTEM_RESPONSE_CONTINUATIONS_PER_TURN: usize = 4;
+ const ACP_CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
++/// How often a deferred MCP restart re-checks an agent that is busy without a
++/// claimed turn (background tasks outliving their turn send no end signal).
++const DEFERRED_MCP_RESTART_POLL: Duration = Duration::from_secs(5);
+ const LEGACY_CONVERSATION_ARCHIVED_MESSAGE: &str =
+     "This historical conversation can no longer be continued. Please start a new conversation.";
+ const DEPRECATED_AGENT_TYPE_MESSAGE: &str = "This agent type is no longer supported for new conversations.";
+@@ -832,14 +837,19 @@ impl ConversationService {
+             Some(agent) => agent.supports_midturn_delivery(),
+             None => self.static_supports_midturn_delivery(conversation_id).await,
+         };
++        // Live MCP status comes from the running agent itself (what the CLI
++        // reported), so it exists only while there is one.
++        let mcp_servers = agent.as_ref().and_then(|agent| agent.mcp_server_statuses());
+ 
+-        self.runtime_state.summary_from_parts(
++        let mut summary = self.runtime_state.summary_from_parts(
+             conversation_id,
+             task_status,
+             has_task,
+             pending_confirmations,
+             supports_midturn_delivery,
+-        )
++        );
++        summary.mcp_servers = mcp_servers;
++        summary
+     }
+ 
+     /// Backend-static `supports_midturn_delivery` for a conversation with no
+@@ -1050,6 +1060,11 @@ impl ConversationService {
+         // value would let anyone fork an arbitrary `parent_session_id` they do
+         // not own — strip it unconditionally on the create path.
+         strip_request_fork_spec(&mut extra);
++        // `extra.mcp_selection` is written only by `PUT /api/conversations/{id}/mcp`;
++        // a client-supplied one would not match the snapshot built below.
++        if let Some(obj) = extra.as_object_mut() {
++            obj.remove(CONVERSATION_MCP_SELECTION_KEY);
++        }
+ 
+         let assistant_id = req
+             .assistant
+@@ -2287,16 +2302,21 @@ impl ConversationService {
+ 
+         // Snapshot invariant: once written at create time, `extra.skills`
+         // must not be re-shaped by PATCH. The frontend must clone the
+-        // conversation to produce a new snapshot.
++        // conversation to produce a new snapshot. The MCP snapshot changes only
++        // through `PUT /api/conversations/{id}/mcp`, which rebuilds all of its
++        // fields together and applies the change to the runtime.
+         if let Some(incoming) = &req.extra
+             && (incoming.get("skills").is_some()
+                 || incoming.get("mcp_server_ids").is_some()
+                 || incoming.get("mcp_servers").is_some()
+                 || incoming.get("mcp_statuses").is_some()
+-                || incoming.get("session_mcp_servers").is_some())
++                || incoming.get("session_mcp_servers").is_some()
++                || incoming.get(CONVERSATION_MCP_SELECTION_KEY).is_some())
+         {
+             return Err(ConversationError::BadRequest {
+-                reason: "extra.skills and MCP snapshots are immutable post-creation".into(),
++                reason: "extra.skills and MCP snapshots are immutable post-creation; \
++                         change MCP servers with PUT /api/conversations/{id}/mcp"
++                    .into(),
+             });
+         }
+ 
+@@ -4706,6 +4726,440 @@ impl ConversationService {
+     }
+ }
+ 
++// ── Per-conversation MCP selection ─────────────────────────────────
++
++impl ConversationService {
++    /// Replace a conversation's MCP selection after creation
++    /// (`PUT /api/conversations/{id}/mcp`).
++    ///
++    /// The selection is resolved and frozen the way `create()` does it, through
++    /// the same `build_runtime_mcp_snapshot`, so the four snapshot fields in
++    /// `extra` keep one shape whichever path wrote them. An explicit selection
++    /// also writes `extra.mcp_selection`, which makes a team member keep it
++    /// across re-attach instead of being reset to its assistant's binding;
++    /// `inherit` removes it again.
++    ///
++    /// Runtime: an idle solo agent restarts now, a busy one restarts once it is
++    /// idle, and with no agent running the next start reads the new snapshot.
++    /// A team member is left to the team runtime: the existing
++    /// `assistant.mcpBindingChanged` path re-resolves it (the adapter honors the
++    /// conversation's own selection) and restarts it through the team's gate.
++    /// `conversation.mcpChanged` tells the UI and agents what changed.
++    #[tracing::instrument(skip_all, fields(user_id = %user_id, conversation_id = %id))]
++    pub async fn update_mcp_selection(
++        &self,
++        user_id: &str,
++        id: &str,
++        req: UpdateConversationMcpRequest,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) -> Result<UpdateConversationMcpResponse, ConversationError> {
++        let existing = self
++            .conversation_repo
++            .get(user_id, id)
++            .await?
++            .ok_or_else(|| ConversationError::NotFound { id: id.to_owned() })?;
++        reject_deprecated_runtime_row(&existing)?;
++        let agent_type: AgentType = string_to_enum(&existing.r#type)?;
++        let mut extra: serde_json::Value = serde_json::from_str(&existing.extra)
++            .map_err(|e| ConversationError::internal(format!("Invalid extra JSON: {e}")))?;
++        let team_id = team_id_from_extra(&existing.extra);
++        let source: Option<ConversationSource> = existing
++            .source
++            .as_deref()
++            .and_then(|s| string_to_enum::<ConversationSource>(s).ok());
++
++        let explicit_ids = match (req.server_ids, req.inherit) {
++            (Some(ids), false) => Some(dedup_mcp_server_ids(ids)),
++            (None, true) => None,
++            _ => {
++                return Err(ConversationError::bad_request(
++                    "send either `server_ids` (a list, `[]` for none) or `inherit: true`",
++                ));
++            }
++        };
++
++        let selection = match explicit_ids.as_ref() {
++            Some(ids) => {
++                let (selection, unusable) = self.split_selected_mcp_rows(user_id, ids.clone()).await?;
++                if !unusable.is_empty() {
++                    return Err(ConversationError::bad_request(format!(
++                        "unknown, deleted or reserved MCP server id(s): {}",
++                        unusable.join(", ")
++                    )));
++                }
++                Some(selection)
++            }
++            None => {
++                self.inherited_mcp_selection(user_id, id, &extra, team_id.is_some())
++                    .await?
++            }
++        };
++
++        let snapshot = match selection.as_ref() {
++            Some(selection) => {
++                self.build_runtime_mcp_snapshot(
++                    user_id,
++                    Some(&selection.mcp_server_ids),
++                    &selection.session_mcp_servers,
++                    &selection.mcp_statuses,
++                    &agent_type,
++                    &extra,
++                )
++                .await?
++            }
++            // Nothing to inherit from: creation's fallback, every enabled server.
++            None => {
++                self.build_runtime_mcp_snapshot(user_id, None, &[], &[], &agent_type, &extra)
++                    .await?
++            }
++        };
++        let fingerprint = assistant_mcp_binding_fingerprint(match selection.as_ref() {
++            Some(selection) => &selection.selected_ids,
++            None => &snapshot.mcp_server_ids,
++        });
++
++        write_mcp_snapshot_into_extra(&mut extra, &snapshot, explicit_ids.as_deref())?;
++        let updates = ConversationRowUpdate {
++            extra: Some(
++                serde_json::to_string(&extra)
++                    .map_err(|e| ConversationError::internal(format!("Failed to serialize extra: {e}")))?,
++            ),
++            updated_at: Some(now_ms()),
++            ..Default::default()
++        };
++        self.conversation_repo.update(user_id, id, &updates).await?;
++        info!(
++            mcp_servers = ?snapshot.mcp_servers,
++            inherit = explicit_ids.is_none(),
++            team = team_id.is_some(),
++            "Conversation MCP selection replaced"
++        );
++
++        let runtime_action = if team_id.is_none() {
++            self.apply_mcp_selection_to_runtime(user_id, id, source, task_manager)
++                .await
++        } else {
++            // A team member's runtime belongs to the team session. Announcing its
++            // assistant's binding makes the team re-resolve that assistant's members
++            // through the conversation adapter, which honors this conversation's own
++            // selection; members that follow the assistant resolve to their unchanged
++            // binding and stay put. The team then restarts this member through its
++            // own gate: now when idle, after its current work, or at next attach.
++            match self.conversation_assistant_id(user_id, id, &extra).await {
++                Ok(Some(assistant_id)) => {
++                    info!(
++                        assistant_id = %assistant_id,
++                        "team member MCP selection replaced; asking the team runtime to apply it"
++                    );
++                    self.publish_assistant_mcp_binding_changed(user_id, &assistant_id, fingerprint);
++                    ConversationMcpRuntimeAction::Team
++                }
++                // Without an assistant no team refresh reaches the member; its next
++                // attach reads the new snapshot.
++                Ok(None) => ConversationMcpRuntimeAction::NextStart,
++                Err(error) => {
++                    warn!(
++                        error = %ErrorChain(&error),
++                        "MCP selection saved, but the member's assistant could not be read; the next attach loads it"
++                    );
++                    ConversationMcpRuntimeAction::NextStart
++                }
++            }
++        };
++
++        self.publish_conversation_mcp_changed(&ConversationMcpChanged {
++            user_id: user_id.to_owned(),
++            conversation_id: id.to_owned(),
++            team_id,
++            mcp_server_ids: snapshot.mcp_server_ids.clone(),
++            mcp_servers: snapshot.mcp_servers.clone(),
++            runtime_action,
++        });
++        let conversation = self.get(user_id, id).await?;
++        self.broadcast_list_changed(user_id, id, "updated", source.as_ref());
++
++        Ok(UpdateConversationMcpResponse {
++            conversation,
++            runtime_action,
++        })
++    }
++
++    /// What creation picks without an explicit MCP choice: the binding of the
++    /// conversation's assistant while it still exists (`Some`); otherwise every
++    /// enabled server (`None`), except that a team member without an assistant
++    /// gets no server.
++    async fn inherited_mcp_selection(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        extra: &serde_json::Value,
++        is_team_conversation: bool,
++    ) -> Result<Option<TeamMcpSelection>, ConversationError> {
++        if let Some(assistant_id) = self.conversation_assistant_id(user_id, conversation_id, extra).await?
++            && let Some(selection) = self.resolve_assistant_mcp_selection(user_id, &assistant_id).await?
++        {
++            return Ok(Some(selection));
++        }
++        Ok(is_team_conversation.then(TeamMcpSelection::default))
++    }
++
++    /// The assistant a conversation was created from: its assistant snapshot,
++    /// else the legacy `extra.assistant_id` / `extra.preset_assistant_id`.
++    async fn conversation_assistant_id(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        extra: &serde_json::Value,
++    ) -> Result<Option<String>, ConversationError> {
++        if let Some(snapshot) = self
++            .conversation_repo
++            .get_assistant_snapshot(user_id, conversation_id)
++            .await?
++        {
++            let assistant_id = snapshot.assistant_id.trim();
++            if !assistant_id.is_empty() {
++                return Ok(Some(assistant_id.to_owned()));
++            }
++        }
++        Ok(["assistant_id", "preset_assistant_id"]
++            .into_iter()
++            .find_map(|key| extra.get(key).and_then(serde_json::Value::as_str))
++            .map(str::trim)
++            .filter(|value| !value.is_empty())
++            .map(str::to_owned))
++    }
++
++    /// Apply a solo conversation's new MCP selection to its runtime. The
++    /// selection is already persisted, so any failure here degrades to "the
++    /// next start loads it".
++    async fn apply_mcp_selection_to_runtime(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        source: Option<ConversationSource>,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) -> ConversationMcpRuntimeAction {
++        let busy = match task_manager.get_task(conversation_id) {
++            None => return ConversationMcpRuntimeAction::NextStart,
++            Some(agent) => agent_has_work_in_flight(&agent),
++        };
++        if busy {
++            self.schedule_deferred_mcp_restart(user_id, conversation_id, source, task_manager);
++            return ConversationMcpRuntimeAction::Deferred;
++        }
++        match self.runtime_state.try_begin_idle_restart(conversation_id) {
++            Ok(true) => match self
++                .rebuild_runtime_for_mcp(user_id, conversation_id, task_manager)
++                .await
++            {
++                Ok(()) => ConversationMcpRuntimeAction::Restarted,
++                Err(error) => {
++                    warn!(
++                        conversation_id,
++                        error = %ErrorChain(&error),
++                        "MCP selection saved but the runtime restart failed; the next start loads it"
++                    );
++                    ConversationMcpRuntimeAction::NextStart
++                }
++            },
++            // A turn, or a restart that may have read the old selection, is in
++            // flight: restart again once it is over.
++            Ok(false) | Err(ConversationError::RuntimeRestarting { .. }) => {
++                self.schedule_deferred_mcp_restart(user_id, conversation_id, source, task_manager);
++                ConversationMcpRuntimeAction::Deferred
++            }
++            Err(error) => {
++                debug!(conversation_id, error = %error, "MCP selection saved; runtime is not restartable now");
++                ConversationMcpRuntimeAction::NextStart
++            }
++        }
++    }
++
++    /// Kill and rebuild the runtime while the caller holds the restart gate,
++    /// releasing the gate whatever happens. The tail of `restart_runtime`: the
++    /// gate was taken while no turn was claimed, so there is no turn to cancel.
++    async fn rebuild_runtime_for_mcp(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) -> Result<(), ConversationError> {
++        let result = async {
++            info!(
++                conversation_id,
++                "Restarting conversation runtime to apply its MCP selection"
++            );
++            task_manager
++                .kill_and_wait(conversation_id, Some(AgentKillReason::RuntimeRestart))
++                .await;
++            self.runtime_state.clear_turn_state_for_restart(conversation_id);
++            self.ensure_runtime_agent(user_id, conversation_id, task_manager, "mcp_update")
++                .await
++                .map(|_| ())
++        }
++        .await;
++        self.runtime_state.clear_restarting(conversation_id);
++        result
++    }
++
++    /// Restart the runtime with the new MCP selection once its agent is idle.
++    /// At most one waiter per conversation: a later change rides the same
++    /// restart, which reads the newest snapshot.
++    fn schedule_deferred_mcp_restart(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        source: Option<ConversationSource>,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) {
++        if !self.runtime_state.mark_pending_mcp_restart(conversation_id) {
++            debug!(
++                conversation_id,
++                "MCP runtime restart already pending; it loads the newest selection"
++            );
++            return;
++        }
++        info!(
++            conversation_id,
++            "MCP selection saved; runtime restart deferred until the agent is idle"
++        );
++        let service = self.clone();
++        let user_id = user_id.to_owned();
++        let conversation_id = conversation_id.to_owned();
++        let task_manager = Arc::clone(task_manager);
++        tokio::spawn(async move {
++            service
++                .run_deferred_mcp_restart(&user_id, &conversation_id, source, &task_manager)
++                .await;
++        });
++    }
++
++    /// Body of a deferred MCP restart. Waits until no turn is claimed and no
++    /// restart is in flight, then takes the restart gate the same atomic way as
++    /// the immediate path. An agent still busy without a claimed turn
++    /// (background tasks) is polled. Gives up when the runtime is gone (the
++    /// next start loads the selection) or the conversation is being deleted or
++    /// the app is shutting down.
++    async fn run_deferred_mcp_restart(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        source: Option<ConversationSource>,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) {
++        loop {
++            self.runtime_state.wait_until_idle(conversation_id).await;
++            let busy = match task_manager.get_task(conversation_id) {
++                None => {
++                    debug!(
++                        conversation_id,
++                        "deferred MCP restart dropped: no runtime left to restart"
++                    );
++                    self.runtime_state.clear_pending_mcp_restart(conversation_id);
++                    return;
++                }
++                Some(agent) => agent_has_work_in_flight(&agent),
++            };
++            if busy {
++                tokio::time::sleep(DEFERRED_MCP_RESTART_POLL).await;
++                continue;
++            }
++            match self.runtime_state.try_begin_idle_restart(conversation_id) {
++                Ok(true) => {
++                    self.runtime_state.clear_pending_mcp_restart(conversation_id);
++                    match self
++                        .rebuild_runtime_for_mcp(user_id, conversation_id, task_manager)
++                        .await
++                    {
++                        Ok(()) => info!(conversation_id, "Deferred MCP runtime restart finished"),
++                        Err(error) => warn!(
++                            conversation_id,
++                            error = %ErrorChain(&error),
++                            "deferred MCP runtime restart failed; the next start loads the selection"
++                        ),
++                    }
++                    // The open conversation re-reads its runtime from this.
++                    self.broadcast_list_changed(user_id, conversation_id, "updated", source.as_ref());
++                    return;
++                }
++                // A new turn or another restart won the race: wait for it too.
++                Ok(false) | Err(ConversationError::RuntimeRestarting { .. }) => continue,
++                Err(error) => {
++                    debug!(conversation_id, error = %error, "deferred MCP restart dropped");
++                    self.runtime_state.clear_pending_mcp_restart(conversation_id);
++                    return;
++                }
++            }
++        }
++    }
++
++    /// Announce a replaced MCP selection to the UI and to agents watching the bus.
++    fn publish_conversation_mcp_changed(&self, payload: &ConversationMcpChanged) {
++        match serde_json::to_value(payload) {
++            Ok(value) => self
++                .broadcaster
++                .broadcast(WebSocketMessage::new(CONVERSATION_MCP_CHANGED_EVENT, value)),
++            Err(error) => warn!(
++                conversation_id = %payload.conversation_id,
++                error = %error,
++                "failed to encode conversation MCP change event"
++            ),
++        }
++    }
++}
++
++/// Trim ids, drop empty ones and keep the first occurrence of each, in order.
++fn dedup_mcp_server_ids(ids: Vec<String>) -> Vec<String> {
++    let mut seen = HashSet::new();
++    ids.into_iter()
++        .map(|id| id.trim().to_owned())
++        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
++        .collect()
++}
++
++/// Write the four MCP snapshot fields the way `create()` stores them, plus the
++/// `mcp_selection` marker for an explicit selection (removed on `inherit`).
++fn write_mcp_snapshot_into_extra(
++    extra: &mut serde_json::Value,
++    snapshot: &McpRuntimeSnapshot,
++    explicit_ids: Option<&[String]>,
++) -> Result<(), ConversationError> {
++    let encode = |value: Result<serde_json::Value, serde_json::Error>| {
++        value.map_err(|e| ConversationError::internal(format!("Failed to serialize MCP snapshot: {e}")))
++    };
++    let mcp_server_ids = encode(serde_json::to_value(&snapshot.mcp_server_ids))?;
++    let mcp_servers = encode(serde_json::to_value(&snapshot.mcp_servers))?;
++    let mcp_statuses = encode(serde_json::to_value(&snapshot.mcp_statuses))?;
++    let session_mcp_servers = encode(serde_json::to_value(&snapshot.session_mcp_servers))?;
++    let Some(obj) = extra.as_object_mut() else {
++        return Err(ConversationError::internal("conversation extra is not a JSON object"));
++    };
++    obj.insert("mcp_server_ids".to_owned(), mcp_server_ids);
++    obj.insert("mcp_servers".to_owned(), mcp_servers);
++    obj.insert("mcp_statuses".to_owned(), mcp_statuses);
++    // Written even when empty: this replaces the whole selection, so a builtin
++    // server dropped from it must not survive from the old list.
++    obj.insert("session_mcp_servers".to_owned(), session_mcp_servers);
++    match explicit_ids {
++        Some(ids) => {
++            obj.insert(
++                CONVERSATION_MCP_SELECTION_KEY.to_owned(),
++                serde_json::json!({ "source": "conversation", "server_ids": ids }),
++            );
++        }
++        None => {
++            obj.remove(CONVERSATION_MCP_SELECTION_KEY);
++        }
++    }
++    Ok(())
++}
++
++/// Work a restart would cut off although no turn is claimed: a turn the agent
++/// is running on its own, or background tasks that outlive their turn.
++fn agent_has_work_in_flight(agent: &AgentInstance) -> bool {
++    agent.status() == Some(ConversationStatus::Running) || agent.live_background_tasks() > 0
++}
++
+ fn send_error_display_message(error: &AgentSendError) -> String {
+     error
+         .stream_error()
+@@ -5340,9 +5794,11 @@ impl ConversationService {
+                     .await
+                     .map_err(|e| ConversationError::internal(format!("Failed to list MCP servers: {e}")))?,
+             };
++            // `list_by_ids_any` also returns soft-deleted rows; a deleted server
++            // is out of the snapshot just as it is out of the session.
+             let selected_rows = rows
+                 .into_iter()
+-                .filter(|row| !row.builtin && row.name != TEAM_MCP_SERVER_NAME)
++                .filter(|row| !row.builtin && row.name != TEAM_MCP_SERVER_NAME && row.deleted_at.is_none())
+                 .filter(|row| match selected_ids {
+                     Some(ids) => ids.iter().any(|id| id == &row.id),
+                     None => row.enabled,
+@@ -5423,6 +5879,22 @@ impl ConversationService {
+             preference.as_ref().map(|row| row.last_mcp_ids.as_str()),
+         )?;
+ 
++        // Ids the binding still lists but that no longer resolve are skipped.
++        let (selection, _unusable) = self.split_selected_mcp_rows(user_id, selected_ids).await?;
++        Ok(Some(selection))
++    }
++
++    /// Split explicitly selected MCP row ids into the inputs a snapshot is
++    /// frozen from: user rows by id, builtin rows as launch-ready session
++    /// servers (a builtin row that cannot be converted becomes a failed status).
++    /// Ids that are unknown, soft-deleted or carry the reserved team MCP name
++    /// come back apart: an assistant binding skips them, the per-conversation
++    /// route rejects them.
++    async fn split_selected_mcp_rows(
++        &self,
++        user_id: &str,
++        selected_ids: Vec<String>,
++    ) -> Result<(TeamMcpSelection, Vec<String>), ConversationError> {
+         let repo = {
+             let guard = self
+                 .mcp_server_repo
+@@ -5444,11 +5916,14 @@ impl ConversationService {
+         let mut mcp_server_ids = Vec::new();
+         let mut session_mcp_servers = Vec::new();
+         let mut mcp_statuses = Vec::new();
++        let mut unusable = Vec::new();
+         for id in &selected_ids {
+             let Some(row) = rows_by_id.remove(id) else {
++                unusable.push(id.clone());
+                 continue;
+             };
+-            if !assistant_mcp_row_is_injectable(&row) {
++            if row.deleted_at.is_some() || !assistant_mcp_row_is_injectable(&row) {
++                unusable.push(id.clone());
+                 continue;
+             }
+             if row.builtin {
+@@ -5465,12 +5940,15 @@ impl ConversationService {
+                 mcp_server_ids.push(row.id);
+             }
+         }
+-        Ok(Some(TeamMcpSelection {
+-            selected_ids,
+-            mcp_server_ids,
+-            session_mcp_servers,
+-            mcp_statuses,
+-        }))
++        Ok((
++            TeamMcpSelection {
++                selected_ids,
++                mcp_server_ids,
++                session_mcp_servers,
++                mcp_statuses,
++            },
++            unusable,
++        ))
+     }
+ 
+     /// Resolve and classify one assistant's current MCP binding for an existing
+diff --git a/crates/aionui-conversation/src/routes.rs b/crates/aionui-conversation/src/routes.rs
+index ef0abc193ee21a9bc70bcb02bdce8dd93e713d63..4c6daa84739b1826b5e120ef397d141b3548a3e8 100644
+--- a/crates/aionui-conversation/src/routes.rs
++++ b/crates/aionui-conversation/src/routes.rs
+@@ -4,7 +4,7 @@ use axum::Router;
+ use axum::extract::rejection::JsonRejection;
+ use axum::extract::{Extension, Json, Path, Query, State};
+ use axum::http::StatusCode;
+-use axum::routing::{get, patch, post};
++use axum::routing::{get, patch, post, put};
+ 
+ use aionui_api_types::{
+     ActiveCountResponse, ApiResponse, ApprovalCheckQuery, ApprovalCheckResponse, CancelConversationRequest,
+@@ -12,7 +12,8 @@ use aionui_api_types::{
+     ConversationArtifactListResponse, ConversationArtifactResponse, ConversationListResponse, ConversationResponse,
+     CreateConversationRequest, EnsureConversationRuntimeResponse, ForkConversationRequest, ListConversationsQuery,
+     ListMessagesQuery, MessageListResponse, MessageResponse, MessageSearchResponse, SearchMessagesQuery,
+-    SendMessageRequest, SendMessageResponse, UpdateConversationArtifactRequest, UpdateConversationRequest,
++    SendMessageRequest, SendMessageResponse, UpdateConversationArtifactRequest, UpdateConversationMcpRequest,
++    UpdateConversationMcpResponse, UpdateConversationRequest,
+ };
+ use aionui_auth::CurrentUser;
+ use aionui_common::ApiError;
+@@ -135,6 +136,8 @@ pub fn conversation_routes(state: ConversationRouterState) -> Router {
+         )
+         .route("/api/conversations/{id}/runtime/ensure", post(ensure_runtime))
+         .route("/api/conversations/{id}/runtime/restart", post(restart_runtime))
++        // Replace the MCP selection after creation (PATCH keeps refusing it).
++        .route("/api/conversations/{id}/mcp", put(update_mcp))
+         .route("/api/conversations/{id}/active-lease", post(active_lease))
+         // Confirmation system
+         .route("/api/conversations/{id}/confirmations", get(list_confirmations))
+@@ -412,6 +415,26 @@ async fn restart_runtime(
+     Ok(Json(ApiResponse::ok(response)))
+ }
+ 
++/// `PUT /api/conversations/{id}/mcp`: body `{ "server_ids": [...] }` to set the
++/// conversation's own MCP selection, or `{ "inherit": true }` to go back to what
++/// creation would pick. Solo conversations restart their runtime (now when idle,
++/// after the current work otherwise); team members are restarted by the team
++/// runtime.
++async fn update_mcp(
++    State(state): State<ConversationRouterState>,
++    Extension(user): Extension<CurrentUser>,
++    Path(id): Path<String>,
++    body: Result<Json<UpdateConversationMcpRequest>, JsonRejection>,
++) -> Result<Json<ApiResponse<UpdateConversationMcpResponse>>, ApiError> {
++    let Json(req) = body.map_err(ApiError::from)?;
++    let response = state
++        .service
++        .update_mcp_selection(&user.id, &id, req, &state.task_manager)
++        .await
++        .map_err(ApiError::from)?;
++    Ok(Json(ApiResponse::ok(response)))
++}
++
+ async fn active_lease(
+     State(state): State<ConversationRouterState>,
+     Extension(user): Extension<CurrentUser>,
+diff --git a/crates/aionui-conversation/src/service_test.rs b/crates/aionui-conversation/src/service_test.rs
+index 9b991c09532743569b47db595fd83a5f3f6eb30e..b1a23a1fd5c134e08b1236b9321ac32a63f01a8c 100644
+--- a/crates/aionui-conversation/src/service_test.rs
++++ b/crates/aionui-conversation/src/service_test.rs
+@@ -24,8 +24,8 @@ use aionui_api_types::{
+     SetConfigOptionRequest, SetConfigOptionResponse,
+ };
+ use aionui_api_types::{
+-    CloneConversationRequest, CreateConversationRequest, ListConversationsQuery, SearchMessagesQuery,
+-    SendMessageRequest, UpdateConversationRequest, WebSocketMessage,
++    CloneConversationRequest, ConversationMcpRuntimeAction, CreateConversationRequest, ListConversationsQuery,
++    SearchMessagesQuery, SendMessageRequest, UpdateConversationMcpRequest, UpdateConversationRequest, WebSocketMessage,
+ };
+ use aionui_common::{
+     AgentKillReason, AgentType, Confirmation, ConversationSource, ConversationStatus, PaginatedResult,
+@@ -33,14 +33,15 @@ use aionui_common::{
+ };
+ use aionui_db::models::{
+     AcpSessionRow, AgentMetadataRow, ConversationArtifactRow, ConversationAssistantSnapshotRow, ConversationRow,
+-    MessageRow, UpdateAgentHandshakeParams, UpsertAgentMetadataParams,
++    McpServerRow, MessageRow, UpdateAgentHandshakeParams, UpsertAgentMetadataParams,
+ };
+ use aionui_db::{
+-    ConversationFilters, ConversationRowUpdate, CreateAcpSessionParams, DbError, IAcpSessionRepository,
+-    IAgentMetadataRepository, IAssistantDefinitionRepository, IAssistantOverlayRepository,
+-    IAssistantPreferenceRepository, IConversationRepository, MessageRowUpdate, MessageSearchRow, PersistedSessionState,
+-    SaveRuntimeStateParams, SqliteAssistantDefinitionRepository, SqliteAssistantOverlayRepository,
+-    SqliteAssistantPreferenceRepository, UpdateAgentAvailabilitySnapshotParams, UpsertAssistantDefinitionParams,
++    ConversationFilters, ConversationRowUpdate, CreateAcpSessionParams, CreateMcpServerParams, DbError,
++    IAcpSessionRepository, IAgentMetadataRepository, IAssistantDefinitionRepository, IAssistantOverlayRepository,
++    IAssistantPreferenceRepository, IConversationRepository, IMcpServerRepository, MessageRowUpdate, MessageSearchRow,
++    PersistedSessionState, SaveRuntimeStateParams, SqliteAssistantDefinitionRepository,
++    SqliteAssistantOverlayRepository, SqliteAssistantPreferenceRepository, SqliteMcpServerRepository,
++    UpdateAgentAvailabilitySnapshotParams, UpdateMcpServerParams, UpsertAssistantDefinitionParams,
+     UpsertAssistantOverlayParams, UpsertAssistantPreferenceParams, UpsertConversationAssistantSnapshotParams,
+     init_database_memory,
+ };
+@@ -9001,6 +9002,443 @@ async fn update_rejects_acp_runtime_current_extra_fields() {
+     }
+ }
+ 
++// ── Per-conversation MCP selection (PUT /api/conversations/{id}/mcp) ───────
++
++/// The mock task manager plus a real in-memory MCP catalog for `user_1`:
++/// `alpha` and `beta` are user servers, `img` is a builtin one. None is
++/// globally enabled, so a new assistant-less conversation starts with no MCP.
++async fn make_service_with_mcp_catalog(
++    task_mgr: Arc<MockTaskManager>,
++) -> (
++    ConversationService,
++    Arc<MockBroadcaster>,
++    Arc<MockRepo>,
++    Arc<dyn IMcpServerRepository>,
++    Vec<McpServerRow>,
++) {
++    let (svc, broadcaster, repo) = make_service_with_mock_task_manager(task_mgr);
++    let db = init_database_memory().await.unwrap();
++    seed_test_user(db.pool(), "user_1").await;
++    let mcp_repo: Arc<dyn IMcpServerRepository> = Arc::new(SqliteMcpServerRepository::new(db.pool().clone()));
++    let mut rows = Vec::new();
++    for (name, builtin) in [("alpha", false), ("beta", false), ("img", true)] {
++        let row = mcp_repo
++            .create(CreateMcpServerParams {
++                user_id: "user_1",
++                name,
++                description: None,
++                enabled: false,
++                transport_type: "http",
++                transport_config: r#"{"url":"http://127.0.0.1:9/mcp"}"#,
++                tools: None,
++                original_json: None,
++                builtin,
++            })
++            .await
++            .unwrap();
++        rows.push(row);
++    }
++    svc.with_mcp_server_repo(mcp_repo.clone());
++    (svc, broadcaster, repo, mcp_repo, rows)
++}
++
++fn mcp_ids_request(ids: &[&str]) -> UpdateConversationMcpRequest {
++    UpdateConversationMcpRequest {
++        server_ids: Some(ids.iter().map(|id| (*id).to_owned()).collect()),
++        inherit: false,
++    }
++}
++
++#[tokio::test]
++async fn update_mcp_selection_freezes_the_new_selection_like_create() {
++    let task_mgr = Arc::new(MockTaskManager::new());
++    let (svc, broadcaster, repo, _mcp_repo, rows) = make_service_with_mcp_catalog(task_mgr.clone()).await;
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    assert_eq!(
++        conv.extra["mcp_server_ids"],
++        json!([]),
++        "nothing is enabled, so creation froze no server"
++    );
++    broadcaster.take_events();
++
++    let response = svc
++        .update_mcp_selection(
++            "user_1",
++            &conv.id,
++            mcp_ids_request(&[rows[0].id.as_str(), rows[2].id.as_str(), rows[0].id.as_str()]),
++            &(task_mgr.clone() as Arc<dyn IWorkerTaskManager>),
++        )
++        .await
++        .unwrap();
++
++    assert_eq!(response.runtime_action, ConversationMcpRuntimeAction::NextStart);
++    let extra = &response.conversation.extra;
++    assert_eq!(
++        extra["mcp_server_ids"],
++        json!([rows[0].id]),
++        "user rows are frozen by id"
++    );
++    assert_eq!(
++        extra["session_mcp_servers"][0]["name"], "img",
++        "builtin rows travel as session servers, as at creation"
++    );
++    assert_eq!(extra["mcp_servers"], json!(["alpha", "img"]));
++    assert_eq!(
++        extra["mcp_selection"]["server_ids"],
++        json!([rows[0].id, rows[2].id]),
++        "the conversation now owns its selection, deduplicated in order"
++    );
++    let stored: serde_json::Value = serde_json::from_str(&get_row(&repo, "user_1", &conv.id).await.extra).unwrap();
++    assert_eq!(
++        stored["mcp_server_ids"],
++        json!([rows[0].id]),
++        "persisted, not only returned"
++    );
++
++    let events = broadcaster.take_events();
++    let changed = events
++        .iter()
++        .find(|event| event.name == "conversation.mcpChanged")
++        .expect("conversation.mcpChanged is broadcast");
++    assert_eq!(changed.data["conversation_id"], json!(conv.id));
++    assert_eq!(changed.data["user_id"], "user_1");
++    assert_eq!(changed.data["runtime_action"], "next_start");
++    assert!(changed.data.get("team_id").is_none());
++    assert!(
++        events
++            .iter()
++            .any(|event| event.name == "conversation.listChanged" && event.data["action"] == "updated"),
++        "open views refetch the conversation"
++    );
++    assert_eq!(task_mgr.kill_count(), 0, "there was no runtime to restart");
++}
++
++#[tokio::test]
++async fn update_mcp_selection_rejects_unknown_and_deleted_servers_without_writing() {
++    let task_mgr = Arc::new(MockTaskManager::new());
++    let (svc, broadcaster, repo, mcp_repo, rows) = make_service_with_mcp_catalog(task_mgr.clone()).await;
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    mcp_repo.delete("user_1", &rows[1].id).await.unwrap();
++    let before = get_row(&repo, "user_1", &conv.id).await.extra;
++    broadcaster.take_events();
++
++    let err = svc
++        .update_mcp_selection(
++            "user_1",
++            &conv.id,
++            mcp_ids_request(&[rows[0].id.as_str(), rows[1].id.as_str(), "mcp_missing"]),
++            &(task_mgr.clone() as Arc<dyn IWorkerTaskManager>),
++        )
++        .await
++        .unwrap_err();
++
++    match err {
++        ConversationError::BadRequest { reason } => {
++            assert!(reason.contains(&rows[1].id), "names the deleted server: {reason}");
++            assert!(reason.contains("mcp_missing"), "names the unknown id: {reason}");
++        }
++        other => panic!("expected BadRequest, got {other:?}"),
++    }
++    assert_eq!(
++        get_row(&repo, "user_1", &conv.id).await.extra,
++        before,
++        "a rejected change writes nothing"
++    );
++    assert!(broadcaster.take_events().is_empty(), "and announces nothing");
++}
++
++#[tokio::test]
++async fn update_mcp_selection_needs_exactly_one_of_server_ids_or_inherit() {
++    let task_mgr = Arc::new(MockTaskManager::new());
++    let (svc, _broadcaster, _repo, _mcp_repo, _rows) = make_service_with_mcp_catalog(task_mgr.clone()).await;
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    let task_mgr_dyn: Arc<dyn IWorkerTaskManager> = task_mgr.clone();
++
++    for req in [
++        UpdateConversationMcpRequest::default(),
++        UpdateConversationMcpRequest {
++            server_ids: Some(Vec::new()),
++            inherit: true,
++        },
++    ] {
++        let err = svc
++            .update_mcp_selection("user_1", &conv.id, req, &task_mgr_dyn)
++            .await
++            .unwrap_err();
++        assert!(matches!(err, ConversationError::BadRequest { .. }), "got {err:?}");
++    }
++}
++
++#[tokio::test]
++async fn update_mcp_selection_restarts_an_idle_runtime_now() {
++    let task_mgr = Arc::new(MockTaskManager::new());
++    let (svc, _broadcaster, _repo, _mcp_repo, rows) = make_service_with_mcp_catalog(task_mgr.clone()).await;
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    task_mgr.insert_agent(&conv.id, AgentInstance::Mock(Arc::new(MockAgent::new(&conv.id))));
++
++    let response = svc
++        .update_mcp_selection(
++            "user_1",
++            &conv.id,
++            mcp_ids_request(&[rows[1].id.as_str()]),
++            &(task_mgr.clone() as Arc<dyn IWorkerTaskManager>),
++        )
++        .await
++        .unwrap();
++
++    assert_eq!(response.runtime_action, ConversationMcpRuntimeAction::Restarted);
++    assert_eq!(
++        task_mgr.kill_records(),
++        vec![(conv.id.clone(), Some(AgentKillReason::RuntimeRestart))]
++    );
++    assert!(task_mgr.get_task(&conv.id).is_some(), "the runtime was rebuilt");
++    assert!(
++        !svc.runtime_state().is_restarting(&conv.id),
++        "the restart gate is released"
++    );
++}
++
++#[tokio::test]
++async fn update_mcp_selection_defers_the_restart_until_the_turn_ends() {
++    let task_mgr = Arc::new(MockTaskManager::new());
++    let (svc, _broadcaster, _repo, _mcp_repo, rows) = make_service_with_mcp_catalog(task_mgr.clone()).await;
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    task_mgr.insert_agent(&conv.id, AgentInstance::Mock(Arc::new(MockAgent::new(&conv.id))));
++    let turn = svc.runtime_state().try_claim_turn(&conv.id, "turn-running").unwrap();
++    let task_mgr_dyn: Arc<dyn IWorkerTaskManager> = task_mgr.clone();
++
++    let first = svc
++        .update_mcp_selection(
++            "user_1",
++            &conv.id,
++            mcp_ids_request(&[rows[0].id.as_str()]),
++            &task_mgr_dyn,
++        )
++        .await
++        .unwrap();
++    assert_eq!(first.runtime_action, ConversationMcpRuntimeAction::Deferred);
++    assert!(
++        first
++            .conversation
++            .runtime
++            .as_ref()
++            .is_some_and(|runtime| runtime.mcp_restart_pending),
++        "the pending restart is visible on the conversation"
++    );
++    // A second change while the turn still runs rides the same pending restart.
++    let second = svc
++        .update_mcp_selection(
++            "user_1",
++            &conv.id,
++            mcp_ids_request(&[rows[1].id.as_str()]),
++            &task_mgr_dyn,
++        )
++        .await
++        .unwrap();
++    assert_eq!(second.runtime_action, ConversationMcpRuntimeAction::Deferred);
++    assert_eq!(task_mgr.kill_count(), 0, "a running turn is never cut off");
++
++    drop(turn);
++    tokio::time::timeout(Duration::from_secs(2), async {
++        while task_mgr.kill_count() == 0 || svc.runtime_state().is_restarting(&conv.id) {
++            tokio::time::sleep(Duration::from_millis(10)).await;
++        }
++    })
++    .await
++    .expect("the deferred restart runs once the turn ends");
++    assert_eq!(
++        task_mgr.kill_records(),
++        vec![(conv.id.clone(), Some(AgentKillReason::RuntimeRestart))],
++        "one restart covers both changes"
++    );
++    assert!(!svc.runtime_state().has_pending_mcp_restart(&conv.id));
++    assert!(task_mgr.get_task(&conv.id).is_some(), "the runtime was rebuilt");
++}
++
++#[tokio::test]
++async fn update_mcp_selection_inherit_drops_the_selection_and_resolves_like_create() {
++    let task_mgr = Arc::new(MockTaskManager::new());
++    let (svc, _broadcaster, _repo, mcp_repo, rows) = make_service_with_mcp_catalog(task_mgr.clone()).await;
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    let task_mgr_dyn: Arc<dyn IWorkerTaskManager> = task_mgr.clone();
++    let owned = svc
++        .update_mcp_selection(
++            "user_1",
++            &conv.id,
++            mcp_ids_request(&[rows[0].id.as_str(), rows[2].id.as_str()]),
++            &task_mgr_dyn,
++        )
++        .await
++        .unwrap();
++    assert_eq!(owned.conversation.extra["session_mcp_servers"][0]["name"], "img");
++    // No assistant: creation's fallback is every globally enabled server.
++    mcp_repo
++        .update(
++            "user_1",
++            &rows[1].id,
++            UpdateMcpServerParams {
++                enabled: Some(true),
++                ..Default::default()
++            },
++        )
++        .await
++        .unwrap();
++
++    let response = svc
++        .update_mcp_selection(
++            "user_1",
++            &conv.id,
++            UpdateConversationMcpRequest {
++                server_ids: None,
++                inherit: true,
++            },
++            &task_mgr_dyn,
++        )
++        .await
++        .unwrap();
++
++    let extra = &response.conversation.extra;
++    assert!(
++        extra.get("mcp_selection").is_none(),
++        "inherit removes the conversation's own selection"
++    );
++    assert_eq!(extra["mcp_server_ids"], json!([rows[1].id]));
++    assert_eq!(extra["mcp_servers"], json!(["beta"]));
++    assert_eq!(
++        extra["session_mcp_servers"],
++        json!([]),
++        "the builtin from before is gone"
++    );
++}
++
++#[tokio::test]
++async fn update_mcp_selection_hands_a_team_member_to_the_team_runtime() {
++    async fn create_team_member(svc: &ConversationService) -> ConversationResponse {
++        let req: CreateConversationRequest = serde_json::from_value(json!({
++            "type": "acp",
++            "extra": { "workspace": ensure_test_workspace_path(), "teamId": "team-1" }
++        }))
++        .unwrap();
++        svc.create("user_1", req).await.unwrap()
++    }
++
++    let task_mgr = Arc::new(MockTaskManager::new());
++    let (svc, broadcaster, repo, _mcp_repo, rows) = make_service_with_mcp_catalog(task_mgr.clone()).await;
++    let task_mgr_dyn: Arc<dyn IWorkerTaskManager> = task_mgr.clone();
++
++    // A member created from an assistant: the team re-resolves that assistant's
++    // members, and the adapter makes this conversation's own selection win.
++    let member = create_team_member(&svc).await;
++    repo.upsert_assistant_snapshot(
++        "user_1",
++        &UpsertConversationAssistantSnapshotParams {
++            conversation_id: &member.id,
++            assistant_definition_id: "def-reviewer",
++            assistant_id: "reviewer",
++            assistant_source: "user",
++            agent_id: "claude",
++            rules_content: "",
++            default_model_mode: "auto",
++            resolved_model_id: None,
++            default_permission_mode: "auto",
++            resolved_permission_value: None,
++            default_thought_level_mode: "auto",
++            resolved_thought_level_value: None,
++            default_skills_mode: "auto",
++            resolved_skill_ids: "[]",
++            resolved_disabled_builtin_skill_ids: "[]",
++            default_mcps_mode: "auto",
++            resolved_mcp_ids: "[]",
++        },
++    )
++    .await
++    .unwrap();
++    task_mgr.insert_agent(&member.id, AgentInstance::Mock(Arc::new(MockAgent::new(&member.id))));
++    broadcaster.take_events();
++
++    let response = svc
++        .update_mcp_selection(
++            "user_1",
++            &member.id,
++            mcp_ids_request(&[rows[0].id.as_str()]),
++            &task_mgr_dyn,
++        )
++        .await
++        .unwrap();
++
++    assert_eq!(response.runtime_action, ConversationMcpRuntimeAction::Team);
++    assert_eq!(task_mgr.kill_count(), 0, "the team runtime owns a member's restart");
++    let events = broadcaster.take_events();
++    let binding = events
++        .iter()
++        .find(|event| event.name == "assistant.mcpBindingChanged")
++        .expect("the member's assistant is announced to the team runtime");
++    assert_eq!(binding.data["assistant_id"], "reviewer");
++    assert_eq!(binding.data["user_id"], "user_1");
++    let changed = events
++        .iter()
++        .find(|event| event.name == "conversation.mcpChanged")
++        .expect("conversation.mcpChanged is broadcast");
++    assert_eq!(changed.data["team_id"], "team-1");
++    assert_eq!(changed.data["runtime_action"], "team");
++
++    // A member without an assistant gets no team refresh; its next attach reads it.
++    let bare = create_team_member(&svc).await;
++    broadcaster.take_events();
++    let response = svc
++        .update_mcp_selection(
++            "user_1",
++            &bare.id,
++            mcp_ids_request(&[rows[0].id.as_str()]),
++            &task_mgr_dyn,
++        )
++        .await
++        .unwrap();
++    assert_eq!(response.runtime_action, ConversationMcpRuntimeAction::NextStart);
++    assert!(
++        !broadcaster
++            .take_events()
++            .iter()
++            .any(|event| event.name == "assistant.mcpBindingChanged")
++    );
++}
++
++#[tokio::test]
++async fn update_rejects_the_mcp_selection_marker_and_points_at_the_mcp_route() {
++    let (svc, _broadcaster, _repo, task_mgr) = make_service();
++    let conv = svc.create("u", make_create_req()).await.unwrap();
++
++    let update_req: UpdateConversationRequest = serde_json::from_value(json!({
++        "extra": { "mcp_selection": { "source": "conversation", "server_ids": [] } },
++    }))
++    .unwrap();
++    let err = svc.update("u", &conv.id, update_req, &task_mgr).await.unwrap_err();
++
++    match err {
++        ConversationError::BadRequest { reason: msg } => {
++            assert!(msg.contains("/api/conversations/{id}/mcp"), "msg = {msg:?}")
++        }
++        other => panic!("expected BadRequest, got {other:?}"),
++    }
++}
++
++#[tokio::test]
++async fn create_strips_a_client_supplied_mcp_selection() {
++    let (svc, _broadcaster, _repo, _task_mgr) = make_service();
++    let req: CreateConversationRequest = serde_json::from_value(json!({
++        "type": "acp",
++        "extra": {
++            "workspace": ensure_test_workspace_path(),
++            "mcp_selection": { "source": "conversation", "server_ids": ["mcp_forged"] }
++        }
++    }))
++    .unwrap();
++
++    let conv = svc.create("u", req).await.unwrap();
++
++    assert!(conv.extra.get("mcp_selection").is_none());
++}
++
+ #[tokio::test]
+ async fn update_allows_other_extra_fields() {
+     let (svc, _broadcaster, _repo, task_mgr) = make_service();
+diff --git a/crates/aionui-app/src/router/team_conversation_adapters.rs b/crates/aionui-app/src/router/team_conversation_adapters.rs
+index 4d197b9506e882466a201245fb3d85ef3c5605bf..be8edd12bd59ce6c608f2aaae867964af2d08227 100644
+--- a/crates/aionui-app/src/router/team_conversation_adapters.rs
++++ b/crates/aionui-app/src/router/team_conversation_adapters.rs
+@@ -403,6 +403,15 @@ fn persisted_mcp_snapshot_resolution(extra: &serde_json::Value) -> TeamMcpSnapsh
+     }
+ }
+ 
++/// The persisted snapshot of a conversation that owns its MCP selection, with
++/// that selection's fingerprint; `None` while it follows its assistant binding.
++fn conversation_owned_mcp_snapshot_resolution(extra: &serde_json::Value) -> Option<TeamMcpSnapshotResolution> {
++    let fingerprint = aionui_api_types::conversation_mcp_selection_fingerprint(extra)?;
++    let mut resolution = persisted_mcp_snapshot_resolution(extra);
++    resolution.fingerprint = Some(fingerprint);
++    Some(resolution)
++}
++
+ #[async_trait]
+ impl TeamProjectionMessageStore for TeamConversationAdapters {
+     fn mint_message_id(&self) -> String {
+@@ -554,6 +563,13 @@ impl TeamConversationProvisioningPort for TeamConversationAdapters {
+                 ))
+             })?;
+         let extra: serde_json::Value = serde_json::from_str(&row.extra).unwrap_or(serde_json::Value::Null);
++        // A member whose conversation owns its MCP selection (`PUT
++        // /api/conversations/{id}/mcp`) keeps it across re-attach and assistant
++        // binding changes. Its fingerprint lets the attach record the selection
++        // as applied, so the same selection never restarts the member twice.
++        if let Some(resolution) = conversation_owned_mcp_snapshot_resolution(&extra) {
++            return Ok(resolution);
++        }
+         let Some(assistant_id) = assistant_id else {
+             return Ok(persisted_mcp_snapshot_resolution(&extra));
+         };
+@@ -812,6 +828,34 @@ mod tests {
+         assert_eq!(resolution.fingerprint, None);
+     }
+ 
++    #[test]
++    fn owned_selection_keeps_the_persisted_snapshot_and_fingerprints_its_ids() {
++        let extra = serde_json::json!({
++            "mcp_server_ids": ["mcp-b"],
++            "mcp_servers": ["b", "chrome-devtools"],
++            "mcp_selection": { "source": "conversation", "server_ids": ["mcp-b", "mcp-builtin"] },
++        });
++
++        let resolution = conversation_owned_mcp_snapshot_resolution(&extra).expect("the conversation owns a selection");
++
++        assert_eq!(resolution.snapshot.mcp_server_ids, vec!["mcp-b"]);
++        assert_eq!(resolution.snapshot.mcp_servers, vec!["b", "chrome-devtools"]);
++        // Same fingerprint function as an assistant binding, over every selected
++        // id (builtin ones included), so an unchanged set is `Unchanged`.
++        assert_eq!(
++            resolution.fingerprint,
++            Some(aionui_api_types::assistant_mcp_binding_fingerprint(&[
++                "mcp-builtin".to_owned(),
++                "mcp-b".to_owned(),
++            ]))
++        );
++        let follows_assistant = serde_json::json!({ "mcp_server_ids": ["mcp-b"] });
++        assert!(
++            conversation_owned_mcp_snapshot_resolution(&follows_assistant).is_none(),
++            "without its own selection the member follows its assistant"
++        );
++    }
++
+     #[test]
+     fn persisted_snapshot_fallback_tolerates_absent_and_malformed_fields() {
+         let resolution = persisted_mcp_snapshot_resolution(&serde_json::json!({ "mcp_server_ids": "not-a-list" }));
