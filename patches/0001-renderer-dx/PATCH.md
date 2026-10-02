@@ -826,3 +826,22 @@ log: a new message accepted 70 to 130 ms after each cancel. Pressing the Stop bu
 the capture phase, before AionUi's own handler cancels the turn; the queued messages stay in it, a notice says so, and the box's own mode
 toggle puts it back. A team member's column holds its own box only. `click-test.js` scenario `stop-holds-draft-box`; suite 459/459. (A team
 member's Stop already pauses the member through AionCore's pause route.)
+
+## October 2nd, 2026: build `2026-10-02.1`
+
+- **Respond now's bolt** is found by the text of the queued message among the message rows on screen (`queuedRows`). It was looked up by the
+  message's database id in the member's last 40 chat messages. The page gives a message you just sent an id of its own until the chat is read
+  again, and a busy member writes 23 to 133 chat messages in 8 to 56 minutes (measured on a running team), so the message was gone from the
+  window long before it left the queue. Several queued messages with one text take the latest bubbles with that text, oldest first.
+  `click-test.js` scenario `respond-now`.
+- **The usage meter in a team's single view.** In that view there is no `[data-slot-id]` column around the member in front, so its model
+  picker was never found (`acctTargets` now asks `singleViewTarget`). A Claude member that is offered no account switch (one Claude agent, or
+  the agent lists not read yet) gets its meter before the model picker anyway. Scenario `usage`.
+- **Ctrl+Z and Ctrl+Y in the two message boxes** (a chat's and the new-chat page's). Chromium recorded one undo step per character there:
+  React redraws DOM beside the box on every keystroke, and Chromium ends its typing command whenever the DOM changes under it (43 presses
+  of Ctrl+Z for 43 characters in the built app; 1 for a bare textarea). The box keeps its own history, taken from the input events: typing
+  and deleting in one burst (no pause over a second) is one step, a paste, a cut or a line break is its own, Ctrl+Z steps back, Ctrl+Y and
+  Ctrl+Shift+Z forward. A change the page makes itself (a send emptying the box, a draft put back) starts a new history from that text, so
+  undo never puts back what was sent. Scenario `undo`; `tools\test-live-undo.js` runs the same checks in the real app.
+- **Hooks for patch 0010**: `window.aiondxFeedback` (opens the AionDX issues page with what was typed) and `window.aiondxInstallUpdate`
+  (installs a downloaded update through the main process, or opens the installer when that bridge is missing).
