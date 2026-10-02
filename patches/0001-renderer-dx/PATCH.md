@@ -15,8 +15,7 @@ AionUi's own tooltips (Arco's tooltip classes, which AionUi restyles): what the 
 rules (never while working; the backoff; waiting out a rate limit, teammates before the lead;
 runs on any page; when it switches itself off), what the three colours mean, and the current
 status or why it switched off. Team members and solo chats get their own wording. (It was a
-labelled `Loop · Off` pill until 2026-09-23; K: *"the loop ui you have gets smushed in team view
-(with multiple columns)"*, then *"we should include a tooltip on it's functionality when you hover
+labelled `Loop · Off` pill until 2026-09-23; a request, then *"we should include a tooltip on it's functionality when you hover
 over it that explains all this"*.)
 Clicking it opens a menu in the same style as the permission menu:
 
@@ -42,8 +41,7 @@ Screenshots, taken with AionUi's shipped CSS in `tools\dx-harness\shots\`:
 
 ## Why it was rebuilt
 
-K, September 22nd, 2026: *"it's a loop off button...but it's out of place on the ui. can you take a
-better wack at that. fix it"*.
+a request of September 22nd, 2026.
 
 The first version was a `position:fixed` panel pinned 16 px from the right and 96 px from the bottom
 of the window, drawn with hardcoded dark colors (`#333`, `#222`). So it covered whatever was under
@@ -80,7 +78,7 @@ so nothing a user queued under the old version is dropped.
 
 ## Team agents
 
-K, September 22nd, 2026: *"but why is it not available for teamagents?"*. The first rebuild only
+a request of September 22nd, 2026. The first rebuild only
 recognized `#/conversation/<id>`. Teams differ in three ways, all read from source:
 
 1. **A different page.** `#/team/<teamId>` (`Router.tsx:79`) shows every member side by side, one
@@ -118,8 +116,7 @@ backstop. A loop runs while its chat or team page is open, as before.
 
 ## Paused members, background running, failed turns (2026-09-23)
 
-K, after a team sat paused for most of an hour with its Loops on: *"I HAD LOOP ON, THAT
-SHOULD BE DOING THE SAME THING"*. It was not, for two reasons, both fixed.
+A report came after a team sat paused for most of an hour with its Loops on: the Loops should have been working, and were not, for two reasons, both fixed.
 
 1. **A paused member was skipped.** The loop fired only for `state === 'idle'`. A Devin free-model
    rate limit fails a delivery, aioncore retries three times in about two seconds, and the slot goes
@@ -142,8 +139,7 @@ Also:
 - **It never sends to an agent that is working** (stated plainly because a summary of this change
   read as "sends every 2 minutes"). A solo chat must have finished its turn; a team member must be
   idle with nothing queued. The `working` test pins running, queued, starting, and idle-with-work.
-- **Nudges back off when the agent has nothing to do.** K: *"the loop shouldn't be mindlessly
-  spamming every 2 minutes regardless of if the agent is working or not"*. An agent idle because it
+- **Nudges back off when the agent has nothing to do.** a request. An agent idle because it
   waits on something outside its turn (a tournament driver) would otherwise be nudged about
   every 80 s and answer "still waiting" each time, at about 200K tokens a turn. Now each nudge is
   scored once: a turn under 3 minutes with fewer than 6 tool-call records means nothing to do, and
@@ -165,8 +161,7 @@ From `K Standing Feature Requests and Bug Reports.docx` in the project root, plu
 a team agent left in the project notes. Source ready and tested; installs with the next
 **AionDX Apply Update**.
 
-- Your own messages no longer switch the Loop off. K: *"apparently the loop only works for
-  claude agents, swe didn't work once"*. The Loop's saved state (AionUi's localStorage,
+- Your own messages no longer switch the Loop off. a request. The Loop's saved state (AionUi's localStorage,
   `%APPDATA%\AionUi\Local Storage\leveldb\000007.log`) showed every team Loop K had armed ended
   `off: "you sent a message"` with `fires: 0`. Nothing was SWE-specific: the backend wakes a
   dormant or paused slot on a user message for any backend (`session.rs` 661-664 and 1655,
@@ -176,23 +171,21 @@ a team agent left in the project notes. Source ready and tested; installs with t
   working.", "Not sending: it has 3 queued items.", "Waiting a minute after your message.",
   "Holding: you have an unsent draft in this box.", "Paused by the team runtime, usually a
   provider limit. Retry 1 of 10 at 10:52."
-- The button shows the agent's state. K: *"I have seen the ai actively printing to the chat when
-  the "processing" bib on the top of the chat input window is missing."* Every 3 s the script reads
+- The button shows the agent's state. a requestprocessing" bib on the top of the chat input window is missing."* Every 3 s the script reads
   `run-state` for team members and the conversation status for solo chats (left-side output under
   6 s old also counts as working). A green dot means the agent is working, red means paused or
   blocked, and none means idle. The card's second line reads "Agent: working, turn open 4 min." and
   so on. The icon also spins while working, but only under `prefers-reduced-motion:
   no-preference`. K's Windows has animations off, which Chromium reports as `reduce`, so the
   static dot is what K sees.
-- Permission is a round shield. K: *"The permissions are taking up ALL THE SPACE"*. The pill
+- Permission is a round shield. a request. The pill
   becomes a 28 x 28 grey circle with the shield; label and caret are hidden; hovering shows
   "Permission: Bypass Permissions / What the agent may do without asking you first. / Click to
   change it."; the mode is in the `aria-label`. AionUi's CSS forces this pill to grow
   (`flex-basis:0!important; flex-grow:1!important`) and makes it transparent, so the override
   pins size and background with `!important`. While the mode is loading, the spinner shows in
   place of the shield.
-- Clicking into a member's box no longer scrolls the team page. K: *"I want to do the
-  navigating with the side arrows"*. `TeamPage.tsx` 751-755 scrolls the active column to the left
+- Clicking into a member's box no longer scrolls the team page. a request. `TeamPage.tsx` 751-755 scrolls the active column to the left
   edge whenever the active member changes, and focusing a box makes that member active. The script
   wraps `Element.prototype.scrollIntoView` and skips the call for a `[data-slot-id]` column when
   the last pointer press, under 1.5 s ago, landed inside that same column. Arrows and tabs scroll
@@ -203,8 +196,7 @@ a team agent left in the project notes. Source ready and tested; installs with t
 
 ## Shared with agents, and Compact (build `2026-09-24.2`)
 
-K, September 24th: *"we should both be using the same buttons and tools (and if it's using a
-tool i want to see visual feedback of it)"*, and, later the same day, *"any way we can force
+a request of September 24th, and, later the same day, *"any way we can force
 context compression if the user desires?"*. The agent side is patch 0007; this is the button's.
 
 - Each Loop's settings (on or off, the continue message, a compaction request) are also kept in
@@ -243,7 +235,7 @@ no `session_generation`. On the 25th the team still started as K opened it, and 
 started it was the Loop's nudge to the lead, whose Loops the lead had switched on. Any send starts a
 stopped team (and drains the lead's mailbox), so the Loop now waits for someone to message the team.
 
-K, September 24th: *"teams should not auto-wake just because you open the team's chat"*. The
+a request of September 24th. The
 team page calls `POST /api/teams/{id}/session` when it opens. For a team with no session (every
 team, after an AionUi restart) that starts the session and drains the lead's unread mailbox as
 work, so the lead takes turns and wakes its teammates. The script wraps `window.fetch`: that one
@@ -257,8 +249,7 @@ switch passes everything through. `window.__aionDx.heldWakes()` lists the teams 
 
 The Loop kept a waiting agent busy but let its prompt cache lapse: after short replies it waited 2, 5,
 10, 20 and 30 minutes from its last nudge, and Anthropic's cache lasts 5 minutes from its last read
-(5-minute writes cost 1.25 times the input price, reads 0.1 times, 0.05 on Opus 5.5). K: "THE LOOP HAS
-FAILED IT'S JOB MULTIPLE TIMES THIS AFTERNOON AND CAUSED LOADS OF USAGE BURNED ON DUMB-CACHING/UNCACHING".
+(5-minute writes cost 1.25 times the input price, reads 0.1 times, 0.05 on Opus 5.5). a request.
 
 | rule | constant |
 |---|---|
@@ -297,8 +288,7 @@ while it works. The router in patch 0002 does the rest. Research:
 
 ## Build `2026-09-25.5`: Unsend on "Unread"; the outbox removed
 
-K: "why is there this extra message queue step? i never asked for that ... I mean what's been sent in
-chat and unread". The outbox is gone. In a Claude chat each "Unread" badge
+a request. The outbox is gone. In a Claude chat each "Unread" badge
 (`[data-testid="message-status-badge"]`) gets an Unsend button. A click reads the message's `msg_id`
 (`GET /api/conversations/{id}/messages/{messageId}`; the row is `#message-<id>`), writes
 `aiondx.unsend.req.<msg_id>` = `{conv, messageId, at}`, and waits for the router's answer in
@@ -381,7 +371,7 @@ for the team on screen, and a `PUT /api/settings/client` heartbeat every 2 minut
 
 ## Bug that shipped: the loop could not be turned on
 
-First install, September 22nd, 18:37. K: *"i see a cool loop menu"*, then *"only i can't turn the
+First install, September 22nd, 18:37. a request, then *"only i can't turn the
 loop on"*.
 
 **Cause.** The page watcher (a `MutationObserver` on `document.body`) re-rendered the menu from
@@ -565,7 +555,7 @@ stops all polling.
   Claude agent (`aiondx.agent.conv.<id>` = {agent}; the launcher gives the chat that agent's
   environment and carries the transcript); any other agent opens a new chat in the same folder with
   this conversation in its message box. It sits just left of the model picker, outside the team
-  column's 140 px picker box, as a bare profile icon in team columns (K: "it's cramming vertically").
+  column's 140 px picker box, as a bare profile icon in team columns (a request).
   The first version's `aiondx.account.conv.<id>` picks still show and are cleared by a new pick.
 - Respond now: a tick box in each message box's top-right corner and a bolt left of a queued message.
   Solo Claude and Codex: the running turn is cancelled and the queued message runs next. Other solo
@@ -586,9 +576,8 @@ stops all polling.
 Later the same day, same build number:
 
 - Welcome, from K's smoke-test window: the primary buttons are painted in the accent colour with black
-  or white text, whichever reads on it (K: *"white text on a white background"*); each button runs once
-  until its work settles, and Sign in reuses the chat it opened (K: *"i hit it a bunch, it started a
-  bunch of conversations that went nowhere"*); the sign-in panel and its code box sit above the Welcome
+  or white text, whichever reads on it (a request); each button runs once
+  until its work settles, and Sign in reuses the chat it opened (a request); the sign-in panel and its code box sit above the Welcome
   screen, and Welcome says where to paste a code (K had to press Not now to reach it).
 - Antigravity failsafe: when it is not installed, its sign-in fails, or it has not answered 90 s after
   Sign in, step 1 offers "Set up with <agent>" for the first working agent in the new-chat list
@@ -644,9 +633,7 @@ the shared record, and `loop_status` shows when it resumed. Switching the Loop o
 K's stop, clears it. An agent setting one raises the usual notice ("... set it to resume at 12:10").
 `click-test.js` scenario `resume-at`.
 
-Same build: Welcome's first step explains Antigravity under K's sentence (K: *"we should explain that
-antigravity is a free way to ... and it's provided by google at X usage in Y amount of time ... and that
-it's all to help you migrate and setup"*). Two short blocks: free with a Google account, with an allowance
+Same build: Welcome's first step explains Antigravity under K's sentence (a request). Two short blocks: free with a Google account, with an allowance
 that refreshes every week and no published number (Google's plans page gives none: "Meaningful quota,
 refreshed weekly"); and what it does for you, a one-time move-in that asks before each change, after
 which nothing in AionDX needs it. The footer says Settings > Appearance > Open AionDX setup brings the
@@ -654,8 +641,7 @@ screen back.
 
 ## Build `2026-09-26.3`: chat colours, the right-click menu, MCP seen and switched
 
-Chat colours (K: *"want the ability to change the color of each chat bubble, and all chat types should
-be seperated. i want the ability to make my chat bubbles different colors from any agent"*; his answers:
+Chat colours (a request; his answers:
 per agent plus per team member, his typed messages, Loop nudges and agent-to-agent messages each apart,
 separate dark and light colours, a small right-click menu). Research:
 `! LLM Files\Research\2026-09-26_chat-bubble-dom-and-colours.md`.
@@ -679,8 +665,7 @@ separate dark and light colours, a small right-click menu). Research:
   colour...") and Copy when text is selected. An item opens Settings > Appearance scrolled to that
   control and marks it. Text boxes, AionUi's own right-click menus and dialogs keep theirs.
 
-MCP (K: *"is MCP fully configurable and transparent to agents working in AIonDX? If not, we need to
-make it so"*): an agent's change through the Loop tool's `mcp_set` (patch 0007 1.5.0) is announced with
+MCP (a request): an agent's change through the Loop tool's `mcp_set` (patch 0007 1.5.0) is announced with
 its name and note, linked to its chat; Settings > Tools gets an On/Off switch per server that is not
 built in, which reads the state before toggling.
 
@@ -711,7 +696,7 @@ straight to the backend. `__aionDx.heldStarts()` lists them. `click-test.js` sce
   before. Its text no longer says "key": Antigravity signs in with Google. The brief for Antigravity or any other
   agent now says to do every step itself, never to hand the user a script, with `aiondx setup scan` and
   `aiondx setup apply --all` spelled out.
-- Model names get their versions (K, from the friend's install: the pickers showed "Fable", "Opus", "Sonnet", the
+- Model names get their versions (from a tester's install: the pickers showed "Fable", "Opus", "Sonnet", the
   version only on hover). Every model list that reaches the page through `runtime/ensure` or `config-options` is read
   for the versions in its descriptions; the pills ("Opus 5.5 · High") and the model menu's rows ("Opus 5.5",
   "Opus 5.5 (1M context)", "Default (Opus 5.5)") show them, a pill AionUi rewrites is relabelled at once, and the
@@ -720,8 +705,7 @@ straight to the backend. `__aionDx.heldStarts()` lists them. `click-test.js` sce
 
 ## September 26th, 2026 (night): build `2026-09-26.6`, On until I stop it
 
-K: *"that loop needs an option for infinite/until i stop it or stop the agent (the stop button) or ask it to turn
-it off specifically"*. The Loop menu has three choices: On, On until I stop it, Off. The second marks the button
+a request. The Loop menu has three choices: On, On until I stop it, Off. The second marks the button
 with ∞ and changes what the Loop does: no hold, no rest when the cache ran out (it wakes a cold agent), no giving
 up after failed retries, and 3 nudges with no reply pause it instead of switching it off. It ends when:
 
@@ -760,7 +744,7 @@ An agent's switch-off without that (an older Loop tool) is refused and your reco
   `localStorage['team-active-slot-<team id>']` (else the lead's); the tabs are `[data-team-tab-role]` with
   `data-testid="team-tab-<slot>"`. `targets()` and `targetOf()` use it, so the button, your sends and the Stop button
   reach that member's Loop. `click-test.js` scenario `single-view`; harness `?team=1&single=1[&front=slotB]`.
-- Model versions (K: the pickers "just say 'Fable' 'Opus' etc."). Measured in the standalone app: a chat's start
+- Model versions (the pickers showed only family names such as Fable and Opus). Measured in the standalone app: a chat's start
   (`runtime/ensure`) answers with only its Mode option, no models, so the build-.5 labels never learned anything.
   AionUi's pickers read each agent's catalog from `GET /api/agents/management`, whose model options carry the
   versions in their descriptions ("Opus 5.5 · Best for everyday, complex tasks", "Fable 5 · ...", "Haiku 4.5 ·
@@ -768,7 +752,7 @@ An agent's switch-off without that (an older Loop tool) is refused and your reco
   its menu (the same `runtimeSelectorOptions` rows as a chat's) get the names.
 - Checked in the real app (`tools\dx-harness\probe-app.js`, the staged standalone app driven over its debugging port):
   "/plugin" typed with real key presses in a real chat opens the Plugins panel, lists 314 plugins, and sends nothing.
-- "/plugin" by every road (K's "/plugin does not, only reload plugins" reached Claude Code as the /plugin command):
+- "/plugin" by every road (a request reached Claude Code as the /plugin command):
   Ctrl+Enter and the draft-queue button (`sendbox-add-to-draft-btn`), which queue a message without the send button;
   an Enter that Windows text input reports as keyCode 229 with no composition under way (AionUi's message box tracks
   composition with compositionstart/end and sends on it; the Loop script now does the same); and, behind all of
@@ -779,8 +763,7 @@ An agent's switch-off without that (an older Loop tool) is refused and your reco
   panel lists 314 plugins) and `tools\dx-harness\probe-models.js` (the page loads `/api/agents/management` with fetch,
   so the Loop script sees it; a fresh profile's Claude agent has no model list yet, K's has the full one with versions).
   `tools\smoke-standalone.js` 14/14.
-- AionUi's own "Interrupt & send" is hidden (K: *"it's the same thing as ticking the respond now checkbox, and the
-  button on the bottom takes up a way lot of space"*). AionUi draws it in the message box's send-button slot, beside
+- AionUi's own "Interrupt & send" is hidden (a request). AionUi draws it in the message box's send-button slot, beside
   the context meter, for a team member that is working while you type, and it calls the same interrupt route as Respond
   now. Found by its lightning icon, so in any language. `click-test.js` scenario `interrupt-btn`.
 
@@ -832,3 +815,14 @@ confirms it works. Tests: `tools\dx-harness\click-test.js`, scenarios named belo
   Explorer); Shift+click shows it in its folder. A chip for a folder opens in Explorer when clicked, since AionUi's own
   preview cannot show one. The message text lives in an open shadow root, so the chips are looked for every 3 seconds.
   `local-links`. The skill now tells every agent how to write pictures and links (R-015).
+
+## October 1st, 2026 (later): Stop must stop
+
+a request of October 1st (can't be stopped by the harness or the UI). AionUi's draft box has a Manual mode, which
+sends nothing by itself, and an Auto mode, which sends its next message as soon as a turn ends; a turn the Stop button cancelled ends like any
+other (`useConversationCommandQueue.ts` drains on turn completion and `handleStop` does not pause it). In Auto mode Stop therefore stops the
+agent for one cancel and starts it again on the next queued message. The chat K pointed at on October 1st shows the pattern in the AionCore
+log: a new message accepted 70 to 130 ms after each cancel. Pressing the Stop button now also puts that message box's draft box on Manual, in
+the capture phase, before AionUi's own handler cancels the turn; the queued messages stay in it, a notice says so, and the box's own mode
+toggle puts it back. A team member's column holds its own box only. `click-test.js` scenario `stop-holds-draft-box`; suite 459/459. (A team
+member's Stop already pauses the member through AionCore's pause route.)

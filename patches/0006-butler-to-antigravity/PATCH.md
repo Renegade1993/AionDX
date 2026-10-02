@@ -4,8 +4,7 @@
 **Status:** built into `vendor\app.asar.patched` on 2026-09-24, not installed. Installs with the
 next "AionDX Apply Update".
 
-K, September 24th: *"at least remove it from the ui's presenting it everywhere for all things,
-use antigravity in it's place"*.
+a request of September 24th.
 
 ## What changes
 

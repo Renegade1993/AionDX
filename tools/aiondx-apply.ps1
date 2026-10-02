@@ -4,8 +4,7 @@
   WHY THIS EXISTS
   aioncore runs every agent inside a Windows Job object (KILL_ON_JOB_CLOSE, breakaway disabled), so
   anything an agent starts, elevated or not, dies when AionUi closes. Installing a new app.asar needs
-  AionUi closed, so nothing launched from inside AionUi can finish an install. K, 2026-09-22:
-  "need to build something outside that i can trigger until we figure out a better update mechanism".
+  AionUi closed, so nothing launched from inside AionUi can finish an install. a request of 2026-09-22.
   And, 2026-09-24: "I need a revert mechanism if AionDX fails to startup as well." When AionUi will
   not start, no agent can help, so the way back has to live here, on the desktop.
 

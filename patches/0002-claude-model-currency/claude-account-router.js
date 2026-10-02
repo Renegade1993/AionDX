@@ -260,8 +260,7 @@ function carryTranscript(targetDir, dirs) {
 // ---------------------------------------------------------------------------
 // Any agent, not just two accounts (AionDX, 2026-09-26)
 // ---------------------------------------------------------------------------
-// K: "it seems you built it around my use case specifically. it needs to be omni-compatible. it needs
-// to draw on the same list of available agents (dynamically) as is shown on the 'new chat' screen".
+// a request.
 // The renderer's pill writes aiondx.agent.conv.<conversation id> = {agent: <agent_id>} for a chat moved
 // to another Claude agent. Every agent AionUi knows keeps its own environment in agent_metadata.env
 // (HOME, CLAUDE_CONFIG_DIR and so on: that is what puts two Claude agents on two accounts), and AionCore

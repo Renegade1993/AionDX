@@ -5,8 +5,7 @@
  * WHY REAL INPUT
  * The first harness only took screenshots and opened the menu with a scripted `.click()`. A
  * scripted click fires on the element directly, so it cannot catch a menu that rebuilds itself
- * between mouse-down and mouse-up. That bug shipped on 2026-09-22 (K: "i can't turn the loop
- * on"). A browser only fires `click` when press and release land on the same element, which is
+ * between mouse-down and mouse-up. That bug shipped on 2026-09-22 (a request). A browser only fires `click` when press and release land on the same element, which is
  * what these tests reproduce, holding the button 120 ms the way a person does.
  *
  * WHAT IT CHECKS, against tools\dx-harness\harness.html and its stub backend
@@ -65,7 +64,10 @@
  *   welcome                    the first-run screen: Antigravity sign-in, the setup brief for another
  *                              agent, Not now, reopening it from Settings
  *   usage                      the Claude usage meter: 5-hour and weekly bars left of the agent control,
- *                              bars alone in a team column, a stale reading hidden
+ *                              bars alone in a team column, a stale reading hidden; in a team's single view
+ *                              (no member column) the member in front has its meter, in full
+ *   undo                       (since 2026-10-02) Ctrl+Z and Ctrl+Y in the message box: a typed burst is one step,
+ *                              a pause makes a new one, what the page itself changed is not undone into
  *   bubbles                    (since 2026-09-26) chat colours: rows told apart (yours, Loop, agent-to-agent,
  *                              an agent's reply), dark and light sets, text readable in the Markdown shadow
  *                              root, the right-click menu and its jump to the control in Settings, the
@@ -898,8 +900,7 @@ async function pageTarget() {
       check(sc, 'a solo chat whose history says "good night" goes off', (await label('')) === 'Loop · Off');
     }
 
-    // On until I stop it (2026-09-26, K: "that loop needs an option for infinite/until i stop it or stop the agent (the
-    // stop button) or ask it to turn it off specifically"): no hold, no cold rest, no giving up; no agent ends it alone.
+    // On until I stop it (2026-09-26, a request): no hold, no cold rest, no giving up; no agent ends it alone.
     {
       const sc = 'forever';
       const K = 'aionui.dx.harness1';
@@ -1151,7 +1152,7 @@ async function pageTarget() {
       c = await calls();
       check(sc, '"/plugin install <id>" runs the install at once, and sends nothing', await panelOpen() && JSON.stringify(c[0]) === JSON.stringify(['install', 'code-review@claude-plugins-official', '--json']) &&
         (await posts('/api/conversations/harness1/messages')).length === 0, JSON.stringify(c));
-      // The other ways a message leaves the box (K's "/plugin does not, only reload plugins" reached Claude Code anyway):
+      // The other ways a message leaves the box (a request reached Claude Code anyway):
       // Ctrl+Enter and the draft-queue button (both queue it), an Enter that Windows text input reports as keyCode 229,
       // and, behind all of them, the send itself.
       const closePanel = () => js(`(() => { const b = document.querySelector('.aiondx-plugins-close'); if (b) b.click(); return 0; })()`);
@@ -1592,6 +1593,49 @@ async function pageTarget() {
       await js('window.__aionDx.decorateLinks()');
       await sleep(200);
       check(sc, 'looking again adds no second button', (await js(`document.getElementById('md1').shadowRoot.querySelectorAll('.aiondx-ext').length`)) === 2);
+    }
+
+    // ---- Stop must stop (R-017, 2026-10-01): the draft box does not restart the agent after Stop ----
+    {
+      const sc = 'stop-holds-draft-box';
+      // AionUi's CommandQueuePanel as it renders: a box labelled with its title, a header with a mode toggle that flips between "Auto send"
+      // and "Manual send", and the list of waiting commands (data-command-queue-list).
+      const fakeBox = (where, mode) => js(`(() => { const at = document.querySelector(${JSON.stringify(where)}); const box = document.createElement('div'); box.className = 'fake-draft-box';
+        box.setAttribute('aria-label', 'Draft box');
+        box.innerHTML = '<div><button type="button" aria-label="Toggle send mode">${mode}</button></div><div><div data-command-queue-list="true"><div>queued one</div></div></div>';
+        box.querySelector('button').addEventListener('click', (e) => { e.currentTarget.textContent = e.currentTarget.textContent === 'Auto send' ? 'Manual send' : 'Auto send'; window.__toggles = (window.__toggles || 0) + 1; });
+        at.parentNode.insertBefore(box, at); return 0; })()`);
+      const mode = (scope) => js(`(() => { const b = document.querySelector(${JSON.stringify((scope ? scope + ' ' : '') + '.fake-draft-box button')}); return b ? b.textContent : null; })()`);
+      const addStop = (scope) => js(`(() => { const a = document.querySelector(${JSON.stringify(scope + ' .sendbox-actions')}); const b = document.createElement('button'); b.type = 'button';
+        b.className = 'arco-btn arco-btn-secondary arco-btn-shape-circle sendbox-stop-button'; b.textContent = 'stop'; a.appendChild(b); return 0; })()`);
+
+      // A solo chat, draft box on Auto, Loop off: Stop puts it on Manual, and says so.
+      await load('theme=light');
+      await fakeBox('#solo .sendbox-panel', 'Auto send');
+      await addStop('#solo');
+      await js('window.__toggles = 0; document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
+      await humanClick('#solo .sendbox-stop-button');
+      await sleep(400);
+      check(sc, "Stop puts a draft box that sends by itself on Manual send, so it cannot start the agent again", (await mode('')) === 'Manual send' && (await js('window.__toggles')) === 1, await mode(''));
+      check(sc, 'and says so, and that its messages are still in it', (await toasts()).some((t) => /is on Manual send now, so it does not start the agent again after Stop\. Its messages are still in it\./.test(t)), JSON.stringify(await toasts()));
+      await humanClick('#solo .sendbox-stop-button');
+      await sleep(300);
+      check(sc, 'a second Stop leaves a box that is already on Manual alone', (await mode('')) === 'Manual send' && (await js('window.__toggles')) === 1);
+      // With no draft box there is nothing to hold, and nothing breaks.
+      await load('theme=light');
+      await addStop('#solo');
+      await humanClick('#solo .sendbox-stop-button');
+      await sleep(200);
+      check(sc, 'with no draft box, Stop does what it did before', (await toasts()).filter((t) => /draft box/.test(t)).length === 0);
+      // A team: Stop in one member's column holds that column's box and no other.
+      await load('team=1&theme=light');
+      await fakeBox('[data-slot-id="slotA"] .sendbox-panel', 'Auto send');
+      await fakeBox('[data-slot-id="slotB"] .sendbox-panel', 'Auto send');
+      await addStop('[data-slot-id="slotB"]');
+      await humanClick('[data-slot-id="slotB"] .sendbox-stop-button');
+      await sleep(400);
+      check(sc, "Stop in a team member's column holds that member's draft box only", (await mode('[data-slot-id="slotB"]')) === 'Manual send' && (await mode('[data-slot-id="slotA"]')) === 'Auto send', JSON.stringify([await mode('[data-slot-id="slotB"]'), await mode('[data-slot-id="slotA"]')]));
+      await shot('click-test-stop-draft-box');
     }
 
     // ---- shared with agents (P-010, 2026-09-24) ----
@@ -2192,6 +2236,22 @@ async function pageTarget() {
       await js('window.__aionDx.scanQueues()');
       await sleep(300);
       check(sc, 'an AionCore that does not list the queue gets no bolts', !(await js(`!!document.querySelector('.aiondx-rn-bolt')`)));
+      // The bolt is found by the text of your message, not by ids and not in the member's last 40 messages (a request of 2026-10-02): the row the page shows for a message you just sent has an id of its
+      // own until the chat is read again, and a busy member writes more than 40 messages in a few minutes.
+      await load('team=1&theme=light&sends=1');
+      await sleep(700);
+      await js(`(() => { const R = window.__stub.routes; const w = R['GET /api/teams/team1/run-state'].data.slot_work[1]; w.state = 'running'; w.active_turn_id = 't2'; w.queued_foreground_count = 1;
+        w.queued_foreground_message_ids = ['mb1']; w.team_run_id = 'run1';
+        R['GET /api/teams/team1/mailbox'] = { success: true, data: [ { id: 'mb1', team_id: 'team1', from_agent_id: 'user', to_agent_id: 'slotB', msg_type: 'message', content: 'check the logs first', summary: null, files: [], read: false, created_at: Date.now() - 5000 } ] };
+        const h = window.__stub.histories.convB; for (let i = 0; i < 70; i++) h.push({ id: 'n-' + i, position: 'left', created_at: Date.now() - 4000 + i, hidden: false, content: JSON.stringify({ content: 'tool output ' + i }) });
+        document.getElementById('message-b-9').id = 'message-page-own-id'; return 0; })()`);
+      await js('window.__aionDx.scanQueues()');
+      await sleep(300);
+      check(sc, 'a queued message gets its bolt although the page gave its row an id of its own and the member has 70 newer messages', await js(`!!document.querySelector('#message-page-own-id .aiondx-rn-bolt')`));
+      await js(`(() => { const row = document.getElementById('message-page-own-id'); const copy = row.cloneNode(true); copy.id = 'message-older'; copy.style.top = '10px'; copy.querySelectorAll('.aiondx-rn-bolt').forEach((b) => b.remove()); row.parentNode.insertBefore(copy, row); return 0; })()`);
+      await js('window.__aionDx.repaint()');
+      await sleep(200);
+      check(sc, 'with the same words sent twice and one waiting, the newest bubble has the bolt and the older one has none', await js(`!!document.querySelector('#message-page-own-id .aiondx-rn-bolt') && !document.querySelector('#message-older .aiondx-rn-bolt')`));
       // A long queue is told once.
       await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
       await js(`(() => { window.__stub.routes['GET /api/teams/team1/run-state'].data.slot_work[1].queued_background_count = 22; return 0; })()`);
@@ -2202,6 +2262,45 @@ async function pageTarget() {
       await js('window.__aionDx.pulseNow()');
       await sleep(300);
       check(sc, 'and not again while the queue stays long', (await toasts()).length === 1);
+    }
+
+    // ---- Ctrl+Z in the message box (2026-10-02) ----
+    {
+      const sc = 'undo';
+      await load('theme=light&sends=1');
+      await sleep(500);
+      const box = '[data-testid="sendbox-input"]';
+      const val = () => js(`document.querySelector('${box}').value`);
+      const ctrl = async (k, shift) => {
+        const o = { key: k, code: 'Key' + k.toUpperCase(), windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers: 2 | (shift ? 8 : 0) };
+        await send('Input.dispatchKeyEvent', Object.assign({ type: 'rawKeyDown' }, o));
+        await send('Input.dispatchKeyEvent', Object.assign({ type: 'keyUp' }, o));
+        await sleep(60);
+      };
+      const typeKeys = async (text) => { for (const ch of text) await send('Input.insertText', { text: ch }); await sleep(60); };
+      await humanClick(box);
+      await typeKeys('the quick brown fox');
+      check(sc, 'typed one letter at a time', (await val()) === 'the quick brown fox', await val());
+      await ctrl('z');
+      check(sc, 'one Ctrl+Z undoes the whole burst', (await val()) === '', await val());
+      await ctrl('y');
+      check(sc, 'Ctrl+Y puts it back', (await val()) === 'the quick brown fox', await val());
+      await ctrl('z', true);
+      check(sc, 'and Ctrl+Shift+Z is the same as Ctrl+Y: it is already the latest, so nothing changes', (await val()) === 'the quick brown fox', await val());
+      await ctrl('z');
+      await typeKeys('one');
+      await sleep(1150);
+      await typeKeys(' two');
+      await ctrl('z');
+      check(sc, 'a pause of over a second ends a step', (await val()) === 'one', await val());
+      await ctrl('z');
+      check(sc, 'and the first step is next', (await val()) === '', await val());
+      // the page emptying the box itself (a send) is not undone into
+      await typeKeys('sent text');
+      await js(`(() => { const t = document.querySelector('${box}'); const d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); d.set.call(t, ''); t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await ctrl('z');
+      check(sc, 'after the page empties the box (a send), Ctrl+Z does not bring the sent text back', (await val()) === '', await val());
+      check(sc, 'a text box that is not a message box is left alone', await js(`(() => { const t = document.createElement('textarea'); t.id = 'other-box'; document.body.appendChild(t); const e = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }); t.dispatchEvent(e); const r = !e.defaultPrevented; t.remove(); return r; })()`));
     }
 
     // ---- chat colours and the right-click menu (2026-09-26, build 2026-09-26.3) ----
@@ -2328,7 +2427,7 @@ async function pageTarget() {
       await js(`(() => { const p = document.getElementById('fake-tools'); if (p) p.remove(); location.hash = '#/conversation/harness1'; return 0; })()`);
     }
 
-    // ---- the one-click setup (2026-09-26, K: "we want a streamlined 'one-click' ish setup process") ----
+    // ---- the one-click setup (2026-09-26, a request) ----
     {
       const sc = 'one-click';
       await load('theme=light&welcome=1&setup=1');
@@ -2456,7 +2555,7 @@ async function pageTarget() {
       await shot('click-test-welcome');
       const btn = await js(`(() => { const b = document.querySelector('.aiondx-w-signin'); const cs = getComputedStyle(b);
         return { bg: cs.backgroundColor, fg: cs.color, inline: b.style.backgroundColor }; })()`);
-      check(sc, "the sign-in button is drawn in the accent colour with text that reads on it (K: white on white)",
+      check(sc, "the sign-in button is drawn in the accent colour with text that reads on it (white on white)",
         btn && btn.inline && btn.bg !== btn.fg && btn.bg !== 'rgba(0, 0, 0, 0)', JSON.stringify(btn));
       // Another agent: step 2, then the brief to copy.
       await humanClick('.aiondx-w-external');
@@ -2470,7 +2569,7 @@ async function pageTarget() {
       const brief = await js('window.__copied || ""');
       check(sc, 'Copy the setup brief copies a brief naming the setup procedure, your instructions and your choices',
         /aiondx-setup\\SKILL\.md/.test(brief) && /> Answer in plain English\. Never use em dashes\./.test(brief) && /\[x\] Agents and their settings/.test(brief) && /\[ \] Sign-ins and accounts/.test(brief), brief.slice(0, 600));
-      check(sc, 'the brief says to do every step itself, never to hand the user a script, with the two commands in full (K: Antigravity "made scripts for the tester")',
+      check(sc, 'the brief says to do every step itself, never to hand the user a script, with the two commands in full (it had handed a tester scripts to run)',
         /Never give me a script or a command to run/.test(brief) && /"%LOCALAPPDATA%\\AionDX\\bin\\aiondx\.exe" setup scan/.test(brief) &&
         /aiondx\.exe" setup apply --all --prefs /.test(brief) && !/--skip mcp/.test(brief), brief.slice(0, 1200));
       check(sc, 'and records the setup as done', ((await store())['aiondx.welcome'] || {}).done === true && ((await store())['aiondx.welcome'] || {}).mode === 'external', JSON.stringify((await store())['aiondx.welcome']));
@@ -2615,9 +2714,23 @@ async function pageTarget() {
       um = await meter('[data-slot-id="slotB"]');
       check(sc, 'a team column shows the bars alone, and a reached limit is marked', um && um.compact && um.limit === 'reached' && /5-hour window 100%, limit reached/.test(um.title), JSON.stringify(um));
       check(sc, 'a member with no reading shows none', !(await meter('[data-slot-id="slotA"]')));
+      // The single view of a team: no column around the member in front (a request of 2026-10-02).
+      await load('team=1&single=1&front=slotB&theme=light');
+      await putStore('aiondx.usage.acct.k2', { label: 'Second', at: Date.now(), status: 'allowed_warning',
+        five_hour: { u: 0.6, reset: nowS + 7200, status: 'allowed' }, seven_day: { u: 0.8, reset: nowS + 3 * 86400, status: 'allowed_warning' } });
+      await putStore('aiondx.usage.conv.convB', { acct: 'k2', at: Date.now() });
+      await sleep(900);
+      await js('window.__aionDx.pullNow()');
+      await js('window.__aionDx.repaint()');
+      await sleep(500);
+      um = await meter('');
+      check(sc, "the single view of a team shows the usage of the member in front, in full", um && !um.compact && um.text === '5h 60% \u00b7 wk 80%' && /^Claude usage, Second: 5-hour window 60%/.test(um.title), JSON.stringify(um));
+      await js("localStorage.setItem('team-active-slot-team1', 'slotA'); window.__aionDx.repaint(); 0");
+      await sleep(500);
+      check(sc, 'and moves with the tab in front: the lead has no reading, so no meter', !(await meter('')));
     }
 
-    // ---- opening a chat does not start its agent (2026-09-26, K: "Don't start chats on open") ----
+    // ---- opening a chat does not start its agent (2026-09-26, a request) ----
     // The page's POST /api/conversations/{id}/runtime/ensure starts a Claude or Codex process; the first message starts it anyway.
     {
       const sc = 'chat-start';

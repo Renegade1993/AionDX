@@ -46,9 +46,8 @@
  * the window reads the cache (0.1x the input price; 0.05x on Opus 5.5); a nudge after it writes the
  * whole context again (1.25x). Until build 2026-09-25.4 a short reply ("nothing to do yet") pushed
  * the next nudge to 5, 10, 20 and 30 minutes after the last one, so almost every nudge after the
- * second paid a full reload. A team lead logged it (AionDX dev log, September 25th) and K:
- * "THE LOOP HAS FAILED IT'S JOB MULTIPLE TIMES THIS AFTERNOON AND CAUSED LOADS OF USAGE BURNED ON
- * DUMB-CACHING/UNCACHING". Now, counted from the agent's own last message:
+ * second paid a full reload. A team lead logged it (AionDX dev log, September 25th), and the owner reported the same: usage burned on
+ * re-caching. Now, counted from the agent's own last message:
  *   - after real work the next nudge goes once the chat is quiet (20 s);
  *   - after a short reply (under 3 minutes, fewer than 6 tool-call records) it goes at 2 minutes,
  *     and after two or more at 4 minutes, always inside the window;
@@ -95,8 +94,7 @@
  * click opens the menu, which reuses the Arco dropdown classes. Until 2026-09-23 it was a labelled pill,
  * "Loop · On", which K found too wide for team columns.
  *
- * SHARED WITH AGENTS (since 2026-09-24, P-010). K: "we should both be using the same buttons and
- * tools (and if it's using a tool i want to see visual feedback of it)". Each Loop's settings (on
+ * SHARED WITH AGENTS (since 2026-09-24, P-010). a request. Each Loop's settings (on
  * or off, the continue message, a compaction request) are kept in AionUi's per-user settings
  * store, GET/PUT /api/settings/client, where the AionDX Loop tool (patches\0007-loop-tool, an MCP
  * server every agent gets) reads and writes the same record: aiondx.loop.conv.<id> and
@@ -112,8 +110,7 @@
  * read yet ("Unread" under it) gets an Unsend button (see "unsend" below). A Claude chat gets an
  * account pill beside AionUi's model picker (see "the chat's Claude account"). Every notice names its
  * team and member, or its chat, and a click opens it. (Build 2026-09-25.4 held messages to a working
- * agent in an outbox above the box first. K: "why is there this extra message queue step? i never
- * asked for that". Removed in 2026-09-25.5.)
+ * agent in an outbox above the box first. a request. Removed in 2026-09-25.5.)
  *
  * COMPACT (since 2026-09-24). The menu offers "Compact its context" when the agent lists a compact
  * command: /compact for Claude and Codex, /compress for Gemini CLI and Qwen. It goes out the next
@@ -187,9 +184,8 @@
     /\bwrap\s+up\s+(?:when|for\s+(?:now|today|the\s+day)|here|now)\b/i,
     /^\s*(?:(?:ok(?:ay)?|alright|so|then|let'?s)\s+)*call\s+it\s+(?:a\s+day|a\s+night|here|quits)\b/i, /^\s*(?:(?:ok(?:ay)?|please)\s+)*knock\s+it\s+off\s*$/i,
     /^\s*(?:ok(?:ay)?\s+|alright\s+|thanks\s+|thank\s+you\s+)?good\s*night\b/i];
-  // A stop that is not the Loop's. September 28th, K told a team lead: "have them stand down once everything is produced...
-  // We can let one teammate continue working, that lane has top priority", and every Loop in the team went off, that
-  // teammate's too. So a message that carves someone out ("let Builder continue working", "except Worker") stops nothing, a stop told to be relayed to
+  // A stop that is not the Loop's. September 28th, one message to a team lead stood two teammates down and let a third carry on, and every Loop in the team
+  // went off, the third's too. So a message that carves someone out ("let Builder continue working", "except Worker") stops nothing, a stop told to be relayed to
   // others ("have them stand down", "tell Worker to stand down") is the lead's to carry out, and a stop followed by its
   // condition ("stand down once it is produced") waits for the condition. K can say it plainly to stop everyone.
   var STOP_CARVE_RES = [
@@ -199,7 +195,7 @@
   var STOP_RELAY_RE = /\b(?:have|tell|ask|get|make|order|instruct|want)\s+(?:the\s+)?(?!(?:everyone|everybody|all|the\s+team|us|you|y'?all|to)\b)[\w'-]+(?:\s+[\w'-]+){0,2}?\s+(?:to\s+)?$/i;
   var STOP_THEN_COND_RE = /^\s*(?:and\s+|then\s+)?(?:once|when|whenever|after|until|till|if|unless|as\s+soon\s+as)\b/i;
   var STOP_SUBORD_RE = /\b(?:when|whenever|once|after|until|till|before|if|unless|as\s+soon\s+as|by\s+the\s+time|so\s+that|in\s+case)\b/i;
-  // Turning the Loop itself off, said to one chat or member (K, 2026-09-26: "or ask it to turn it off specifically").
+  // Turning the Loop itself off, said to one chat or member (a request of 2026-09-26).
   // Only that chat's or member's Loop goes off, whatever its mode.
   var LOOP_OFF_RES = [
     /\b(?:turn|switch|shut|put)\s+(?:the\s+|your\s+|this\s+|that\s+|my\s+|its\s+)?loop\s+off\b/i,
@@ -249,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-01.1';
+  var BUILD = '2026-10-02.1';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -300,8 +296,7 @@
     s.lastFired = 0; s.lastFiredText = ''; s.stalls = 0; s.fires = 0; s.offReason = '';
     s.nudgeLevel = 0; s.shortSince = 0; s.nextNudgeAt = 0; s.restingSince = 0; s.restKind = ''; s.onAt = at;
   }
-  /** forever: on until the user stops it (K, 2026-09-26: "that loop needs an option for infinite/until i stop it or
-   *  stop the agent (the stop button) or ask it to turn it off specifically"). No hold, no rest, no giving up. */
+  /** forever: on until the user stops it (a request of 2026-09-26). No hold, no rest, no giving up. */
   function setOn(t, on, why, byUser, forever) {
     var s = state(t);
     var was = s.on;
@@ -844,9 +839,7 @@
     return 'Last changed by ' + m.who + ' at ' + hhmm(m.at) + (m.note ? ': ' + m.note.replace(/[.\s]+$/, '') : '') + '.';
   }
 
-  // Notices at the top of the window. K, 2026-09-25: "the notifications to the user that pop up at
-  // the top of the ui should tell the user which chat/team that occurred in. clicking the popup
-  // should take you to the conversation". Each notice about a Loop names its team and member, or
+  // Notices at the top of the window. a request of 2026-09-25. Each notice about a Loop names its team and member, or
   // its chat, on its first line, and a click opens that page (and brings the member's column into
   // view). AionUi's own notices are replies to what you just did on the page you are on; the one
   // background notice it has (cross-conversation messages looping) already names both chats.
@@ -939,7 +932,7 @@
 
   // ---------------------------------------------------------------- Antigravity sign-in (patch 0008)
 
-  // K, 2026-09-24: "our users aren't going to know how to or want to open a terminal ... in the ui".
+  // a request of 2026-09-24.
   // AionDX's agy wrapper (patches\0008-agy-signin) signs Antigravity in from a chat turn: it opens
   // Google's sign-in in the browser and writes aiondx.agy.signin = {state, message, at} to the
   // store. While that says "waiting", this panel says so, and takes the code the sign-in page shows
@@ -1019,7 +1012,7 @@
 
   // ---------------------------------------------------------------- AionDX accent (patch 0009)
 
-  // K, 2026-09-25: "make the dividing lines accent colors (and configurable in settings)". The
+  // a request of 2026-09-25. The
   // AionDX Dark and Light themes (patches\0009-identity\themes.js, in AionUi's own Settings >
   // Appearance gallery) read --aiondx-accent. This adds an "AionDX accent" row under that gallery:
   // swatches, a custom colour, and "accent dividing lines". The choice is kept in the settings
@@ -1040,8 +1033,7 @@
     var n = parseInt(m[1], 16);
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
-  // Background colours (K, 2026-09-26: "I want to give the user the ability to change the background
-  // color for both light and dark modes"). The colour you pick is the app's backdrop (--bg-base); the
+  // Background colours (a request of 2026-09-26). The colour you pick is the app's backdrop (--bg-base); the
   // other surfaces step away from it the way AionDX Dark and Light step from theirs: toward white in dark
   // mode, toward black in light mode, by the percentages below. They override whichever theme is active
   // in that mode, stock or AionDX, through the tokens every AionUi theme shares plus Arco's own.
@@ -1262,8 +1254,7 @@
 
   // ---------------------------------------------------------------- the context ring's colours (2026-10-01)
 
-  // K, 2026-10-01: "context meter seems to be based on my color, but the wheel should 1. be configurable 2. have multiple
-  // color zones, defaulting to blue for low context usage, green, yellow, orange, then red". AionUi's ring
+  // a request of 2026-10-01. AionUi's ring
   // (components/agent/ContextUsageIndicator.tsx) is the accent colour until 70%, then amber, then red above 90%. AionDX
   // reads how far the ring is filled from its stroke-dashoffset and paints its progress circle with the zone colour
   // (an inline style beats the stroke attribute React writes). Five zones, each starting at a percentage of the context
@@ -1345,8 +1336,7 @@
 
   // ---------------------------------------------------------------- chat colours (build 2026-09-26.3)
 
-  // K, 2026-09-26: "want the ability to change the color of each chat bubble, and all chat types should be
-  // seperated. i want the ability to make my chat bubbles different colors from any agent", and "color changes
+  // a request of 2026-09-26, and "color changes
   // should be accessible by right-clicking any item and getting sent directly to it's color control panel
   // section of the settings". His answers: a colour per agent and per team member ("be able to set team agent
   // colors and their chat color helps establish the identity"); controls of their own for his typed messages,
@@ -1777,8 +1767,7 @@
 
   // ---------------------------------------------------------------- MCP, seen and switched (build 2026-09-26.3)
 
-  // K, 2026-09-26: "is MCP fully configurable and transparent to agents working in AIonDX? If not, we need to make
-  // it so"; agents change servers freely and he sees each change. Research:
+  // a request of 2026-09-26; agents change servers freely and he sees each change. Research:
   // ! LLM Files\Research\2026-09-26_mcp-configurable-and-transparent.md. Agents change AionUi's MCP list with the
   // Loop tool's mcp_set (patch 0007 1.5.0), which logs each change to aiondx.mcp.log; this window announces each one
   // with the agent's name, linked to its chat. Settings > Tools gets an On/Off switch per server: AionUi 2.2.2 shows
@@ -2108,8 +2097,7 @@
     var lefts = msgs.filter(function (m) { return m.position === 'left'; });
     // The account is out of usage: nothing sent now can be answered, and each nudge only draws another "limit reached".
     // The usage tap records which window is rejected and when it resets; wait for that, then resume the agent once.
-    // K, 2026-10-01: "the loops don't seem to recognize limits being hit, so it just sits there and prompts the
-    // 'limit reached' messages".
+    // a request of 2026-10-01.
     var lim = accountLimit(convId);
     if (lim) {
       if (s.limitUntil !== lim.until) { s.limitUntil = lim.until; s.limitDone = 0; save(t, s); }
@@ -2309,7 +2297,7 @@
     if (rs.err === 401 || rs.err === 403 || rs.err === 404) { if (s.on) setOn(t, false, 'team status check failed (' + rs.err + ')'); return; }
     if (rs.err || !rs.data) return;
     // A team with no session (every team after an AionUi restart) is not started by the Loop.
-    // K, 2026-09-25: "opening a team chat still immediately starts the team": the Loop's nudge
+    // a request of 2026-09-25: the Loop's nudge
     // was the send that started it (any send runs ensure_session_inner, which also drains the
     // lead's mailbox; see P-011). The team starts when someone sends it a message, and the Loop
     // carries on from there.
@@ -2568,13 +2556,16 @@
     // AionUi sends on it, so keyCode 229 alone no longer stops these checks.
     document.addEventListener('compositionstart', function () { composingNow = true; }, true);
     document.addEventListener('compositionend', function () { composingNow = false; }, true);
-    // The agent's Stop button (K, 2026-09-26: "until i stop it or stop the agent (the stop button)"): that chat's or
+    // The agent's Stop button (a request of 2026-09-26): that chat's or
     // member's Loop goes off, whatever its mode, so it does not start the agent again straight after.
     document.addEventListener('click', function (ev) {
       var b = ev.target && ev.target.closest ? ev.target.closest('.sendbox-stop-button') : null;
       if (!b || b.disabled || disabled()) return;
       var t = targetOf(b);
-      if (!t || !state(t).on) return;
+      if (!t) return;
+      // First, before AionUi's own handler cancels the turn: the draft box must not send its next message when it ends.
+      holdDraftBox(b, t);
+      if (!state(t).on) return;
       setOn(t, false, 'you pressed Stop', true);
       notify(t, 'Loop off for {who}: you pressed Stop.', '');
     }, true);
@@ -2596,9 +2587,44 @@
   }
 
 
+  // ---------------------------------------------------------------- Stop must stop (2026-10-01)
+
+  // a request of 2026-10-01. AionUi's draft box (the queue of messages added with the draft button) has two modes: Manual, which sends
+  // nothing by itself, and Auto, which sends the next message as soon as a turn ends, and a turn the Stop button cancelled ends like
+  // any other (useConversationCommandQueue.ts: the queue drains on turn completion, and handleStop does not pause it). So Stop in
+  // Auto mode stops the agent for the length of one cancel and then starts it on the next queued message. Pressing Stop now also
+  // puts that chat's draft box on Manual, before the cancel goes out; the messages stay in the box, and the mode toggle on the box
+  // puts it back on Auto. For a team member's Stop AionUi already pauses the member (the pause route), so only the box is held.
+  /** The draft box (CommandQueuePanel) that belongs to a message box: found by walking up from the box's panel. */
+  function draftBoxOf(node) {
+    var el = node && node.closest ? (node.closest('.sendbox-panel') || node) : node;
+    for (var i = 0; el && i < 8; i++, el = el.parentElement) {
+      var list = el.querySelector && el.querySelector('[data-command-queue-list]');
+      if (list) return list;
+      if (el.hasAttribute && el.hasAttribute('data-slot-id')) break;   // a team column ends the search: another column's box is not ours
+    }
+    return null;
+  }
+  function holdDraftBox(stopButton, t) {
+    var list = draftBoxOf(stopButton);
+    if (!list) return false;
+    var panel = list.closest('[aria-label]') || list.parentElement;
+    var buttons = panel ? panel.querySelectorAll('button') : [];
+    for (var i = 0; i < buttons.length; i++) {
+      var txt = String(buttons[i].textContent || '');
+      var aria = String(buttons[i].getAttribute('aria-label') || '');
+      if (/auto/i.test(txt) && (/send/i.test(txt) || /mode/i.test(aria))) {
+        buttons[i].click();
+        notify(t, 'The draft box for {who} is on Manual send now, so it does not start the agent again after Stop. Its messages are still in it.', '');
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ---------------------------------------------------------------- Claude Code plugins, /plugin (build 2026-09-26.6)
 
-  // A tester, through K, 2026-09-26: "we don't have plugin access here and we need it", then "it seems we should
+  // A tester, through a request of 2026-09-26, then "it seems we should
   // definitely implement /plugins". AionUi's Claude chats offer /reload-plugins but not Claude Code's /plugin browser.
   // "/plugin" or "/plugins" typed in any message box opens this panel instead: the plugins installed and the ones the
   // marketplaces offer, with Install, Enable or Disable, Update and Uninstall, and a marketplace to add. It runs Claude
@@ -2838,7 +2864,7 @@
 
   // ---------------------------------------------------------------- the chat's agent (build 2026-09-26.1)
 
-  // K, 2026-09-25: "if possible, would like the ability to swap models and accounts in a given chat". Then,
+  // a request of 2026-09-25. Then,
   // 2026-09-26: "it seems you built it around my use case specifically. it needs to be omni-compatible. it
   // needs to draw on the same list of available agents (dynamically) as is shown on the 'new chat' screen",
   // and "the account box needs to be put to the left of the model type in the teams multi-lane view ...
@@ -2988,7 +3014,7 @@
 
   /** The box AionUi's model picker sits in: the picker, or the plain wrapper around it, so the control
    *  lands beside it in the header row. A team column wraps the picker in a 140 px box; inside that the
-   *  control and the picker stacked (K, 2026-09-26: "it's cramming vertically and doesn't fit"). */
+   *  control and the picker stacked (a request of 2026-09-26). */
   var slotCache = typeof WeakMap === 'function' ? new WeakMap() : null;
   function pickerSlot(sel) {
     var hit = slotCache && slotCache.get(sel);
@@ -3021,6 +3047,10 @@
       if (r.kind === 'team' && col) {
         var slot = col.getAttribute('data-slot-id');
         t = { kind: 'team', key: 'team:' + r.id + ':' + slot, teamId: r.id, slotId: slot, role: col.getAttribute('data-role') || '' };
+      } else if (r.kind === 'team' && !col) {
+        // AionUi's single view of a team (a request of 2026-10-02): the member in front has no [data-slot-id] column around its header, so its model picker was never found.
+        var sv = singleViewTarget(r.id);
+        if (sv) t = { kind: 'team', key: sv.key, teamId: sv.teamId, slotId: sv.slotId, role: sv.role, single: true };
       } else if (r.kind === 'conv' && !col) {
         t = { kind: 'conv', key: 'conv:' + r.id, convId: r.id };
       }
@@ -3030,7 +3060,7 @@
   }
 
   function renderAccounts() {
-    var live = {};
+    var live = {}, liveUsage = {};
     var list = acctTargets();
     if (list.length) loadAgents(false);
     list.forEach(function (t) {
@@ -3038,14 +3068,19 @@
       if (!convId) { if (t.kind === 'team') memberConversation(t).then(function (r) { if (r && r.convId) schedule(); }, function () {}); return; }
       var info = convInfo[convId];
       if (!info || Date.now() - info.at > CONV_INFO_MS) loadConvInfo(convId);
-      if (!info || !info.agentId || !agentList.at) return;
-      // A team column offers only Claude-to-Claude switches; a solo chat always has new-chat picks.
-      if (t.kind === 'team' && (info.backend !== 'claude' || claudeAgents().length < 2)) return;
+      if (!info) return;
+      // A team column offers only Claude-to-Claude switches; a solo chat always has new-chat picks. A Claude member that is
+      // offered no switch (one Claude agent only, or the lists not read yet) still gets its usage bar, before the model picker.
+      if (!info.agentId || !agentList.at || (t.kind === 'team' && (info.backend !== 'claude' || claudeAgents().length < 2))) {
+        if (info.backend === 'claude') { liveUsage[t.key] = true; placeUsage(t, t.anchor, convId); }
+        return;
+      }
       live[t.key] = true;
+      liveUsage[t.key] = true;
       var el = acctEls[t.key] || (acctEls[t.key] = buildAcctPill(t.key));
       el._t = t;
       el._convId = convId;
-      el.classList.toggle('aiondx-acct--compact', t.kind === 'team');
+      el.classList.toggle('aiondx-acct--compact', t.kind === 'team' && !t.single);
       if (el.parentNode !== t.anchor.parentNode || el.nextSibling !== t.anchor) t.anchor.parentNode.insertBefore(el, t.anchor);
       paintAcct(el, t, convId, info);
       placeUsage(t, el, convId);
@@ -3058,6 +3093,7 @@
       dropUsage(k);
       if (acctMenu && acctMenu._key === k) closeAcctMenu();
     });
+    Object.keys(usageEls).forEach(function (k) { if (!liveUsage[k]) dropUsage(k); });
   }
 
   var ICON_USER = '<svg viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="15" r="8" stroke="currentColor" stroke-width="4"/>' +
@@ -3079,7 +3115,7 @@
   function paintAcct(el, t, convId, info) {
     var cur = chatAgent(convId, info);
     var name = agentName(cur.id);
-    var label = t.kind === 'team' ? '' : shortAgentName(name);
+    var label = t.kind === 'team' && !t.single ? '' : shortAgentName(name);
     var lab = el.querySelector('.aiondx-acct-label');
     if (lab.textContent !== label) lab.textContent = label;
     el.classList.toggle('aiondx-acct--chosen', cur.chosen);
@@ -3360,9 +3396,7 @@
 
   // ---------------------------------------------------------------- Claude usage meter (2026-09-26)
 
-  // K: "i would like to see a usage meter, you can build this infrastructure to only show for claude ... We
-  // should put the usage meter in a skinny bar at the top of the chat window, between the chat name and the
-  // account + the model". AionDX's Claude launcher reads the chat's account windows from Anthropic's rate-limit
+  // a request. AionDX's Claude launcher reads the chat's account windows from Anthropic's rate-limit
   // headers (patches\0002 claude-stream-proxy.js, startUsage) into aiondx.usage.acct.<key>, and which account a
   // chat runs on into aiondx.usage.conv.<conversation id>. Two thin bars, the 5-hour window over the week,
   // with their percentages, sit just left of the agent control; a team column gets the bars alone. A reading
@@ -3461,7 +3495,7 @@
         '<span class="aiondx-usage-bar" data-w="wk"><i></i></span></span><span class="aiondx-usage-text"></span>';
       usageEls[t.key] = el;
     }
-    el.classList.toggle('aiondx-usage--compact', t.kind === 'team');
+    el.classList.toggle('aiondx-usage--compact', t.kind === 'team' && !t.single);
     if (el.parentNode !== beforeEl.parentNode || el.nextSibling !== beforeEl) beforeEl.parentNode.insertBefore(el, beforeEl);
     var five = windowNow(a.five_hour) || { u: 0 }, week = windowNow(a.seven_day) || { u: 0 };
     var stale = Date.now() - (Number(a.at) || 0) > USAGE_STALE_MS;
@@ -3481,7 +3515,7 @@
     if (el.title !== tip) { el.title = tip; el.setAttribute('aria-label', tip); }
     el.setAttribute('data-limit', five.status === 'rejected' || week.status === 'rejected' ? 'reached' : '');
     // Too narrow for the whole meter: it gives way, and hovering the account pill shows the same figures.
-    if (t.kind !== 'team') {
+    if (t.kind !== 'team' || t.single) {
       el.removeAttribute('data-narrow');
       if (tx.scrollWidth > tx.clientWidth + 1) el.setAttribute('data-narrow', '1');
     }
@@ -3542,9 +3576,7 @@
 
   // ---------------------------------------------------------------- drafts that survive closing the app (build 2026-09-26.1)
 
-  // K, 2026-09-26: "i want chats to be saved in the chat box at all times. the app needs soft and hard
-  // caching. it seems to do it well while the app is open, but it should be hard cached consistently
-  // as well, when the app closes". AionUi keeps a composer's draft in memory only (useSendBoxDraft:
+  // a request of 2026-09-26. AionUi keeps a composer's draft in memory only (useSendBoxDraft:
   // a Map behind an SWR key), so closing the app, or a crash, loses it. AionDX keeps two copies of
   // every message box's text: localStorage (aionui.dx.draft.<scope>), written as you type, and the
   // settings store (aiondx.draft.<scope>), written 2 s after you stop typing and when the window hides
@@ -3684,7 +3716,7 @@
   // setup agent, patch 0006), and the AionDX themes (window.__aionDxThemes, from aiondx-themes.js, which
   // patch 0009 writes into the app). AionUi reads its settings once when the window loads, so a first
   // theme install reloads the window once. Recorded in aiondx.provisioned = {v, at, build, did}.
-  // Version 2 (K, 2026-09-26: "We can remove AionCLI, same waste as the butler"): Aion CLI switched off, with the
+  // Version 2 (a request of 2026-09-26): Aion CLI switched off, with the
   // built-in assistants that run on it. A machine set up at version 1 gets only that step.
   var PROVISION_KEY = 'aiondx.provisioned';
   var PROVISION_VERSION = 2;
@@ -3783,17 +3815,16 @@
 
   // ---------------------------------------------------------------- Welcome to AionDX (build 2026-09-26.1)
 
-  // K, 2026-09-26: Antigravity setup should be the first screen, "Welcome to AionDX" / "Please sign up for
-  // a free antigravity key so it can migrate your agent and user preferences from other ui's you may be
-  // using", with an option to skip and have everything configured by an external agent (like Claude via
-  // Claude Desktop), on the same screen as the global options (instructions for every agent) and the
+  // A request of 2026-09-26: Antigravity setup is the first screen ("Welcome to AionDX": sign up for a free Antigravity key so it can
+  // migrate the user's agent and preferences from other apps), with an option to skip and have everything configured by an external
+  // agent (like Claude via Claude Desktop), on the same screen as the global options (instructions for every agent) and the
   // account migration options, all handled by Antigravity. Shown once, after first-run setup, until the
   // user finishes it or picks "Not now"; reopened from Settings > Appearance ("AionDX setup").
   // State: aiondx.welcome = { done, mode: 'antigravity' | 'external' | 'later', at, conv }.
   var WELCOME_KEY = 'aiondx.welcome';
   var AGY_INSTALL = 'irm https://antigravity.google/cli/install.ps1 | iex; & "$env:LOCALAPPDATA\\AionDX\\bin\\aiondx.exe" doctor';
   var welcome = { el: null, step: 0, data: null, agy: null, alt: null, via: null, conv: null, opened: false };
-  // The failsafe (K, 2026-09-26: "make sure antigravity works, failsafe if need be"). The setup skill is in
+  // The failsafe (a request of 2026-09-26). The setup skill is in
   // every AionDX chat, so any working agent can run the setup. When Antigravity is not installed, its
   // sign-in reports failed, or it has not answered 90 s after "Sign in", step 1 offers "Set up with <agent>"
   // for the first working agent in the new-chat list (Claude Code, Codex, Gemini, Qwen, OpenCode, then any).
@@ -3851,7 +3882,7 @@
     var el = welcome.el;
     var text = el ? String(el.querySelector('.aiondx-welcome-prefs').value || '').trim() : '';
     var chosen = WELCOME_OPTIONS.filter(function (o) { var cb = el && el.querySelector('[data-opt="' + o[0] + '"]'); return cb ? cb.checked : o[1]; });
-    // Clearer for Antigravity (K, 2026-09-26: it "made scripts for the tester to run himself"): the same scan and import the
+    // Clearer for Antigravity (a request of 2026-09-26: it had handed a tester scripts to run): the same scan and import the
     // Welcome screen's Import button runs, as two commands, and plainly no work handed back to the user.
     var cmd = mode === 'external' ? '"%LOCALAPPDATA%\\AionDX\\bin\\aiondx.exe"' : 'aiondx';
     var skip = [];
@@ -3916,7 +3947,7 @@
     }
   }
   /** One run at a time per Welcome button: disabled until its work settles, so a second click cannot start
-   *  a second chat (K, September 26th: "i hit it a bunch, it started a bunch of conversations"). */
+   *  a second chat (a request of September 26th). */
   function once(btn, work) {
     if (!btn || btn.disabled) return;
     btn.disabled = true;
@@ -3926,7 +3957,7 @@
       btn.classList.remove('arco-btn-loading');
     });
   }
-  // ---- the one-click setup (K, 2026-09-26: "we want a streamlined 'one-click' ish setup process", Antigravity
+  // ---- the one-click setup (a request of 2026-09-26, Antigravity
   // as the backup "which needs clearer instructions"). The main process runs the setup skill's survey and import
   // (patch 0009, window.aiondxSetup): step 1 looks, "found" lists what it found with a tick box each, one Import
   // copies it all in and gives every agent the instructions, "done" says what happened. No agent, sign-in or
@@ -4139,8 +4170,7 @@
         '<img class="aiondx-welcome-mark" src="./aiondx-mark.svg" alt="">' +
         '<h2 id="aiondx-welcome-title" class="aiondx-welcome-title">' + (oneClick() ? 'Set up with Antigravity' : 'Welcome to AionDX') + '</h2>' +
         '<p class="aiondx-welcome-text">Sign in to Antigravity with your Google account, and it can bring over the agent and user preferences from the other AI apps you use. There is no key to paste: Google\'s sign-in page does it.</p>' +
-        // K, 2026-09-26: "we should explain that antigravity is a free way to ... and it's provided by google at X usage
-        // in Y amount of time ... and that it's all to help you migrate and setup". Google publishes no number for the
+        // a request of 2026-09-26. Google publishes no number for the
         // free plan (antigravity.google/docs/plans: "Meaningful quota, refreshed weekly"; research note of the 26th).
         '<div class="aiondx-welcome-facts">' +
           '<div class="aiondx-welcome-fact"><div class="aiondx-welcome-fact-title">Free with a Google account</div>' +
@@ -4338,13 +4368,8 @@
 
   // ---------------------------------------------------------------- Respond now (rebuilt 2026-10-01)
 
-  // K, 2026-09-26: "a llm often gets backlogged in messages. I would like a way to place my messages at the top of the queue. two ways: a
-  // little tick box in the top right of each message box 'Respond Now' and on messages already sent and unread/queued, a button to the left of
-  // the message that's a lightning bolt ... and has a tooltip". Build 2026-09-26.1 read that as "stop the agent": the tick box and the bolt
-  // cancelled the running turn, or sent a "Respond now: stop what you are doing..." note that only piled onto the queue. K, 2026-10-01: "all
-  // your 'respond now' button does is send another message ... that message just gets piled on right? This is maybe the dumbest implementation
-  // i have ever seen ... seems like the lightning bolt actually stops the agent, that's not what i intended. i want the message to go to the
-  // top of their message queue to be seen next, not stop pending processes".
+  // a request of 2026-09-26. Build 2026-09-26.1 read that as "stop the agent": the tick box and the bolt
+  // cancelled the running turn, or sent a "Respond now: stop what you are doing..." note that only piled onto the queue. a request of 2026-10-01.
   //
   // It is for team columns now, and goes through AionCore patch core-0002 (POST /api/teams/{id}/agents/{slot}/steer):
   //   - tick, then send: the message goes into the member's running turn when its agent takes messages mid-turn (Claude, Codex), which reads
@@ -4466,7 +4491,7 @@
     return b;
   }
 
-  var rnQueued = {};         // member conversation id -> { t, items: [{ bubble: message id in the chat, id: mailbox id }] }
+  var rnQueued = {};         // member key -> { t, items: [{ id: mailbox id, want: its text, at: when it was sent }] }
   /** A tick box in every team message box, and a bolt beside each message of yours that still waits in a member's queue. */
   function renderRespondNow() {
     var liveBoxes = [], liveBolts = [];
@@ -4488,11 +4513,10 @@
       });
       var r = route();
       if (r && r.kind === 'team') {
-        Object.keys(rnQueued).forEach(function (conv) {
-          var q = rnQueued[conv];
-          q.items.forEach(function (it) {
-            var row = document.getElementById('message-' + it.bubble);
-            var qb = row && placeBolt(row, q.t, it.id);
+        Object.keys(rnQueued).forEach(function (key) {
+          var q = rnQueued[key];
+          queuedRows(q).forEach(function (m) {
+            var qb = placeBolt(m.row, q.t, m.id);
             if (qb) liveBolts.push(qb);
           });
         });
@@ -4517,6 +4541,47 @@
     return b;
   }
   function normText(x) { return String(x || '').replace(/\s+/g, ' ').trim(); }
+  /** Where a member's messages are on screen: its column, or the whole page when it is the member in front in the single view. */
+  function rnContainer(t) {
+    var col = null;
+    var cols = document.querySelectorAll('[data-slot-id]');
+    for (var i = 0; i < cols.length; i++) if (cols[i].getAttribute('data-slot-id') === t.slotId) { col = cols[i]; break; }
+    if (col) return col;
+    var sv = singleViewTarget(t.teamId);
+    return sv && sv.slotId === t.slotId ? document : null;
+  }
+  function sameMessage(shown, want) {
+    if (!shown || !want) return false;
+    if (shown === want) return true;
+    // A long message can be shown shortened or with attachment lines around it: the start of both is the same text.
+    var n = Math.min(120, shown.length, want.length);
+    return n >= 40 && shown.slice(0, n) === want.slice(0, n);
+  }
+  /** The rows on screen that are your messages still waiting in this member's queue, matched by their text, so it does not matter how
+   *  far back in the chat they are or which id the page gave the row (a request of 2026-10-02: a message sent in this view keeps the page's own id until the chat is read again, and
+   *  the member's last 40 chat messages, where the old code looked, are a few minutes of its work). Several queued messages with one
+   *  text take the latest bubbles with that text, oldest first. */
+  function queuedRows(q) {
+    var scope = rnContainer(q.t);
+    if (!scope) return [];
+    var rows = [].slice.call(scope.querySelectorAll('[data-testid="message-text-right"]'));
+    if (!rows.length) return [];
+    var texts = rows.map(function (row) {
+      var c = row.querySelector('[data-testid="message-text-content"]');
+      return normText(c ? c.textContent : '');
+    });
+    var used = {}, out = [];
+    // Newest queued message first, taking the newest unused bubble that shows its text.
+    q.items.slice().sort(function (a, b) { return b.at - a.at; }).forEach(function (it) {
+      for (var i = rows.length - 1; i >= 0; i--) {
+        if (used[i] || !sameMessage(texts[i], it.want)) continue;
+        used[i] = true;
+        out.push({ row: rows[i], id: it.id });
+        break;
+      }
+    });
+    return out;
+  }
   /** For team pages, every few seconds: which of your messages each member still has waiting in its queue. */
   async function scanTeamQueues() {
     var r = route();
@@ -4533,21 +4598,12 @@
         for (var i = 0; i < ws.length; i++) {
           var w = ws[i];
           var t = { kind: 'team', key: 'team:' + r.id + ':' + w.slot_id, teamId: r.id, slotId: w.slot_id, role: w.role || '' };
-          var mc = await memberConversation(t);
-          if (!mc.convId) continue;
-          var msgs = (await getMessages(mc.convId, 40)) || [];
-          var used = {}, items = [];
+          var items = [];
           w.queued_foreground_message_ids.forEach(function (mid) {
             var row = byId[mid];
-            if (!row) return;
-            var want = normText(row.content);
-            for (var k = msgs.length - 1; k >= 0; k--) {
-              var m = msgs[k];
-              if (m.position !== 'right' || m.hidden || used[m.id]) continue;
-              if (normText(msgText(m)) === want) { used[m.id] = true; items.push({ bubble: m.id, id: mid }); break; }
-            }
+            if (row) items.push({ id: mid, want: normText(row.content), at: Number(row.created_at) || 0 });
           });
-          if (items.length) next[mc.convId] = { t: t, items: items };
+          if (items.length) next[t.key] = { t: t, items: items };
         }
       }
     } catch (e) {
@@ -4559,8 +4615,7 @@
 
   // ---------------------------------------------------------------- unsend (build 2026-09-25.5)
 
-  // K, 2026-09-25: "want the ability to unsend messages that haven't been read yet ... I mean what's
-  // been sent in chat and unread". A message sent to a Claude chat while it works shows "Unread"
+  // a request of 2026-09-25. A message sent to a Claude chat while it works shows "Unread"
   // until Claude takes it: AionCore writes it straight into Claude's input with the message's msg_id
   // as its uuid, and Claude holds it in its own command queue until its next step. Claude drops a
   // queued message on a cancel_async_message control request naming that uuid (tested live
@@ -4846,8 +4901,7 @@
     // and a bolt to the left of a message still waiting in the queue.
     '.sendbox-panel:has(> .aiondx-rn){padding-top:24px !important}',
     // AionUi's own "Interrupt & send" (team members, while one works and you have typed): the same interrupt as Respond
-    // now, as a wide button between the permission shield and the context meter (K, 2026-09-26: "it's the same thing
-    // as ticking the respond now checkbox, and the button on the bottom takes up a way lot of space"). Found by its
+    // now, as a wide button between the permission shield and the context meter (a request of 2026-09-26). Found by its
     // lightning icon, so any language; AionDX's own controls are left alone.
     '.sendbox-actions .arco-btn:has(.i-icon-lightning):not([class*="aiondx"]){display:none !important}',
     '.aiondx-rn{position:absolute;top:5px;right:14px;z-index:2;display:inline-flex;align-items:center;gap:4px;',
@@ -4962,7 +5016,7 @@
     '@keyframes aiondx-spin{to{transform:rotate(360deg)}}',
     '@media (prefers-reduced-motion:no-preference){.aiondx-loop--busy .aiondx-loop-icon svg{animation:aiondx-spin 1.6s linear infinite}}',
 
-    // The Permission pill, shrunk to its shield (K, 2026-09-24: "taking up ALL THE SPACE").
+    // The Permission pill, shrunk to its shield (a request of 2026-09-24).
     // AionUi's own button and dropdown, restyled only: label and caret hidden, a 28 x 28
     // circle like the loop button. A hover card names the mode instead.
     // AionUi sizes this pill with !important flex rules (flex-basis 0, grow 1, max-width
@@ -5617,7 +5671,7 @@
     by.className = 'aiondx-by';
     box.appendChild(by);
 
-    // No compaction item (K, 2026-10-01: "Compact next context needs to be taken out of the loop menu (should have never been there in the first place").
+    // No compaction item (a request of 2026-10-01).
     // An agent can still ask for a compaction with the Loop tool's compact option; the status line shows it.
 
     menuParts = { onItem: onItem, foreverItem: foreverItem, offItem: offItem, status: status, by: by, ta: ta, hold: holdRow,
@@ -5783,8 +5837,7 @@
 
   // ---------------------------------------------------------------- live agent state
 
-  // K, 2026-09-24: "I would like better indication of when the ai is or isn't engaged. I have
-  // seen the ai actively printing to the chat when the 'processing' bib ... is missing." So the
+  // a request of 2026-09-24 So the
   // chats on screen are checked against the backend every 3 s, independently of the loop:
   // a team member's run-state slot, or a solo chat's conversation status, with fresh output
   // (under 6 s old) as a backstop in case the status lags the stream.
@@ -5945,7 +5998,7 @@
 
   // ---------------------------------------------------------------- schedule send (R-003, 2026-10-01)
 
-  // K, 2026-10-01: "need a 'schedule send' button next to the send to draft box button (should have a timer icon or something)".
+  // a request of 2026-10-01.
   // A round button beside AionUi's draft button holds what is typed in the box and sends it later: in 15 minutes, an hour,
   // three hours, tomorrow at 9:00, or at a time picked. Each is a record in the settings store (aiondx.sched.<id> = { id,
   // scope, text, due, at }), so it survives closing the app and shows in any window. Every window checks every 5 seconds
@@ -6266,8 +6319,7 @@
 
   // ---------------------------------------------------------------- the sidebar's team spinner (R-007, 2026-10-01)
 
-  // K, 2026-10-01: "some of the teams sessions show (in the sidebar) that they are still running (spinning/swirly circle) when no
-  // lane is moving". AionUi spins a team's sidebar icon while the team has an active run (useSiderTeamRunning: accepted, running or
+  // a request of 2026-10-01. AionUi spins a team's sidebar icon while the team has an active run (useSiderTeamRunning: accepted, running or
   // cancelling), taken from run events and refreshed from the run snapshot only at load and on a reconnect. A run can stay open
   // with every member idle or paused, and a missed event leaves it spinning. AionDX asks the team's run-state every 10 seconds for
   // each spinner on screen, and where no member is running, starting or queued the spinner gives way to the team's own icon.
@@ -6307,7 +6359,7 @@
 
   // ---------------------------------------------------------------- links to local files that open outside AionUi (R-014, 2026-10-01)
 
-  // K, 2026-09-27: "Oh, yeah the markdown link just opens it in AionDX. I want external folder links", and 2026-09-26: "allow the llm to
+  // a request of 2026-09-27, and 2026-09-26: "allow the llm to
   // directly/symbolically link a file, basically placing a shortcut icon in chat with label space attached to it". AionUi turns a Markdown
   // link to a local path into a chip (components/Markdown/LocalFileLink.tsx: span[data-local-file-path], a button that opens AionUi's own
   // preview, a copy button), inside the message's open shadow root. AionDX adds a third button to each chip with an absolute path: it opens
@@ -6392,7 +6444,7 @@
 
   // ---------------------------------------------------------------- opening a team does not wake it (P-011)
 
-  // K, 2026-09-24: "teams should not auto-wake just because you open the team's chat." Opening a
+  // a request of 2026-09-24 Opening a
   // team page calls POST /api/teams/{id}/session (useTeamWarmup; TeamPermissionContext calls it
   // too, as a head start before a mode or model change). For a team with no session yet, as after
   // every AionUi restart, that starts one, attaches the lead and queues the lead's unread mailbox
@@ -6431,8 +6483,8 @@
 
   // ---------------------------------------------------------------- opening a chat does not start its agent
 
-  // K, 2026-09-26: agents "touching off on their own or just by viewing the team window", "or chat"; he chose "Don't
-  // start chats on open". Opening a solo chat sends POST /api/conversations/{id}/runtime/ensure from five hooks on
+  // A request of 2026-09-26: agents must not start on their own just because a team window or a chat is viewed ("Don't
+  // start chats on open"). Opening a solo chat sends POST /api/conversations/{id}/runtime/ensure from five hooks on
   // mount (the header model picker, the send box's model and mode hooks, the permission pill, the message warmup),
   // and for Claude, Codex and the other ACP agents that starts the agent's process. Research: ! LLM Files\Research\
   // 2026-09-26_chat-start-on-open.md. The first message starts the agent anyway (AionCore's send builds it), so for an
@@ -6609,8 +6661,7 @@
 
   // ---------------------------------------------------------------- team column scrolling
 
-  // K, 2026-09-24: "when I click into a chat, it automatically scoots my window so that chat is
-  // in the far left column. I want to do the navigating with the side arrows." TeamPage.tsx
+  // a request of 2026-09-24 TeamPage.tsx
   // scrolls a column into view (inline: 'start') whenever it becomes the active member, and
   // clicking into its message box makes it active (TeamChatView onFocus -> switchTab). So a
   // column's scrollIntoView that follows your own press inside that same column is dropped.
@@ -6633,6 +6684,117 @@
     };
   }
 
+  // ---------------------------------------------------------------- hooks for the app's own bundles (patch 0010, build 2026-10-02.1)
+
+  // The AionUi feedback form sent logs, a database summary and a screenshot to AionUi's Sentry project. Patch 0010 sends its open and
+  // submit calls here instead: the AionDX issues page opens in the browser, with what the person typed filled in.
+  var ISSUES_URL = 'https://github.com/Renegade1993/AionDX/issues/new';
+  window.aiondxFeedback = function (opts) {
+    opts = opts || {};
+    var text = String(opts.description || '').slice(0, 1500);
+    var title = String(opts.moduleLabel || opts.module || 'Feedback').slice(0, 80);
+    var url = ISSUES_URL + '?title=' + encodeURIComponent(title) + (text ? '&body=' + encodeURIComponent(text) : '');
+    return postJson('/api/shell/open-external', { url: url }).then(function () { return undefined; }, function () { return undefined; });
+  };
+  /** Install a downloaded update: the main process checks the installer against the release's checksums, runs it silently, and the
+   *  app closes and comes back. Without that bridge the installer is opened as AionUi's own button did. */
+  window.aiondxInstallUpdate = function (file, openIt) {
+    var u = window.aiondxUpdate;
+    if (!u || typeof u.install !== 'function') return openIt();
+    var say = function (m) { toast(m, 'The installer is in your Downloads folder.', null); };
+    toast('Installing the update: AionDX closes, updates and opens again.', '', null);
+    return u.install(file).then(function (r) { if (!r || !r.ok) say('The update was not installed: ' + ((r && r.error) || 'unknown error') + '.'); },
+      function (e) { say('The update was not installed: ' + String(e && e.message || e) + '.'); });
+  };
+
+  // ---------------------------------------------------------------- Ctrl+Z in the message box (build 2026-10-02.1)
+
+  // a request of 2026-10-02. In AionUi's box Chromium records one undo
+  // step per character: the page changes the DOM beside the box on every keystroke (React redraws the highlight layer, and rewrites the
+  // textarea's own child text), and Chromium ends its typing command whenever the DOM changes under it. A sentence needed as many
+  // presses of Ctrl+Z as it had characters (measured in the built app, tools\probe-undo*.js: 43 presses for 43 characters; 1 for a
+  // bare textarea). So the two message boxes (a chat's, the new-chat page's) keep their own history, taken from the input events:
+  // typing and deleting in one burst (no pause over a second) is one step, a paste, a cut or a line break is its own, Ctrl+Z steps
+  // back, Ctrl+Y and Ctrl+Shift+Z forward. A change the page makes itself (a send emptying the box, a draft put back, a restore) starts
+  // a new history from that text, so Ctrl+Z never puts back what was already sent.
+  var UNDO_PAUSE_MS = 1000;
+  var UNDO_LIMIT = 300;
+  var undoHist = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function undoBox(el) {
+    return !!(el && el.tagName === 'TEXTAREA' && el.closest && el.closest('[data-testid="sendbox-input"], [data-testid="guid-input"]'));
+  }
+  function undoKind(type) {
+    if (/^insert(Text|CompositionText|ReplacementText)$/.test(type)) return 'ins';
+    if (/^delete(ContentBackward|ContentForward|WordBackward|WordForward|SoftLineBackward|SoftLineForward)$/.test(type)) return 'del';
+    return 'other';
+  }
+  function undoState(ta) {
+    var h = undoHist.get(ta);
+    if (!h) { h = { stack: [{ v: ta.value, s: ta.selectionStart, e: ta.selectionEnd }], i: 0, at: 0, kind: '', applying: false }; undoHist.set(ta, h); }
+    return h;
+  }
+  /** What the history last knew against what the box holds: a difference is the page's own change, and starts the history again. */
+  function undoSync(ta) {
+    var h = undoState(ta);
+    if (h.stack[h.i].v !== ta.value) { h.stack = [{ v: ta.value, s: ta.selectionStart, e: ta.selectionEnd }]; h.i = 0; h.at = 0; h.kind = ''; }
+    return h;
+  }
+  function undoApply(ta, h, to, how) {
+    var snap = h.stack[to];
+    h.applying = true;
+    try {
+      var desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+      if (desc && desc.set) desc.set.call(ta, snap.v); else ta.value = snap.v;
+      var ev;
+      try { ev = new InputEvent('input', { bubbles: true, inputType: how }); } catch (e) { ev = new Event('input', { bubbles: true }); }
+      ta.dispatchEvent(ev);
+      try { ta.setSelectionRange(snap.s, snap.e); } catch (e) {}
+    } finally { h.applying = false; }
+    h.i = to;
+    h.at = 0;
+    h.kind = '';
+  }
+  function watchUndo() {
+    if (!undoHist) return;
+    // Before an edit: the text as it stands is the starting point if the page changed it since the last one.
+    window.addEventListener('beforeinput', function (ev) {
+      if (undoBox(ev.target) && ev.inputType !== 'historyUndo' && ev.inputType !== 'historyRedo') undoSync(ev.target);
+    }, true);
+    window.addEventListener('input', function (ev) {
+      var ta = ev.target;
+      if (!ev.inputType || !undoBox(ta)) return;        // an input event the page made up (no inputType) is a change it made itself
+      if (ev.inputType === 'historyUndo' || ev.inputType === 'historyRedo') return;
+      var h = undoState(ta);
+      if (h.applying) return;
+      var kind = undoKind(ev.inputType);
+      var now = Date.now();
+      var snap = { v: ta.value, s: ta.selectionStart, e: ta.selectionEnd };
+      if (h.i < h.stack.length - 1) h.stack.length = h.i + 1;                      // an edit after an undo ends the redo line
+      if (kind !== 'other' && kind === h.kind && now - h.at < UNDO_PAUSE_MS && h.i > 0) h.stack[h.i] = snap;   // the same burst
+      else {
+        h.stack.push(snap);
+        if (h.stack.length > UNDO_LIMIT) h.stack.shift();
+        h.i = h.stack.length - 1;
+      }
+      h.kind = kind;
+      h.at = now;
+    }, true);
+    window.addEventListener('keydown', function (ev) {
+      if (ev.defaultPrevented || ev.isComposing || composingNow || ev.altKey || !(ev.ctrlKey || ev.metaKey)) return;
+      var k = String(ev.key || '').toLowerCase();
+      var undo = k === 'z' && !ev.shiftKey;
+      var redo = (k === 'z' && ev.shiftKey) || (k === 'y' && !ev.shiftKey);
+      if (!undo && !redo) return;
+      var ta = ev.target;
+      if (!undoBox(ta) || disabled()) return;
+      var h = undoSync(ta);
+      var to = undo ? h.i - 1 : h.i + 1;
+      ev.preventDefault();                                   // the browser's own history is the per-character one
+      if (to < 0 || to >= h.stack.length) return;            // nothing further that way
+      undoApply(ta, h, to, undo ? 'historyUndo' : 'historyRedo');
+    }, true);
+  }
+
   function start() {
     ensureStyle();
     themePrefs = loadThemePrefs();
@@ -6640,6 +6802,7 @@
     watchSends();
     watchDrafts();
     watchRespondNow();
+    watchUndo();
     watchPermissionHover();
     watchAcctHover();
     watchLocalLinks();

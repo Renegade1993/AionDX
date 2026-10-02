@@ -1,8 +1,6 @@
 // aiondx-loop.cs: AionDX patch 0007, the Loop as an agent tool.
 //
-// K, 2026-09-24: "the AionDX system should pass in information on how to use it (however it
-// normally passes in control schemas), because we should both be using the same buttons and tools
-// (and if it's using a tool i want to see visual feedback of it)."
+// a request of 2026-09-24
 //
 // A stdio MCP server: JSON-RPC 2.0, one message per line on stdin and stdout. It is registered
 // once as an ordinary MCP server row in AionUi (POST /api/mcp/servers), so every agent backend
@@ -100,7 +98,7 @@ namespace AionDx
 
     static class Program
     {
-        const string Version = "1.10.1";
+        const string Version = "1.12.0";
         const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aionui-dx.js HOLD_MIN)
         const long HoldMax = 240;      // aionui-dx.js HOLD_MIN_MAX
         const long ResumeWarmMaxMs = 50 * 60000;   // aionui-dx.js RESUME_WARM_MAX_MS
@@ -211,7 +209,7 @@ namespace AionDx
             "until a time, set resume_at to that time: the Loop keeps you warm while that is cheaper and sends one " +
             "nudge saying the time has come, since nothing else tells you. The user sees every change " +
             "you make on the button. A team lead also has priority_send: a message to a teammate that goes ahead of " +
-            "everything queued for it without stopping its current turn. The user's MCP servers and their credentials " +
+            "everything queued for it without stopping its current turn, and agent_stop: the real way to stop a teammate (pause, Loop off, process restart); team_interrupt_agent and team_shutdown_agent are not stops. The user's MCP servers and their credentials " +
             "are in the AionDX MCP file and AionUi's list, loaded into no chat: when the user asks you to use one, " +
             "mcp_tools lists its tools and mcp_call calls one, connecting for that call only. The user's GitHub needs no MCP " +
             "server: git on this PC is signed in by itself; github_status says as whom and how to push, and github_create_repo " +
@@ -304,6 +302,23 @@ namespace AionDx
                             { "member", Prop("string", "The teammate: its name, slot id or conversation id.") },
                             { "message", Prop("string", "What to tell it. Up to 8000 characters. Both member and message are needed.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "agent_stop" },
+                    { "title", "Stop a teammate" },
+                    { "description",
+                        "Team lead only. Actually stops one teammate: it pauses the member (AionCore's pause: its running turn is cancelled and it takes " +
+                        "no new work, queued or sent by other agents, until the user writes to it), switches its Loop off, and then restarts its agent " +
+                        "process so nothing it started in the background (monitors, background shells, scheduled wake-ups) can carry on. Use it when a " +
+                        "teammate must stop and stay stopped. team_interrupt_agent cancels the turn but sends the replacement message you give it, which " +
+                        "starts the next turn, and team_shutdown_agent waits for the teammate to agree; neither is a stop. The user sees every step. " +
+                        "keep_process: true skips the restart (the member keeps its process and its context loaded)." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "member", Prop("string", "The teammate: its name, slot id or conversation id.") },
+                            { "reason", Prop("string", "Why, in a few words. Shown to the user.") },
+                            { "keep_process", Prop("boolean", "true pauses and switches the Loop off but does not restart the agent process.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", true }, { "idempotentHint", true }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
                     { "name", "mcp_status" },
                     { "title", "MCP servers" },
@@ -429,6 +444,7 @@ namespace AionDx
                 if (name == "loop_status") text = LoopStatus(a);
                 else if (name == "loop_set") text = LoopSet(a);
                 else if (name == "priority_send") text = PrioritySend(a);
+                else if (name == "agent_stop") text = AgentStop(a);
                 else if (name == "mcp_status") text = McpStatus(a);
                 else if (name == "mcp_set") text = McpSet(a);
                 else if (name == "mcp_tools") text = McpToolsText(Str(a, "server"), Str(a, "tool"), false, TimeoutArg(a, 60) * 1000);
@@ -442,12 +458,13 @@ namespace AionDx
                     isError = r.Item2;
                     text = isError ? "tool error" : "ok";
                 }
-                else throw new ToolError("Unknown tool: " + name + ". This server has loop_status, loop_set, priority_send, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo and usage_status.");
+                else throw new ToolError("Unknown tool: " + name + ". This server has loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo and usage_status.");
             }
             catch (ToolError e) { text = e.Message; isError = true; content = null; }
             catch (Exception e) { text = "The Loop tool failed: " + e.Message; isError = true; content = null; }
             Log((Ident != null ? "conv=" + Ident.ConvId + " " : "") + name + (isError ? " error: " + OneLine(text) : " ok") +
                 (name == "loop_set" ? " args=" + OneLine(Json.Serialize(Redact(a))) : "") +
+                (name == "agent_stop" ? " member=" + OneLine(Str(a, "member") ?? "") : "") +
                 (name == "priority_send" ? " member=" + OneLine(Str(a, "member") ?? "") + " chars=" + (Str(a, "message") ?? "").Length : "") +
                 (name == "mcp_set" ? " action=" + OneLine(Str(a, "action") ?? "") + " server=" + OneLine(Str(a, "name") ?? "") : "") +
                 (name == "mcp_tools" || name == "mcp_call" ? " server=" + OneLine(Str(a, "server") ?? "") + " tool=" + OneLine(Str(a, "tool") ?? "") : ""));
@@ -464,10 +481,12 @@ namespace AionDx
             "  aiondx loop status [--member NAME|all]\n" +
             "  aiondx loop set [--on|--off] [--until-stopped] [--message TEXT] [--hold MINUTES] [--resume-at TIME] [--resume-message TEXT] [--compact] [--note TEXT] [--member NAME|all]\n" +
             "  aiondx priority --member NAME --message TEXT   (team lead) a message that goes ahead of the teammate's queue\n" +
+            "  aiondx stop --member NAME [--reason TEXT] [--keep-process]   (team lead) really stop a teammate: pause it, Loop off, restart its process\n" +
             "  aiondx mcp list|tools|call|add|update|remove|test|enable|disable|status ...   the user's MCP servers (aiondx mcp help)\n" +
             "  aiondx setup scan | apply --all ...   bring the other AI apps' setup into AionDX (aiondx setup help)\n" +
             "  aiondx github [status | repos | create NAME [--public]]   the user's GitHub, through git's own sign-in (aiondx github help)\n" +
             "  aiondx usage [--all]        your Claude account's 5-hour and weekly usage, resets, and whether a limit is reached\n" +
+            "  aiondx migrate detect|run|backup|verify ...   move from AionUi to AionDX: back up the chats, remove AionUi, check them (aiondx migrate help)\n" +
             "--on and --off switch the Loop; --until-stopped (only when the user asks for it) keeps it on until the user stops it, " +
             "with no hold and no rest, and only the user's own request ends it (--until-stopped=false ends that mode); " +
             "--message sets the continue message (\"\" restores the default); " +
@@ -721,7 +740,7 @@ namespace AionDx
 
         // ------------------------------------------------------------------ Claude usage for the agents (1.10.0)
         //
-        // K, October 1st, 2026: "a top priority is the usage information passed into 1. the ui, and 2. the agents". The
+        // a request of October 1st, 2026. The
         // numbers come from Claude's own traffic: AionDX's launcher (patch 0002) starts every Claude session behind a
         // loopback tap that reads the anthropic-ratelimit-unified-* headers of the answers and writes
         //   aiondx.usage.acct.<account key> = { label, at, status, five_hour: {u, reset, status}, seven_day: {...} }
@@ -872,8 +891,7 @@ namespace AionDx
 
         // ------------------------------------------------------------------ GitHub, through git's own sign-in (1.9.0)
         //
-        // K, 2026-09-26: "can you make the mcp easier to find for my llms? that way when i say 'hey go push this to my
-        // github' they aren't lost". This PC's git signs in to GitHub through Git Credential Manager (the system git
+        // a request of 2026-09-26. This PC's git signs in to GitHub through Git Credential Manager (the system git
         // config's credential.helper is manager): the sign-in the user's other repositories already push with, so a push
         // needs no token and no MCP server. What an agent could not do on its own was find that out, list the user's
         // repositories, or make a new one. `aiondx github` and the github_status and github_create_repo tools do those
@@ -1130,8 +1148,8 @@ namespace AionDx
 
         // ------------------------------------------------------------------ the setup, for an agent (1.7.0)
         //
-        // K, 2026-09-26: Antigravity "made scripts for the tester to run himself....this is not what we intended....we want a
-        // streamlined 'one-click' ish setup process", with Antigravity as the backup "which needs clearer instructions".
+        // A request of 2026-09-26: a streamlined one-click setup, with Antigravity as the backup, which needs clear instructions
+        // (it had handed a tester scripts to run).
         // The Welcome screen's Import runs the setup skill's survey.js and apply.js in AionDX's main process; these two
         // commands run the same scripts for an agent, so the backup follows the same steps with nothing to improvise.
         // They need no Node.js: without it the scripts run on AionDX's (or AionUi's) own Electron as Node.
@@ -1259,6 +1277,31 @@ namespace AionDx
             if (args[0] == "setup") return SetupCli(args, o);
             if (args[0] == "github") return GitHubCli(args, o);
             if (args[0] == "usage") return UsageCli(args, o);
+            if (args[0] == "migrate") return MigrateCli(args, o);
+            if (args[0] == "stop")
+            {
+                var sa = new Dictionary<string, object>();
+                try
+                {
+                    for (int i = 1; i < args.Length; i++)
+                    {
+                        var x = args[i];
+                        string inline = null;
+                        int eq = x.IndexOf('=');
+                        if (x.StartsWith("--") && eq > 0) { inline = x.Substring(eq + 1); x = x.Substring(0, eq); }
+                        if (x == "--member") sa["member"] = inline ?? Next(args, ref i, x);
+                        else if (x == "--reason") sa["reason"] = inline ?? Next(args, ref i, x);
+                        else if (x == "--keep-process") sa["keep_process"] = inline == null || inline != "false";
+                        else throw new ToolError("Unknown option " + args[i] + ".\n" + CliHelp);
+                    }
+                    string text = AgentStop(sa);
+                    o.WriteLine(text.TrimEnd());
+                    Log((Ident != null ? "conv=" + Ident.ConvId + " " : "") + "cli stop ok member=" + OneLine(Str(sa, "member") ?? ""));
+                    return 0;
+                }
+                catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+                catch (Exception e) { o.WriteLine("The stop failed: " + e.Message); return 1; }
+            }
             if (args[0] == "priority")
             {
                 var pa = new Dictionary<string, object>();
@@ -2111,7 +2154,7 @@ namespace AionDx
         // A team lead, in its team's log (September 26th): "is there value in a lighter-weight 'priority'
         // flag on team_send_message itself for messages that genuinely cannot wait (a stop instruction, a
         // correction to something actively wrong), so the lead does not need to reach for a full
-        // turn-interrupt just to avoid the queue-order problem?" K: "get on it. it's requests are top priority".
+        // turn-interrupt just to avoid the queue-order problem?" a request.
         // AionCore's coordinator serves a teammate's queue by lane: foreground (the user's messages) first,
         // then control, directed (agents' team_send_message) and background (aionui-team work_coordinator,
         // tests.rs priority_lanes_claim_foreground_then_control_then_directed_then_background). The user's route
@@ -2142,6 +2185,597 @@ namespace AionDx
             sb.Append("Sent to ").Append(t.Name ?? t.SlotId).Append(" as a priority message. It goes ahead of everything queued for it and is the next thing it reads")
               .Append(busy ? " when the turn it is in ends (to stop that turn now, use team_interrupt_agent)" : "").Append(".\n");
             if (w != null) sb.Append(QueueLine(t, w));
+            return sb.ToString();
+        }
+
+        // ------------------------------------------------------------------ moving from AionUi to AionDX (2026-10-01, 1.12.0)
+
+        // a request of 2026-10-01. AionDX is AionUi's own app with patches, and it keeps its chats, settings and
+        // agents in the same folder, %APPDATA%\AionUi. Moving therefore means taking the AionUi program off the PC and leaving that
+        // folder where it is. The one risk is the removal touching the folder, so the parts that matter (the chats database, the
+        // settings, the custom assistants) are copied first and checked, AionUi's own uninstaller is run silently (it keeps app data
+        // unless it was built to delete it; AionUi's electron-builder config does not), and the database is checked again afterwards.
+        // The installer (installer\aiondx.iss) asks first and runs `aiondx migrate run`; the same command works from a shell.
+        //
+        //   aiondx migrate detect                       is AionUi here, where, which version, what is in its data folder
+        //   aiondx migrate run [--no-backup]            back up, remove AionUi, check the chats are intact
+        //   aiondx migrate backup --to DIR              only the backup
+        //   aiondx migrate verify --backup DIR          compare the data folder with a backup
+        // A machine-wide AionUi (C:\Program Files) needs an administrator: the removal step runs once more as an elevated copy of this
+        // program (one Windows prompt); declining it leaves AionUi where it was and nothing else changed.
+
+        sealed class AionUiInstall { public string Dir, Version, Scope, Uninstaller, UninstallArgs, Source; }
+
+        static System.IO.StreamWriter MOut;
+        static string MLogFile;
+
+        static void MSay(string line)
+        {
+            try { if (MOut != null) MOut.WriteLine(line); } catch (Exception) { }
+            if (MLogFile != null)
+            {
+                try { File.AppendAllText(MLogFile, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") + " [migrate] " + line + "\n", new UTF8Encoding(false)); } catch (Exception) { }
+            }
+            Log("migrate: " + line);
+        }
+
+        static string MOpt(Dictionary<string, string> o, string key) { string v; return o.TryGetValue(key, out v) ? v : null; }
+
+        static Dictionary<string, string> MParse(string[] args, int from)
+        {
+            var o = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = from; i < args.Length; i++)
+            {
+                string a = args[i];
+                if (!a.StartsWith("--")) throw new ToolError("Unexpected \"" + a + "\".\n" + MigrateHelp);
+                string k = a.Substring(2);
+                int eq = k.IndexOf('=');
+                if (eq > 0) { o[k.Substring(0, eq)] = k.Substring(eq + 1); continue; }
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) { o[k] = args[++i]; }
+                else o[k] = "true";
+            }
+            return o;
+        }
+
+        const string MigrateHelp =
+            "Usage:\n" +
+            "  aiondx migrate detect [--dir DIR] [--data DIR]       find AionUi and say what is in its data folder\n" +
+            "  aiondx migrate run [--no-backup] [--backup-dir DIR] [--no-elevate] [--log FILE] [--result FILE]\n" +
+            "                                                       back up the chats and settings, remove AionUi, check they are intact\n" +
+            "  aiondx migrate backup --to DIR [--data DIR]          copy the chats database, settings and custom assistants\n" +
+            "  aiondx migrate verify --backup DIR [--data DIR]      compare the data folder with a backup\n" +
+            "The data folder is %APPDATA%\\AionUi (--data or AIONDX_AIONUI_DATA to point elsewhere). Exit codes for run: 0 moved, 2 AionUi not found, " +
+            "3 the administrator prompt was declined, 4 AionUi is running, 5 the backup failed (nothing was removed), 6 the removal failed, " +
+            "7 the chats database changed during the removal (the backup, if one was taken, is named).";
+
+        static string AionUiData(string given)
+        {
+            if (!string.IsNullOrEmpty(given)) return given;
+            string env = Environment.GetEnvironmentVariable("AIONDX_AIONUI_DATA");
+            if (!string.IsNullOrEmpty(env)) return env;
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AionUi");
+        }
+
+        static string MigrateDb(string data) { return Path.Combine(data, @"aionui\aionui-backend.db"); }
+
+        static void ParseUninstallString(string us, out string exe, out string args)
+        {
+            exe = null; args = "";
+            if (string.IsNullOrEmpty(us)) return;
+            us = us.Trim();
+            if (us.StartsWith("\""))
+            {
+                int q = us.IndexOf('"', 1);
+                if (q > 0) { exe = us.Substring(1, q - 1); args = us.Substring(q + 1).Trim(); }
+                return;
+            }
+            int e = us.ToLowerInvariant().IndexOf(".exe", StringComparison.Ordinal);
+            if (e > 0) { exe = us.Substring(0, e + 4); args = us.Substring(e + 4).Trim(); }
+        }
+
+        static AionUiInstall InstallFrom(string exe, string args, string loc, string version, string hiveScope, string source)
+        {
+            string dir = !string.IsNullOrEmpty(loc) && Directory.Exists(loc) ? loc : (exe != null ? Path.GetDirectoryName(exe) : null);
+            // A registry entry for a program that is gone is not an install.
+            if (dir == null || !File.Exists(Path.Combine(dir, "AionUi.exe"))) return null;
+            var i = new AionUiInstall { Dir = dir, Source = source };
+            string u = exe != null && File.Exists(exe) ? exe : Path.Combine(dir, "Uninstall AionUi.exe");
+            i.Uninstaller = File.Exists(u) ? u : null;
+            string a = (args ?? "").ToLowerInvariant();
+            i.Scope = a.Contains("/allusers") ? "machine" : a.Contains("/currentuser") ? "user" : hiveScope;
+            i.UninstallArgs = i.Scope == "machine" ? "/allusers" : "/currentuser";
+            i.Version = version;
+            if (string.IsNullOrEmpty(i.Version))
+            {
+                try { i.Version = System.Diagnostics.FileVersionInfo.GetVersionInfo(Path.Combine(dir, "AionUi.exe")).ProductVersion; } catch (Exception) { i.Version = ""; }
+            }
+            return i;
+        }
+
+        /** AionUi's install: the one named (--dir), else the Windows uninstall list (all users, then this user), else the usual folders. */
+        static AionUiInstall FindAionUi(string dirGiven, string uninstallerGiven)
+        {
+            if (!string.IsNullOrEmpty(dirGiven))
+                return InstallFrom(uninstallerGiven, "", dirGiven, null, dirGiven.IndexOf("Program Files", StringComparison.OrdinalIgnoreCase) >= 0 ? "machine" : "user", "given");
+            var hives = new[] { Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryHive.CurrentUser };
+            var views = new[] { Microsoft.Win32.RegistryView.Registry64, Microsoft.Win32.RegistryView.Registry32 };
+            foreach (var hive in hives)
+            {
+                foreach (var view in views)
+                {
+                    try
+                    {
+                        using (var b = Microsoft.Win32.RegistryKey.OpenBaseKey(hive, view))
+                        using (var k = b.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"))
+                        {
+                            if (k == null) continue;
+                            foreach (var name in k.GetSubKeyNames())
+                            {
+                                using (var s = k.OpenSubKey(name))
+                                {
+                                    if (s == null) continue;
+                                    var dn = s.GetValue("DisplayName") as string;
+                                    if (dn == null || !dn.Equals("AionUi", StringComparison.OrdinalIgnoreCase)) continue;
+                                    string exe, args;
+                                    ParseUninstallString(s.GetValue("UninstallString") as string, out exe, out args);
+                                    var found = InstallFrom(exe, args, s.GetValue("InstallLocation") as string, s.GetValue("DisplayVersion") as string,
+                                        hive == Microsoft.Win32.RegistryHive.LocalMachine ? "machine" : "user", "the Windows uninstall list");
+                                    if (found != null) return found;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception) { }
+                }
+            }
+            var folders = new[] {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "AionUi"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Programs\AionUi") };
+            foreach (var f in folders)
+            {
+                var found = InstallFrom(null, "", f, null, f.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), StringComparison.OrdinalIgnoreCase) ? "machine" : "user", "its usual folder");
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        /** AionUi is running when AionUi.exe is, or a program from its folder (its AionCore, its agents). */
+        static int AionUiRunning(string dir)
+        {
+            int n = 0;
+            string d = dir == null ? null : dir.TrimEnd('\\') + "\\";
+            foreach (var p in System.Diagnostics.Process.GetProcesses())
+            {
+                try
+                {
+                    bool named = p.ProcessName.Equals("AionUi", StringComparison.OrdinalIgnoreCase);
+                    string path = null;
+                    try { path = p.MainModule.FileName; } catch (Exception) { path = null; }
+                    // A program from this install's folder, or an AionUi whose folder cannot be read (counted: better to ask to close it).
+                    if (path != null ? (d != null && path.StartsWith(d, StringComparison.OrdinalIgnoreCase)) : named) n++;
+                }
+                catch (Exception) { }
+                finally { p.Dispose(); }
+            }
+            return n;
+        }
+
+        static bool IsAdmin()
+        {
+            try { return new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator); }
+            catch (Exception) { return false; }
+        }
+
+        static string Hex(byte[] b) { var sb = new StringBuilder(); foreach (var x in b) sb.Append(x.ToString("x2")); return sb.ToString(); }
+
+        static string HashFile(string path)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                return Hex(sha.ComputeHash(f));
+        }
+
+        /** Copy a file, returning the SHA-256 of what was read. Shared read, so a database a stopped program left open is still readable. */
+        static string CopyHashed(string src, string dst)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(dst));
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var fi = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var fo = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                var buf = new byte[4 * 1024 * 1024];
+                int n;
+                while ((n = fi.Read(buf, 0, buf.Length)) > 0) { sha.TransformBlock(buf, 0, n, null, 0); fo.Write(buf, 0, n); }
+                sha.TransformFinalBlock(new byte[0], 0, 0);
+                return Hex(sha.Hash);
+            }
+        }
+
+        // What a move must not lose: the chats database (and its journal files), the settings, the custom assistants and the app's own
+        // preferences. Caches, logs and the older copies AionUi's own tools left beside the database are not copied.
+        static readonly string[] MigratePaths = {
+            @"aionui\aionui-backend.db", @"aionui\aionui-backend.db-wal", @"aionui\aionui-backend.db-shm", @"aionui\assistant-rules",
+            "config", "Local Storage", "Session Storage", "Preferences", "Local State", "auth.enc", "device-id.json" };
+
+        static void WalkFiles(string dir, List<string> into)
+        {
+            try
+            {
+                foreach (var f in Directory.GetFiles(dir)) into.Add(f);
+                foreach (var d in Directory.GetDirectories(dir)) WalkFiles(d, into);
+            }
+            catch (Exception) { }
+        }
+
+        /** The files a backup would copy, as paths relative to the data folder. */
+        static List<string> MigrateFiles(string data)
+        {
+            var rel = new List<string>();
+            foreach (var p in MigratePaths)
+            {
+                string full = Path.Combine(data, p);
+                if (File.Exists(full)) rel.Add(p);
+                else if (Directory.Exists(full))
+                {
+                    var all = new List<string>();
+                    WalkFiles(full, all);
+                    foreach (var f in all) rel.Add(f.Substring(data.TrimEnd('\\').Length + 1));
+                }
+            }
+            return rel;
+        }
+
+        static string Mb(long bytes) { return bytes >= 1024L * 1024 * 1024 ? (bytes / 1073741824.0).ToString("0.0") + " GB" : Math.Max(1, bytes / 1048576).ToString() + " MB"; }
+
+        /** Copy the parts that matter to `dest`, check them, and write backup.json. Throws ToolError with the reason when it cannot. */
+        static Dictionary<string, object> MigrateBackup(string data, string dest, string aionuiVersion)
+        {
+            if (!Directory.Exists(data)) throw new ToolError("AionUi's data folder " + data + " does not exist.");
+            var rel = MigrateFiles(data);
+            long total = 0;
+            foreach (var r in rel) { try { total += new FileInfo(Path.Combine(data, r)).Length; } catch (Exception) { } }
+            string root = Path.GetPathRoot(Path.GetFullPath(dest));
+            long free;
+            try { free = new DriveInfo(root).AvailableFreeSpace; } catch (Exception) { free = long.MaxValue; }
+            long need = total + total / 20 + 64L * 1048576;
+            if (free < need)
+                throw new ToolError("There is not enough room for a backup: it needs " + Mb(need) + " on " + root + " and " + Mb(free) + " is free. Free some space, or move without a backup.");
+            Directory.CreateDirectory(dest);
+            MSay("backing up " + rel.Count + " file(s), " + Mb(total) + ", to " + dest);
+            var files = new List<object>();
+            foreach (var r in rel)
+            {
+                string src = Path.Combine(data, r), dst = Path.Combine(dest, r);
+                bool db = r.Equals(@"aionui\aionui-backend.db", StringComparison.OrdinalIgnoreCase);
+                long len = new FileInfo(src).Length;
+                string h = null;
+                if (db) MSay("copying the chats database (" + Mb(len) + ")");
+                try
+                {
+                    h = CopyHashed(src, dst);
+                    if (new FileInfo(dst).Length != len) throw new ToolError("the copy of " + r + " has a different size from the original");
+                    if (db && HashFile(dst) != h) throw new ToolError("the copy of the chats database does not match the original");
+                }
+                catch (ToolError) { throw; }
+                catch (Exception e) { throw new ToolError("could not copy " + r + " (" + e.Message + ")"); }
+                files.Add(new Dictionary<string, object> { { "path", r }, { "bytes", len }, { "sha256", h } });
+            }
+            var m = new Dictionary<string, object> {
+                { "schema", "aiondx.migration-backup/1" }, { "createdUtc", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") }, { "from", data },
+                { "aionuiVersion", aionuiVersion ?? "" }, { "bytes", total }, { "files", files } };
+            File.WriteAllText(Path.Combine(dest, "backup.json"), Json.Serialize(m), new UTF8Encoding(false));
+            MSay("backup done and checked: " + files.Count + " file(s)");
+            return m;
+        }
+
+        /** Compare the data folder with a backup manifest: every file still there with the same size, and the database with the same hash. */
+        static List<string> MigrateCompare(string data, Dictionary<string, object> manifest)
+        {
+            var problems = new List<string>();
+            // A manifest just built is a List<object>; one read back from backup.json is an object[]. Both are enumerable.
+            var files = manifest["files"] as System.Collections.IEnumerable;
+            if (files == null) { problems.Add("the backup lists no files"); return problems; }
+            foreach (object item in files)
+            {
+                var f = item as Dictionary<string, object>;
+                if (f == null) continue;
+                string r = Convert.ToString(f["path"]);
+                long bytes = Convert.ToInt64(f["bytes"]);
+                string full = Path.Combine(data, r);
+                if (!File.Exists(full)) { problems.Add(r + " is missing"); continue; }
+                if (new FileInfo(full).Length != bytes) { problems.Add(r + " has a different size"); continue; }
+                if (r.Equals(@"aionui\aionui-backend.db", StringComparison.OrdinalIgnoreCase) && HashFile(full) != Convert.ToString(f["sha256"])) problems.Add("the chats database has changed");
+            }
+            return problems;
+        }
+
+        static void MResult(string resultFile, string status, string message, string backup)
+        {
+            MSay("result: " + status + (message.Length > 0 ? ": " + message : ""));
+            if (string.IsNullOrEmpty(resultFile)) return;
+            try { File.WriteAllText(resultFile, "status=" + status + "\nmessage=" + message.Replace("\r", " ").Replace("\n", " ") + "\nbackup=" + (backup ?? "") + "\n", new UTF8Encoding(false)); } catch (Exception) { }
+        }
+
+        /** Run AionUi's own uninstaller silently and wait for it. `_?=` makes an NSIS uninstaller run in place, so this can wait for it; it
+         *  also leaves the uninstaller and its folder, which are removed here. Runs elevated for a machine-wide install. */
+        static int UninstallStep(AionUiInstall inst, string resultFile)
+        {
+            string args = "/S " + inst.UninstallArgs + " _?=" + inst.Dir;
+            MSay("running " + inst.Uninstaller + " " + args);
+            var psi = new System.Diagnostics.ProcessStartInfo(inst.Uninstaller, args) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetTempPath() };
+            using (var p = System.Diagnostics.Process.Start(psi))
+            {
+                if (!p.WaitForExit(10 * 60 * 1000))
+                {
+                    try { p.Kill(); } catch (Exception) { }
+                    MResult(resultFile, "uninstall-failed", "AionUi's uninstaller did not finish in 10 minutes.", null);
+                    return 6;
+                }
+                if (p.ExitCode != 0)
+                {
+                    MResult(resultFile, "uninstall-failed", "AionUi's uninstaller stopped with exit code " + p.ExitCode + ".", null);
+                    return 6;
+                }
+            }
+            try { File.Delete(inst.Uninstaller); } catch (Exception) { }
+            try { if (Directory.Exists(inst.Dir) && Directory.GetFileSystemEntries(inst.Dir).Length == 0) Directory.Delete(inst.Dir); } catch (Exception) { }
+            if (File.Exists(Path.Combine(inst.Dir, "AionUi.exe")))
+            {
+                MResult(resultFile, "uninstall-failed", "AionUi's uninstaller finished but AionUi.exe is still there.", null);
+                return 6;
+            }
+            MResult(resultFile, "removed", "AionUi was removed from " + inst.Dir + ".", null);
+            return 0;
+        }
+
+        /** The removal as an elevated copy of this program (one Windows prompt). 3 when the prompt was declined. */
+        static int ElevatedUninstall(AionUiInstall inst, out string status, out string message)
+        {
+            status = ""; message = "";
+            string self = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            string rf = Path.Combine(Path.GetTempPath(), "aiondx-migrate-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".result");
+            string a = "migrate uninstall-step --dir " + QuoteArg(inst.Dir) + " --uninstaller " + QuoteArg(inst.Uninstaller) + " --scope " + inst.Scope +
+                       " --uninstall-args " + QuoteArg(inst.UninstallArgs) + " --result " + QuoteArg(rf);
+            var psi = new System.Diagnostics.ProcessStartInfo(self, a) { UseShellExecute = true, Verb = "runas", WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden };
+            try
+            {
+                MSay("asking Windows for administrator rights to remove the machine-wide AionUi");
+                using (var p = System.Diagnostics.Process.Start(psi)) { p.WaitForExit(11 * 60 * 1000); }
+            }
+            catch (System.ComponentModel.Win32Exception e)
+            {
+                if (e.NativeErrorCode == 1223) { status = "declined"; message = "The administrator prompt was declined, so AionUi was not removed."; return 3; }
+                throw;
+            }
+            if (!File.Exists(rf)) { status = "uninstall-failed"; message = "The removal did not report back."; return 6; }
+            foreach (var line in File.ReadAllLines(rf))
+            {
+                if (line.StartsWith("status=")) status = line.Substring(7);
+                else if (line.StartsWith("message=")) message = line.Substring(8);
+            }
+            try { File.Delete(rf); } catch (Exception) { }
+            return status == "removed" ? 0 : 6;
+        }
+
+        static int MigrateRun(Dictionary<string, string> o)
+        {
+            string resultFile = MOpt(o, "result");
+            string data = AionUiData(MOpt(o, "data"));
+            var inst = FindAionUi(MOpt(o, "dir"), MOpt(o, "uninstaller"));
+            if (inst == null) { MResult(resultFile, "not-found", "AionUi is not installed on this PC, so there is nothing to remove. Your chats in " + data + " stay where they are.", null); return 2; }
+            MSay("AionUi " + inst.Version + " at " + inst.Dir + " (" + inst.Scope + ", from " + inst.Source + ")");
+            if (inst.Uninstaller == null) { MResult(resultFile, "uninstall-failed", "AionUi's uninstaller (Uninstall AionUi.exe) is missing from " + inst.Dir + ".", null); return 6; }
+            int running = AionUiRunning(inst.Dir);
+            if (running > 0) { MResult(resultFile, "running", "AionUi is running (" + running + " process" + (running == 1 ? "" : "es") + "). Close it, then run this again.", null); return 4; }
+
+            string db = MigrateDb(data);
+            bool haveDb = File.Exists(db);
+            long dbLen = haveDb ? new FileInfo(db).Length : 0;
+            string backupDir = null;
+            Dictionary<string, object> manifest = null;
+            if (MOpt(o, "no-backup") != null) MSay("no backup, as asked");
+            else if (!haveDb) MSay("there is no chats database in " + data + ", so there is nothing to back up");
+            else
+            {
+                backupDir = MOpt(o, "backup-dir");
+                if (string.IsNullOrEmpty(backupDir))
+                    backupDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"AionDX\migration", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-from-AionUi");
+                try { manifest = MigrateBackup(data, backupDir, inst.Version); }
+                catch (ToolError e) { MResult(resultFile, "backup-failed", "The backup failed: " + e.Message + " AionUi was not touched.", null); return 5; }
+                catch (Exception e) { MResult(resultFile, "backup-failed", "The backup failed: " + e.Message + " AionUi was not touched.", null); return 5; }
+            }
+            string dbHash = haveDb && manifest == null ? HashFile(db) : null;
+
+            int rc;
+            string status, message;
+            if (inst.Scope == "machine" && !IsAdmin() && MOpt(o, "no-elevate") == null) rc = ElevatedUninstall(inst, out status, out message);
+            else
+            {
+                string tmp = Path.Combine(Path.GetTempPath(), "aiondx-migrate-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".result");
+                rc = UninstallStep(inst, tmp);
+                status = ""; message = "";
+                try { foreach (var line in File.ReadAllLines(tmp)) { if (line.StartsWith("status=")) status = line.Substring(7); else if (line.StartsWith("message=")) message = line.Substring(8); } File.Delete(tmp); } catch (Exception) { }
+            }
+            if (rc != 0)
+            {
+                MResult(resultFile, status, message + " Your chats and settings were not touched" + (backupDir != null ? "; the backup is in " + backupDir : "") + ".", backupDir);
+                return rc;
+            }
+
+            // The chats must be exactly as they were.
+            if (haveDb)
+            {
+                var problems = new List<string>();
+                if (manifest != null) problems = MigrateCompare(data, manifest);
+                else
+                {
+                    if (!File.Exists(db)) problems.Add("the chats database is missing");
+                    else if (new FileInfo(db).Length != dbLen || HashFile(db) != dbHash) problems.Add("the chats database has changed");
+                }
+                if (problems.Count > 0)
+                {
+                    MResult(resultFile, "data-changed", "AionUi was removed, but its data folder is not as it was: " + string.Join("; ", problems.ToArray()) + "." +
+                        (backupDir != null ? " The backup is in " + backupDir + "." : ""), backupDir);
+                    return 7;
+                }
+                MSay("the chats database is intact (" + Mb(dbLen) + ")");
+            }
+            MResult(resultFile, "migrated", "AionUi " + inst.Version + " was removed. Your chats and settings in " + data + " stay, and AionDX opens them." +
+                (backupDir != null ? " A copy of the chats database and settings is in " + backupDir + "." : ""), backupDir);
+            return 0;
+        }
+
+        static int MigrateCli(string[] args, StreamWriter o)
+        {
+            MOut = o;
+            if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h") { o.WriteLine(MigrateHelp); return args.Length < 2 ? 2 : 0; }
+            try
+            {
+                string sub = args[1];
+                var opt = MParse(args, 2);
+                MLogFile = MOpt(opt, "log");
+                string data = AionUiData(MOpt(opt, "data"));
+                if (sub == "detect")
+                {
+                    var inst = FindAionUi(MOpt(opt, "dir"), MOpt(opt, "uninstaller"));
+                    if (inst == null) o.WriteLine("found=0");
+                    else
+                    {
+                        o.WriteLine("found=1");
+                        o.WriteLine("dir=" + inst.Dir);
+                        o.WriteLine("version=" + inst.Version);
+                        o.WriteLine("scope=" + inst.Scope);
+                        o.WriteLine("uninstaller=" + (inst.Uninstaller ?? ""));
+                        o.WriteLine("running=" + AionUiRunning(inst.Dir));
+                    }
+                    o.WriteLine("data=" + data);
+                    o.WriteLine("dataExists=" + (Directory.Exists(data) ? "1" : "0"));
+                    string db = MigrateDb(data);
+                    o.WriteLine("dbBytes=" + (File.Exists(db) ? new FileInfo(db).Length : 0));
+                    long total = 0;
+                    foreach (var r in MigrateFiles(data)) { try { total += new FileInfo(Path.Combine(data, r)).Length; } catch (Exception) { } }
+                    o.WriteLine("backupBytes=" + total);
+                    return 0;
+                }
+                if (sub == "run") return MigrateRun(opt);
+                if (sub == "uninstall-step")
+                {
+                    string dir = MOpt(opt, "dir"), un = MOpt(opt, "uninstaller");
+                    if (dir == null || un == null) throw new ToolError("uninstall-step needs --dir and --uninstaller.");
+                    var inst = new AionUiInstall { Dir = dir, Uninstaller = un, Scope = MOpt(opt, "scope") ?? "user", UninstallArgs = MOpt(opt, "uninstall-args") ?? "/currentuser" };
+                    return UninstallStep(inst, MOpt(opt, "result"));
+                }
+                if (sub == "backup")
+                {
+                    string to = MOpt(opt, "to");
+                    if (string.IsNullOrEmpty(to)) throw new ToolError("backup needs --to DIR.");
+                    MigrateBackup(data, to, MOpt(opt, "aionui-version"));
+                    return 0;
+                }
+                if (sub == "verify")
+                {
+                    string b = MOpt(opt, "backup");
+                    if (string.IsNullOrEmpty(b) || !File.Exists(Path.Combine(b, "backup.json"))) throw new ToolError("verify needs --backup DIR with a backup.json in it.");
+                    var m = Json.DeserializeObject(File.ReadAllText(Path.Combine(b, "backup.json"))) as Dictionary<string, object>;
+                    var problems = MigrateCompare(data, m);
+                    if (problems.Count == 0) { o.WriteLine("The data folder matches the backup."); return 0; }
+                    o.WriteLine("The data folder differs from the backup: " + string.Join("; ", problems.ToArray()) + ".");
+                    return 7;
+                }
+                throw new ToolError("Unknown command \"migrate " + sub + "\".\n" + MigrateHelp);
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+            catch (Exception e) { o.WriteLine("The migrate command failed: " + e.Message); return 1; }
+        }
+
+        // ------------------------------------------------------------------ a real stop (2026-10-01, 1.11.0)
+
+        // a request of 2026-10-01. A lead's
+        // tools had no stop: team_interrupt_agent cancels the turn and then delivers the lead's replacement message, which starts the
+        // next turn (session.rs interrupt_agent_message), and team_shutdown_agent is a handshake the agent has to agree to. AionCore does
+        // have a stop: POST /api/teams/{id}/runs/{run}/agents/{slot}/pause cancels the member's batch and leaves the slot paused, so it
+        // claims nothing from its queue until the user writes to it (the UI's Stop button for a member calls it). Cancel and pause end the
+        // turn but not what the agent's process started in the background, so the member's runtime is restarted too, which ends the
+        // process and everything under it.
+        static string AgentStop(Dictionary<string, object> a)
+        {
+            string member = (Str(a, "member") ?? "").Trim();
+            string reason = (Str(a, "reason") ?? "").Trim();
+            bool keepProcess = Bool(a, "keep_process") == true;
+            if (member.Length == 0) throw new ToolError("member is required: the teammate's name, slot id or conversation id.");
+            if (member.Equals("all", StringComparison.OrdinalIgnoreCase)) throw new ToolError("Stop one teammate at a time: name one.");
+            if (reason.Length > 300) reason = reason.Substring(0, 300);
+            var ctx = LoadContext();
+            if (ctx.Self.Kind != "team") throw new ToolError("Stopping a teammate is for teams, and this chat is not on one.");
+            if (ctx.Self.Role != "lead") throw new ToolError("Only the team lead can stop a teammate.");
+            var t = Resolve(ctx, member, true)[0];
+            if (t.ConvId == ctx.Self.ConvId) throw new ToolError("That is you. Stop a teammate; the user stops you.");
+            string who = t.Name ?? t.SlotId;
+            var sb = new StringBuilder();
+            string team = Uri.EscapeDataString(t.TeamId), slot = Uri.EscapeDataString(t.SlotId);
+
+            // 1. The Loop first, so nothing nudges the member awake again.
+            string loopNote = "";
+            try
+            {
+                LoopSet(new Dictionary<string, object> { { "on", false }, { "member", member }, { "note", "stopped by " + (ctx.Self.Name ?? "the lead") + (reason.Length > 0 ? ": " + reason : "") } });
+                loopNote = "Its Loop is off.";
+            }
+            catch (ToolError e)
+            {
+                loopNote = e.Message.IndexOf("until the user stops it", StringComparison.Ordinal) >= 0
+                    ? "Its Loop runs until the user stops it, so no agent can switch it off: its next nudge wakes it again. The user switches it off from the Loop button, or the member's Stop button."
+                    : "Its Loop was left as it was (" + OneLine(e.Message) + ").";
+            }
+
+            // 2. Pause: the turn is cancelled and the slot takes no new work.
+            var w = SlotWork(t);
+            string run = w != null ? Str(w, "team_run_id") : null;
+            bool paused = false;
+            string pauseNote;
+            if (w == null) pauseNote = "The run state did not list it, so nothing could be paused.";
+            else if (string.IsNullOrEmpty(run)) pauseNote = "It has no run in progress (state " + (Str(w, "state") ?? "unknown") + "), so there was no turn to cancel.";
+            else
+            {
+                try
+                {
+                    Api("POST", "/api/teams/" + team + "/runs/" + Uri.EscapeDataString(run) + "/agents/" + slot + "/pause",
+                        Json.Serialize(new Dictionary<string, object> { { "reason", reason.Length > 0 ? reason : "stopped by the team lead" } }));
+                    paused = true;
+                    pauseNote = "Paused: its turn was cancelled and it takes no new work until the user writes to it.";
+                }
+                catch (ToolError e) { pauseNote = "The pause was refused: " + OneLine(e.Message); }
+            }
+
+            // 3. Wait for the turn to end, then restart the process.
+            string restartNote = "";
+            if (!keepProcess)
+            {
+                string last = null;
+                for (int i = 0; i < 12; i++)
+                {
+                    var now = SlotWork(t);
+                    last = now != null ? Str(now, "state") : null;
+                    bool running = now != null && (last == "running" || last == "starting" || Str(now, "active_turn_id") != null);
+                    if (!running) break;
+                    System.Threading.Thread.Sleep(500);
+                }
+                try
+                {
+                    Api("POST", "/api/teams/" + team + "/agents/" + slot + "/runtime/restart", "{}");
+                    restartNote = "Its agent process was restarted, which ends everything it had started in the background.";
+                }
+                catch (ToolError e) { restartNote = "The process restart was refused (" + OneLine(e.Message) + "); it is " + (paused ? "paused" : "not paused") + " but its process is still running."; }
+            }
+            else restartNote = "Its process was left running (keep_process).";
+
+            var after = SlotWork(t);
+            sb.Append("Stopping ").Append(who).Append(": ").Append(paused ? "done." : "not complete.").Append('\n');
+            sb.Append("  ").Append(pauseNote).Append('\n');
+            sb.Append("  ").Append(loopNote).Append('\n');
+            sb.Append("  ").Append(restartNote).Append('\n');
+            if (after != null) sb.Append("  Now: ").Append(Str(after, "state") ?? "unknown").Append(", ").Append(Long(after, "queued_foreground_count") + Long(after, "queued_background_count")).Append(" queued.\n");
+            sb.Append("  To start it again, the user writes to it, or you send it a message with team_send_message after the user says to.\n");
             return sb.ToString();
         }
 
@@ -2253,8 +2887,7 @@ namespace AionDx
             }
             var prefs = ReadPrefs(targets);
             long now = NowMs();
-            // A Loop the user set to run until they stop it (K, 2026-09-26: "until i stop it or stop the agent (the stop
-            // button) or ask it to turn it off specifically"). No agent switches it off or ends that mode on its own: only
+            // A Loop the user set to run until they stop it (a request of 2026-09-26). No agent switches it off or ends that mode on its own: only
             // after the user asked for a Loop off in their own words, in the chat this call comes from, since the mode was
             // set and in the last 30 minutes. The Loop engine writes that request (AskKey) from what the user typed.
             long askedAt = 0;
@@ -2419,8 +3052,7 @@ namespace AionDx
 
         // ------------------------------------------------------------------ MCP (1.5.0)
 
-        // K, 2026-09-26: "is MCP fully configurable and transparent to agents working in AIonDX? If not, we need to
-        // make it so"; agents change servers freely and he sees each change. Research:
+        // a request of 2026-09-26; agents change servers freely and he sees each change. Research:
         // ! LLM Files\Research\2026-09-26_mcp-configurable-and-transparent.md. These use AionCore's own routes (the
         // ones Settings > Tools uses) and log every change to aiondx.mcp.log, which AionDX's window announces with the
         // agent's name. Values of env and headers are never printed: they often hold keys.
@@ -2684,8 +3316,7 @@ namespace AionDx
 
         // ------------------------------------------------------------------ the AionDX MCP file, and servers used as needed (1.6.0)
         //
-        // K, 2026-09-26: "i don't want any session i used in this ui to get loaded up with my mcp information unless i say
-        // for instance 'hey, go get my my project's github server access credentials'"; then, needing it that day, "a global
+        // a request of 2026-09-26; then, needing it that day, "a global
         // AionDX directory or file or something that every agent knows carries the MCP access credentials". So the user's
         // servers and their credentials live in one file, %USERPROFILE%\.aiondx\mcp\servers.json, which nothing loads into a
         // chat, and the aiondx-loop skill (offered in every chat) says where it is. An agent the user asks connects for one
@@ -2709,7 +3340,7 @@ namespace AionDx
             "Credentials are encrypted for this Windows account (values that start dpapi:v1:), readable only by it on this PC:",
             "  aiondx mcp secret NAME --set stores a new one from standard input; aiondx mcp protect encrypts any typed in here by hand." };
 
-        // K, 2026-09-26: "i need access now, security by tomorrow". The file's credentials are sealed with Windows' data
+        // a request of 2026-09-26. The file's credentials are sealed with Windows' data
         // protection (DPAPI) for the signed-in account: "dpapi:v1:<base64>", readable only by that account on this PC,
         // which is the account every AionDX agent runs as. Its folder is closed to every other account. add and update
         // seal a credential as they write it (an env or header value whose name says key, token, secret, password and

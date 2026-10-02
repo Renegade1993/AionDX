@@ -264,7 +264,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
   r = await mcp('list');
   check('list names the secrets but never their values', /Secrets it holds, named here without their values: FIX_TOKEN\./.test(r.out) && !/from-secrets/.test(r.out), r.out);
   check('list says a credential is still plain text, and how to encrypt it', /1 credential is still plain text: aiondx mcp protect encrypts them/.test(r.out), r.out);
-  // Encrypted for this Windows account (K: "security by tomorrow").
+  // Encrypted for this Windows account (a request).
   f = readFile();
   f.mcpServers.ph.headers = { 'X-Api-Key': 'plain-header-key', 'X-Trace': 'visible', Authorization: 'Bearer ${FIX_TOKEN}' };
   writeFile(f);
@@ -402,7 +402,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
   await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   const tl = await rpc('tools/list', {});
   const names = ((tl.result && tl.result.tools) || []).map((t) => t.name).join(',');
-  check('the MCP server offers mcp_tools and mcp_call (and the GitHub and usage tools after them)', names === 'loop_status,loop_set,priority_send,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status', names);
+  check('the MCP server offers mcp_tools and mcp_call (and the GitHub and usage tools after them)', names === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status', names);
   let m = await rpc('tools/call', { name: 'mcp_call', arguments: { server: 'fix', tool: 'image' } });
   const content = (m.result && m.result.content) || [];
   check('mcp_call hands the picture back as a picture the agent can see, and the text beside it', !m.result.isError && content[0] && content[0].type === 'image' &&

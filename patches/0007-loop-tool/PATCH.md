@@ -6,9 +6,7 @@ one MCP server row in AionUi's database, and records in AionUi's per-user settin
 build `2026-09-24.2`, inside `vendor\app.asar.patched` (BCE7BB32), waiting for AionDX Apply
 Update. Built against AionUi 2.2.2 / AionCore 0.2.2.
 
-K, September 24th: *"the AionDX system should pass in information on how to use it (however it
-normally passes in control schemas), because we should both be using the same buttons and tools
-(and if it's using a tool i want to see visual feedback of it)."* Prerogative P-010, design
+a request of September 24th Prerogative P-010, design
 directive 2.
 
 ## What an agent can do
@@ -164,7 +162,7 @@ agent, and an older backend with no store runs as before.
 ## September 26th, 2026: 1.3.0, priority messages, and the activator after review
 
 - `priority_send` (MCP) and `aiondx priority --member NAME --message TEXT` (shell), for a team lead: the
-  team lead's question 2, with K's answer *"its requests are top priority"*. The message goes by the
+  team lead's question 2, answered by making its requests top priority. The message goes by the
   user's own route to that teammate (`POST /api/teams/{id}/agents/{slot}/messages`), which AionCore
   queues as foreground work ahead of agents' messages and team notices, without stopping the teammate's
   turn. It arrives marked as the lead's priority message, and the reply gives the teammate's queue, with
@@ -196,8 +194,7 @@ Tests 101/101; installed on K's machine at 12:56.
 
 ## September 26th, 2026: 1.5.0, MCP for agents
 
-K: *"is MCP fully configurable and transparent to agents working in AIonDX? If not, we need to make it
-so"*, with agents changing servers freely and K seeing each change. Research:
+a request, with agents changing servers freely and K seeing each change. Research:
 `! LLM Files\Research\2026-09-26_mcp-configurable-and-transparent.md`.
 
 - `mcp_status` (MCP) and `aiondx mcp status`: the servers the chat was started with, how its agent
@@ -215,8 +212,7 @@ so"*, with agents changing servers freely and K seeing each change. Research:
 
 ## September 26th, 2026: 1.6.0, the AionDX MCP file and servers used as needed
 
-K: *"i don't want any session i used in this ui to get loaded up with my mcp information unless i say
-for instance 'hey, go get my project's github server access credentials'"*, then, with a team
+a request, then, with a team
 blocked: *"i need access now, security by tomorrow... just a 'as needed' access basis, like through
 a global AionDX directory or file or something that every agent knows carries the MCP access
 credentials"*.
@@ -268,8 +264,7 @@ AionDX's (or AionUi's) own Electron as Node, hidden, with a 150 s limit and a wa
 
 ## September 26th, 2026 (night): 1.8.0, until the user stops it
 
-K: *"that loop needs an option for infinite/until i stop it or stop the agent (the stop button) or ask it to turn
-it off specifically"*. `loop_set until_stopped: true` / `aiondx loop set --until-stopped` (for when the user asks)
+a request. `loop_set until_stopped: true` / `aiondx loop set --until-stopped` (for when the user asks)
 writes `forever: true` and `foreverAt` into the Loop's record; the Loop engine (patch 0001 build `2026-09-26.6`)
 then never rests and never gives up. No agent can switch such a Loop off (`on: false`) or end the mode
 (`until_stopped: false`) on its own: the tool refuses, names the Loops, and changes nothing. It allows it only when
@@ -284,8 +279,7 @@ it". An engine older than `2026-09-26.6` is named in the reply. `test-loop-tool.
 
 ## September 27th, 2026: 1.9.0, the user's GitHub
 
-K: *"can you make the mcp easier to find for my llms? that way when i say 'hey go push this to my github' they
-aren't lost"*. This PC's git signs in to GitHub through Git Credential Manager (the system git config's
+a request. This PC's git signs in to GitHub through Git Credential Manager (the system git config's
 `credential.helper manager`), so a push needs no token and no MCP server; an agent could not find that out, list the
 repositories, or make one. `aiondx github` (status: the account, who commits are signed as, how to push),
 `aiondx github repos`, `aiondx github create NAME [--public] [--description TEXT]`, and the MCP tools
@@ -303,7 +297,7 @@ Tests: `test-loop-tool.js` 143/143 (a stand-in git and a stand-in GitHub), `test
 
 ## October 1st, 2026: version 1.10.1, the usage of the account, and pictures in chat
 
-K, October 1st: *"a top priority is the usage information passed into 1. the ui, and 2. the agents"*.
+a request of October 1st.
 
 - `usage_status` (tool) and `aiondx usage [--all]` (shell): the Claude account this chat runs on, from the records the
   usage tap writes (patch 0002): how much of the 5-hour and weekly windows is used, when each resets ("resets 12:30, in 3
@@ -322,3 +316,52 @@ K, October 1st: *"a top priority is the usage information passed into 1. the ui,
 - Tests: `test-loop-tool.js` 152/152, `test-mcp-bridge.js` 81/81. Installed with `node patches\0007-loop-tool\install.js
   --no-register` on October 1st (the MCP row was already there); the skill is refreshed, and a chat started from now on sees
   `usage_status`.
+
+## October 1st, 2026: version 1.11.0, a real stop for a teammate
+
+A request of October 1st: fix the "lost control" case, an agent that cannot be stopped by the harness or by the UI (one agent was then running away).
+A team lead had no tool that stops a teammate: `team_interrupt_agent` cancels the turn and then delivers the replacement message the lead
+supplies, which starts the next turn (`session.rs` `interrupt_agent_message`), and `team_shutdown_agent` is a handshake the teammate has to agree
+to. AionCore does have a stop, the pause route the UI's Stop button for a member uses, and no agent tool reached it.
+
+- `agent_stop` (tool) and `aiondx stop --member NAME [--reason TEXT] [--keep-process]` (shell), team lead only. In order: the member's Loop
+  off (a Loop the user set to run until they stop it cannot be switched off by an agent; the reply says it will wake the member again);
+  `POST /api/teams/{id}/runs/{run}/agents/{slot}/pause` (the turn is cancelled and the slot claims no work until the user writes to it); a
+  wait of up to 6 seconds for the turn to end; then `POST /api/teams/{id}/agents/{slot}/runtime/restart`, which ends the agent's process and
+  with it anything it started in the background (monitors, background shells, scheduled wake-ups), which a cancel does not. Each step is
+  reported, including a refused pause or restart; nothing is claimed as done that was not. `keep_process` skips the restart.
+- The skill ("Stopping a teammate") and the tool's instructions say that interrupt and shutdown are not stops.
+- Tests: `test-loop-tool.js` 167/167 (the order of the three calls, the reason carried to the pause, a refused pause, a refused restart, a
+  locked Loop, the lead and teammate refusals, the shell form), `test-mcp-bridge.js` 81/81. Installed on this PC on October 1st.
+
+## October 1st, 2026: version 1.12.0, `aiondx migrate`, moving from AionUi to AionDX
+
+a request of October 1st. AionDX is AionUi's program renamed and uses the
+same data folder (`%APPDATA%\AionUi`), so the chats carry over by themselves; the work is removing AionUi's program safely and
+proving the data was not touched. The installer page (`installer\aiondx.iss`) calls this; it is also a command.
+
+- `aiondx migrate detect [--dir D] [--data D]` reports the AionUi found (its folder, version, whether it is for one user or all users,
+  its uninstaller, whether it is running, the size of its chats database). `aiondx migrate run [--backup-dir D | --no-backup]
+  [--no-elevate] [--result FILE] [--log FILE] [--dir D] [--data D]` does the move. Without `--dir` it reads the uninstall entries in the
+  registry (all users, 32-bit view, current user) and the two usual folders. `aiondx migrate backup --to DIR` and `aiondx migrate
+  verify --backup DIR` are the two halves on their own: copy the data aside, and compare the data folder with a backup.
+- `run`, in order: refuse while that AionUi's own `AionUi.exe` is running; copy the chats database (with its `-wal` and `-shm`), the
+  assistant rules, `config`, Local Storage, Session Storage, Preferences, Local State, `auth.enc` and `device-id.json` to the backup
+  folder, hashing each copy and comparing it with the original; run AionUi's own uninstaller silently (`/S`, `/currentuser` or
+  `/allusers`, `_?=<folder>` so it finishes before we go on), then delete the uninstaller and the folder it leaves; hash the data again
+  against the manifest taken before. The data folder is never written to, only read.
+- A machine-wide AionUi needs administrator rights to remove. `run` starts itself again through the Windows prompt (once), waits for the
+  elevated copy and reads its result file. Declining the prompt leaves everything as it was.
+- Exit codes: 0 moved, 2 no AionUi found, 3 permission prompt declined, 4 AionUi is running, 5 the backup failed (nothing removed),
+  6 AionUi would not uninstall, 7 the data changed during the move (said loudly, the backup is named).
+- `--result FILE` gets `status=`, `message=` and `backup=` lines for the installer to show on its last page; `--log FILE` appends what
+  was done.
+- Installer: when AionUi is found, a page after the welcome offers "Move to AionDX" (the default, unless the AionUi found is newer than
+  the 2.2.2 this AionDX is built on) or "Keep AionUi too", with a tick for the backup. Silent installs keep AionUi unless run with
+  `/MIGRATE=yes`; `/AIONUIBACKUP=no` skips the backup. When only the chats are left (AionUi already removed), nothing is offered; the
+  Ready page and the run log say AionDX opens the chats in `%APPDATA%\AionUi`.
+- Tests: `test-migrate.js` 23/23 (a made-up AionUi and uninstaller: detection, running refusal, backup byte for byte, a failing
+  uninstaller, a changed database caught, the result file, the exit codes), `test-loop-tool.js` 167/167, `test-mcp-bridge.js` 81/81, and
+  `tools\test-installer-migrate.js` 15/15, which builds the real installer script under its own name, registry key and data folder and
+  installs it silently against made-up AionUi folders. Never run against the real AionUi: it is installed machine-wide on this PC and
+  was running. The Windows prompt and the wizard page's layout are therefore not exercised.

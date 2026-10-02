@@ -4,7 +4,7 @@
 `index.html` · **Status:** built into `vendor\app.asar.patched` on 2026-09-24, not installed.
 Installs with the next "AionDX Apply Update".
 
-K, September 24th: *"also want to remove the whole "sign in with email" thing. That won't be
+a request of September 24thsign in with email" thing. That won't be
 necessary for our fork."*
 
 ## What the stock app does

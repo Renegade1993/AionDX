@@ -12,8 +12,7 @@
  *   out/renderer/aiondx-mark.svg           new: the mark, for the sidebar's top left
  *   out/renderer/assets/index-*.js         the sidebar's top-left logo (an inline SVG drawn on a black
  *                                          tile, Layout.tsx) becomes the mark, and the name beside it
- *                                          "AionDX" (K, 2026-09-25: "Can we replace the icon in the ui
- *                                          in the top left?")
+ *                                          "AionDX" (a request of 2026-09-25)
  *   out/main/index.js                      the window icon (production had none, so Windows showed
  *                                          AionUi.exe's), the tray icon and the notification icon; and at
  *                                          start, AionDX's bin folder first on PATH and the installer's
@@ -110,7 +109,7 @@ function __aiondxIconFile(name) {
   } catch {}
 })();
 /** Right-click: Cut, Copy, Paste and Select all in a text box, and Copy on selected text. AionUi shows no menu
- *  there (K, 2026-09-26: "i want to be able to right-click and get a context menu for cut/copy/paste"). Electron
+ *  there (a request of 2026-09-26). Electron
  *  asks for this menu only when the page did not handle the right-click itself, so AionUi's own right-click
  *  menus (the file tree, say) are untouched. */
 (function __aiondxContextMenu() {
@@ -140,7 +139,7 @@ function __aiondxIconFile(name) {
     });
   } catch {}
 })();
-/** The one-click setup (K, 2026-09-26: "we want a streamlined 'one-click' ish setup process"). The Welcome screen
+/** The one-click setup (a request of 2026-09-26). The Welcome screen
  *  asks for it through the preload's aiondxSetup. The setup skill's survey.js and apply.js run in a child of this
  *  process as Node (Electron's own runtime, ELECTRON_RUN_AS_NODE), so no Node.js install and no agent are needed.
  *  An import may use only the survey this process made last, and apply.js checks every item of the plan against
@@ -200,7 +199,7 @@ function __aiondxIconFile(name) {
     });
   } catch {}
 })();
-/** Claude Code plugins (A tester, through K, 2026-09-26: "we don't have plugin access here and we need it"). AionUi's Claude
+/** Claude Code plugins (A tester, through a request of 2026-09-26). AionUi's Claude
  *  chats do not offer Claude Code's /plugin browser. The page's /plugin panel asks for "claude plugin ..." through the
  *  preload's aiondxPlugins, and this runs it: the claude found on PATH (AionDX's bin comes first), hidden, killed at
  *  180 s, only the plugin and marketplace subcommands and options below. A marketplace's own install command runs only

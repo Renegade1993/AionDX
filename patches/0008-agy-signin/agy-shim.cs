@@ -1,7 +1,6 @@
 // agy-shim.cs: AionDX patch 0008, Antigravity signs in from AionUi itself.
 //
-// K, 2026-09-24: "our users aren't going to know how to or want to open a terminal. find a fix
-// here ... in the ui".
+// a request of 2026-09-24.
 //
 // AionUi runs Antigravity's CLI in print mode (`agy -p ... --output-format stream-json`, aionui-session
 // antigravity/argv.rs). Signed out, print mode tries a silent sign-in, then opens Google's sign-in

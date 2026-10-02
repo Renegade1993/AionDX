@@ -57,6 +57,7 @@ const slash = {
   convG: ['compress', 'memory'], convN: ['init'],
 };
 let down = false;
+const stub = { pause: 'ok', restart: 'ok' };   // what the pause and restart routes answer
 // Each member's queue, as GET /api/teams/{id}/run-state reports it (aionui-api-types team.rs TeamSlotWorkPayload).
 const work = { slotL: { state: 'running', fg: 0, bg: 0 }, slotW: { state: 'running', fg: 0, bg: 3 }, slotV: { state: 'idle', fg: 0, bg: 0 } };
 
@@ -118,7 +119,16 @@ server = http.createServer((req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/teams/team1/run-state') {
       return reply(res, 200, { success: true, data: { session_generation: 'g1', active_run: null, slot_work: Object.entries(work).map(([slot, w]) => ({
         slot_id: slot, role: slot === 'slotL' ? 'lead' : 'teammate', state: w.state, queued_foreground_count: w.fg, queued_background_count: w.bg,
-        active_turn_id: w.state === 'running' ? 't-' + slot : null, blocked_reason: null })) } });
+        active_turn_id: w.state === 'running' ? 't-' + slot : null, blocked_reason: null, team_run_id: w.state === 'running' ? 'run1' : null })) } });
+    }
+    if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/teams\/team1\/runs\/run1\/agents\/([^/]+)\/pause$/))) {
+      if (stub.pause === 'refuse') return reply(res, 409, { success: false, message: 'slot is not pausable' });
+      if (work[m[1]]) work[m[1]].state = 'paused';
+      return reply(res, 200, { success: true });
+    }
+    if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/teams\/team1\/agents\/([^/]+)\/runtime\/restart$/))) {
+      if (stub.restart === 'busy') return reply(res, 409, { success: false, message: 'Team member is busy' });
+      return reply(res, 200, { success: true });
     }
     if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/teams\/team1\/agents\/([^/]+)\/messages$/))) {
       if (work[m[1]]) work[m[1]].fg++;
@@ -240,7 +250,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const tl = await solo.rpc('tools/list', {});
   const tools = (tl.result && tl.result.tools) || [];
-  check('tools/list offers loop_status, loop_set, priority_send, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo and usage_status', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status', tools.map((t) => t.name));
+  check('tools/list offers loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo and usage_status', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status', tools.map((t) => t.name));
   const schemaText = JSON.stringify(tools.map((t) => t.inputSchema));
   check('schemas use only type, properties and description (every backend takes them)', !/additionalProperties|\$schema|"required"|"title"/.test(schemaText), schemaText);
   const set = tools.find((t) => t.name === 'loop_set') || { inputSchema: { properties: {} } };
@@ -444,7 +454,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await lead.call('loop_status', { member: 'all' });
   check('status for "all" lists every member', (r.text.match(/^Loop for /gm) || []).length === 3, r.text);
 
-  // ---- until the user stops it (1.8.0; K: "until i stop it or stop the agent (the stop button) or ask it to turn it off specifically") ----
+  // ---- until the user stops it (1.8.0; a request) ----
   r = await lead.call('loop_set', { member: 'Worker', until_stopped: true, note: 'K: run until I stop it' });
   rec = kv['aiondx.loop.team.team1.slotW'];
   check('until_stopped: true switches it on until the user stops it', !r.isError && rec.on === true && rec.forever === true && rec.foreverAt > 0 &&
@@ -491,7 +501,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const orphan = startTool('convS', { AIONUI_CONVERSATION_ID: '', AIONUI_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
-  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 10, tlOrphan.result && tlOrphan.result.tools.length);
+  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 11, tlOrphan.result && tlOrphan.result.tools.length);
   r = await orphan.call('loop_status');
   check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionUi chat/.test(r.text), r.text);
 
@@ -537,6 +547,45 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await workerTool.rpc('initialize', { protocolVersion: '2025-06-18' });
   r = await workerTool.call('priority_send', { member: 'Viewer', message: 'x' });
   check('a teammate cannot send priority messages', r.isError && /Only the team lead can send a priority message/.test(r.text), r.text);
+  // ---- a real stop (1.11.0, K's "lost control" of October 1st) ----
+  work.slotW.state = 'running'; work.slotW.bg = 3;
+  kv['aiondx.loop.team.team1.slotW'] = { v: 1, on: true, msg: 'x', rev: 1, by: 'user', at: Date.now() - 1000 };
+  requests.length = 0;
+  r = await leadTool.call('agent_stop', { member: 'Worker', reason: 'it is looping on a closed task' });
+  const stopCalls = requests.filter((q) => q.method !== 'GET').map((q) => q.method + ' ' + q.path);
+  check('agent_stop switches the Loop off, pauses the member through its run, then restarts its process, in that order',
+    !r.isError && stopCalls.join(' | ') === 'PUT /api/settings/client | POST /api/teams/team1/runs/run1/agents/slotW/pause | POST /api/teams/team1/agents/slotW/runtime/restart', stopCalls.join(' | ') + ' :: ' + r.text);
+  check('the Loop record says who stopped it and why', kv['aiondx.loop.team.team1.slotW'].on === false && /stopped by Lead: it is looping on a closed task/.test(kv['aiondx.loop.team.team1.slotW'].note), JSON.stringify(kv['aiondx.loop.team.team1.slotW']));
+  check('the pause carries the reason', requests.some((q) => /\/pause$/.test(q.path) && q.body && q.body.reason === 'it is looping on a closed task'));
+  check('nothing is interrupted, cancelled or messaged', !requests.some((q) => /interrupt|cancel|\/messages$/.test(q.path)), requests.map((q) => q.path).join(' '));
+  check('it says what was done, step by step, and what the member is now', /^Stopping Worker: done\./.test(r.text) && /Paused: its turn was cancelled/.test(r.text) && /Its Loop is off\./.test(r.text) &&
+    /agent process was restarted/.test(r.text) && /Now: paused/.test(r.text), r.text);
+  work.slotW.state = 'running';
+  requests.length = 0;
+  r = await leadTool.call('agent_stop', { member: 'Worker', keep_process: true });
+  check('keep_process pauses without restarting the process', !r.isError && !requests.some((q) => /runtime\/restart/.test(q.path)) && /left running \(keep_process\)/.test(r.text), r.text);
+  work.slotW.state = 'running'; stub.restart = 'busy';
+  r = await leadTool.call('agent_stop', { member: 'Worker' });
+  check('a refused restart is reported, and the member is still paused', !r.isError && /process restart was refused/.test(r.text) && /is paused but its process is still running/.test(r.text), r.text);
+  stub.restart = 'ok'; work.slotW.state = 'running'; stub.pause = 'refuse';
+  r = await leadTool.call('agent_stop', { member: 'Worker' });
+  check('a refused pause is reported, not claimed as done', /Stopping Worker: not complete\./.test(r.text) && /The pause was refused/.test(r.text), r.text);
+  stub.pause = 'ok'; work.slotW.state = 'running';
+  kv['aiondx.loop.team.team1.slotW'] = { v: 1, on: true, forever: true, foreverAt: Date.now() - 5000, msg: 'x', rev: 2, by: 'user', at: Date.now() - 1000 };
+  r = await leadTool.call('agent_stop', { member: 'Worker' });
+  check('a Loop that runs until the user stops it is left on, and the reply says it will wake the member again',
+    kv['aiondx.loop.team.team1.slotW'].on === true && /Its Loop runs until the user stops it, so no agent can switch it off/.test(r.text) && /Paused:/.test(r.text), r.text);
+  r = await leadTool.call('agent_stop', { member: 'Lead' });
+  check('the lead cannot stop itself', r.isError && /That is you/.test(r.text), r.text);
+  r = await leadTool.call('agent_stop', { member: 'all' });
+  check('agent_stop takes one teammate at a time', r.isError && /one teammate at a time/.test(r.text), r.text);
+  r = await workerTool.call('agent_stop', { member: 'Viewer' });
+  check('a teammate cannot stop another', r.isError && /Only the team lead can stop a teammate/.test(r.text), r.text);
+  r = await leadTool.call('agent_stop', { member: 'Nobody' });
+  check('an unknown teammate is named in the refusal', r.isError && /No teammate matches "Nobody"/.test(r.text), r.text);
+  work.slotW.state = 'running'; work.slotW.bg = 3;
+  delete kv['aiondx.loop.team.team1.slotW'];
+
   r = await leadTool.call('loop_status', { member: 'Worker' });
   check('loop_status shows the teammate\'s queue', /Queue: Worker has \d+ messages waiting/.test(r.text), r.text);
 
@@ -560,6 +609,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     requests.some((q) => q.method === 'POST' && q.path === '/api/teams/team1/agents/slotW/messages'), pc.stdout + pc.stderr);
   pc = await cli(['priority', '--member', 'Viewer', '--message', 'x'], 'convW');
   check('aiondx priority from a teammate is refused, exit 1', pc.status === 1 && /Only the team lead/.test(pc.stdout), pc.stdout);
+  work.slotW.state = 'running';
+  requests.length = 0;
+  let sc = await cli(['stop', '--member', 'Worker', '--reason', 'enough'], 'convL');
+  check('aiondx stop --member --reason stops a teammate from a shell, exit 0', sc.status === 0 && /^Stopping Worker: done\./.test(sc.stdout) &&
+    requests.some((q) => /\/pause$/.test(q.path)) && requests.some((q) => /runtime\/restart$/.test(q.path)), sc.stdout + sc.stderr);
+  sc = await cli(['stop', '--member', 'Viewer'], 'convW');
+  check('and a teammate gets the refusal, exit 1', sc.status === 1 && /Only the team lead can stop a teammate/.test(sc.stdout), sc.stdout + sc.stderr);
+  work.slotW.state = 'running';
   let c = await cli(['loop', 'status']);
   check('aiondx loop status prints the same report, exit 0', c.status === 0 && /^Loop for you \(Worker, teammate on team "Team One"\): /.test(c.stdout), c.stdout + c.stderr);
   c = await cli(['loop', 'set', '--off', '--note', 'map tests pass']);
@@ -633,7 +690,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     { ...process.env, ...cliEnv('convS') });
   check('PowerShell waits for it and captures its output', /^Loop for you \(chat "Solo chat"\)/m.test(ps.stdout) && /exit=0/.test(ps.stdout), ps.stdout + ps.stderr);
 
-  // ---- GitHub through git's own sign-in (1.9.0; K: "when i say 'hey go push this to my github' they aren't lost") ----
+  // ---- GitHub through git's own sign-in (1.9.0; a request) ----
   // A stand-in git: signed in as "tester", with a placeholder commit identity. And one with no sign-in.
   fs.mkdirSync(path.join(LOGDIR, 'bin'), { recursive: true });   // not beside the logs, which the last check reads
   const FAKEGIT = path.join(LOGDIR, 'bin', 'git.cmd');
@@ -696,7 +753,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('the github_create_repo tool makes a private repository', !r.isError && /^Made https:\/\/github\.com\/tester\/delta \(private\)/.test(r.text) && ghRepos.delta.private === true, r.text);
 
 
-  // ---- Claude usage for the agents (1.10.0; K: "a top priority is the usage information passed into 1. the ui, and 2. the agents") ----
+  // ---- Claude usage for the agents (1.10.0; a request) ----
   const nowS = Math.floor(Date.now() / 1000);
   kv['aiondx.usage.conv.convS'] = { acct: 'acctA', at: Date.now() };
   kv['aiondx.usage.acct.acctA'] = { label: 'main (Plan A)', at: Date.now() - 180000, http: 200, status: 'allowed', claim: 'five_hour',

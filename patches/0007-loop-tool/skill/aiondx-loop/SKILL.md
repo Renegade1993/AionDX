@@ -1,6 +1,6 @@
 ---
 name: aiondx-loop
-description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when you want to show the user a picture, or link a file or folder, in chat: Markdown does both, and the section on pictures says how. It is the only keep-warm mechanism: do not write a script that pokes agents.
+description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when you want to show the user a picture, or link a file or folder, in chat: Markdown does both, and the section on pictures says how. It is the only keep-warm mechanism: do not write a script that pokes agents.
 ---
 
 # The AionDX Loop
@@ -86,6 +86,22 @@ teammate's chat. Use it for what cannot wait behind a long queue: a stop instruc
 to something actively wrong. It does not stop the teammate's current turn; `team_interrupt_agent`
 does that. The reply, and `loop status`, say how many messages each teammate has waiting. Past 20,
 hold back further messages: on September 25th a teammate stopped taking work at 33.
+
+## Stopping a teammate (team lead)
+
+When the user wants a teammate to stop, or one is running away (looping on finished work, ignoring its instructions), use
+`agent_stop`, or from the shell:
+
+```
+"{{AIONDX}}" stop --member Worker --reason "looping on a closed task"
+```
+
+It pauses the member (its turn is cancelled and it takes no new work, queued or from other agents, until the user writes to
+it), switches its Loop off, and restarts its agent process, which ends anything it started in the background (monitors,
+background shells, scheduled wake-ups). `--keep-process` skips the restart. `team_interrupt_agent` is not a stop: it cancels the
+turn and then sends the replacement message you give it, which starts the next turn. `team_shutdown_agent` is not one either:
+the teammate has to agree. A Loop the user set to run until they stop it cannot be switched off by an agent, and wakes the member
+again at its next nudge; the reply says so, and you tell the user.
 
 ## MCP servers and their credentials
 

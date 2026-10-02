@@ -5,8 +5,7 @@
  *
  *   node patches\0006-butler-to-antigravity\apply.js <extracted-asar-root>
  *
- * K, 2026-09-24: "at least remove it from the ui's presenting it everywhere for all things, use
- * antigravity in it's place".
+ * a request of 2026-09-24.
  *
  * HOW. Every "via chat" button in AionUi (Ask the Butler on error messages, Let the butler set it
  * up in WebUI settings, the "... via chat" buttons in settings, scheduled tasks, skills and the

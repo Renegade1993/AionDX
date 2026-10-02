@@ -2,12 +2,13 @@
 #
 #   powershell -ExecutionPolicy Bypass -File "C:\AI Projects\AionDX\tools\build-release.ps1" -Version 0.1.0
 #
-# K, September 26th, 2026: "you need to prepare a installer that's all in one based on our source".
+# a request of September 26th, 2026.
 #
-# The app is AionUi 2.2.2's own release files as its installer put them on this PC (Electron, locales,
+# The app is AionUi 2.2.2's own release files (vendor\aionui-base, unpacked from AionUi's installer by
+# tools\fetch-aionui-base.js; or an installed AionUi, if the PC has one) (Electron, locales,
 # the bundled AionCore v0.2.2, the unpacked native modules), with:
-#   resources\app.asar      built from the STOCK asar (checked by SHA-256): patches 0001, 0003, 0006 and
-#                           0009 applied, packed with the stock header's unpack rules (tools\pack-asar.js)
+#   resources\app.asar      built from the STOCK asar (checked by SHA-256): patches 0001, 0003, 0006, 0009 and
+#                           0010 applied, packed with the stock header's unpack rules (tools\pack-asar.js)
 #   resources\aiondx\       the per-user payload: bin (Loop tool, Antigravity sign-in wrapper, Claude
 #                           launcher, all built from source here), skills, icons, release.json
 #   AionDX.exe              AionUi.exe renamed, with the AionDX icon and version strings (brand-exe.mjs)
@@ -24,11 +25,15 @@ param(
   [string]$AionUiDir = 'C:\Program Files\AionUi',
   # Ship AionDX's own AionCore build (vendor\aioncore) in place of the stock binary. Off unless given: a patched
   # AionCore goes to another PC only after it has passed its tests here (September 26th).
-  [switch]$AionDxCore
+  [switch]$AionDxCore,
+  # Stop after the staged app and its privacy checks, before the installer is compiled (for tests on the staged app).
+  [switch]$StageOnly
 )
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+(\.\d+){1,3}(-[0-9A-Za-z.]+)?$') { throw "-Version must look like 0.1.0 (got '$Version')" }
 $root = 'C:\AI Projects\AionDX'
+# The base: an installed AionUi, else the copy unpacked from its official installer (tools\fetch-aionui-base.js).
+if (-not (Test-Path (Join-Path $AionUiDir 'AionUi.exe'))) { $AionUiDir = Join-Path $root 'vendor\aionui-base' }
 $STOCK_SHA = '95b6352bca6400e2990781398a0644f185e5b1b9f42706125ddeee21e72c7d73'   # AionUi 2.2.2's app.asar
 $EXE_SHA = '16360a60802c14b1842289362704b4c4731fe4db57fda3aad4346945c1dec6dc'     # AionUi 2.2.2's AionUi.exe, x64
 $AIONUI_VER = '2.2.2'
@@ -38,6 +43,7 @@ $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $node = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $node) { $node = 'C:\Program Files\nodejs\node.exe' }
 $Stock = Join-Path $AionUiDir 'resources\app.asar.stock'
+if (-not (Test-Path $Stock)) { $Stock = Join-Path $AionUiDir 'resources\app.asar' }   # a fresh unpack has only the stock one
 $Unpacked = Join-Path $AionUiDir 'resources\app.asar.unpacked'
 
 $dist = Join-Path $root "dist\$Version"
@@ -98,6 +104,8 @@ foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-ident
   Run $node @("$root\patches\$p\apply.js", $ext) "patch $p"
   Say "patch $p applied"
 }
+Run $node @("$root\patches\0010-official-identity\apply.js", $ext, $Version, '--report', "$work\0010-report.txt") 'patch 0010'
+Say "patch 0010 applied (report: $work\0010-report.txt)"
 Run $node @("$root\tools\pack-asar.js", $ext, "$work\stock\app.asar", "$work\packed\app.asar") 'pack'
 
 # 3. Stage the app. Everything AionUi's installer put here, except its uninstaller, its updater feed file
@@ -157,6 +165,10 @@ Run "$env:WINDIR\System32\tar.exe" @('-xf', $nodeZip, '-C', $nodeHome) 'unpack N
 if (-not (Test-Path (Join-Path $nodeHome "$nodeDirName\node.exe"))) { throw "Node.js did not unpack to $nodeHome\$nodeDirName" }
 Say "Node.js $NODE_VER bundled (sha256 $wantNode) in resources\bundled-aioncore\win32-x64\managed-resources\node\$nodeDirName"
 Copy-Item "$work\packed\app.asar" "$stage\resources\app.asar"
+# AionUi's logo files beside the app (its own tray fallback, the WebUI's web-app icons and manifest) become AionDX's.
+Copy-Item "$root\patches\0009-identity\icon\png\aiondx-256.png" "$stage\resources\app.png" -Force
+foreach ($i in @('icon-180.png', 'icon-192.png', 'icon-512.png')) { if (Test-Path "$stage\resources\pwa\$i") { Copy-Item "$ext\out\renderer\pwa\$i" "$stage\resources\pwa\$i" -Force } }
+if (Test-Path "$stage\resources\manifest.webmanifest") { Copy-Item "$ext\out\renderer\manifest.webmanifest" "$stage\resources\manifest.webmanifest" -Force }
 Rename-Item (Join-Path $stage 'AionUi.exe') 'AionDX.exe'
 Run $node @("$root\tools\brand-exe.mjs", (Join-Path $stage 'AionDX.exe'), "$root\patches\0009-identity\icon\aiondx.ico", $Version) 'brand AionDX.exe'
 Say "staged the app in $stage"
@@ -195,10 +207,17 @@ Files AionDX changed or added:
   0009 the AionDX mark, name and themes; at start, AionDX's programs first on PATH, Node.js on PATH when the PC has
        none, and AionUi's updater off; the one-click setup's and /plugin's main-process halves and their preload bridge
        (out/main/index.js, out/preload/index.js, out/renderer/index.html, icons, out/renderer/aiondx-*.js)
+  0010 AionDX as its own product: every display string that said AionUi says AionDX; the About page, the update check
+       and self-update read AionDX's own GitHub releases; no crash reports or usage analytics are sent to AionUi's
+       services; feedback opens AionDX's GitHub issues; pictures attached to a message box are kept across a restart
+       (out/main/index.js, out/preload/index.js, out/renderer/assets/*.js, the web-app manifests, static/images)
 - resources\aiondx\: AionDX's own programs, skills and icon.
 - resources\bundled-aioncore\win32-x64\managed-resources\node\node-v$NODE_VER-win-x64\: Node.js $NODE_VER from
   nodejs.org, unchanged (MIT; its LICENSE is in that folder), for a PC without Node.
 - resources\app-update.yml and AionUi's uninstaller are not included.
+- resources\app.png, resources\pwa and resources\manifest.webmanifest: AionUi's logo files replaced by AionDX's.
+- resources\bundled-aioncore\win32-x64\aioncore.exe (with -AionDxCore): AionCore built from source with AionDX's patches
+  (the built-in assistants say AionDX where they said AionUi; the message queue and per-chat MCP changes).
 "@
 [IO.File]::WriteAllText("$stage\NOTICE.AionDX.txt", $notice.Replace("`n", "`r`n"), $utf8)
 
@@ -218,7 +237,7 @@ $release = [ordered]@{
   files = [ordered]@{ 'AionDX.exe' = $exeSha; 'resources/app.asar' = $asarSha; 'resources/bundled-aioncore/win32-x64/aioncore.exe' = $coreSha }
   appBytes = $stageBytes
   patches = @('0001-renderer-dx', '0002-claude-model-currency', '0003-local-account', '0004-setup-butler', '0005-claude-exe-shim',
-    '0006-butler-to-antigravity', '0007-loop-tool', '0008-agy-signin', '0009-identity') + @($(if ($coreRec) { @($coreRec.patches) } else { @() }))
+    '0006-butler-to-antigravity', '0007-loop-tool', '0008-agy-signin', '0009-identity', '0010-official-identity') + @($(if ($coreRec) { @($coreRec.patches) } else { @() }))
   userFiles = @($userFiles)
 }
 [IO.File]::WriteAllText("$payload\release.json", ($release | ConvertTo-Json -Depth 6), $utf8)
@@ -242,7 +261,20 @@ INSTALL
    Windows runs only signed programs, and AionDX is not signed. It can run only with Smart App Control
    off (Windows Security > App & browser control > Smart App Control settings).
 3. It installs for you only, in %LOCALAPPDATA%\Programs\AionDX, with no administrator prompt.
-4. Start AionDX. It opens on "Welcome to AionDX": sign in to Antigravity (free, with a Google account)
+   If AionUi is on the PC, Setup first asks whether to move to AionDX (the default) or keep both:
+   - Move: your chats and settings stay where they are (AionDX uses the same folder, %APPDATA%\AionUi).
+     Setup copies the chats database, settings and custom assistants to %LOCALAPPDATA%\AionDX\migration
+     (a box you can untick), removes AionUi with its own uninstaller (Windows asks for permission once if
+     AionUi was installed for all users), and checks the chats database is exactly as it was.
+   - Keep both: AionDX installs next to AionUi. They share one set of chats and settings, so use one at a time.
+   An AionUi newer than the one AionDX is built on may have a chats database AionDX cannot open: Setup warns
+   and defaults to keeping both. For an unattended install, /MIGRATE=yes moves (/AIONUIBACKUP=no skips the copy).
+   The same step runs from a shell: "%LOCALAPPDATA%\AionDX\bin\aiondx.exe" migrate detect | run.
+4. Updates: AionDX looks for a newer release on GitHub (github.com/Renegade1993/AionDX/releases) about half a minute after it
+   starts and every six hours. When there is one, a card says so; "Download" and then "Install now" check the installer
+   against the release's published SHA-256, install it quietly, and AionDX comes back. About > Check for updates does the same on
+   request. AionDX itself sends no crash reports or usage figures.
+5. Start AionDX. It opens on "Welcome to AionDX": sign in to Antigravity (free, with a Google account)
    and it sets up your agents, or pick "Use another agent instead".
 
 CHECK THE DOWNLOAD
@@ -268,6 +300,8 @@ Copy-Item "$dist\README.txt" "$stage\README.txt"
 Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aionui-dx.js", "$ext\out\renderer\aiondx-themes.js", "$stage\README.txt") 'privacy check: renderer and README'
 Run $node @("$root\tools\privacy-check.js", '--block', "$ext\out\main\index.js") 'privacy check: main process block'
 Run $node @("$root\tools\privacy-check.js", '--dir', $payload) 'privacy check: payload'
+
+if ($StageOnly) { Say "stage only: the staged app is in $stage; no installer compiled"; exit 0 }
 
 # 8. The installer.
 $numeric = ($Version -replace '[^0-9.]', '')

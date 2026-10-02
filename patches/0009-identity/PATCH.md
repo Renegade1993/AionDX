@@ -5,9 +5,7 @@ accent row (patch 0001 build `2026-09-25.2`). **Status:** themes installed and A
 active 2026-09-25 07:24 (shows at AionUi's next start); shortcut icons set; vendor build 5C6DD96E
 carries the icons and the accent row, waiting for AionDX Apply Update.
 
-K, September 25th: *"can you also help us move away from the AionUi visual identity? maybe replace
-the icon, turn some of the background colors darker, make the dividing lines accent colors (and
-configurable in settings)"*.
+a request of September 25th.
 
 ## The mark
 
@@ -70,7 +68,7 @@ shortcuts back to AionUi's icon), and the updater's "revert to stock" or a build
 
 ## The sidebar's top-left logo and name, and a grey mark (2026-09-25)
 
-K: "Can we replace the icon in the ui in the top left?". AionUi draws that logo inline (Layout.tsx: a
+a request. AionUi draws that logo inline (Layout.tsx: a
 black 32 px tile and a white SVG) with the word "AionUi" beside it, so replacing `app-*.png` never
 reached it. `apply.js` now edits the renderer bundle that holds it: the SVG becomes
 `<img src="./aiondx-mark.svg">` (the mark, copied to `out/renderer/`), the tile loses `bg-black`, and
@@ -89,8 +87,7 @@ the PNGs and the .ico; `install.js` put the .ico on the shortcuts and the grey t
   an activator, `aiondx activate --quiet --from aionui-start`, killed after 90 s.
 - `aiondx-themes.js` for the renderer's first-run setup.
 
-Later the same day, for the standalone app (K: *"you need to prepare a installer that's all in one based
-on our source"*; the friend has no AionUi):
+Later the same day, for the standalone app (a request; the friend has no AionUi):
 
 - The start hook recognises a standalone install by `resources\aiondx\release.json` beside the app. The
   `C:\ProgramData\AionDX\manifest.json` test is gone, since any account can create that folder. On a
@@ -100,8 +97,7 @@ on our source"*; the friend has no AionUi):
   or a test run) or with `AIONDX_NO_ACTIVATE=1`.
 - The Windows app id is `com.aiondx.app` on a standalone install, so AionDX and a stock AionUi on the
   same PC keep separate taskbar pins, jump lists and notifications.
-- Right-click: Cut, Copy, Paste and Select all in a text box, and Copy on selected text (K: *"i want to
-  be able to right-click and get a context menu for cut/copy/paste"*). Electron raises this only when
+- Right-click: Cut, Copy, Paste and Select all in a text box, and Copy on selected text (a request). Electron raises this only when
   the page did not handle the right-click itself, so AionUi's own menus are unchanged.
 
 ## September 26th, 2026 (evening): the one-click setup's main-process half, and Node.js for a PC without it
@@ -120,7 +116,7 @@ on our source"*; the friend has no AionUi):
 
 ## September 26th, 2026 (night): Claude Code plugins for the page
 
-A tester, through K: *"we don't have plugin access here and we need it"*, then *"it seems we should definitely implement
+A tester, through a request, then *"it seems we should definitely implement
 /plugins"*. AionUi's Claude chats offer `/reload-plugins` but not Claude Code's `/plugin` browser.
 `ipcMain.handle("aiondx:plugins")` in the helper block runs `claude plugin ...` for the page's /plugin panel (patch
 0001): the `claude` found on PATH (AionDX's bin first), hidden, killed at 180 s. Only `list`, `install`, `uninstall`,

@@ -41,14 +41,21 @@ const vis = ResEdit.Resource.VersionInfo.fromEntries(res.entries);
 if (!vis.length) { console.error('no version resource in ' + exePath); process.exit(1); }
 const vi = vis[0];
 const lang = vi.getAllLanguagesForStringValues()[0] || { lang: 1033, codepage: 1200 };
+// The numeric version (the fixed part of the resource) and the version strings Windows shows: AionDX's, not the Electron app's.
+const nums = String(version).split('-')[0].split('.').map((n) => parseInt(n, 10) || 0);
+while (nums.length < 4) nums.push(0);
+vi.setFileVersion(nums[0], nums[1], nums[2], nums[3], lang.lang);
+vi.setProductVersion(nums[0], nums[1], nums[2], nums[3], lang.lang);
 vi.setStringValues(lang, {
   FileDescription: 'AionDX',
   ProductName: 'AionDX',
   CompanyName: 'AionDX',
   OriginalFilename: 'AionDX.exe',
   InternalName: 'AionDX',
+  FileVersion: version,
   ProductVersion: version,
-  Comments: 'AionDX ' + version + ': AionUi 2.2.2 with the AionDX patches. AionUi is Apache-2.0 software by iOfficeAI.',
+  LegalCopyright: 'AionDX. Licences and notices: NOTICE.AionDX.txt',
+  Comments: 'AionDX ' + version + '. Built on open-source software under the Apache-2.0 licence; see NOTICE.AionDX.txt and the LICENSE files.',
 });
 vi.outputToResourceEntries(res.entries);
 

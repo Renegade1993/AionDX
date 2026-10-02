@@ -2,8 +2,7 @@
  * claude-stream-proxy.js - the account router's pass-through between AionCore and Claude, so AionDX
  * can take back a message Claude has not read yet (AionDX, 2026-09-25).
  *
- * K, September 25th: "want the ability to unsend messages that haven't been read yet ... I mean
- * what's been sent in chat and unread". AionCore writes a message sent mid-turn straight into
+ * a request of September 25th. AionCore writes a message sent mid-turn straight into
  * Claude's stdin, stamped with the message's msg_id as its uuid; Claude keeps it in its own command
  * queue until its next step, and AionUi shows it "Unread". Claude drops a queued message on a
  * `cancel_async_message` control request naming that uuid (tested live 2026-09-25,
@@ -46,8 +45,8 @@ const MAX_REQ_AGE_MS = 120000; // an older request is from a chat's earlier proc
  * reads the account's usage windows from the traffic Claude Code already makes (AionDX,
  * 2026-10-01).
  *
- * K, October 1st: usage information in the UI and in the agents is the top priority, "BY ANY MEANS NECESSARY. ENSURE
- * IT WORKS BEFORE IMPLEMENTING". Every response to a subscription Messages call carries the account's usage in
+ * A request of October 1st made usage information in the UI and in the agents the top priority, to be proven on real calls before it
+ * is built in. Every response to a subscription Messages call carries the account's usage in
  * anthropic-ratelimit-unified-* headers (5-hour and 7-day utilization, resets, status). Claude Code reads them and
  * prints them only at a threshold or a hit limit, and a call of AionDX's own to read them is not something
  * Anthropic's terms allow with a subscription token (the September 26th probe, switched off). So the router starts
@@ -138,8 +137,7 @@ function startTap(opts) {
 // ---------------------------------------------------------------------------
 // The account's usage windows, for AionDX's meter (2026-09-26)
 // ---------------------------------------------------------------------------
-// K: "see if you can figure out any way to get 5-hour usage window usage from the claude api. i would like to
-// see a usage meter ... only for claude". /api/oauth/usage needs a user:profile token, and AionUi's Claude
+// a request. /api/oauth/usage needs a user:profile token, and AionUi's Claude
 // agents run on setup-token (user:inference) tokens (P-003). The Messages API, though, answers subscription
 // traffic with anthropic-ratelimit-unified-* headers (5-hour and 7-day utilization, resets, status), measured
 // with both accounts on September 26th (tools\probe-claude-usage.js); the free count_tokens route does not
@@ -265,8 +263,7 @@ function startUsage(opts, log) {
 // ---------------------------------------------------------------------------
 // YOLO means YOLO (2026-10-01)
 // ---------------------------------------------------------------------------
-// K, October 1st: "I STILL HAVE TO MANUALLY ALLOW BASHES, THIS HOLD UP MY AGENTS. I WANT THIS DONE AWAY WITH IN YOLO
-// MODE", and a team's developer agent "got switched off yolo mode without my having done so". AionCore starts Claude with
+// a request of October 1st, and a team's developer agent "got switched off yolo mode without my having done so". AionCore starts Claude with
 // --permission-mode default and applies the chat's stored mode afterwards with a set_permission_mode request
 // (aionui-session claude.rs); when that step is missed the process stays on default while AionUi still shows YOLO,
 // and even in bypassPermissions Claude asks (can_use_tool) for what its own safety checks flag, a dangerous rm for

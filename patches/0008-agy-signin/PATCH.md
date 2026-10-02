@@ -6,8 +6,7 @@ command override in AionUi's database, and the Loop script's sign-in panel (patc
 once AionUi restarts with patch 0009's start hook (see "How AionCore finds agy"); the first real
 sign-in through the panel worked during the standalone smoke test.
 
-K, September 24th: *"our users aren't going to know how to or want to open a terminal. find a fix
-here ... in the ui"*.
+a request of September 24th.
 
 ## Why Antigravity could not sign in inside AionUi
 

@@ -3,8 +3,7 @@
  * appearance, tokens, css). Installed into `theme.userThemes` by install.js, they show in AionUi's
  * Settings > Appearance gallery beside Light and Dark, and AionUi's own theme editor can change them.
  *
- * K, 2026-09-25: "move away from the AionUi visual identity ... turn some of the background colors
- * darker, make the dividing lines accent colors (and configurable in settings)".
+ * a request of 2026-09-25.
  *
  * Everything accent-coloured reads one variable, --aiondx-accent (default teal #2dd4bf, the colour
  * of the AionDX mark). The accent picker AionDX adds to Settings > Appearance overrides it (and its
@@ -14,8 +13,7 @@
  * No `cover`: AionUi turns a user theme's cover into the app's background image
  * (CssThemeSettings ensureBackgroundCss). Without one the gallery draws a preview from the tokens.
  *
- * AionDX Dark's neutrals are plain greys (K, 2026-09-25: "is this a purple hew? can we make it grey,
- * just about this dark"). They were a navy tint (#0c1017 and kin); each became the grey of the same
+ * AionDX Dark's neutrals are plain greys (a request of 2026-09-25). They were a navy tint (#0c1017 and kin); each became the grey of the same
  * lightness, CIE L*.
  *
  * Baselines for "darker" (AionUi 2.2.2's default scheme): dark #0e0e0e / #1a1a1a / #262626 with

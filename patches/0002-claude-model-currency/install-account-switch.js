@@ -2,8 +2,7 @@
 /**
  * install-account-switch.js - per-chat Claude account (AionDX, 2026-09-25).
  *
- * K, September 25th: "if possible, would like the ability to swap models and accounts in a given
- * chat". The model already switches live from AionUi's own picker. The account is fixed when the
+ * a request of September 25th. The model already switches live from AionUi's own picker. The account is fixed when the
  * Claude process starts, by the account router (%APPDATA%\npm\claude-account-router.js). This:
  *
  *   1. installs the router from this folder (backup: claude-account-router.js.bak-20260925);

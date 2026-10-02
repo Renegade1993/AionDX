@@ -17,8 +17,8 @@ Size: 16 files, 62 hunks, 1895 lines added, 52 removed. Written September 26th, 
 3. Deleting a server stops it. A soft-deleted server no longer launches in chats whose frozen
    selection still lists it (all three session loaders), and new snapshots leave it out.
 
-K asked on September 26th, 2026 for MCP to be "fully configurable and transparent to agents"
-and for per-chat MCP to be "a permanent one-time fix". The investigation behind this patch is
+A request of September 26th, 2026 asked for MCP to be fully configurable and transparent to agents,
+and for per-chat MCP to be a permanent one-time fix. The investigation behind this patch is
 `! LLM Files\Research\2026-09-26_mcp-configurable-and-transparent.md`; this patch closes its
 gaps 1 (no per-chat control after creation), 3 (no live connection status) and 6 (deleted
 servers keep launching).

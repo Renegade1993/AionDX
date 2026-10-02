@@ -2,8 +2,8 @@
 AionDX: build AionCore from its source, on the development PC only. Users never need Rust: the installer and
 AionDX Apply Update ship the aioncore.exe this produces.
 
-K, 2026-09-26: MCP per chat "needs to be a permanent one-time fix for me and other users", and on installing Rust:
-"if it's for the dev environment that's fine. just don't users to have to install other software".
+A request of 2026-09-26: MCP per chat needs to be a permanent one-time fix, and Rust may be installed on the development PC but
+users must not have to install other software.
 
   - Rust: rustup, per user (%USERPROFILE%\.cargo, %USERPROFILE%\.rustup), with PATH left alone; this script calls
     cargo by its full path. The toolchain is the one AionCore pins in rust-toolchain.toml.
@@ -21,6 +21,8 @@ tree it started. Windowless when started hidden. Log: %TEMP%\aiondx-aioncore-bui
 param(
   [string]$Tag = 'v0.2.2',
   [switch]$Patched,
+  # Delete the build folder first: C code built earlier (SQLite and others) keeps the paths it was built with.
+  [switch]$Clean,
   [int]$DeadlineMinutes = 120
 )
 $ErrorActionPreference = 'Stop'
@@ -132,8 +134,18 @@ try {
   }
 
   # 5. The release build, the way AionCore's own release does it.
-  Say "cargo build --release --target $target -p aionui-app (RUSTFLAGS=-C target-feature=+crt-static)"
-  $c = Run $cargo @('build', '--release', '--target', $target, '-p', 'aionui-app') $wt @{ RUSTFLAGS = '-C target-feature=+crt-static'; CARGO_TERM_COLOR = 'never' }
+  Say "cargo build --release --target $target -p aionui-app (+crt-static, build paths remapped)"
+  # Nothing about this PC goes into the binary: the panic and debug paths Rust writes into it name the build folder, the cargo registry
+  # and the toolchain, and those hold the Windows user name (found on October 2nd, 2026, in the first build meant for a public release).
+  # CARGO_ENCODED_RUSTFLAGS separates flags with 0x1f, so a path with a space in it is one flag.
+  $rustupHome = Join-Path $env:USERPROFILE '.rustup'
+  $flags = @('-C', 'target-feature=+crt-static',
+    "--remap-path-prefix=$cargoHome=C:\cargo", "--remap-path-prefix=$rustupHome=C:\rustup", "--remap-path-prefix=$wt=C:\aioncore",
+    "--remap-path-prefix=$env:USERPROFILE=C:\user", '-C', 'link-arg=/PDBALTPATH:%_PDB%')
+  # The C code the crates compile (cl.exe) writes its source paths into the binary through __FILE__: /d1trimfile drops the user folder from them.
+  if ($Clean -and (Test-Path (Join-Path $wt 'target'))) { Say 'clean build: removing target'; Remove-Item -LiteralPath (Join-Path $wt 'target') -Recurse -Force }
+  $trim = "/d1trimfile:$($env:USERPROFILE)\"
+  $c = Run $cargo @('build', '--release', '--target', $target, '-p', 'aionui-app') $wt @{ CARGO_ENCODED_RUSTFLAGS = ($flags -join [string][char]0x1f); RUSTFLAGS = $null; CL = $trim; CARGO_TERM_COLOR = 'never' }
   if ($c -ne 0) { throw "cargo build exit $c" }
   $exe = Join-Path $wt "target\$target\release\aioncore.exe"
   $h = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()

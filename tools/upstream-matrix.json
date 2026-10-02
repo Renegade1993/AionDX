@@ -1,5 +1,5 @@
 {
-  "about": "AionDX harvest matrix: what AionDX takes from upstream AionUi and AionCore, and what it does not. Configuration for tools/upstream-sync.js; explained in UPSTREAM-MATRIX.md. Set by K's directive of 2026-09-24. Changing a decision is K's call.",
+  "about": "AionDX harvest matrix: what AionDX takes from upstream AionUi and AionCore, and what it does not. Configuration for tools/upstream-sync.js; explained in UPSTREAM-MATRIX.md. Set by the project owner's directive of 2026-09-24. Changing a decision is the owner's call.",
   "decisions": {
     "harvest": "take upstream as it ships, no AionDX change",
     "harvest+patch": "take upstream; an AionDX patch rides on it, so upstream changes here are checked before a rebuild",
@@ -80,7 +80,7 @@
       "patches": [
         "0003"
       ],
-      "why": "K: remove the sign-in, not necessary for our fork. Not in the public source; patch 0003's anchors in the shipped bundle are the check.",
+      "why": "The sign-in is removed: it is not necessary for this fork. Not in the public source; patch 0003's anchors in the shipped bundle are the check.",
       "watch": {
         "content": [
           "CORE_IDENTITY_MODE|identityMode|identity-mode|AuthManager|coreUserBridge"
@@ -104,9 +104,9 @@
       "id": "F6",
       "repo": "frontend",
       "area": "Telemetry: page-view analytics, analytics identity alias, Sentry crash and install-failure reports",
-      "decision": "hold",
-      "patches": [],
-      "why": "Sends usage events and crash data to AionUi's services. Not decided.",
+      "decision": "strip",
+      "patches": ["0010"],
+      "why": "Sent usage events and crash data to AionUi's services. Switched off in the standalone app from 0.25.0 (patch 0010: Sentry has no destination, the analytics function returns, feedback opens the AionDX issues page). The project owner has not confirmed it.",
       "watch": {
         "paths": [
           "packages/desktop/src/sentry.ts",
@@ -121,9 +121,9 @@
       "id": "F7",
       "repo": "frontend",
       "area": "Auto-update from GitHub releases (electron-updater)",
-      "decision": "hold",
-      "patches": [],
-      "why": "electron-updater is set to autoDownload=false and autoInstallOnAppQuit=true (main index.js 42408): it checks, AionUi offers the update, and K's click downloads it; it then installs on quit. That replaces app.asar, so patches 0001, 0003 and 0006 drop out until AionDX Apply Update rebuilds them, and after October 7th, 2026 the stock build would ask for a sign-in. Taking updates through AionDX Apply Update only is the alternative. Not decided.",
+      "decision": "harvest+patch",
+      "patches": ["0010"],
+      "why": "electron-updater is set to autoDownload=false and autoInstallOnAppQuit=true (main index.js 42408): it checks AionUi's feed and installs stock AionUi over the app. The standalone app turns that updater off (AIONUI_DISABLE_AUTO_UPDATE) and, from 0.25.0, patch 0010 reads AionDX's own GitHub releases instead: a check at start and every six hours, a download, and a silent install of an installer whose SHA-256 is the published one.",
       "watch": {
         "paths": [
           "packages/desktop/src/process/services/autoUpdaterService.ts"
@@ -206,7 +206,7 @@
       "patches": [
         "0006"
       ],
-      "why": "K: remove it from the UI everywhere and use Antigravity in its place. The hook's target constant and the English strings are patched; new Butler entry points upstream would need adding.",
+      "why": "The Butler is removed from the UI everywhere and Antigravity is used in its place. The hook's target constant and the English strings are patched; new Butler entry points upstream would need adding.",
       "watch": {
         "paths": [
           "packages/desktop/src/renderer/hooks/assistant/useTalkToButler.ts",

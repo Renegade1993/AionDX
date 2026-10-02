@@ -1,7 +1,6 @@
 # Upstream and the harvest matrix
 
-K, 2026-09-24: *"make sure we are syncing the latest source changes from upstream, and that we have
-a set configuration matrix on what gets harvested and what does not."*
+a request of 2026-09-24
 
 The configuration is `tools\upstream-matrix.json`. This file explains it. `tools\upstream-sync.js`
 reads it, fetches both upstream clones and reports which rows an upstream change touches. Changing a
@@ -78,22 +77,17 @@ agent, version-pin chores), none touching anything an AionDX patch depends on.
 
 The `why` for each row, and the paths and content patterns watched for it, are in the JSON.
 
-## Two rows wait on K
+## Two rows that were open
 
-F6, telemetry. The app sends a page-view event on every screen change, an analytics identity alias
-tied to the account id, and Sentry crash and installer-failure reports to AionUi's services.
-Harvesting keeps upstream's crash data flowing; stripping keeps usage on the machine.
+F6, telemetry. The app sent a page-view event on every screen change, an analytics identity alias
+tied to the account id, and Sentry crash and installer-failure reports to AionUi's services. The
+standalone app, from 0.25.0, strips all of it (patch 0010). The project owner has not confirmed that.
 
-F7, auto-update. electron-updater checks for a release and AionUi offers it (autoDownload is off); K's
-click downloads it and it installs when AionUi quits. That replaces
-`app.asar`, so patches 0001 and 0003 drop out until "AionDX Apply Update" rebuilds them, and after
-October 7th, 2026 the stock AionPro build would ask for an aionui.com sign-in in that window. The
-alternative is taking updates only through AionDX Apply Update, which already detects a new stock
-build and rebuilds on top of it.
+F7, auto-update. electron-updater checked AionUi's own feed, and installing what it found would put stock
+AionUi over the app. The standalone app turns that updater off; from 0.25.0 patch 0010 checks AionDX's own
+GitHub releases and installs a verified installer silently.
 
-The standalone app (installer 0.1.0, September 26th) runs with AionUi's own switch
-`AIONUI_DISABLE_AUTO_UPDATE=1`: there an update would install stock AionUi over AionDX, and it has no
-Apply Update to rebuild with. K's own machine is unchanged, and F7's decision for it is still his.
+The standalone app runs with AionUi's own switch `AIONUI_DISABLE_AUTO_UPDATE=1`, which turns its updater off.
 
 ## When upstream moves
 

@@ -3,9 +3,9 @@
  * probe-app.js - one-off: the staged standalone app (vendor\release\stage\AionDX) in a throwaway profile, driven
  * through its debugging port, to see two things the harness cannot:
  *   1. "/plugin" typed in a real chat's message box with real key presses: does the Plugins panel open, and does
- *      anything reach the agent? (K, 2026-09-26: "/plugin does not, only reload plugins")
+ *      anything reach the agent? (a request of 2026-09-26)
  *   2. The model names a Claude chat shows, on the new-chat page and in a chat, before and after its agent starts.
- *      (K: "just says 'Fable' 'Opus' etc.")
+ *      (a request)
  * It creates one Claude chat and starts its runtime (runtime/ensure), and sends no prompt. The app is minimized;
  * 240 s deadline; the app's process tree is killed on every exit. Screenshots to %TEMP%\aiondx-probe-*.png.
  *

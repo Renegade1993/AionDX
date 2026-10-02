@@ -7,7 +7,7 @@
  *                                        everything the survey found, every agent installed, less the kinds skipped
  *   --text                               a summary for a person instead of the JSON (aiondx setup apply uses it)
  *
- * K, 2026-09-26: "we want a streamlined 'one-click' ish setup process". The survey (survey.js) lists what
+ * a request of 2026-09-26. The survey (survey.js) lists what
  * the other AI apps left on this PC; this copies and wires it, the same way whichever button or agent runs it:
  *   - copies of the chosen files under ~/.aiondx/harvest/<date>/<tool>/, secret-looking files, node_modules,
  *     .git and the like left out; custom agents, commands, skills, prompts and rules also under

@@ -4,8 +4,7 @@
 **Status:** installed 2026-09-24 11:49, takes effect at each Claude agent's next launch; no AionUi
 restart needed. Built against AionUi 2.2.2 / AionCore 0.2.2.
 
-K, September 24th: *"for some reason i have to manually bash allow agents, we need to remove that
-requirement in yolo mode"*.
+a request of September 24th.
 
 ## The bug
 

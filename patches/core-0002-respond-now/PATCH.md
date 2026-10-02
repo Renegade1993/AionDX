@@ -6,12 +6,8 @@ Written October 1st, 2026. Built with `tools\build-aioncore.ps1 -Patched`, which
 
 ## Why
 
-K, September 26th: *"a llm often gets backlogged in messages. I would like a way to place my messages at the top of
-the queue."* The first build of that (renderer `2026-09-26.1`) stopped the agent's running turn, or sent a note that
-only piled onto the queue. K, October 1st: *"all your 'respond now' button does is send another message ... that
-message just gets piled on right? This is maybe the dumbest implementation i have ever seen ... seems like the
-lightning bolt actually stops the agent, that's not what i intended. i want the message to go to the top of their
-message queue to be seen next, not stop pending processes."*
+a request of September 26th The first build of that (renderer `2026-09-26.1`) stopped the agent's running turn, or sent a note that
+only piled onto the queue. a request of October 1st
 
 A team member's messages wait in AionCore's work coordinator (foreground lane, first in first out; claimed in one
 batch when the member's turn ends). The only existing route that reordered anything, `interrupt`, cancels the turn.

@@ -82,7 +82,7 @@ async function target() {
   // single-instance lock so it runs beside the installed AionUi, and leaves the tray and updater off; the
   // first-run path under test (sign-in, setup, Welcome, agents) is the same.
   app = spawn(EXE, [`--user-data-dir=${PROFILE}`, `--remote-debugging-port=${PORT}`], {
-    env: { ...process.env, AIONDX_NO_ACTIVATE: '1', AIONUI_E2E_TEST: '1', AIONUI_E2E_USER_DATA_DIR: PROFILE, AIONDX_SETUP_TEST_HOME: SETUP_HOME },
+    env: { ...process.env, AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONUI_E2E_TEST: '1', AIONUI_E2E_USER_DATA_DIR: PROFILE, AIONDX_SETUP_TEST_HOME: SETUP_HOME },
     stdio: 'ignore', windowsHide: true, detached: false });
   app.on('error', (e) => finish(2, 'could not start the app: ' + e.message));
 

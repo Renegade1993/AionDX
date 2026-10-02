@@ -4,8 +4,7 @@
  *
  *   node tools\probe-claude-usage.js
  *
- * K, September 26th, 2026: "see if you can figure out any way to get 5-hour usage window usage from the
- * claude api". /api/oauth/usage needs a user:profile token (P-003), and both AionUi Claude agents run on
+ * a request of September 26th, 2026. /api/oauth/usage needs a user:profile token (P-003), and both AionUi Claude agents run on
  * setup-token (user:inference) tokens. But the Messages API answers subscription traffic with the
  * anthropic-ratelimit-unified-* headers, which Claude Code itself reads (5h and 7d utilization, resets,
  * status). This asks, per account in the Claude launcher's config, first the free token-count endpoint and,

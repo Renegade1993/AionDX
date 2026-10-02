@@ -183,7 +183,7 @@ asymmetric: the main account keeps working, so it reads as an account problem.
 
 ## Per-chat account (2026-09-25)
 
-K: "if possible, would like the ability to swap models and accounts in a given chat". The router now
+a request. The router now
 reads `aiondx.account.conv.<conversation id>` from AionUi's `client_preferences` table (same read-only
 database session) and, when it names an account in the config, launches on that account instead of
 the agent's own. An account without its own `home` gets the real profile, so a second-agent chat moved to
@@ -263,9 +263,8 @@ config already said `false`. `test-usage-for.js` 11/11.
 
 ## October 1st, 2026: usage from Claude's own traffic, and YOLO means YOLO
 
-K, October 1st: *"a top priority is the usage information passed into 1. the ui, and 2. the agents"*, on how to get the
-numbers *"BY ANY MEANS NECESSARY. ENSURE IT WORKS BEFORE IMPLEMENTING"*, and *"I STILL HAVE TO MANUALLY ALLOW BASHES, THIS
-HOLD UP MY AGENTS. I WANT THIS DONE AWAY WITH IN YOLO MODE"*.
+two requests of October 1st: get the usage numbers by any means that can be proven to work before it is built in, and stop
+making agents wait for a manual approval of every Bash command in YOLO mode.
 
 - Usage tap (`startTap` in `claude-stream-proxy.js`). The router starts Claude with `ANTHROPIC_BASE_URL` on a loopback
   forwarder that hands every request to the real API untouched and reads the `anthropic-ratelimit-unified-*` headers of

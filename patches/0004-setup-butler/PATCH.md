@@ -124,8 +124,7 @@ second agent with its own config folder. Hook up, Check and Report are 8, 9 and 
 
 ## September 26th, 2026 (evening): the one-click setup
 
-K, after the friend's install, where Antigravity "made scripts for the tester to run himself....this is not what we
-intended....we want a streamlined 'one-click' ish setup process"; then "One click setup as you described, with the
+a request; then "One click setup as you described, with the
 backup of antigravity....which needs clearer instructions".
 
 - `scripts/apply.js`, new: the import, deterministic, beside `survey.js`. It takes the survey and a plan (or `--all`
