@@ -25,7 +25,7 @@ End If
 cmd = """" & node & """ """ & script & """"
 shell.Run cmd, 0, False
 
-' Also check upstream against the harvest matrix (added 2026-09-24, K's directive to keep
+' Also check upstream against the harvest matrix (added 2026-09-24, the owner's directive to keep
 ' syncing upstream). Fetches refs only, never checks out; 180 s deadline of its own; writes
 ' vendor\upstream-sync.json and vendor\upstream-sync.log.
 Dim sync

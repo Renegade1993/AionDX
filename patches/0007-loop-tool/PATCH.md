@@ -1,4 +1,4 @@
-# 0007-loop-tool: agents use the same Loop as K
+# 0007-loop-tool: agents use the same Loop as the owner
 
 **Target:** outside the asar: `%LOCALAPPDATA%\AionDX\bin\` (two programs), an auto-inject skill,
 one MCP server row in AionUi's database, and records in AionUi's per-user settings store.
@@ -30,7 +30,7 @@ deletes, no side effects):
 
 | key | written by | holds |
 |---|---|---|
-| `aiondx.loop.conv.<conversationId>`, `aiondx.loop.team.<teamId>.<slotId>` | K's menu, the Loop switching itself off, the tool | `on`, `msg`, `compactAt`, `by` (`user`, `loop`, `agent`), `who`, `for`, `at`, `note`, `rev` |
+| `aiondx.loop.conv.<conversationId>`, `aiondx.loop.team.<teamId>.<slotId>` | The owner's menu, the Loop switching itself off, the tool | `on`, `msg`, `compactAt`, `by` (`user`, `loop`, `agent`), `who`, `for`, `at`, `note`, `rev` |
 | `aiondx.loopstatus.<same suffix>` | the renderer only | what the Loop last decided (`why`), nudges, last nudge, compaction sent |
 | `aiondx.engine` | the renderer, every 2 minutes | `{at, build}`; the tool calls the engine stale after 5 minutes |
 
@@ -38,7 +38,7 @@ The renderer takes a record when its `at` is newer than the last one it applied 
 sides stamp with this machine's clock. Counters and timers stay in the renderer's localStorage.
 Conversation `extra` was the first plan and was dropped: `PATCH /api/conversations/{id}` stamps
 `updated_at`, the sidebar sorts by `modified_at`, so every toggle would have moved the chat to the
-top of K's list.
+top of the owner's list.
 
 **Identity.** aioncore puts `AIONUI_BASE_URL`, `AIONUI_RUNTIME_TOKEN`, `AIONUI_USER_ID` and
 `AIONUI_CONVERSATION_ID` into every agent process, but an MCP server gets only its own row's
@@ -51,19 +51,19 @@ the variables: `devin.exe` above it still has them. The runtime token signs in a
 
 **Two ways in.** A chat's MCP servers are frozen when the chat is created (aionui-conversation
 `build_runtime_mcp_snapshot`): the list comes from the assistant's MCP binding, which in `auto`
-mode is whatever the user last picked for that assistant. K has never picked any, so a new MCP
+mode is whatever the user last picked for that assistant. The owner has never picked any, so a new MCP
 row reaches no existing chat (the enabled `airtable` row is absent from every running Claude
 agent's `--mcp-config`, checked 13:44). Changing an assistant's binding restarts team members
 bound to it, which would interrupt a running team. So:
 
 1. `aiondx-loop.exe`, the MCP server, is registered as an ordinary enabled row, for chats started
-   with it selected and for K's MCP picker.
+   with it selected and for the owner's MCP picker.
 2. `aiondx.exe`, the same code as a console program, works from any agent's shell, and the
    `aiondx-loop` skill in `builtin-skills\auto-inject` (offered to every chat, every backend)
    says how and when to use it. PowerShell neither waits for nor captures a Windows-subsystem
    program (measured: no output, `$LASTEXITCODE` empty), hence the console build.
 
-**Compaction.** `loop_set compact: true` (or K's "Compact its context" menu item) sets
+**Compaction.** `loop_set compact: true` (or the owner's "Compact its context" menu item) sets
 `compactAt`; the renderer sends the agent's own command (`/compact` for Claude and Codex,
 `/compress` for Gemini CLI and Qwen, from `GET /api/conversations/{id}/slash-commands`) the next
 time the agent stops, through the same path as a nudge. A team member's recognized command
@@ -140,7 +140,7 @@ installed server, called `loop_status` and got this chat's Loop back (`conv=dd44
 loop_status ok` in the log); `aiondx loop status` from this chat's shell gives the same report.
 
 The renderer half is tested in `tools\dx-harness\click-test.js` (144 checks, 34 of them new):
-K's changes reach the store, an agent's change shows (notice, mark, hover line, menu), a Loop
+The owner's changes reach the store, an agent's change shows (notice, mark, hover line, menu), a Loop
 only the store knows is ticked with its page closed, status and heartbeat are published and not
 rewritten while nothing changes, older Loops are migrated, compaction from the menu and from an
 agent, and an older backend with no store runs as before.
@@ -177,12 +177,12 @@ agent, and an older backend with no store runs as before.
   and registry values; the manifest is replaced in one step; the `C:\ProgramData` payload fallback is
   gone; `doctor` counts a missing stock AionUi as information on a standalone install. Skills get the
   real bin path in place of `{{AIONDX}}`.
-- Tests 83/83. Installed on K's machine with `install.js --no-register` at 12:17.
+- Tests 83/83. Installed on the developer's machine with `install.js --no-register` at 12:17.
 
 ## September 26th, 2026: 1.4.0, resume at a set time
 
 A team lead, told to slow down until 12:10 for a new usage window, answered every nudge "Holding"
-and resumed only when K noticed the time (team log, September 26th): an agent has no clock between turns.
+and resumed only when the owner noticed the time (team log, September 26th): an agent has no clock between turns.
 `loop_set` takes `resume_at` (`12:10`, `3:30 pm`, `+45` minutes, an ISO time within 24 hours, `off`) and
 `resume_message`; the shell takes `--resume-at` and `--resume-message`. The record gets `wakeAt`,
 `wakeMsg`, `wakeBy` and `wakeSelf` (the agent set its own, so the nudge says "the resume time you set").
@@ -190,11 +190,11 @@ A resume time switches the Loop on; `on: false` clears it; other changes keep it
 it resumes, who set it, whether the cache is kept warm until then (up to 50 minutes away) or left to run
 out, and when it last resumed. When the running engine's build predates resume times the reply says so
 and tells the agent to watch the clock itself. The renderer half is patch 0001 build `2026-09-26.2`.
-Tests 101/101; installed on K's machine at 12:56.
+Tests 101/101; installed on the developer's machine at 12:56.
 
 ## September 26th, 2026: 1.5.0, MCP for agents
 
-a request, with agents changing servers freely and K seeing each change. Research:
+a request, with agents changing servers freely and the owner seeing each change. Research:
 `! LLM Files\Research\2026-09-26_mcp-configurable-and-transparent.md`.
 
 - `mcp_status` (MCP) and `aiondx mcp status`: the servers the chat was started with, how its agent
@@ -212,10 +212,9 @@ a request, with agents changing servers freely and K seeing each change. Researc
 
 ## September 26th, 2026: 1.6.0, the AionDX MCP file and servers used as needed
 
-a request, then, with a team
-blocked: *"i need access now, security by tomorrow... just a 'as needed' access basis, like through
-a global AionDX directory or file or something that every agent knows carries the MCP access
-credentials"*.
+a request, made while a team was blocked:
+agents need MCP access on an as-needed basis, through a global AionDX directory or file that every agent knows carries the MCP access
+credentials.
 
 - The AionDX MCP file, `%USERPROFILE%\.aiondx\mcp\servers.json` (`AIONDX_MCP_FILE` overrides it for the
   tests): `_about` lines, `mcpServers` in the form Claude Desktop and Claude Code use (`command`, `args`,
@@ -252,7 +251,7 @@ credentials"*.
   AionDX MCP file").
 - Tests: `test-mcp-bridge.js` 71/71 against `test-mcp-fixture.js` (stdio through a `.cmd`, streamable HTTP
   as JSON and as events, the SSE transport and the fallback, a stand-in AionUi API); `test-loop-tool.js`
-  117/117. Installed on K's machine the same afternoon; the file was made empty.
+  117/117. Installed on the developer's machine the same afternoon; the file was made empty.
 
 ## September 26th, 2026 (evening): 1.7.0, `aiondx setup`
 
@@ -275,7 +274,7 @@ So a lead can switch off a teammate's Loop when the user asks the lead to. Statu
 it". An engine older than `2026-09-26.6` is named in the reply. `test-loop-tool.js` 130/130.
 - 1.8.1: a value that names a secret ("Bearer ${GITHUB_TOKEN}") is never sealed itself: the secret is sealed in
   "secrets", and the value is filled in at use. 1.8.0 would have sealed such a header with its placeholder unfilled.
-  `test-mcp-bridge.js` 81/81, `test-loop-tool.js` 130/130. Installed on K's machine.
+  `test-mcp-bridge.js` 81/81, `test-loop-tool.js` 130/130. Installed on the developer's machine.
 
 ## September 27th, 2026: 1.9.0, the user's GitHub
 
@@ -311,7 +310,7 @@ a request of October 1st.
   show the user a picture (`![what it shows](C:/path/in/your/working/folder/pic.png)`, inside the working folder, spaces in
   angle brackets) and how to link a file or folder (`[label](file:///C:/path/folder/)`, which becomes a chip with a button
   that opens it with Windows). The picture route was already in AionUi (`LocalImageView`, `/api/fs/image-base64`, limited to
-  the working folder and AionUi's own folders); the agents did not know. K's September 26th and 27th requests (R-014,
+  the working folder and AionUi's own folders); the agents did not know. The owner's September 26th and 27th requests (R-014,
   R-015).
 - Tests: `test-loop-tool.js` 152/152, `test-mcp-bridge.js` 81/81. Installed with `node patches\0007-loop-tool\install.js
   --no-register` on October 1st (the MCP row was already there); the skill is refreshed, and a chat started from now on sees

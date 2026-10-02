@@ -389,7 +389,7 @@ async function pageTarget() {
 
     // The button: round, icon only, 28 x 28 like the composer's other circle buttons, in every
     // chat; grey off, primary colour on, amber while holding back. (It was a labelled pill until
-    // 2026-09-23; K: too wide for team columns.)
+    // 2026-09-23; a request: too wide for team columns.)
     for (const theme of ['light', 'dark']) {
       const sc = `look-${theme}`;
       await load(`team=1&theme=${theme}`);
@@ -557,7 +557,7 @@ async function pageTarget() {
         probe.style.color = 'rgb(var(--success-6))'; const green = getComputedStyle(probe).color;
         probe.style.color = 'rgb(var(--danger-6))'; const red = getComputedStyle(probe).color; probe.remove();
         return { bg: a.backgroundColor, content: a.content, green, red }; })()`);
-      // K's Windows has animations off, which Chromium reports as reduce-motion; headless Edge does too.
+      // The developer's Windows has animations off, which Chromium reports as reduce-motion; headless Edge does too.
       const reduced = await js(`matchMedia('(prefers-reduced-motion: reduce)').matches`);
       let d = await dotOf('[data-slot-id="slotA"]');
       check(sc, 'a working member: green dot, with animations off', reduced === true && d.content !== 'none' && d.bg === d.green, JSON.stringify(d));
@@ -731,14 +731,14 @@ async function pageTarget() {
       const sc = 'resume-at';
       await load('theme=light');
       await armVia('');
-      const K = 'aionui.dx.harness1';
+      const LOOP_KEY = 'aionui.dx.harness1';
       const sent = async () => (await posts('/api/conversations/harness1/messages')).map((c) => String((c.body && c.body.content) || ''));
-      const shortReply = (firedAgoMs, replyAgoMs) => js(`(() => { const s = JSON.parse(localStorage.getItem('${K}'));
-        s.lastFired = Date.now() - ${firedAgoMs}; s.nudgeScored = s.fires; localStorage.setItem('${K}', JSON.stringify(s));
+      const shortReply = (firedAgoMs, replyAgoMs) => js(`(() => { const s = JSON.parse(localStorage.getItem('${LOOP_KEY}'));
+        s.lastFired = Date.now() - ${firedAgoMs}; s.nudgeScored = s.fires; localStorage.setItem('${LOOP_KEY}', JSON.stringify(s));
         const h = window.__stub.histories.harness1; const nudge = h.filter(m => m.position === 'right').pop(); if (nudge) nudge.created_at = s.lastFired;
         h.push({ id: 'r' + Math.random(), position: 'left', type: 'text', hidden: false, created_at: Date.now() - ${replyAgoMs}, content: { content: 'Holding.' } }); return 0; })()`);
-      const later = (ms) => js(`(() => { const s = JSON.parse(localStorage.getItem('${K}'));
-        ['lastFired', 'shortSince', 'lastAt', 'onAt'].forEach(f => { if (s[f]) s[f] -= ${ms}; }); localStorage.setItem('${K}', JSON.stringify(s));
+      const later = (ms) => js(`(() => { const s = JSON.parse(localStorage.getItem('${LOOP_KEY}'));
+        ['lastFired', 'shortSince', 'lastAt', 'onAt'].forEach(f => { if (s[f]) s[f] -= ${ms}; }); localStorage.setItem('${LOOP_KEY}', JSON.stringify(s));
         window.__stub.histories.harness1.forEach(m => { m.created_at -= ${ms}; }); return 0; })()`);
       const fromTool = (fields) => putStore('aiondx.loop.conv.harness1', Object.assign({ v: 1, on: true,
         msg: 'CONTINUE WORKING. Re-check the project plan and queue files, take the next unfinished item, and keep going until the user interrupts.',
@@ -750,13 +750,13 @@ async function pageTarget() {
       await fromTool({ wakeAt: wake1 });
       await js('window.__aionDx.pullNow()');
       await sleep(300);
-      let st = await saved(K);
+      let st = await saved(LOOP_KEY);
       check(sc, "the Loop tool's resume time reaches the Loop, with a notice naming who set it", st.wakeAt === wake1 && st.wakeBy === 'Team Lead' &&
         (await toasts()).some((t) => /Team Lead set it to resume at \d\d:\d\d/.test(t)), JSON.stringify([st.wakeAt - wake1, await toasts()]));
       await shortReply(100000, 90000);
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.tickNow()');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       check(sc, 'holding: the next keep-warm nudge waits 4 min from the reply', (await sent()).length === 0 &&
         /^Holding until \d\d:\d\d, the resume time\. The next keep-warm nudge goes at \d\d:\d\d/.test(st.why || ''), st.why);
       await later(160000);
@@ -765,22 +765,22 @@ async function pageTarget() {
       check(sc, 'the keep-warm nudge says it is holding, not "continue working"', out.length === 1 &&
         /^\[AionDX Loop[^\]]*\] Holding until \d\d:\d\d, the resume time Team Lead set\. Nothing to do before then/.test(out[0]), JSON.stringify(out));
       // 50 min of short replies: past the 45 min hold, and it keeps the cache warm anyway (18 min to go).
-      await js(`(() => { const s = JSON.parse(localStorage.getItem('${K}')); s.nudgeLevel = 2; s.shortSince = Date.now() - 50 * 60000; localStorage.setItem('${K}', JSON.stringify(s)); return 0; })()`);
+      await js(`(() => { const s = JSON.parse(localStorage.getItem('${LOOP_KEY}')); s.nudgeLevel = 2; s.shortSince = Date.now() - 50 * 60000; localStorage.setItem('${LOOP_KEY}', JSON.stringify(s)); return 0; })()`);
       await shortReply(90000, 70000);
       await later(180000);
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.tickNow()');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       check(sc, 'a near resume time keeps the cache warm past the hold', (await sent()).length === 1 && st.restKind !== 'hold', JSON.stringify([st.restKind, st.why]));
       // The time comes, with the agent already cold and the Loop resting: the resume nudge goes all the same.
-      await js(`(() => { const s = JSON.parse(localStorage.getItem('${K}')); s.wakeAt = Date.now() - 5000; s.restingSince = Date.now() - 60000; s.restKind = 'cold';
-        s.lastFired = Date.now() - 20 * 60000; localStorage.setItem('${K}', JSON.stringify(s));
+      await js(`(() => { const s = JSON.parse(localStorage.getItem('${LOOP_KEY}')); s.wakeAt = Date.now() - 5000; s.restingSince = Date.now() - 60000; s.restKind = 'cold';
+        s.lastFired = Date.now() - 20 * 60000; localStorage.setItem('${LOOP_KEY}', JSON.stringify(s));
         window.__stub.histories.harness1.forEach(m => { m.created_at = Math.min(m.created_at, Date.now() - 19 * 60000); }); return 0; })()`);
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.tickNow()');
       await sleep(300);
       out = await sent();
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       const rec = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.loop.conv.harness1'];
       const pub = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.loopstatus.conv.harness1'];
       check(sc, 'at the time, one nudge says so and gives the message, even to a cold, resting agent', out.length === 1 &&
@@ -796,29 +796,29 @@ async function pageTarget() {
       await shortReply(90000, 70000);
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.tickNow()');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       check(sc, 'a resume time 2 h off lets the cache run out', (await sent()).length === 0 && st.restKind === 'resume' &&
         /^Resting until \d\d:\d\d, the resume time: keeping the cache warm that long would cost more than one reload/.test(st.why || ''), JSON.stringify([st.restKind, st.why]));
-      // The menu shows it and clears it; K sets one from the menu; Off clears it.
+      // The menu shows it and clears it; the owner sets one from the menu; Off clears it.
       await humanClick('.aiondx-loop button');
       await js(`(() => { document.querySelector('.aiondx-menu .aiondx-resume').scrollIntoView({ block: 'nearest' }); return 0; })()`);
       const note = await js('(document.querySelector(".aiondx-menu .aiondx-resume-note") || {}).textContent');
       check(sc, 'the menu says when it resumes and who set it', /^Resumes at \d\d:\d\d, set by Team Lead\.$/.test(note || ''), note);
       await humanClick('.aiondx-menu .aiondx-resume-clear');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       let rec2 = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.loop.conv.harness1'];
       check(sc, 'Clear removes it, for the tool too', !st.wakeAt && rec2 && rec2.wakeAt === 0 && st.restKind !== 'resume', JSON.stringify([st.wakeAt, rec2 && rec2.wakeAt, st.restKind]));
       const inHour = new Date(Date.now() + 60 * 60000);
       const hh = ('0' + inHour.getHours()).slice(-2) + ':' + ('0' + inHour.getMinutes()).slice(-2);
       await js(`(() => { const i = document.querySelector('.aiondx-menu .aiondx-resume-time'); i.value = '${hh}'; return 0; })()`);
       await humanClick('.aiondx-menu .aiondx-resume-set');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       rec2 = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.loop.conv.harness1'];
-      check(sc, "K's own resume time from the menu, written for the tool", st.wakeAt > Date.now() + 58 * 60000 && st.wakeAt < Date.now() + 61 * 60000 &&
+      check(sc, "The owner's own resume time from the menu, written for the tool", st.wakeAt > Date.now() + 58 * 60000 && st.wakeAt < Date.now() + 61 * 60000 &&
         st.wakeBy === 'the user' && rec2 && rec2.wakeAt === st.wakeAt && rec2.wakeBy === 'the user', JSON.stringify([st.wakeAt - Date.now(), rec2 && rec2.wakeBy]));
       await js(`(() => { document.querySelector('.aiondx-menu [data-choice="off"]').scrollIntoView({ block: 'nearest' }); return 0; })()`);
       await humanClick('.aiondx-menu [data-choice="off"]');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       rec2 = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.loop.conv.harness1'];
       check(sc, 'switching the Loop off clears the resume time', !st.on && !st.wakeAt && rec2 && rec2.on === false && rec2.wakeAt === 0, JSON.stringify([st.on, st.wakeAt, rec2 && rec2.wakeAt]));
     }
@@ -867,7 +867,7 @@ async function pageTarget() {
       check(sc, "\"we're done\" still is, ending its clause", (await phrase("If that's all, we're done.")) === true && (await phrase("We're done for today.")) === true &&
         (await phrase("we're done testing the map, now run the build")) === false);
       // R-012, 2026-09-28: a stand-down aimed at some members, or conditional, or carving one out, is not the whole team's stop.
-      check(sc, "K's message to a team lead (stand-down for two, Builder carries on) stops nothing",
+      check(sc, "The owner's message to a team lead (stand-down for two, Builder carries on) stops nothing",
         (await phrase("Don't need to push the maps and the docs endlessly. Have them clean up the things i asked for... then have them stand down once everything is produced... We can let Builder continue working, that lane has top priority.")) === false &&
         (await phrase('Have them clean up the things i asked for... then have them stand down. We can let Builder continue working, that lane has top priority.')) === false);
       check(sc, 'a stop told to be relayed to others, or with a condition after it, is not the Loop\'s',
@@ -903,7 +903,7 @@ async function pageTarget() {
     // On until I stop it (2026-09-26, a request): no hold, no cold rest, no giving up; no agent ends it alone.
     {
       const sc = 'forever';
-      const K = 'aionui.dx.harness1';
+      const LOOP_KEY = 'aionui.dx.harness1';
       const sent = async () => (await posts('/api/conversations/harness1/messages')).length;
       const pickForever = async (scope) => {
         await humanClick(`${scope} .aiondx-loop button`);
@@ -916,7 +916,7 @@ async function pageTarget() {
       check(sc, 'the menu offers On, On until I stop it, and Off', JSON.stringify(items) === JSON.stringify(['on:On', 'forever:On until I stop it', 'off:Off']), JSON.stringify(items));
       await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
       await pickForever('');
-      let st = await saved(K);
+      let st = await saved(LOOP_KEY);
       let rec = (await store())[SOLO_KEY];
       check(sc, 'choosing it switches the Loop on until you stop it, for the tool too', st.on === true && st.forever === true && st.foreverAt > 0 &&
         rec && rec.on === true && rec.forever === true && rec.foreverAt === st.foreverAt && rec.by === 'user', JSON.stringify([st.forever, rec]));
@@ -930,29 +930,29 @@ async function pageTarget() {
       await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
       await js('window.__aionDx.tickNow()');   // the first nudge
       // 46 min of short replies, the last 70 s ago: an ordinary Loop rests here (the hold).
-      await js(`(() => { const s = JSON.parse(localStorage.getItem('${K}')); s.nudgeLevel = 2; s.shortSince = Date.now() - 46 * 60000;
-        s.lastFired = Date.now() - 90000; s.nudgeScored = s.fires; localStorage.setItem('${K}', JSON.stringify(s));
+      await js(`(() => { const s = JSON.parse(localStorage.getItem('${LOOP_KEY}')); s.nudgeLevel = 2; s.shortSince = Date.now() - 46 * 60000;
+        s.lastFired = Date.now() - 90000; s.nudgeScored = s.fires; localStorage.setItem('${LOOP_KEY}', JSON.stringify(s));
         const h = window.__stub.histories.harness1; const nudge = h.filter(m => m.position === 'right').pop(); if (nudge) nudge.created_at = s.lastFired;
         h.push({ id: 'f-r1', position: 'left', type: 'text', hidden: false, created_at: Date.now() - 70000, content: { content: 'still nothing' } }); return 0; })()`);
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.tickNow()');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       check(sc, 'no rest after the hold', st.restKind !== 'hold' && !st.restingSince && /^Nothing to do after the last nudge\. The next goes at/.test(st.why || ''), JSON.stringify([st.restKind, st.why]));
       // Its cache ran out 5 min ago: an ordinary Loop never wakes it.
-      await js(`(() => { const s = JSON.parse(localStorage.getItem('${K}')); s.lastFired = Date.now() - 11 * 60000; localStorage.setItem('${K}', JSON.stringify(s));
+      await js(`(() => { const s = JSON.parse(localStorage.getItem('${LOOP_KEY}')); s.lastFired = Date.now() - 11 * 60000; localStorage.setItem('${LOOP_KEY}', JSON.stringify(s));
         const h = window.__stub.histories.harness1; h.forEach(m => { m.created_at = Math.min(m.created_at, Date.now() - 11 * 60000); });
         h.push({ id: 'f-r2', position: 'left', type: 'text', hidden: false, created_at: Date.now() - 10 * 60000, content: { content: 'still nothing' } }); return 0; })()`);
       await js('window.__aionDx.tickNow()');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       check(sc, 'a cold agent is woken all the same', (await sent()) === 1 && !st.restingSince, JSON.stringify([await sent(), st.restKind, st.why]));
       // Three nudges with no reply: an ordinary Loop switches itself off.
-      await js(`(() => { const s = JSON.parse(localStorage.getItem('${K}')); s.stalls = 2; s.lastFired = Date.now() - 270000; s.nudgeScored = s.fires; s.nudgeLevel = 2;
-        localStorage.setItem('${K}', JSON.stringify(s));
+      await js(`(() => { const s = JSON.parse(localStorage.getItem('${LOOP_KEY}')); s.stalls = 2; s.lastFired = Date.now() - 270000; s.nudgeScored = s.fires; s.nudgeLevel = 2;
+        localStorage.setItem('${LOOP_KEY}', JSON.stringify(s));
         const h = window.__stub.histories.harness1; h.forEach(m => { m.created_at = Math.min(m.created_at, Date.now() - 300000); });
         const nudge = h.filter(m => m.position === 'right').pop(); if (nudge) nudge.created_at = s.lastFired; return 0; })()`);
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.tickNow()');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       check(sc, 'no reply to 3 nudges: it waits, and stays on', st.on === true && st.forever === true && (await sent()) === 0 &&
         /^Paused: no reply to the last 3 nudges\. It carries on when the agent answers, and stays on until you stop it\.$/.test(st.why || ''), JSON.stringify([st.on, st.why]));
       // An agent switching it off on its own (an older Loop tool): kept on, and your record goes back.
@@ -960,7 +960,7 @@ async function pageTarget() {
       await putStore(SOLO_KEY, { v: 1, on: false, forever: false, msg: DEFAULT_MSG, compactAt: 0, holdMin: 45, rev: 90, by: 'agent', who: 'Harness agent', for: '', at: Date.now() + 1000, note: 'work is done' });
       await js('window.__aionDx.pullNow()');
       await sleep(300);
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       rec = (await store())[SOLO_KEY];
       check(sc, "an agent's switch-off is refused, and your setting goes back to the store", st.on === true && st.forever === true &&
         rec.on === true && rec.forever === true && rec.by === 'user', JSON.stringify([st.on, rec]));
@@ -969,14 +969,14 @@ async function pageTarget() {
         at: Date.now() + 2000, note: 'the user asked: "turn off your loop"', askedAt: Date.now() - 5000 });
       await js('window.__aionDx.pullNow()');
       await sleep(300);
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       check(sc, 'an agent switching it off because you asked (askedAt): off', st.on === false && !st.forever, JSON.stringify([st.on, st.forever, st.offReason]));
       // The agent's Stop button.
       await pickForever('');
       await js(`(() => { const a = document.querySelector('#solo .sendbox-actions'); const b = document.createElement('button'); b.type = 'button';
         b.className = 'arco-btn arco-btn-secondary arco-btn-shape-circle sendbox-stop-button'; b.textContent = 'stop'; a.appendChild(b); return 0; })()`);
       await humanClick('#solo .sendbox-stop-button');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       rec = (await store())[SOLO_KEY];
       check(sc, "the agent's Stop button switches it off, as yours", st.on === false && st.offReason === 'you pressed Stop' && rec.on === false && rec.by === 'user', JSON.stringify([st.on, st.offReason, rec]));
       await js(`(() => { document.querySelector('#solo .sendbox-stop-button').remove(); return 0; })()`);
@@ -984,7 +984,7 @@ async function pageTarget() {
       await pickForever('');
       await js(`(() => { window.__stub.histories.harness1.push({ id: 'f-off', position: 'right', type: 'text', hidden: false, created_at: Date.now() + 1000, content: { content: 'ok, turn off your loop' } }); return 0; })()`);
       await js('window.__aionDx.tickNow()');
-      st = await saved(K);
+      st = await saved(LOOP_KEY);
       check(sc, '"turn off your loop" in its history switches it off', st.on === false && /^you said "ok, turn off your loop"$/.test(st.offReason || ''), JSON.stringify([st.on, st.offReason]));
 
       // A team: said to a member, that member's Loop; about another member, only a note for the Loop tool.
@@ -1756,7 +1756,7 @@ async function pageTarget() {
     }
     {
       const sc = 'compact';
-      // K, 2026-10-01: the Loop menu has no compaction item. An agent can still ask for one through the Loop tool.
+      // A request of 2026-10-01: the Loop menu has no compaction item. An agent can still ask for one through the Loop tool.
       await load('theme=light');
       await humanClick('.aiondx-loop button');
       await sleep(300);
@@ -2548,7 +2548,7 @@ async function pageTarget() {
         /^Sign in to Antigravity with your Google account/.test(v.text) && /There is no key to paste/.test(v.text) && !/Antigravity key/.test(v.text), JSON.stringify(v));
       check(sc, 'with Antigravity found installed', v && /^Antigravity is installed\./.test(v.status), v && v.status);
       const facts = await js(`[...document.querySelectorAll('.aiondx-welcome .aiondx-welcome-fact')].map(f => f.textContent)`);
-      check(sc, "it says Antigravity is Google's, free, with a weekly allowance, and only there to help the user move in (K)", facts && facts.length === 2 &&
+      check(sc, "it says Antigravity is Google's, free, with a weekly allowance, and only there to help the user move in (the owner)", facts && facts.length === 2 &&
         /^Free with a Google account/.test(facts[0]) && /refreshes every week/.test(facts[0]) && /does not publish a number/.test(facts[0]) &&
         /^What it does for you/.test(facts[1]) && /helps you move in/.test(facts[1]) && /asking before each change/.test(facts[1]), JSON.stringify(facts));
       check(sc, 'and a way to use another agent instead, its tooltip naming Claude Desktop', v && v.buttons.length === 3 && /Claude in Claude Desktop/.test(v.ext), JSON.stringify(v && v.buttons));
@@ -2578,7 +2578,7 @@ async function pageTarget() {
       await sleep(3800);
       await js('window.__calls.length = 0; 0');
       await humanClick('.aiondx-w-signin');
-      await humanClick('.aiondx-w-signin');   // K hit it a bunch: one chat, not several
+      await humanClick('.aiondx-w-signin');   // the owner hit it a bunch: one chat, not several
       await sleep(800);
       await humanClick('.aiondx-w-signin');
       await sleep(400);
@@ -2592,7 +2592,7 @@ async function pageTarget() {
       await sleep(400);
       const reach = await js(`(() => { const i = document.querySelector('.aiondx-signin-code'); if (!i) return null; const r = i.getBoundingClientRect();
         const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { onTop: at === i, status: (document.querySelector('.aiondx-welcome-status') || {}).textContent }; })()`);
-      check(sc, "the sign-in code box sits above the Welcome screen and is reachable (K had to press Not now)", reach && reach.onTop, JSON.stringify(reach));
+      check(sc, "the sign-in code box sits above the Welcome screen and is reachable (the owner had to press Not now)", reach && reach.onTop, JSON.stringify(reach));
       check(sc, 'and Welcome says where to paste the code', reach && /paste it into the box at the top of the window/.test(reach.status || ''), JSON.stringify(reach));
       await putStore('aiondx.agy.signin', null);
       await js(`(() => { delete window.__stub.store['aiondx.agy.signin']; return 0; })()`);

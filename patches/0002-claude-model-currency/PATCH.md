@@ -231,7 +231,7 @@ Do not restore `claude.cmd.ORIGINAL`. It is the stock npm shim and points at the
 - Claude Code is also looked for on PATH, skipping any folder that holds an AionDX launcher, so a PC
   whose Claude came from winget or elsewhere works and the search can never land on a shim.
 - For the installer: the router, the pass-through and the shim go to `%LOCALAPPDATA%\AionDX\bin` on a
-  friend's PC (K's stay in `%APPDATA%\npm`), only when Claude Code is installed.
+  a tester's PC (the owner's stay in `%APPDATA%\npm`), only when Claude Code is installed.
 
 Later the same day:
 
@@ -243,7 +243,7 @@ Later the same day:
   environment's (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`), or else the access token in the
   config folder's `.credentials.json`, read at each probe and skipped while expired; the refresh token is
   never read. `claude /login` writes a token to that file only when Windows Credential Manager fails
-  (Claude Code 2.1.283 uses `Bun.secrets`), so most /login accounts get no meter; K's agents run on token
+  (Claude Code 2.1.283 uses `Bun.secrets`), so most /login accounts get no meter; the owner's agents run on token
   files and do. The key is a hash of the token, or of the credentials
   file's path. `"usageMeter": false` in the config, or `AIONDX_NO_USAGE=1`, switches it off. Live on the first machine it ran on.
 - From the review: `defaultAccount` applies only when the database names the chat's agent, so a failed
@@ -258,7 +258,7 @@ Later the same day:
 Anthropic's terms do not permit a Free, Pro or Max OAuth token in any product but Claude Code
 (`! LLM Files\Research\2026-09-26_headroom-and-subscription-oauth.md`), and the probe is AionDX's own call
 with that token. `usageFor` now needs `"usageMeter": true` in the router config; no config, a config
-without the key, or any other value leaves it off, so no installed copy starts probing by itself. K's own
+without the key, or any other value leaves it off, so no installed copy starts probing by itself. The owner's own
 config already said `false`. `test-usage-for.js` 11/11.
 
 ## October 1st, 2026: usage from Claude's own traffic, and YOLO means YOLO
@@ -280,14 +280,14 @@ making agents wait for a manual approval of every Bash command in YOLO mode.
   seven_day: {...} }` and `aiondx.usage.conv.<conversation>` = `{ acct, at }`, written when a window moved a whole percent
   or a status changed, else at most once a minute. The renderer's meter (patch 0001) and the Loop tool's `usage_status`
   and nudge lines (patch 0007) read them. `"usageMeter": false` in the config, or `AIONDX_NO_USAGE=1`, switches the tap
-  off; **K's config had `false` from the probe period, so the tap does nothing until it is `true` (done October 1st,
+  off; **the owner's config had `false` from the probe period, so the tap does nothing until it is `true` (done October 1st,
   backup `claude-account-router.config.json.bak-20261001`).**
 - YOLO means YOLO (`makeApprover`). A `can_use_tool` request on a chat whose stored mode (`conversations.extra
   .current_mode_id`, read from AionUi's database) is `bypassPermissions` is answered at once with allow, and AionCore never
   sees it. Claude asks even in bypass mode for what its own safety checks flag (a dangerous `rm`, say). Reply format
   proven on a real Claude (`tools\probe-claude-stream.js perm`): `{"type":"control_response","response":{"subtype":
   "success","request_id":...,"response":{"behavior":"allow","updatedInput":<the request's input>}}}`. `AskUserQuestion` and
-  `ExitPlanMode` are never answered here. A chat K switched to another mode in the pill is left alone. Every answer, and
+  `ExitPlanMode` are never answered here. A chat the owner switched to another mode in the pill is left alone. Every answer, and
   every mode change AionCore makes, is logged (secrets masked) to `%LOCALAPPDATA%\AionDX\logs\auto-approve.log`, which is how
   the next unexplained switch gets explained. Why a chat leaves YOLO: AionCore starts Claude with `--permission-mode
   default` and applies the stored mode afterwards with `set_permission_mode` (`aionui-session claude.rs`); when that step is

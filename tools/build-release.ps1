@@ -142,7 +142,7 @@ if ($AionDxCore) {
   Say 'AionCore: an AionDX build is in vendor\aioncore, left out (pass -AionDxCore to ship it)'
 }
 if (-not $coreRec) { Say 'AionCore: the stock binary' }
-# Node.js for a PC without it (2026-09-26, the friend's install: AionUi's browser tool runs npx by name, and his PC had
+# Node.js for a PC without it (2026-09-26, a tester's install: AionUi's browser tool runs npx by name, and that PC had
 # no Node on PATH). AionUi 2.2.2's own installer already puts Node's Windows build where AionCore's managed runtime
 # takes it (managed-resources\node\<dir>, MANAGED_NODE_VERSION in aionui-runtime managed.rs), but not on PATH. Here the
 # official zip, checked against nodejs.org's published SHA-256, is unpacked over that folder so the files shipped are
@@ -294,7 +294,7 @@ If something goes wrong, send the newest files from %LOCALAPPDATA%\AionDX\logs.
 [IO.File]::WriteAllText("$dist\README.txt", $readme.Replace("`n", "`r`n"), $utf8)
 Copy-Item "$dist\README.txt" "$stage\README.txt"
 
-# 7b. Nothing about this PC, its user, their accounts, people or other projects ships (K, 2026-09-27, after team
+# 7b. Nothing about this PC, its user, their accounts, people or other projects ships (a request of 2026-09-27, after team
 # names, a tester's name and this PC's name were found in the shipped comments and release.json). Every file AionDX
 # adds to the app: its renderer scripts, its block of the main process, the payload, the README. Any hit stops the build.
 Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aionui-dx.js", "$ext\out\renderer\aiondx-themes.js", "$stage\README.txt") 'privacy check: renderer and README'

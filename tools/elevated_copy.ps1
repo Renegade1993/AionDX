@@ -9,7 +9,7 @@
 
   WHY THE WAIT RUNS UNDER TASK SCHEDULER
   The second version waited for AionUi to close inside this same process. On 2026-09-22 that waiter
-  died silently the moment K restarted AionUi, with no swap and no log line. Cause, confirmed from
+  died silently the moment the owner restarted AionUi, with no swap and no log line. Cause, confirmed from
   both ends: aioncore starts every agent inside a Windows Job object with KILL_ON_JOB_CLOSE
   (upstream-aioncore\crates\aionui-process\src\capabilities.rs), and anything an agent launches,
   elevated or not, inherits that job. When AionUi exits the job closes and Windows kills everything

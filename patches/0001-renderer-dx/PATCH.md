@@ -2,7 +2,7 @@
 
 **Built against:** AionUi 2.2.2 · **Target:** renderer only · **Status:** live build `5C877C23...`,
 installed September 23rd at 11:40 (the round button, explainer, backoff and resume). The source
-now also carries K's reports of September 23rd (below), passes all 110 real-mouse checks in
+now also carries the owner's reports of September 23rd (below), passes all 110 real-mouse checks in
 `tools\dx-harness\click-test.js`, and goes live with the next "AionDX Apply Update".
 
 ## What it adds
@@ -15,8 +15,7 @@ AionUi's own tooltips (Arco's tooltip classes, which AionUi restyles): what the 
 rules (never while working; the backoff; waiting out a rate limit, teammates before the lead;
 runs on any page; when it switches itself off), what the three colours mean, and the current
 status or why it switched off. Team members and solo chats get their own wording. (It was a
-labelled `Loop · Off` pill until 2026-09-23; a request, then *"we should include a tooltip on it's functionality when you hover
-over it that explains all this"*.)
+labelled `Loop · Off` pill until 2026-09-23; a request that day asked for a hover tooltip that explains it.)
 Clicking it opens a menu in the same style as the permission menu:
 
 - **Keep working after each turn: On / Off**, with the same fixed check-mark slot the permission
@@ -29,7 +28,7 @@ While on, it polls the conversation every 15 s. Once a turn has finished and the
 been quiet for 20 s, and at least 60 s have passed since its last send, it posts the continue
 message to `/api/conversations/{id}/messages`, the same call the send box makes. It turns itself off
 after 3 sends that drew no reply. (Until 2026-09-24 it also turned off when you sent a message of
-your own; see "K's reports" below.)
+your own; see "The owner's reports" below.)
 
 Screenshots, taken with AionUi's shipped CSS in `tools\dx-harness\shots\`:
 
@@ -91,7 +90,7 @@ recognized `#/conversation/<id>`. Teams differ in three ways, all read from sour
    Posting straight into the member's conversation would bypass the team runtime.
 3. **A different interrupt signal.** Because the lead also sends to members, "the newest user-side
    message is not the loop's own text" fires every time the lead speaks. In a team the only reliable
-   signal is K pressing send in that member's box.
+   signal is the owner pressing send in that member's box.
 
 **What the team loop does:**
 
@@ -101,7 +100,7 @@ recognized `#/conversation/<id>`. Teams differ in three ways, all read from sour
 | which conversation is it? | `GET /api/teams/{id}`, `assistants[]`: `slot_id` to `conversation_id`, cached 60 s |
 | quiet time, no-reply count | the member's conversation, same rules as solo |
 | send | `POST /api/teams/{id}/agents/{slot}/messages`, body `{content}` |
-| turn off | K presses send (button, or Enter with text) in that member's composer; or 3 sends with no reply |
+| turn off | The owner presses send (button, or Enter with text) in that member's composer; or 3 sends with no reply |
 
 Pressing send now also turns a **solo** loop off immediately; the solo history check stays as a
 backstop. A loop runs while its chat or team page is open, as before.
@@ -155,14 +154,14 @@ Also:
 - Errors are read from `type: "tips"` messages with an error payload; both shapes the app stores
   are handled (`content.error.detail`, and the top-level `content.details` added by newer builds).
 
-## K's reports of September 23rd, built 2026-09-24
+## The owner's reports of September 23rd, built 2026-09-24
 
-From `K Standing Feature Requests and Bug Reports.docx` in the project root, plus two notes the
+From the owner's standing list of feature requests and bug reports (a Word document in the project root, not published), plus two notes the
 a team agent left in the project notes. Source ready and tested; installs with the next
 **AionDX Apply Update**.
 
 - Your own messages no longer switch the Loop off. a request. The Loop's saved state (AionUi's localStorage,
-  `%APPDATA%\AionUi\Local Storage\leveldb\000007.log`) showed every team Loop K had armed ended
+  `%APPDATA%\AionUi\Local Storage\leveldb\000007.log`) showed every team Loop the owner had armed ended
   `off: "you sent a message"` with `fires: 0`. Nothing was SWE-specific: the backend wakes a
   dormant or paused slot on a user message for any backend (`session.rs` 661-664 and 1655,
   `work_source.rs`). Now a send only resets the backoff. The Loop holds while that box has an
@@ -171,13 +170,13 @@ a team agent left in the project notes. Source ready and tested; installs with t
   working.", "Not sending: it has 3 queued items.", "Waiting a minute after your message.",
   "Holding: you have an unsent draft in this box.", "Paused by the team runtime, usually a
   provider limit. Retry 1 of 10 at 10:52."
-- The button shows the agent's state. a requestprocessing" bib on the top of the chat input window is missing."* Every 3 s the script reads
+- The button shows the agent's state (a request: the processing indicator on top of the chat input was missing). Every 3 s the script reads
   `run-state` for team members and the conversation status for solo chats (left-side output under
   6 s old also counts as working). A green dot means the agent is working, red means paused or
   blocked, and none means idle. The card's second line reads "Agent: working, turn open 4 min." and
   so on. The icon also spins while working, but only under `prefers-reduced-motion:
-  no-preference`. K's Windows has animations off, which Chromium reports as `reduce`, so the
-  static dot is what K sees.
+  no-preference`. The developer's Windows has animations off, which Chromium reports as `reduce`, so the
+  static dot is what the owner sees.
 - Permission is a round shield. a request. The pill
   becomes a 28 x 28 grey circle with the shield; label and caret are hidden; hovering shows
   "Permission: Bypass Permissions / What the agent may do without asking you first. / Click to
@@ -196,8 +195,7 @@ a team agent left in the project notes. Source ready and tested; installs with t
 
 ## Shared with agents, and Compact (build `2026-09-24.2`)
 
-a request of September 24th, and, later the same day, *"any way we can force
-context compression if the user desires?"*. The agent side is patch 0007; this is the button's.
+a request of September 24th and, later the same day, a request to force context compression on demand. The agent side is patch 0007; this is the button's.
 
 - Each Loop's settings (on or off, the continue message, a compaction request) are also kept in
   AionUi's per-user settings store, `GET/PUT /api/settings/client`, under
@@ -205,7 +203,7 @@ context compression if the user desires?"*. The agent side is patch 0007; this i
   message edit once typing pauses for 0.8 s); the Loop writes there when it switches itself off.
 - The store is read on every 3 s pulse, on any page, and on every 15 s tick. A newer record (by
   its `at`) wins over this window's copy. A Loop only the store knows, one an agent switched on
-  in a chat K never opened, is ticked like any other.
+  in a chat the owner never opened, is ticked like any other.
 - An agent's change shows within 3 s: a notice at the top of the window in AionUi's own message
   style ("Lead switched the Loop on for Worker." with the agent's note under it), a purple mark
   at the bottom right of the button for 10 minutes, the aria-label, and a "Last changed by ...
@@ -231,7 +229,7 @@ and the sidebar sorts by `modified_at`, so every toggle would have moved the cha
 ## Opening a team does not wake it (build `2026-09-24.3`, P-011)
 
 Build `2026-09-25.1` adds the other half: the Loop's own tick does nothing for a team whose run-state has
-no `session_generation`. On the 25th the team still started as K opened it, and the request that
+no `session_generation`. On the 25th the team still started as the owner opened it, and the request that
 started it was the Loop's nudge to the lead, whose Loops the lead had switched on. Any send starts a
 stopped team (and drains the lead's mailbox), so the Loop now waits for someone to message the team.
 
@@ -341,7 +339,7 @@ tab view, which may not carry `data-slot-id`; if so, no pill appears there, and 
 ## Bug that shipped: no Loop request ever reached the backend in the desktop app
 
 Found 2026-09-24, about 15:25. A team lead switched its team's Loops on through the new tool
-(`aiondx loop set --on --member all`, 15:14, records correct in the store) and K saw nothing change.
+(`aiondx loop set --on --member all`, 15:14, records correct in the store) and the owner saw nothing change.
 aioncore's request log (`%APPDATA%\AionUi\logs\<date>.log`, one `http response ... path=` line per
 request) showed no Loop traffic at all: no store reads, no run-state polls beyond AionUi's own (about
 15 every 10 minutes all day, before and after the install), no heartbeat. The window's localStorage
@@ -371,8 +369,7 @@ for the team on screen, and a `PUT /api/settings/client` heartbeat every 2 minut
 
 ## Bug that shipped: the loop could not be turned on
 
-First install, September 22nd, 18:37. a request, then *"only i can't turn the
-loop on"*.
+First install, September 22nd, 18:37. The report: the Loop could not be turned on.
 
 **Cause.** The page watcher (a `MutationObserver` on `document.body`) re-rendered the menu from
 scratch on every DOM change, and the menu's own re-render was a DOM change. So while open it rebuilt
@@ -442,7 +439,7 @@ being used by another process.
 
 ### The first waiter was killed by AionUi itself
 
-The rebuilt installer then waited for AionUi to close in the same elevated process. K restarted
+The rebuilt installer then waited for AionUi to close in the same elevated process. The owner restarted
 AionUi at 18:20 and nothing happened: the waiter was gone, its log stopped at 17:27 with no swap,
 error, timeout or stop recorded, and `app.asar` was still the old build.
 
@@ -469,7 +466,7 @@ Nothing in the waiter's chain belongs to AionUi.
 
 **Normal use: the desktop shortcut "AionDX Apply Update".** It runs `tools\aiondx-apply.ps1`, which
 opens a menu: install the new build, roll back to the previous one, or revert to stock AionUi (menu
-added 2026-09-24). Whichever K picks, it closes AionUi (that ends every agent session), rebuilds
+added 2026-09-24). Whichever the owner picks, it closes AionUi (that ends every agent session), rebuilds
 first for an install when the source is newer, swaps with one UAC prompt, checks the hash, reopens
 AionUi, and checks it started, offering a roll back or a revert on the spot if it did not. It exists
 because nothing started from inside AionUi can do this: closing AionUi kills whatever an agent
@@ -575,10 +572,10 @@ stops all polling.
 
 Later the same day, same build number:
 
-- Welcome, from K's smoke-test window: the primary buttons are painted in the accent colour with black
+- Welcome, from the developer's smoke-test window: the primary buttons are painted in the accent colour with black
   or white text, whichever reads on it (a request); each button runs once
   until its work settles, and Sign in reuses the chat it opened (a request); the sign-in panel and its code box sit above the Welcome
-  screen, and Welcome says where to paste a code (K had to press Not now to reach it).
+  screen, and Welcome says where to paste a code (the owner had to press Not now to reach it).
 - Antigravity failsafe: when it is not installed, its sign-in fails, or it has not answered 90 s after
   Sign in, step 1 offers "Set up with <agent>" for the first working agent in the new-chat list
   (Claude Code, Codex, Gemini, Qwen, OpenCode, then any other), and gives the install line with a Copy
@@ -630,10 +627,10 @@ At the time, one nudge goes whatever the rest, backoff or cache say: "It is 12:1
 set." (or "Team Lead set", "the user set"; "It is 12:25; the resume time ... was 12:10." when the
 agent was busy past it), then the resume message or the continue message. The time is then cleared in
 the shared record, and `loop_status` shows when it resumed. Switching the Loop off, by anyone or by
-K's stop, clears it. An agent setting one raises the usual notice ("... set it to resume at 12:10").
+The owner's stop, clears it. An agent setting one raises the usual notice ("... set it to resume at 12:10").
 `click-test.js` scenario `resume-at`.
 
-Same build: Welcome's first step explains Antigravity under K's sentence (a request). Two short blocks: free with a Google account, with an allowance
+Same build: Welcome's first step explains Antigravity under the owner's sentence (a request). Two short blocks: free with a Google account, with an allowance
 that refreshes every week and no published number (Google's plans page gives none: "Meaningful quota,
 refreshed weekly"); and what it does for you, a one-time move-in that asks before each change, after
 which nothing in AionDX needs it. The footer says Settings > Appearance > Open AionDX setup brings the
@@ -673,7 +670,7 @@ built in, which reads the state before toggling.
 
 ## Build `2026-09-26.4`: opening a chat does not start its agent
 
-K chose "Don't start chats on open" after agents started when a chat was only viewed. Opening a solo chat
+The owner chose "Don't start chats on open" after agents started when a chat was only viewed. Opening a solo chat
 sends `POST /api/conversations/{id}/runtime/ensure` from five hooks on mount, and for Claude, Codex and the
 other ACP agents that starts the agent's process (research: `! LLM Files\Research\
 2026-09-26_chat-start-on-open.md`). The same `window.fetch` wrapper as P-011 now holds that call, without
@@ -739,7 +736,7 @@ An agent's switch-off without that (an older Loop tool) is refused and your reco
 ## September 26th, 2026 (late night): a team's missing buttons, and model versions from the catalog
 
 - The Loop button in AionUi's single view of a team (tabs above, one message box, no member columns). A team's
-  "Loop buttons gone" was this view: `aiondx.diag.loop` on K's app recorded one box, zero member columns,
+  "Loop buttons gone" was this view: `aiondx.diag.loop` on the developer's app recorded one box, zero member columns,
   every 10 minutes from 18:37. The box belongs to the tab in front, which AionUi keeps in
   `localStorage['team-active-slot-<team id>']` (else the lead's); the tabs are `[data-team-tab-role]` with
   `data-testid="team-tab-<slot>"`. `targets()` and `targetOf()` use it, so the button, your sends and the Stop button
@@ -761,15 +758,15 @@ An agent's switch-off without that (an older Loop tool) is refused and your reco
 - Real-app checks for this build (the staged standalone app, throwaway profile, over its debugging port):
   `tools\dx-harness\probe-app.js` ("/plugin" with Enter and with Ctrl+Enter opens the panel and sends nothing; the
   panel lists 314 plugins) and `tools\dx-harness\probe-models.js` (the page loads `/api/agents/management` with fetch,
-  so the Loop script sees it; a fresh profile's Claude agent has no model list yet, K's has the full one with versions).
+  so the Loop script sees it; a fresh profile's Claude agent has no model list yet, the owner's has the full one with versions).
   `tools\smoke-standalone.js` 14/14.
 - AionUi's own "Interrupt & send" is hidden (a request). AionUi draws it in the message box's send-button slot, beside
   the context meter, for a team member that is working while you type, and it calls the same interrupt route as Respond
   now. Found by its lightning icon, so in any language. `click-test.js` scenario `interrupt-btn`.
 
-## October 1st, 2026: build `2026-10-01.1`, K's day list
+## October 1st, 2026: build `2026-10-01.1`, the owner's day list
 
-K's list of October 1st, each item in his own words in `! LLM Files\OPEN-REQUESTS.md`. Every one stays open there until K
+The owner's list of October 1st, each item in their own words in `! LLM Files\OPEN-REQUESTS.md`. Every one stays open there until the owner
 confirms it works. Tests: `tools\dx-harness\click-test.js`, scenarios named below.
 
 - Loop menu: "Compact its context" is gone (R-004). An agent can still ask for a compaction through the Loop tool,
@@ -784,13 +781,13 @@ confirms it works. Tests: `tools\dx-harness\click-test.js`, scenarios named belo
   record). `limits`, `accounts`.
 - Every nudge ends with the account's usage, `[Usage: 5-hour 62% (resets 15:10), week 31%.]`, with a warning above 90%.
   `limits`.
-- Usage bar (K: left of the account pill, and on hover where the chat is too narrow). The meter now shows readings up to
+- Usage bar (a request: left of the account pill, and on hover where the chat is too narrow). The meter now shows readings up to
   12 hours old, dimmed after 30 minutes, with the age in its tooltip; a window past its reset time reads 0%. Where the
   chat is too narrow for it, it hides, and hovering the account pill shows the agent and both windows in a hover card.
   `usage`.
 - Stop phrases (R-012). A stop that carves someone out ("let Builder continue working", "except Worker"), that is told to
   be relayed ("have them stand down", "tell Worker to stand down") or that is followed by its condition ("stand down
-  once the build lands") no longer switches the team's Loops off. K's message of September 28th is pinned as a test.
+  once the build lands") no longer switches the team's Loops off. The owner's message of September 28th is pinned as a test.
   `stop-phrase`.
 - Context ring colours (R-008). AionUi's ring is the accent colour, amber over 70% and red over 90%. AionDX paints its
   progress circle with five zones: blue, green, yellow, orange, red, starting at 0, 40, 60, 75 and 90 percent. Settings
@@ -821,7 +818,7 @@ confirms it works. Tests: `tools\dx-harness\click-test.js`, scenarios named belo
 a request of October 1st (can't be stopped by the harness or the UI). AionUi's draft box has a Manual mode, which
 sends nothing by itself, and an Auto mode, which sends its next message as soon as a turn ends; a turn the Stop button cancelled ends like any
 other (`useConversationCommandQueue.ts` drains on turn completion and `handleStop` does not pause it). In Auto mode Stop therefore stops the
-agent for one cancel and starts it again on the next queued message. The chat K pointed at on October 1st shows the pattern in the AionCore
+agent for one cancel and starts it again on the next queued message. The chat the owner pointed at on October 1st shows the pattern in the AionCore
 log: a new message accepted 70 to 130 ms after each cancel. Pressing the Stop button now also puts that message box's draft box on Manual, in
 the capture phase, before AionUi's own handler cancels the turn; the queued messages stay in it, a notice says so, and the box's own mode
 toggle puts it back. A team member's column holds its own box only. `click-test.js` scenario `stop-holds-draft-box`; suite 459/459. (A team

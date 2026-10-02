@@ -2,13 +2,13 @@
 
 **Target:** AionUi's builtin Butler assistant and every conversation, through AionUi's own
 assistant and skill system (no asar change, no backend change) · **Status:** 2026-09-24: the
-Butler now runs on Gemini CLI on K's machine (waiting on one Google sign-in); the skill installs
+Butler now runs on Gemini CLI on the developer's machine (waiting on one Google sign-in); the skill installs
 into `builtin-skills\auto-inject` with `install.js`, which the updater runs after every swap.
 
 ## How it is attached (decided 2026-09-24)
 
 - The Butler runs on Antigravity, Google's free individual tier ($0/month per
-  antigravity.google/pricing). Gemini CLI was tried first: K's cached Google login refreshed fine,
+  antigravity.google/pricing). Gemini CLI was tried first: the owner's cached Google login refreshed fine,
   but Google's server refused the free tier itself (`IneligibleTierError ... This client is no
   longer supported for Gemini Code Assist for individuals ... migrate to the Antigravity suite`).
   Details: `! LLM Files\Research\2026-09-24_gemini-cli-free-tier-ended.md` and
@@ -37,18 +37,13 @@ into `builtin-skills\auto-inject` with `install.js`, which the updater runs afte
 - For a new install (no per-user choice yet), the one-time setup screen (P-009) makes the same
   Butler call; until then a fresh AionDX install's Butler stays on AionUi's default.
 
-K, September 24th:
+A request of September 24th, in three points:
 
-- *"Yes, Gemini CLI, that would be great for managing setup, and honestly i don't why the butler
-  isn't automatically hooked up to use it. Getting an external app to channel a agent to set it up
-  externally before you use it is a pain in the rear."*
-- *"We should make sure that that initial agent has plenty of instructions regarding setup, and
-  directories or registries to check for existing installs so it can harvest and assemble a latest
-  and greatest version of all of their global instructions and custom files into AionDX's global
-  folder, and to hook up anything that other agents from those previous ui's or desktop apps hooked
-  up that landed outside those folders (or what i refere to as bread crumbs."*
-- *"the harvest should only be done if a user wants it done, but the butler should be primed with
-  the information it needs to act on if the user requests"*
+- Use Gemini CLI for the Butler's setup work: needing an external app to drive an agent before first use is a nuisance.
+- The setup agent needs plenty of instructions, and the places to check for existing installs, so it can harvest and assemble the
+  latest version of the user's global instructions and custom files into AionDX's global folder, and hook up anything the other
+  apps wired outside those folders (their "breadcrumbs").
+- The harvest happens only if the user wants it, but the agent is primed with what it needs to act when asked.
 
 ## What it adds
 

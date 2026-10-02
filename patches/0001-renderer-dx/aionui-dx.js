@@ -23,9 +23,9 @@
  *   All checked against AionCore v0.2.2 source.
  *
  * YOUR OWN MESSAGES DO NOT SWITCH IT OFF (since 2026-09-24). Until then, pressing send in a
- * loop's box switched that loop off. K talks to his agents all the time, so every team loop he
+ * loop's box switched that loop off. The owner talks to their agents all the time, so every team loop they
  * switched on was off again before it ever fired: each saved team loop read "Off: you sent a
- * message", 0 sends, which he read as "the loop only works for claude agents". Now a send of
+ * message", 0 sends, which they read as "the loop only works for claude agents". Now a send of
  * yours resets the loop's backoff, it holds back while you have a draft in that box, and after
  * you speak it gives the reply a minute of quiet before its next nudge. A team member's history
  * cannot tell your messages from the lead's, so on a team page your send button is the signal;
@@ -60,7 +60,7 @@
  *
  * YOUR STOP SWITCHES IT OFF. A message you send that says stop ("stop", "time to stop work", "stand
  * down", "we're done", "good night" and the rest of STOP_RES) switches off the Loop of that chat,
- * or every Loop of that team. A team lead found the Loop nudging at 06:58 after K had ended
+ * or every Loop of that team. A team lead found the Loop nudging at 06:58 after the owner had ended
  * the session the night before.
  *
  * A loop runs whenever AionUi is open, on any page: every chat and team member whose loop is
@@ -92,7 +92,7 @@
  * explainer: what the loop does, its rules, what the colours mean, and the current status. It
  * uses Arco's tooltip classes, which AionUi restyles, so it matches the app's own tooltips. A
  * click opens the menu, which reuses the Arco dropdown classes. Until 2026-09-23 it was a labelled pill,
- * "Loop · On", which K found too wide for team columns.
+ * "Loop · On", which the owner found too wide for team columns.
  *
  * SHARED WITH AGENTS (since 2026-09-24, P-010). a request. Each Loop's settings (on
  * or off, the continue message, a compaction request) are kept in AionUi's per-user settings
@@ -104,7 +104,7 @@
  * to aiondx.loopstatus.<same> for the tool's loop_status, and aiondx.engine says this script is
  * running. Counters and timers stay in localStorage. Conversation extra was the first plan, but a
  * PATCH there stamps updated_at and the sidebar sorts by it, so every toggle would have moved the
- * chat to the top of K's list.
+ * chat to the top of the owner's list.
  *
  * UNSEND, THE ACCOUNT PILL, NOTICES THAT SAY WHERE (since 2026-09-25). A message a Claude chat has not
  * read yet ("Unread" under it) gets an Unsend button (see "unsend" below). A Claude chat gets an
@@ -160,13 +160,13 @@
   var RESUME_WARM_MAX_MS = 50 * 60000;
   var CLAUDE_SEND_GAP_MS = 20000;         // spacing between nudges to a team's Claude members
   // Your messages that switch a Loop off: the stop phrases of a Claude Code stop hook,
-  // narrowed where K also says them to agents about their work ("stop the tournament", "that's
+  // narrowed where the owner also says them to agents about their work ("stop the tournament", "that's
   // enough data", "pause the spread", "shut it down" about a process), plus "time to stop" and
   // "good night". A phrase that negates stop ("don't stop", "until I tell you to stop") never counts.
   // Each is tested clause by clause (split at . ! ? ; , and line breaks), and a phrase in a clause
   // that begins with when, once, after, until, before, if and the like (STOP_SUBORD_RE) does not
   // count: build 2026-09-25.5 read "...and then swap it when we are done testing", said to the
-  // team lead about a game install, as K's stop and switched off both members' Loops; their
+  // team lead about a game install, as the owner's stop and switched off both members' Loops; their
   // caches went cold (team log, 2026-09-25). "we're done" now also has to end its clause, or be
   // followed only by "for now", "for today", "for tonight", "for the day" or "here".
   var STOP_RES = [
@@ -187,7 +187,7 @@
   // A stop that is not the Loop's. September 28th, one message to a team lead stood two teammates down and let a third carry on, and every Loop in the team
   // went off, the third's too. So a message that carves someone out ("let Builder continue working", "except Worker") stops nothing, a stop told to be relayed to
   // others ("have them stand down", "tell Worker to stand down") is the lead's to carry out, and a stop followed by its
-  // condition ("stand down once it is produced") waits for the condition. K can say it plainly to stop everyone.
+  // condition ("stand down once it is produced") waits for the condition. The owner can say it plainly to stop everyone.
   var STOP_CARVE_RES = [
     /\b(?:let|keep|leave)\s+(?!(?:me|us|you|it\s+be)\b)[\w'-]+(?:\s+[\w'-]+){0,3}?\s+(?:continue|carry\s+on|keep\s+(?:going|working|running)|go\s+on|going|running|working)\b/i,
     /\b(?:except|excluding|other\s+than|apart\s+from|aside\s+from)\s+\S/i,
@@ -210,7 +210,7 @@
   var LOOP_OTHER_RE = /\bloop\s+(?:for|on|of)\s+(?!(?:you|yourself|now|today|tonight|the\s+(?:day|night)|good|here|this\s+chat|a\s+(?:bit|while|minute|moment|second))\b)\S/i;
   // Any request to switch a Loop off, this chat's or a teammate's ("turn off Worker's loop", "stop all the loops"). The
   // chat it was said in gets aiondx.loopask.<chat or member> in the store: the Loop tool lets an agent switch off a Loop
-  // that runs until you stop it only after that, from that chat (K's words, which no agent writes).
+  // that runs until you stop it only after that, from that chat (the owner's words, which no agent writes).
   // Up to 30 characters between the verb and "loop", within one clause ("turn off the lights and fix the loop" is not one).
   var ASK_GAP = '(?:(?!\\b(?:and|then|but|so|or)\\b)[^.!?;\\n]){0,30}';
   var LOOP_ASK_RES = [
@@ -310,7 +310,7 @@
     }
     save(t, s);
     if (why) console.log('[dx] loop ' + (on ? 'on' : 'off') + ' (' + t.key + '): ' + why);
-    // The menu, the console and your stop phrases are K; anything else is the Loop switching itself off.
+    // The menu, the console and your stop phrases are the owner; anything else is the Loop switching itself off.
     var mine = byUser || why === 'turned on' || why === 'turned off' || why === 'console';
     pushShared(t, mine ? 'user' : 'loop', why === 'turned on' || why === 'turned off' || why === 'console' ? '' : (why || ''));
     publishStatus(t);
@@ -350,7 +350,7 @@
   }
 
   // AionUi's single view of a team: one member at a time, tabs above, and one message box with no member column around
-  // it. A team's "Loop buttons gone" (K, 2026-09-26) was this view: the Loop looked only for member
+  // it. A team's "Loop buttons gone" (a request of 2026-09-26) was this view: the Loop looked only for member
   // columns (aiondx.diag.loop: slots 0, one box). The box belongs to the tab in front, which AionUi keeps in
   // localStorage team-active-slot-<team id>, else the lead's; the tabs are [data-team-tab-role] with
   // data-testid team-tab-<slot id>.
@@ -381,7 +381,7 @@
 
   /** Every target with saved state, on screen or not, so a loop keeps running while its page is
    *  closed: this window's own (localStorage) and every Loop in the shared store, which includes
-   *  one an agent switched on in a chat K has never opened. */
+   *  one an agent switched on in a chat the owner has never opened. */
   function storedTargets() {
     var out = localTargets();
     var seen = {};
@@ -525,7 +525,7 @@
    *  Until build 2026-09-24.4 this script used same-origin paths everywhere, so in the desktop app
    *  not one Loop request ever reached the backend: no nudge, no resume, no store read, no agent
    *  dot. The test page stubs fetch, which is why its checks passed. Found 2026-09-24 when the
-   *  team lead switched Loops on and K saw nothing change; aioncore's request log showed no
+   *  team lead switched Loops on and the owner saw nothing change; aioncore's request log showed no
    *  Loop traffic at all. */
   function apiUrl(path) {
     var port = window.__backendPort;
@@ -736,7 +736,7 @@
     save(t, s);
   }
 
-  /** Write this Loop's settings to the store, so the agent's tool sees what K set. */
+  /** Write this Loop's settings to the store, so the agent's tool sees what the owner set. */
   function pushShared(t, by, note) {
     if (sharedGone) return;
     var s = state(t);
@@ -1767,7 +1767,7 @@
 
   // ---------------------------------------------------------------- MCP, seen and switched (build 2026-09-26.3)
 
-  // a request of 2026-09-26; agents change servers freely and he sees each change. Research:
+  // a request of 2026-09-26; agents change servers freely and the owner sees each change. Research:
   // ! LLM Files\Research\2026-09-26_mcp-configurable-and-transparent.md. Agents change AionUi's MCP list with the
   // Loop tool's mcp_set (patch 0007 1.5.0), which logs each change to aiondx.mcp.log; this window announces each one
   // with the agent's name, linked to its chat. Settings > Tools gets an On/Off switch per server: AionUi 2.2.2 shows
@@ -2203,7 +2203,7 @@
     save(t, s);
 
     // Marked as the Loop's (2026-09-25): an unmarked nudge reads exactly like the user's own message.
-    // A team's agent logged the 07:00 nudge as K's instruction while K was asleep, and its
+    // A team's agent logged the 07:00 nudge as the owner's instruction while the owner was asleep, and its
     // lead switched the Loop off over it. Resume notes already carry "[Loop]".
     var text = LOOP_TAG + (wakeDue ? resumeText(s, wake) : limitResume ? limitResumeText(s) : holding ? holdingText(s, wake) : s.msg) + usageNote(convId);
     var fr = await send(text);
@@ -2457,7 +2457,7 @@
 
   /** You pressed send in a box that has a loop. The loop stays on: it forgets any backoff and
    *  gives the reply a minute of quiet before its next nudge. Until 2026-09-24 this switched the
-   *  loop off, and since K talks to his agents all the time, no team loop ever got to fire
+   *  loop off, and since the owner talks to their agents all the time, no team loop ever got to fire
    *  (every saved team loop read "Off: you sent a message", 0 sends). Off is now only the
    *  menu's choice, or 3 sends with no reply. */
   function userSent(node, text) {
@@ -4760,10 +4760,10 @@
     '.sendbox-actions .aiondx-loop--waiting .aiondx-loop-btn:hover{background-color:rgba(var(--warning-6),.16) !important;',
     '  border-color:rgb(var(--warning-6)) !important}',
     '.aiondx-loop--waiting .aiondx-loop-icon{color:rgb(var(--warning-6))}',
-    // The agent's own state, read from the backend every 3 s for the chats on screen (K,
+    // The agent's own state, read from the backend every 3 s for the chats on screen (the owner,
     // 2026-09-24: AionUi's own "processing" marker can vanish while the agent is still
     // printing). A green dot while the agent works, a red dot while it is paused or blocked.
-    // The dot is the signal that always shows: K's Windows has animations switched off, which
+    // The dot is the signal that always shows: the developer's Windows has animations switched off, which
     // Chromium reports as prefers-reduced-motion, so a spinning icon alone would never appear
     // for him. Where motion is allowed the icon also turns.
     '.aiondx-loop .aiondx-loop-btn{position:relative;overflow:visible}',
@@ -5369,7 +5369,7 @@
   /** Put one pill at the front of each target's composer action row, before the
    *  Permission pill. React re-mounts those rows when layout changes, which drops
    *  foreign nodes, so this runs from a MutationObserver and simply re-inserts. */
-  // Why a message box has no Loop button (K, 2026-09-26, a team: "Loop buttons gone", not reproduced in the
+  // Why a message box has no Loop button (a request of 2026-09-26, a team: "Loop buttons gone", not reproduced in the
   // harness). Written to the store as aiondx.diag.loop, the newest 12, each kind and place at most every 10 minutes, so
   // the next time it happens the page's own answer is there to read.
   var DIAG_KEY = 'aiondx.diag.loop';
@@ -5704,7 +5704,7 @@
     var byText = agentChangeLine(s);
     if (menuParts.by.textContent !== byText) menuParts.by.textContent = byText;
     menuParts.by.style.display = byText ? '' : 'none';
-    // A message an agent changed while the menu is open, unless K is typing in it.
+    // A message an agent changed while the menu is open, unless the owner is typing in it.
     if (document.activeElement !== menuParts.ta && menuParts.ta.value !== s.msg) menuParts.ta.value = s.msg;
   }
 
@@ -6449,7 +6449,7 @@
   // too, as a head start before a mode or model change). For a team with no session yet, as after
   // every AionUi restart, that starts one, attaches the lead and queues the lead's unread mailbox
   // as work (aionui-team service.rs ensure_session_inner, try_start_recovery_drain), so the lead
-  // takes turns and wakes its teammates. Nothing needs that call: every real send (K's, the
+  // takes turns and wakes its teammates. Nothing needs that call: every real send (the owner's, the
   // Loop's, an agent's) starts the session itself (send_message, send_message_to_agent,
   // interrupt_agent, attach and restart all call ensure_session_inner), and the mode and model
   // pickers read the conversation, not the session. So when run-state says the team has no
@@ -6498,7 +6498,7 @@
   var NEEDS_AGENT_RE = /\/api\/conversations\/([^/?#]+)\/(?:side-question|config-options\/[^/?#]+)(?:[?#]|$)/;
   // ---------------------------------------------------------------- model names with their versions
 
-  // K, 2026-09-26, from the friend's install: the model pickers showed "Fable", "Opus", "Sonnet", the version only on
+  // A request of 2026-09-26, from a tester's install: the model pickers showed "Fable", "Opus", "Sonnet", the version only on
   // hover. Claude Code names its aliases by family and puts the version in the description ("Opus 5.5 with 1M
   // context · $4/$20 per Mtok"), which AionUi shows as a tooltip. Every model list that reaches this page through
   // runtime/ensure is read for those descriptions, and the names in the pills and menus get their version: "Opus 5.5",

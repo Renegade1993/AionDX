@@ -267,10 +267,10 @@ function startUsage(opts, log) {
 // --permission-mode default and applies the chat's stored mode afterwards with a set_permission_mode request
 // (aionui-session claude.rs); when that step is missed the process stays on default while AionUi still shows YOLO,
 // and even in bypassPermissions Claude asks (can_use_tool) for what its own safety checks flag, a dangerous rm for
-// one. Each of those stops the agent until K clicks. So a can_use_tool request on a chat whose STORED mode is
+// one. Each of those stops the agent until the owner clicks. So a can_use_tool request on a chat whose STORED mode is
 // bypassPermissions is answered here, at once, with allow, and AionCore never sees it. The stored mode, read from the
-// AionUi database, is the authority, not the process's: a chat K switched to another mode in the pill is left alone.
-// A tool that needs K's own answer (AskUserQuestion, ExitPlanMode) is never answered here. Every answer is logged
+// AionUi database, is the authority, not the process's: a chat the owner switched to another mode in the pill is left alone.
+// A tool that needs the owner's own answer (AskUserQuestion, ExitPlanMode) is never answered here. Every answer is logged
 // (what, which chat, why Claude asked) to %LOCALAPPDATA%\AionDX\logs\auto-approve.log, and so is every mode
 // change AionCore makes, which is how the next unexplained switch gets explained.
 const CANUSE = Buffer.from('"subtype":"can_use_tool"');
@@ -301,7 +301,7 @@ function makeApprover(opts, log) {
       fs.appendFileSync(logFile, new Date().toISOString() + ' conv=' + tag + ' ' + line + '\n');
     } catch { /* logging never stops an agent */ }
   }
-  /** The mode AionUi stores for this chat (what K chose in the pill), cached for 1.5 s. */
+  /** The mode AionUi stores for this chat (what the owner chose in the pill), cached for 1.5 s. */
   function stored() {
     if (!opts.database || !opts.convId) return null;
     const now = Date.now();

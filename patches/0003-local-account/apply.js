@@ -11,7 +11,7 @@
  *
  * WHY THE ACCOUNT KEEPS ITS OLD ID. The installed build is AionUi's AionPro edition. Its backend
  * (aioncore, --identity-mode aionpro) owns every conversation, team and setting by Core user,
- * and the Core user is found by the external account id. On K's machine that id is in
+ * and the Core user is found by the external account id. On the developer's machine that id is in
  * %APPDATA%\AionUi\auth.enc (plain JSON despite the name). Reusing it means the main process's
  * CoreUserBridge provisions the SAME Core user exactly as it does today, through the bootstrap
  * secret it already holds, so no data moves. A machine that never signed in gets a new id

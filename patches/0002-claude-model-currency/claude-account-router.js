@@ -265,7 +265,7 @@ function carryTranscript(targetDir, dirs) {
 // to another Claude agent. Every agent AionUi knows keeps its own environment in agent_metadata.env
 // (HOME, CLAUDE_CONFIG_DIR and so on: that is what puts two Claude agents on two accounts), and AionCore
 // hands a chat's process its own agent's. So a moved chat gets the chosen agent's environment in place of
-// its own agent's. A config file's named accounts (token files; K's machine) still win where they exist.
+// its own agent's. A config file's named accounts (token files; the developer's machine) still win where they exist.
 
 const DEFAULT_DB = path.join(process.env.APPDATA || path.join(realProfileDir(), 'AppData', 'Roaming'), 'AionUi', 'aionui', 'aionui-backend.db');
 
@@ -421,7 +421,7 @@ try {
   else if (!chosen && cfg && cfg.accounts && agentId) account = accounts[agentId] || accounts[cfg.defaultAccount] || null;
 
   if (account) {
-    // A named account from the config (K's machine: token files). HOME picks the credential store; an
+    // A named account from the config (the developer's machine: token files). HOME picks the credential store; an
     // account without its own home gets the real profile when the chat was moved to it.
     const home = account.home || (chosen ? realProfileDir() : null);
     if (home) { env.HOME = home; env.USERPROFILE = home; }

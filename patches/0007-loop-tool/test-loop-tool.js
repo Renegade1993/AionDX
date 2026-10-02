@@ -455,7 +455,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('status for "all" lists every member', (r.text.match(/^Loop for /gm) || []).length === 3, r.text);
 
   // ---- until the user stops it (1.8.0; a request) ----
-  r = await lead.call('loop_set', { member: 'Worker', until_stopped: true, note: 'K: run until I stop it' });
+  r = await lead.call('loop_set', { member: 'Worker', until_stopped: true, note: 'a request: run until I stop it' });
   rec = kv['aiondx.loop.team.team1.slotW'];
   check('until_stopped: true switches it on until the user stops it', !r.isError && rec.on === true && rec.forever === true && rec.foreverAt > 0 &&
     /: ON until the user stops it/.test(r.text) && /Runs until the user stops it \(since \d\d:\d\d\): no hold and no rest/.test(r.text) &&
@@ -547,7 +547,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await workerTool.rpc('initialize', { protocolVersion: '2025-06-18' });
   r = await workerTool.call('priority_send', { member: 'Viewer', message: 'x' });
   check('a teammate cannot send priority messages', r.isError && /Only the team lead can send a priority message/.test(r.text), r.text);
-  // ---- a real stop (1.11.0, K's "lost control" of October 1st) ----
+  // ---- a real stop (1.11.0, the owner's "lost control" of October 1st) ----
   work.slotW.state = 'running'; work.slotW.bg = 3;
   kv['aiondx.loop.team.team1.slotW'] = { v: 1, on: true, msg: 'x', rev: 1, by: 'user', at: Date.now() - 1000 };
   requests.length = 0;
@@ -656,7 +656,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('status says when the Loop rests and why', /Cache: ran out at \d\d:\d\d/.test(c.stdout) &&
     /Resting since \d\d:\d\d: the cache had run out, and the Loop does not wake a cold agent/.test(c.stdout), c.stdout);
   delete kv['aiondx.loopstatus.team.team1.slotW'];
-  c = await cli(['loop', 'set', '--until-stopped', '--note', 'K: until I stop it']);
+  c = await cli(['loop', 'set', '--until-stopped', '--note', 'a request: until I stop it']);
   rec = kv['aiondx.loop.team.team1.slotW'];
   check('--until-stopped on the command line', c.status === 0 && rec.on === true && rec.forever === true && /ON until the user stops it/.test(c.stdout), c.stdout);
   c = await cli(['loop', 'set', '--off']);

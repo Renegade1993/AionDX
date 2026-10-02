@@ -18,12 +18,12 @@ browser, the renderer's layout redirects to `/login` ("Sign in to AionUi"). Afte
 `CoreUserBridge` provisions a Core user for that account id through aioncore's internal routes
 and installs a session cookie in the renderer.
 
-The account id matters more than the sign-in: every conversation (174), team (17), project (121)
-and setting belongs to the Core user that id maps to (`user_<id>...` on K's machine), and
+The account id matters more than the sign-in: every conversation, team, project
+and setting belongs to the Core user that id maps to (`user_<id>...` on the developer's machine), and
 aioncore's local default user owns nothing.
 
-The aionui.com session K has now expires on October 7th, 2026 at 11:41 (`refreshExpireAt` in
-`%APPDATA%\AionUi\auth.enc`). After that the stock app would sign him out and ask again.
+The aionui.com session of the installed AionPro build expires on October 7th, 2026 (`refreshExpireAt` in
+`%APPDATA%\AionUi\auth.enc`). After that the stock app would sign the user out and ask again.
 
 ## What this patch changes
 
@@ -38,13 +38,13 @@ The aionui.com session K has now expires on October 7th, 2026 at 11:41 (`refresh
 | `clearSession()` | drops tokens, keeps the account |
 
 The local account is, in order: `%APPDATA%\AionUi\aiondx-account.json` if it exists; else the
-account in `auth.enc` (K's, so the same Core user and all his data); else a new
+account in `auth.enc` (the owner's, so the same Core user and all their data); else a new
 `aiondx-<uuid>` id with the Windows user name. The choice is saved to `aiondx-account.json` on
 first run. `desktop-user-` ids are never used, because `CoreUserBridge` refuses to provision them.
 
 Nothing else in the main process changes. `CoreUserBridge`, the bootstrap secret, the backend's
 `--identity-mode aionpro` and the session cookie all work exactly as they do today, so the backend
-side is the same code path K's app ran this morning. `auth.enc` is never modified or deleted.
+side is the same code path the developer's app ran this morning. `auth.enc` is never modified or deleted.
 
 The renderer's `index.html` gets one style rule hiding Settings > Account
 (`[data-settings-id="account"]`), which only showed the aionui.com profile, a balance and a
@@ -56,15 +56,15 @@ stock stays small and readable.
 ## What is lost
 
 The aionui.com account itself: its profile page, the credit balance, and anything that needs an
-aionui.com token. Nothing K uses is known to need it. WebUI pairing keeps working on K's machine,
+aionui.com token. Nothing the owner uses is known to need it. WebUI pairing keeps working on the developer's machine,
 because the account id is the real one.
 
 ## Why not local identity mode
 
 aioncore has a real no-auth mode (`--local`, `system_default_user`), which the open-source build
 uses. It was the first design and was dropped: it switches authentication off on the API and
-shows an empty app, because every row belongs to K's AionPro user. Moving 174 conversations, 17
-teams, three per-user folders (`assistant-rules`, `session-skills`, `conversations`) and the
+shows an empty app, because every row belongs to the owner's AionPro user. Moving every conversation and
+team, three per-user folders (`assistant-rules`, `session-skills`, `conversations`) and the
 `skills.path` column to another owner is a one-way data migration. The backend's own adoption
 code (`aionui-db\src\repository\sqlite_user.rs` `adopt_system_default_data`,
 `aionui-extension\src\fs_adopt.rs`) is the recipe if a source build of the open-source edition
@@ -98,7 +98,7 @@ message:
     [CoreUserBridge] Core session ready (core_user_id=user_<id>...)
 
 By hand: AionUi opens straight to the app, Settings has no Account entry, and the conversation list
-is K's.
+is the owner's.
 
 ## Revert
 

@@ -8,7 +8,7 @@
  * Uses the real AionUi database read-only, and sets and then removes settings-store keys
  * (aiondx.account.conv.<chat>, aiondx.agent.conv.<chat>) for a chat that is not a Claude chat, so no
  * real launch reads them. The generic half (2026-09-26) runs a second scratch copy whose config has no
- * accounts at all, as on a machine that is not K's, with "claude" pinned to node printing the
+ * accounts at all, as on a machine that is not the owner's, with "claude" pinned to node printing the
  * environment it was given.
  *
  *   node patches\0002-claude-model-currency\test-account-switch.js

@@ -4,7 +4,7 @@ a request of 2026-09-24
 
 The configuration is `tools\upstream-matrix.json`. This file explains it. `tools\upstream-sync.js`
 reads it, fetches both upstream clones and reports which rows an upstream change touches. Changing a
-decision is K's call; record the date and his words in the row's `why`.
+decision is the owner's call; record the date and their words in the row's `why`.
 
 ## What upstream is
 
@@ -36,7 +36,7 @@ agent, version-pin chores), none touching anything an AionDX patch depends on.
 | harvest | take upstream as it ships, no AionDX change |
 | harvest+patch | take upstream; an AionDX patch rides on it, so a change here is checked before rebuilding |
 | strip | remove or disable it in AionDX |
-| hold | not decided; K's call |
+| hold | not decided; the owner's call |
 
 ## The matrix
 

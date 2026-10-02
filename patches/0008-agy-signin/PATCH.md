@@ -18,7 +18,7 @@ OAuth" ... "Print mode: auth timed out"). Google redirects to `https://antigravi
 which hands the sign-in back to agy's local listener (`http://localhost:<port>/auth/callback`); if
 agy is gone or the handoff fails, the page shows a code to paste into agy's own screen. A Google
 sign-in often takes longer than 60 seconds, and an AionUi chat has no agy screen to paste into:
-K's pasted code went to the agent as a chat message, and both turns failed at about 60 s.
+The owner's pasted code went to the agent as a chat message, and both turns failed at about 60 s.
 
 ## The fix
 
@@ -65,7 +65,7 @@ Build: `csc /nologo /optimize+ /target:exe /platform:x64 /r:System.Web.Extension
 - The panel: 5 checks in `tools\dx-harness\click-test.js` (`agy-signin`): shown while waiting, a
   code is trimmed and sent, text that is not a code is refused, closes with a notice when done, a
   stale wait shows nothing.
-- Not yet: a full sign-in by a person through a chat turn. The first real one is K's.
+- Not yet: a full sign-in by a person through a chat turn. The first real one is the owner's.
 
 ## How AionCore finds agy (corrected September 26th)
 
@@ -102,9 +102,9 @@ Fixed after review (`! LLM Files\Research\2026-09-26_bug-sweep-reports.md`, repo
 Observed on the 26th, agy 1.2.11:
 
 - The first real sign-in through the panel, during the standalone smoke test. At 11:44:10 the check
-  found agy signed out (3 s), the wrapper chose Google OAuth, the browser page offered a code, K pasted
+  found agy signed out (3 s), the wrapper chose Google OAuth, the browser page offered a code, the owner pasted
   it into the panel at 11:45:39, the wrapper typed it into agy, and agy reported signed in at 11:45:45.
-  The five further chats K's repeated clicks opened waited for that one sign-in.
+  The five further chats the owner's repeated clicks opened waited for that one sign-in.
 - Signed out, `agy models` prints "Error: Please sign in to view available models. Launch the CLI
   without arguments to sign in." and exits 1 in about a second. It opens no browser.
 - With `SSH_CONNECTION`, `SSH_CLIENT` and `SSH_TTY` set, agy ignores the sign-in it has stored and acts

@@ -9,7 +9,7 @@
  * fake electron `app` and a network stub that fails the test if anything reaches aionui.com.
  *
  * Failure modes it guards:
- *   DATA LOSS       a new account id would show K an empty app (174 conversations belong to his
+ *   DATA LOSS       a new account id would show the owner an empty app (every conversation belongs to their
  *                   existing id), so the auth.enc id must win and must persist
  *   SIGN-IN AGAIN   anything that turns the snapshot back to "unauthenticated" sends the app to
  *                   the aionui.com sign-in page
@@ -26,7 +26,11 @@ const { execFileSync, spawnSync } = require('child_process');
 
 const patch = require('./apply.js');
 const ROOT = path.resolve(__dirname, '..', '..');
-const STOCK_ASAR = 'C:\\Program Files\\AionUi\\resources\\app.asar.stock';
+// The stock asar: an installed AionUi's backup (app.asar.stock), else the copy tools/fetch-aionui-base.js unpacks into vendor/aionui-base.
+const STOCK_ASAR = [
+  'C:\\Program Files\\AionUi\\resources\\app.asar.stock',
+  require('path').join(__dirname, '..', '..', 'vendor', 'aionui-base', 'resources', 'app.asar'),
+].find((p) => require('fs').existsSync(p)) || 'C:\\Program Files\\AionUi\\resources\\app.asar.stock';
 const ASAR_CLI = path.join(ROOT, 'vendor', 'node_modules', '@electron', 'asar', 'bin', 'asar.mjs');
 
 let pass = 0, fail = 0;
@@ -124,7 +128,7 @@ function sandbox(src, opts) {
 
   // ------------------------------------------------------------ DATA LOSS
   const KID = 'c18c50aa-0000-4000-8000-000000000001';
-  const meta = { user: { id: KID, name: 'K', username: 'k', email: 'k@example.invalid', avatarUrl: null, extras: {} } };
+  const meta = { user: { id: KID, name: 'User', username: 'user', email: 'user@example.invalid', avatarUrl: null, extras: {} } };
   let ud = fs.mkdtempSync(path.join(tmp, 'ud-'));
   let s = sandbox(once, { userData: ud, meta });
   let am = new s.AuthManager();

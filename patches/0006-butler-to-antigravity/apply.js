@@ -17,7 +17,7 @@
  * home page with the prompt filled in and no assistant pinned.
  *
  * Also: the first-run onboarding's featured assistant points at Antigravity and is named
- * "Antigravity". Other languages keep their own words for the Butler (K works in English).
+ * "Antigravity". Other languages keep their own words for the Butler (the owner works in English).
  *
  * SAFETY. Every anchor must match its expected count across out/renderer/assets/*.js, or nothing is
  * written and the exit code is 1. Re-running on a patched tree finds the new text and changes

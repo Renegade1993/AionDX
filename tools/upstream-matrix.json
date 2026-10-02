@@ -4,7 +4,7 @@
     "harvest": "take upstream as it ships, no AionDX change",
     "harvest+patch": "take upstream; an AionDX patch rides on it, so upstream changes here are checked before a rebuild",
     "strip": "remove or disable it in AionDX",
-    "hold": "not decided; K's call"
+    "hold": "not decided; the owner's call"
   },
   "repos": {
     "frontend": {

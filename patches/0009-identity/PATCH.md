@@ -74,8 +74,8 @@ reached it. `apply.js` now edits the renderer bundle that holds it: the SVG beco
 `<img src="./aiondx-mark.svg">` (the mark, copied to `out/renderer/`), the tile loses `bg-black`, and
 both "AionUi" labels there read "AionDX". Each anchor must match once, or nothing is written.
 
-The mark's tile is neutral grey (#1b1b1b to #070707), matching AionDX Dark, whose navy K read as
-purple ("is this a purple hew? can we make it grey, just about this dark"). `render-icons.js` redrew
+The mark's tile is neutral grey (#1b1b1b to #070707), matching AionDX Dark, whose navy the owner read as
+purple (a request to make it grey, about this dark). `render-icons.js` redrew
 the PNGs and the .ico; `install.js` put the .ico on the shortcuts and the grey themes in the store.
 
 ## September 26th, 2026
@@ -87,7 +87,7 @@ the PNGs and the .ico; `install.js` put the .ico on the shortcuts and the grey t
   an activator, `aiondx activate --quiet --from aionui-start`, killed after 90 s.
 - `aiondx-themes.js` for the renderer's first-run setup.
 
-Later the same day, for the standalone app (a request; the friend has no AionUi):
+Later the same day, for the standalone app (a request; the tester has no AionUi):
 
 - The start hook recognises a standalone install by `resources\aiondx\release.json` beside the app. The
   `C:\ProgramData\AionDX\manifest.json` test is gone, since any account can create that folder. On a
@@ -116,8 +116,7 @@ Later the same day, for the standalone app (a request; the friend has no AionUi)
 
 ## September 26th, 2026 (night): Claude Code plugins for the page
 
-A tester, through a request, then *"it seems we should definitely implement
-/plugins"*. AionUi's Claude chats offer `/reload-plugins` but not Claude Code's `/plugin` browser.
+A request (a tester's suggestion): add Claude Code's `/plugin` browser. AionUi's Claude chats offer `/reload-plugins` but not Claude Code's `/plugin` browser.
 `ipcMain.handle("aiondx:plugins")` in the helper block runs `claude plugin ...` for the page's /plugin panel (patch
 0001): the `claude` found on PATH (AionDX's bin first), hidden, killed at 180 s. Only `list`, `install`, `uninstall`,
 `enable`, `disable`, `update`, `details` and `marketplace add|list|remove|update`, with the options `--json`,
@@ -126,6 +125,6 @@ at most 12 arguments. `-y` is refused: a marketplace's own install command runs 
 hash the user was shown. A `claude.cmd` goes through `cmd.exe` and refuses `& | < > ^ % ! ( )`. The preload exposes
 `window.aiondxPlugins.run(args)`. `test-plugins.js` 10/10 (the refusals, and a real `claude plugin list --json`).
 
-Measured while building it: `claude plugin` ignores `CLAUDE_CONFIG_DIR` when started through K's launcher, so a test
-install went into K's own `~/.claude` (removed again the same minute: plugin uninstalled, `enabledPlugins` taken back
+Measured while building it: `claude plugin` ignores `CLAUDE_CONFIG_DIR` when started through the developer's launcher, so a test
+install went into the owner's own `~/.claude` (removed again the same minute: plugin uninstalled, `enabledPlugins` taken back
 out of settings.json, the cache folders deleted). Test plugin changes only through the harness stub.

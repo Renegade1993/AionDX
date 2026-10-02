@@ -53,4 +53,4 @@ checkout of the tag) succeeded: `vendor\aioncore\aioncore.exe`, sha256 `942be1cc
 - Attachments: a steered new message carries its files the way the ordinary send does; a queued message moved
   through `message_id` delivers its text and file paths from the mailbox row.
 - Not live-tested against a running Claude member yet: the unit tests use the coordinator and a recording port, and
-  the conversation tests use the existing mid-turn mock agent. K's confirmation is what moves this to confirmed.
+  the conversation tests use the existing mid-turn mock agent. The owner's confirmation is what moves this to confirmed.

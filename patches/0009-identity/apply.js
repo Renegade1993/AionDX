@@ -80,7 +80,7 @@ function __aiondxIconFile(name) {
       process.env.PATH = [bin].concat(String(process.env.PATH || "").split(";").filter((p) => p && !same(p))).join(";");
     }
   } catch {}
-  // Node.js for a PC without it (2026-09-26, the friend's install: AionUi's browser tool runs npx). The standalone
+  // Node.js for a PC without it (2026-09-26, a tester's install: AionUi's browser tool runs npx). The standalone
   // AionDX carries Node's own build where AionCore takes a bundled copy (managed-resources\\node\\node-v*-win-x64);
   // when no node.exe is on PATH, that folder goes on the end of it, so npx-based MCP servers and the Claude launcher
   // work. A PC with its own Node keeps using it.
@@ -272,7 +272,7 @@ ${HELPER_END}
 // [what, find, replace, expected count on an unpatched tree, marker proving it is done]
 const EDITS = [
   // The standalone AionDX is its own app to Windows (taskbar grouping, pins, notifications), so it does not
-  // share AionUi's id on a PC that has both; over an installed AionUi (K's layout) the id stays AionUi's.
+  // share AionUi's id on a PC that has both; over an installed AionUi (the developer's layout) the id stays AionUi's.
   ['app id', 'const WINDOWS_APP_USER_MODEL_ID = "com.aionui.app";',
     'const WINDOWS_APP_USER_MODEL_ID = (() => { try { return fs__namespace.existsSync(path__namespace.join(process.resourcesPath || "", "aiondx", "release.json")) ? "com.aiondx.app" : "com.aionui.app"; } catch { return "com.aionui.app"; } })();',
     1, /com\.aiondx\.app/],

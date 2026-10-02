@@ -501,7 +501,7 @@ namespace AionDx
             "  aiondx mcp list                            the user's MCP servers: the AionDX MCP file and AionUi's list\n" +
             "  aiondx mcp tools SERVER [TOOL] [--full]    connect and list its tools and their parameters (* = required)\n" +
             "  aiondx mcp call SERVER TOOL [--param NAME=VALUE]... [--json JSON|- | --json-file FILE] [--out FILE] [--raw] [--timeout S]\n" +
-            "  aiondx mcp add --name NAME (--command EXE [--arg A]... [--env K=V]... [--cwd DIR] | --url URL [--type http|sse] [--header K=V]...)\n" +
+            "  aiondx mcp add --name NAME (--command EXE [--arg A]... [--env KEY=VALUE]... [--cwd DIR] | --url URL [--type http|sse] [--header KEY=VALUE]...)\n" +
             "                 [--description TEXT] [--no-test] [--note TEXT] [--aionui [--on]]\n" +
             "  aiondx mcp update --name NAME [the same options]      aiondx mcp remove|test --name NAME\n" +
             "  aiondx mcp enable|disable --name NAME                 (AionUi's list)\n" +
@@ -745,7 +745,7 @@ namespace AionDx
         // loopback tap that reads the anthropic-ratelimit-unified-* headers of the answers and writes
         //   aiondx.usage.acct.<account key> = { label, at, status, five_hour: {u, reset, status}, seven_day: {...} }
         //   aiondx.usage.conv.<conversation id> = { acct, at }
-        // into AionUi's settings store; the usage meter beside the account control shows them to K, and usage_status,
+        // into AionUi's settings store; the usage meter beside the account control shows them to the owner, and usage_status,
         // `aiondx usage` and one line of loop_status show them to the agent. u is the fraction of the window used
         // (above 1 past the cap); reset is epoch seconds.
 
@@ -1554,7 +1554,7 @@ namespace AionDx
         // ------------------------------------------------------------------ shortcut icons (2026-09-26)
 
         // Every AionUi*.lnk on the desktop, in the Start menu and pinned to the taskbar gets the AionDX mark
-        // (patch 0009's install.js did this on K's machine). Only the icon changes: the shortcut is loaded and
+        // (patch 0009's install.js did this on the developer's machine). Only the icon changes: the shortcut is loaded and
         // saved through WScript.Shell, which keeps its other properties, among them the AppUserModelID that
         // Windows notifications depend on. --common does the all-users desktop and Start menu (Setup runs that
         // part elevated); --reset gives the shortcuts AionUi's own icon back.

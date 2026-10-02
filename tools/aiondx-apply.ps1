@@ -25,7 +25,7 @@
          archive that was live becomes app.asar.prev, so every swap can itself be undone.
       4. Checks the installed file against the chosen one by SHA-256 and records the swap in
          vendor\install-history.json.
-      5. Reopens AionUi through explorer.exe (as K, not elevated, in no job) and checks it started:
+      5. Reopens AionUi through explorer.exe (as the owner, not elevated, in no job) and checks it started:
          a window within 75 s that is still up 20 s later. For a build carrying patch 0003, also
          the local-account and Core-session lines in the main log.
       6. If AionUi did not start, offers a roll back or a revert on the spot, once.
@@ -486,7 +486,7 @@ try {
       @{ Text = 'Leave it as it is'; Enabled = $true; Action = 'Leave' }
     )
     if ($fallback -eq 'Leave' -or $fallback -eq 'Cancel') {
-      Say 'AionUi did not start; K chose to leave it'
+      Say 'AionUi did not start; the owner chose to leave it'
       [void](Box "AionUi did not start after installing $label.`n`nDouble-click AionDX Apply Update again to roll back or revert. Log: $logFile" 'OK' 'Warning')
       Remove-SelfTask
       exit 1

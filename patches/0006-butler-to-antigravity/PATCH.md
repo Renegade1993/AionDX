@@ -27,7 +27,7 @@ to "Let Antigravity set it up", "Enabled the AionUi Butler for you" to "Enabled 
 you", the assistants empty-state hint, and the first-run onboarding's featured assistant (now
 Antigravity, name and target). Other languages keep their own words.
 
-The Butler assistant itself was switched off for K with AionUi's own call, `PATCH
+The Butler assistant itself was switched off for the owner with AionUi's own call, `PATCH
 /api/assistants/aionui-assistant/state {"enabled": false}`, which takes it off the home page and
 out of the assistant pickers. Nothing in the patched interface switches it back on; Settings >
 Assistants still lists it, where it can be switched on by hand.
