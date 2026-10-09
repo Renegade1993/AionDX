@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-02.1';
+  var BUILD = '2026-10-09.1';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -569,7 +569,7 @@
   //            assistants: slotId -> assistant id }
   var teamCache = {};
   function readTeam(teamId, data) {
-    var c = { at: Date.now(), ok: false, name: '', map: {}, backend: {}, names: {}, assistants: {} };
+    var c = { at: Date.now(), ok: false, name: '', map: {}, backend: {}, names: {}, assistants: {}, roles: {} };
     var members = data && (data.assistants || data.agents);
     if (Array.isArray(members)) {
       c.ok = true;
@@ -581,6 +581,7 @@
         c.backend[m.slot_id] = String(m.backend || m.assistant_backend || '');
         c.names[m.slot_id] = String(m.name || m.assistant_name || '');
         c.assistants[m.slot_id] = String(m.assistant_id || '');
+        c.roles[m.slot_id] = String(m.role || '');
       }
     }
     teamCache[teamId] = c;
@@ -3065,10 +3066,10 @@
     if (list.length) loadAgents(false);
     list.forEach(function (t) {
       var convId = t.kind === 'conv' ? t.convId : (teamCache[t.teamId] && teamCache[t.teamId].map[t.slotId]);
-      if (!convId) { if (t.kind === 'team') memberConversation(t).then(function (r) { if (r && r.convId) schedule(); }, function () {}); return; }
+      if (!convId) { if (usageEls[t.key]) liveUsage[t.key] = true; if (t.kind === 'team') memberConversation(t).then(function (r) { if (r && r.convId) schedule(); }, function () {}); return; }
       var info = convInfo[convId];
       if (!info || Date.now() - info.at > CONV_INFO_MS) loadConvInfo(convId);
-      if (!info) return;
+      if (!info) { if (usageEls[t.key]) liveUsage[t.key] = true; return; }   // chat info is being read: keep the meter on screen meanwhile
       // A team column offers only Claude-to-Claude switches; a solo chat always has new-chat picks. A Claude member that is
       // offered no switch (one Claude agent only, or the lists not read yet) still gets its usage bar, before the model picker.
       if (!info.agentId || !agentList.at || (t.kind === 'team' && (info.backend !== 'claude' || claudeAgents().length < 2))) {
@@ -3404,20 +3405,121 @@
   var USAGE_ACCT = 'aiondx.usage.acct.';
   var USAGE_CONV = 'aiondx.usage.conv.';
   var USAGE_STALE_MS = 30 * 60000;       // older than this the meter is dimmed, and its tooltip says how old it is
-  var USAGE_HIDE_MS = 12 * 3600000;      // older than this it is not shown at all
+  var USAGE_HIDE_MS = 3 * 24 * 3600000;  // older than this it is not shown at all (a window that has reset reads 0%, so an old reading is still honest)
   var usageAcct = {};        // key -> reading
   var usageConv = {};        // conversation id -> { acct, at }
   var usageEls = {};         // target key -> meter
+  var USAGE_CFG = 'aiondx.usage.config';
+  var USAGE_ALERT = 'aiondx.usagealert.';
+  var USAGE_FIRED = 'aiondx.usagefired.';
+  var usageCfg = { pollSec: 3, writeSec: 60, alerts: true };   // the settings panel (click the usage meter); the Loop tool and AionCore's tap read them too
+  var usageAlerts = {};      // scope (team.<id> or conv.<id>) -> { rules: [{ window, at, notify, message, by, who, slot, conv }] }
+  var usageFired = {};       // scope -> { rule@account -> { reset, at } }: an alert goes off once per window
+  var usageTaken = 0;
   function takeUsage(data) {
-    var a = {}, c = {};
+    var cfg = data[USAGE_CFG];
+    if (cfg && typeof cfg === 'object') {
+      usageCfg = { pollSec: Math.min(300, Math.max(1, Number(cfg.pollSec) || 3)), writeSec: Math.min(600, Math.max(5, Number(cfg.writeSec) || 60)), alerts: cfg.alerts !== false };
+    }
+    // The meter and the alert check follow the refresh rate the owner chose (a reading can only be as new as the last one AionCore's tap wrote).
+    if (usageCfg.pollSec > 3 && Date.now() - usageTaken < usageCfg.pollSec * 1000 - 400) return;
+    usageTaken = Date.now();
+    var a = {}, c = {}, al = {}, fi = {};
     Object.keys(data).forEach(function (k) {
       var v = data[k];
       if (!v || typeof v !== 'object') return;
       if (k.indexOf(USAGE_ACCT) === 0) a[k.slice(USAGE_ACCT.length)] = v;
       else if (k.indexOf(USAGE_CONV) === 0) c[k.slice(USAGE_CONV.length)] = v;
+      else if (k.indexOf(USAGE_ALERT) === 0) al[k.slice(USAGE_ALERT.length)] = v;
+      else if (k.indexOf(USAGE_FIRED) === 0) fi[k.slice(USAGE_FIRED.length)] = v;
     });
     usageAcct = a;
     usageConv = c;
+    usageAlerts = al;
+    usageFired = fi;
+    try { checkUsageAlerts(); } catch (e) { console.log('[dx] usage alert check failed', e); }
+  }
+  function usageScope(t) { return t.kind === 'team' ? 'team.' + t.teamId : 'conv.' + t.convId; }
+  /** The chats a usage alert scope covers: [{ convId, slotId, teamId, role, name }], or null while the team is not read yet. */
+  function alertMembers(scope) {
+    var m = /^(team|conv)\.(.+)$/.exec(scope);
+    if (!m) return [];
+    if (m[1] === 'conv') return [{ convId: m[2], slotId: '', teamId: '', role: '', name: '' }];
+    var tc = teamCache[m[2]];
+    if (!tc || !tc.ok) {
+      if (!teamFailed[m[2]]) memberConversation({ teamId: m[2], slotId: '' }).then(function () { schedule(); }, function () {});
+      return null;
+    }
+    return Object.keys(tc.map).filter(function (slot) { return !!tc.map[slot]; }).map(function (slot) {
+      return { convId: tc.map[slot], slotId: slot, teamId: m[2], role: tc.roles[slot] || '', name: tc.names[slot] || '' };
+    });
+  }
+  /** Look at every alert rule against the readings now. A rule goes off once for a window; it is armed again when the window resets or
+   *  the usage has dropped 5 points under the threshold. */
+  function checkUsageAlerts() {
+    if (disabled() || !usageCfg.alerts) return;
+    Object.keys(usageAlerts).forEach(function (scope) {
+      var rec = usageAlerts[scope];
+      if (!rec || !Array.isArray(rec.rules) || !rec.rules.length) return;
+      var members = alertMembers(scope);
+      if (!members) return;
+      var fired = Object.assign({}, usageFired[scope] || {}), changed = false;
+      rec.rules.forEach(function (rule) {
+        var thr = Number(rule.at);
+        if (!(thr > 0)) return;
+        var key = rule.window === 'week' ? 'seven_day' : 'five_hour';
+        var done = {};
+        members.forEach(function (mem) {
+          var cr = usageConv[mem.convId];
+          var a = cr && usageAcct[cr.acct];
+          var w = a && windowNow(a[key]);
+          if (!w || done[cr.acct]) return;
+          done[cr.acct] = true;
+          var fk = rule.window + '@' + rule.at + '@' + rule.notify + '|' + cr.acct;
+          var prev = fired[fk];
+          if (w.u < thr) { if (prev && w.u < thr - 0.05) { delete fired[fk]; changed = true; } return; }
+          var reset = Number(a[key].reset) || 0;
+          if (prev && Number(prev.reset) === reset) return;
+          fired[fk] = { reset: reset, at: Date.now() };
+          changed = true;
+          sendUsageAlert(scope, rec, rule, cr.acct, a, w, members);
+        });
+      });
+      if (changed) {
+        usageFired[scope] = fired;
+        var body = {};
+        body[USAGE_FIRED + scope] = fired;
+        putPrefs(body);
+      }
+    });
+  }
+  function alertText(rule, a, w) {
+    var win = rule.window === 'week' ? 'weekly' : '5-hour';
+    var other = windowNow(rule.window === 'week' ? a.five_hour : a.seven_day);
+    return '[AionDX usage alert] ' + (a.label ? 'The Claude account ' + a.label : 'Your Claude account') + ' is at ' + pct(w.u) + ' of its ' + win + ' window' +
+      ' (an alert at ' + Math.round(Number(rule.at) * 100) + '% was set' + (rule.who ? ' by ' + rule.who : rule.by === 'user' ? ' by the user' : '') + ')' +
+      (w.reset ? ', resets ' + resetText(w.reset) : '') + (other ? '; ' + (rule.window === 'week' ? '5-hour' : 'week') + ' ' + pct(other.u) : '') + '. ' +
+      (rule.message ? String(rule.message) : 'Finish or checkpoint what you are doing now, hand off anything that needs a long run, and tell the user if the rest of the work will not fit.');
+  }
+  function sendUsageAlert(scope, rec, rule, acct, a, w, members) {
+    var text = alertText(rule, a, w);
+    var to = [];
+    if (scope.indexOf('conv.') === 0) to = members;
+    else if (rule.notify === 'all') to = members.filter(function (m) { var c = usageConv[m.convId]; return c && c.acct === acct; });
+    else if (rule.notify === 'self') to = members.filter(function (m) { return m.slotId === rule.slot || m.convId === rule.conv; });
+    else to = members.filter(function (m) { return isLeadRole(m.role); });
+    if (!to.length) { console.log('[dx] usage alert ' + scope + ': nobody to tell (' + rule.notify + ')'); return; }
+    to.forEach(function (m) {
+      var done = function (ok) { console.log('[dx] usage alert ' + scope + ' -> ' + (m.name || m.convId) + (ok ? ' sent' : ' failed')); };
+      if (!m.teamId) { postJson('/api/conversations/' + m.convId + '/messages', { content: text }).then(function (r) { done(r.ok); }, function () { done(false); }); return; }
+      var t = { kind: 'team', key: 'team:' + m.teamId + ':' + m.slotId, teamId: m.teamId, slotId: m.slotId, role: m.role };
+      // Respond now: the message goes ahead of the queue and into the running turn, the same as the bolt.
+      steerAgent(t, { content: text }).then(function (r) {
+        if (r.status === 404 || r.status === 405) return sendAsUsual(t, text);
+        return r;
+      }).then(function (r) { done(r && r.ok); }, function () { done(false); });
+    });
+    toast('Usage alert: ' + pct(w.u) + ' of the ' + (rule.window === 'week' ? 'weekly' : '5-hour') + ' window', (a.label ? a.label + '. ' : '') + 'Sent to ' + to.map(function (m) { return m.name || 'the agent'; }).join(', ') + '.');
   }
   /** The account reading for a chat, whatever its age: the limit pause needs a reset time even from an old reading. */
   function usageRecord(convId) {
@@ -3493,8 +3595,10 @@
       el.setAttribute('data-testid', 'aiondx-usage');
       el.innerHTML = '<span class="aiondx-usage-bars"><span class="aiondx-usage-bar" data-w="5h"><i></i></span>' +
         '<span class="aiondx-usage-bar" data-w="wk"><i></i></span></span><span class="aiondx-usage-text"></span>';
+      el.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); if (el._t) openUsagePanel(el._t); });
       usageEls[t.key] = el;
     }
+    el._t = t;
     el.classList.toggle('aiondx-usage--compact', t.kind === 'team' && !t.single);
     if (el.parentNode !== beforeEl.parentNode || el.nextSibling !== beforeEl) beforeEl.parentNode.insertBefore(el, beforeEl);
     var five = windowNow(a.five_hour) || { u: 0 }, week = windowNow(a.seven_day) || { u: 0 };
@@ -3572,6 +3676,117 @@
     var el = usageEls[key];
     if (el && el.parentNode) el.parentNode.removeChild(el);
     delete usageEls[key];
+  }
+
+
+  // ---------------------------------------------------------------- usage settings and alerts (2026-10-09)
+
+  // a request of 2026-10-09: agents read their usage, carry on, and the next time they look they are far over. A usage alert
+  // is a threshold on a window (5-hour or week) of the account a chat runs on, for one team or one chat: when a reading crosses
+  // it, AionDX sends the message at once to the team lead, to every member on that account, or to the agent that set it,
+  // the way the Respond-now bolt does (into the running turn). Agents set alerts with the aiondx usage alert command, the owner
+  // here: click the usage meter. The panel also sets how often the meter and the alert check follow the readings, and how often
+  // AionCore's tap writes a reading that has not moved.
+  var usagePanel = null;
+  function closeUsagePanel() {
+    if (!usagePanel) return;
+    if (usagePanel.el.parentNode) usagePanel.el.parentNode.removeChild(usagePanel.el);
+    document.removeEventListener('keydown', usagePanel.onKey, true);
+    usagePanel = null;
+  }
+  function saveUsageCfg() {
+    var b = {};
+    b[USAGE_CFG] = { pollSec: usageCfg.pollSec, writeSec: usageCfg.writeSec, alerts: usageCfg.alerts, at: Date.now() };
+    putPrefs(b);
+  }
+  function saveUsageRules(scope, rules) {
+    var b = {};
+    if (rules.length) {
+      usageAlerts[scope] = Object.assign({}, usageAlerts[scope] || {}, { rules: rules, at: Date.now(), rev: ((usageAlerts[scope] && usageAlerts[scope].rev) || 0) + 1 });
+      b[USAGE_ALERT + scope] = usageAlerts[scope];
+    } else {
+      delete usageAlerts[scope];
+      b[USAGE_ALERT + scope] = null;
+    }
+    putPrefs(b);
+  }
+  function optionsHtml(list, cur) {
+    return list.map(function (o) { return '<option value="' + o[0] + '"' + (String(o[0]) === String(cur) ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
+  }
+  function openUsagePanel(t) {
+    closeUsagePanel();
+    var scope = usageScope(t);
+    var el = document.createElement('div');
+    el.className = 'aiondx-uspanel';
+    el.setAttribute('data-testid', 'aiondx-usage-panel');
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Usage settings');
+    el.innerHTML = '<div class="aiondx-uspanel-box"><div class="aiondx-uspanel-head"><b>Usage settings</b><button type="button" data-act="close" aria-label="Close">\u2715</button></div>' +
+      '<div class="aiondx-uspanel-now"></div>' +
+      '<div class="aiondx-uspanel-sec"><label>Refresh the meter and check alerts every <select data-f="pollSec"></select></label>' +
+      '<label>Take a reading from Claude\u2019s traffic at least every <select data-f="writeSec"></select> (a reading that moved a whole percent is taken at once)</label>' +
+      '<label class="aiondx-uspanel-chk"><input type="checkbox" data-f="alerts"> Send usage alerts</label></div>' +
+      '<div class="aiondx-uspanel-sec"><b class="aiondx-uspanel-h"></b><div class="aiondx-uspanel-rules"></div>' +
+      '<div class="aiondx-uspanel-add"><select data-f="nwin"></select> at <input type="number" min="1" max="100" value="80" data-f="npct"> % <span>tell</span> <select data-f="nwho"></select>' +
+      '<button type="button" data-act="add">Add alert</button></div>' +
+      '<div class="aiondx-uspanel-note">The message goes straight into the agent\u2019s running turn, the same as the Respond-now bolt. An alert goes off once per window; agents can set their own with <code>aiondx usage alert</code>.</div></div></div>';
+    var q = function (sel) { return el.querySelector(sel); };
+    q('[data-f="pollSec"]').innerHTML = optionsHtml([[1, '1 second'], [3, '3 seconds'], [5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds'], [60, 'minute']], usageCfg.pollSec);
+    q('[data-f="writeSec"]').innerHTML = optionsHtml([[5, '5 seconds'], [15, '15 seconds'], [30, '30 seconds'], [60, 'minute'], [120, '2 minutes'], [300, '5 minutes']], usageCfg.writeSec);
+    q('[data-f="alerts"]').checked = usageCfg.alerts;
+    q('.aiondx-uspanel-h').textContent = t.kind === 'team' ? 'Alerts for this team (' + ((teamCache[t.teamId] && teamCache[t.teamId].name) || 'team') + ')' : 'Alerts for this chat';
+    q('[data-f="nwin"]').innerHTML = optionsHtml([['5h', '5-hour window'], ['week', 'weekly window']], '5h');
+    q('[data-f="nwho"]').innerHTML = t.kind === 'team'
+      ? optionsHtml([['lead', 'the team lead'], ['all', 'every member on that account']], 'lead')
+      : optionsHtml([['self', 'this agent']], 'self');
+    function paint() {
+      var cid = t.kind === 'conv' ? t.convId : (teamCache[t.teamId] && teamCache[t.teamId].map[t.slotId]);
+      var a = cid ? usageOf(cid) : null;
+      q('.aiondx-uspanel-now').textContent = a ? ['5-hour window', 'Week'].map(function (n, i) { return windowText(n, i ? a.seven_day : a.five_hour); }).filter(Boolean).join('  \u00b7  ') + '  (read ' + ageText(Date.now() - (Number(a.at) || 0)) + ')' : 'No usage reading yet.';
+      var rules = ((usageAlerts[scope] && usageAlerts[scope].rules) || []);
+      var box = q('.aiondx-uspanel-rules');
+      box.innerHTML = '';
+      if (!rules.length) box.innerHTML = '<div class="aiondx-uspanel-none">No alerts set.</div>';
+      rules.forEach(function (r, i) {
+        var row = document.createElement('div');
+        row.className = 'aiondx-uspanel-rule';
+        var who = r.notify === 'all' ? 'every member on that account' : r.notify === 'self' ? (r.who || 'the agent that set it') : 'the team lead';
+        row.innerHTML = '<span></span><button type="button" data-act="del" data-i="' + i + '">Remove</button>';
+        row.firstChild.textContent = (r.window === 'week' ? 'Weekly' : '5-hour') + ' window at ' + Math.round(Number(r.at) * 100) + '%: tell ' + who + (r.by === 'agent' ? ' (set by ' + (r.who || 'an agent') + ')' : '') + (r.message ? ' \u2014 ' + r.message : '');
+        box.appendChild(row);
+      });
+    }
+    paint();
+    el.addEventListener('change', function (ev) {
+      var fld = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-f');
+      if (fld === 'pollSec' || fld === 'writeSec') { usageCfg[fld] = Number(ev.target.value) || usageCfg[fld]; saveUsageCfg(); }
+      else if (fld === 'alerts') { usageCfg.alerts = !!ev.target.checked; saveUsageCfg(); }
+    });
+    el.addEventListener('click', function (ev) {
+      if (ev.target === el) { closeUsagePanel(); return; }
+      var b = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
+      if (!b) return;
+      var act = b.getAttribute('data-act');
+      if (act === 'close') closeUsagePanel();
+      else if (act === 'del') {
+        var rules = ((usageAlerts[scope] && usageAlerts[scope].rules) || []).slice();
+        rules.splice(Number(b.getAttribute('data-i')), 1);
+        saveUsageRules(scope, rules);
+        paint();
+      } else if (act === 'add') {
+        var pctv = Math.round(Number(q('[data-f="npct"]').value));
+        if (!(pctv >= 1 && pctv <= 100)) { q('[data-f="npct"]').focus(); return; }
+        var rule = { window: q('[data-f="nwin"]').value, at: pctv / 100, notify: q('[data-f="nwho"]').value, by: 'user' };
+        var list = ((usageAlerts[scope] && usageAlerts[scope].rules) || []).filter(function (r) { return !(r.window === rule.window && r.notify === rule.notify); });
+        list.push(rule);
+        saveUsageRules(scope, list);
+        paint();
+      }
+    });
+    usagePanel = { el: el, onKey: function (ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closeUsagePanel(); } } };
+    document.addEventListener('keydown', usagePanel.onKey, true);
+    document.body.appendChild(el);
+    var iv = setInterval(function () { if (!usagePanel || usagePanel.el !== el) { clearInterval(iv); return; } paint(); }, 4000);
   }
 
   // ---------------------------------------------------------------- drafts that survive closing the app (build 2026-09-26.1)
@@ -4570,16 +4785,30 @@
       var c = row.querySelector('[data-testid="message-text-content"]');
       return normText(c ? c.textContent : '');
     });
-    var used = {}, out = [];
+    var used = {}, out = [], lost = [];
     // Newest queued message first, taking the newest unused bubble that shows its text.
     q.items.slice().sort(function (a, b) { return b.at - a.at; }).forEach(function (it) {
       for (var i = rows.length - 1; i >= 0; i--) {
         if (used[i] || !sameMessage(texts[i], it.want)) continue;
         used[i] = true;
         out.push({ row: rows[i], id: it.id });
-        break;
+        return;
       }
+      lost.push(it);
     });
+    // A message sent in this view can show text the mailbox row does not have (the page's own copy, before the chat is read again), and
+    // then no bubble matches. AionUi marks the bubbles that wait unread, so the unmatched queued messages (newest first) take the
+    // newest unmatched unread bubbles. The bolt sits on the right message even when the text differs, so long as the counts agree.
+    if (lost.length) {
+      var unread = [];
+      for (var j = rows.length - 1; j >= 0; j--) if (!used[j] && rows[j].querySelector('[data-testid="message-status-badge"]')) unread.push(j);
+      var n = Math.min(lost.length, unread.length);
+      for (var k = 0; k < n; k++) out.push({ row: rows[unread[k]], id: lost[k].id, byBadge: true });
+      if (lost.length > n) {
+        diagnose('bolt-no-row', q.t.key, { waiting: q.items.length, unmatched: lost.length - n, bubbles: rows.length, unread: unread.length,
+          wantStart: lost[n].want.slice(0, 50), wantLen: lost[n].want.length });
+      }
+    }
     return out;
   }
   /** For team pages, every few seconds: which of your messages each member still has waiting in its queue. */
@@ -4698,44 +4927,269 @@
   /** An Unsend button inside each "Unread" badge of a Claude chat; unsent messages marked. */
   function renderUnsend() {
     var r = route();
-    if (!r || r.kind !== 'conv' || disabled()) return;
+    if (!r || disabled()) return;
+    if (r.kind === 'team') { renderTeamUnsend(r); return; }
+    if (r.kind !== 'conv') return;
     var info = convInfo[r.id];
     if (!info || Date.now() - info.at > CONV_INFO_MS) loadConvInfo(r.id);
-    if (info && info.backend === 'claude') {
-      var badges = document.querySelectorAll('[data-testid="message-status-badge"]');
-      for (var i = 0; i < badges.length; i++) {
-        var badge = badges[i];
-        var row = badge.closest('[id^="message-"]');
-        if (!row) continue;
-        var mid = row.id.slice('message-'.length);
-        var btn = badge.querySelector('.aiondx-unsend');
-        if (!btn) {
-          btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'aiondx-unsend';
-          btn.setAttribute('data-testid', 'aiondx-unsend');
-          btn.addEventListener('click', function (ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            var b = ev.currentTarget;
-            unsendMessage(b._conv, b._mid).catch(function (e) { console.log('[dx] unsend error', e); });
-          });
-          badge.appendChild(btn);
-        }
-        btn._conv = r.id;
-        btn._mid = mid;
-        var pending = !!unsendPending[mid];
-        var label = pending ? 'Unsending...' : 'Unsend';
-        if (btn.textContent !== label) btn.textContent = label;
-        btn.disabled = pending;
-      }
-    }
+    if (info && info.backend === 'claude') unsendButtons(document, r.id, null);
     Object.keys(unsendResults).forEach(function (msgId) {
       var res = unsendResults[msgId];
       if (!res || !res.cancelled || res.conv !== r.id || !res.messageId) return;
       var el = document.getElementById('message-' + res.messageId);
       if (el && el.getAttribute('data-aiondx-unsent') !== '1') el.setAttribute('data-aiondx-unsent', '1');
     });
+  }
+  /** An Unsend button in every "Unread" badge inside scope. queued (a team member's waiting messages, matched to their bubbles) is
+   *  { row element -> { t, id: mailbox id } }: those are taken back from the team's queue; the others are the member's own chat messages. */
+  function unsendButtons(scope, convId, queued, chatToo) {
+    var badges = scope.querySelectorAll('[data-testid="message-status-badge"]');
+    for (var i = 0; i < badges.length; i++) {
+      var badge = badges[i];
+      var row = badge.closest('[id^="message-"]');
+      if (!row) continue;
+      var mid = row.id.slice('message-'.length);
+      var mine = null;
+      if (queued) for (var q = 0; q < queued.length; q++) if (queued[q].row === row) { mine = queued[q]; break; }
+      if (!mine && chatToo === false) continue;   // a message not in the queue, in a chat that is not Claude's: nothing to take back
+      var btn = badge.querySelector('.aiondx-unsend');
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'aiondx-unsend';
+        btn.setAttribute('data-testid', 'aiondx-unsend');
+        btn.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          var b = ev.currentTarget;
+          var go = b._q ? unsendQueued(b._q, b._conv, b._mid) : unsendMessage(b._conv, b._mid);
+          go.catch(function (e) { console.log('[dx] unsend error', e); });
+        });
+        badge.appendChild(btn);
+      }
+      btn._conv = convId;
+      btn._mid = mid;
+      btn._q = mine;
+      var pending = !!unsendPending[mid];
+      var label = pending ? 'Unsending...' : 'Unsend';
+      if (btn.textContent !== label) btn.textContent = label;
+      btn.disabled = pending;
+    }
+  }
+  var teamUnsent = {};       // bubble id -> true: taken back from a team member's queue
+  /** A team page: the Unread bubbles of each member on screen. A message still in the member's queue is taken back there; one the member's
+   *  chat already holds (delivered into its running turn, waiting for Claude to read it) goes the way a solo chat's does. */
+  function renderTeamUnsend(r) {
+    var tc = teamCache[r.id];
+    if (!tc) return;
+    Object.keys(tc.map).forEach(function (slotId) {
+      var convId = tc.map[slotId];
+      var t = { kind: 'team', key: 'team:' + r.id + ':' + slotId, teamId: r.id, slotId: slotId, role: '' };
+      var scope = rnContainer(t);
+      if (!scope || !convId) return;
+      var info = convInfo[convId];
+      if (!info || Date.now() - info.at > CONV_INFO_MS) loadConvInfo(convId);
+      var q = rnQueued[t.key];
+      var queued = q ? queuedRows(q).map(function (m) {
+        var row = m.row.id ? m.row : m.row.closest('[id^="message-"]');
+        return { row: row, id: m.id, t: q.t };
+      }) : [];
+      var claude = !!(info && info.backend === 'claude');
+      if (!queued.length && !claude) return;
+      unsendButtons(scope, convId, queued, claude);
+    });
+    Object.keys(teamUnsent).forEach(function (id) {
+      var el = document.getElementById('message-' + id);
+      if (el && el.getAttribute('data-aiondx-unsent') !== '1') el.setAttribute('data-aiondx-unsent', '1');
+    });
+  }
+  /** Take one of your messages back out of a team member's queue; if it has left the queue meanwhile, the member's own chat decides. */
+  async function unsendQueued(q, convId, domId) {
+    if (unsendPending[domId]) return;
+    unsendPending[domId] = { conv: convId, msgId: null, at: Date.now() };
+    renderUnsend();
+    var done = function (text) { delete unsendPending[domId]; notify(q.t, text, ''); renderUnsend(); };
+    try {
+      var r = await steerAgent(q.t, { message_id: q.id, unsend: true });
+      if (r.status === 404 || r.status === 405) { done('This AionCore cannot take a queued message back yet.'); return; }
+      if (!r.ok) { done('Could not unsend (' + r.status + ').'); return; }
+      var outcome = await steerAnswer(r);
+      if (outcome === 'unsent') {
+        teamUnsent[domId] = true;
+        done('Unsent. ' + rnWho(q.t) + ' will never read it.');
+        scanTeamQueues().catch(function () {});
+        return;
+      }
+      // not_queued: the member already has it. A running Claude turn may still hold it unread in its own queue.
+      delete unsendPending[domId];
+      renderUnsend();
+      await unsendMessage(convId, domId);
+    } catch (e) { done('Could not unsend: ' + (e && e.message ? e.message : 'the request failed') + '.'); }
+  }
+
+  // ---------------------------------------------------------------- picture viewer (build 2026-10-09.1)
+
+  // a request of 2026-10-09. A picture in a chat opens in AionDX's own viewer: previous and next walk through every picture
+  // shown in the chat (the arrow buttons, the arrow keys), the wheel zooms, a drag moves a zoomed picture, Esc closes. AionUi's
+  // pictures from tools had a viewer whose arrows did nothing (each picture was its own group once the list scrolled), and
+  // pictures that an agent links in its text (markdown, drawn inside a shadow root) had none at all.
+  var viewer = null;         // { el, img, items: [src], i, scale, x, y }
+  function viewerPictures() {
+    var out = [];
+    var rows = document.querySelectorAll('[id^="message-"]');
+    var seen = {};
+    function take(img) {
+      var src = img.currentSrc || img.src;
+      if (!src || seen[src + '#' + out.length]) return;
+      var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+      if (w < 32 || h < 32) return;
+      if (img.closest && (img.closest('.aiondx-viewer') || img.closest('button') || img.closest('.arco-avatar'))) return;
+      out.push({ src: src, alt: img.getAttribute('alt') || '' });
+    }
+    function walk(root) {
+      var imgs = root.querySelectorAll ? root.querySelectorAll('img, *') : [];
+      for (var i = 0; i < imgs.length; i++) {
+        var n = imgs[i];
+        if (n.tagName === 'IMG') take(n);
+        else if (n.shadowRoot) walk(n.shadowRoot);
+      }
+    }
+    for (var r = 0; r < rows.length; r++) walk(rows[r]);
+    return out;
+  }
+  function viewerPaint() {
+    if (!viewer) return;
+    var it = viewer.items[viewer.i];
+    if (!it) return;
+    viewer.img.src = it.src;
+    viewer.img.alt = it.alt;
+    viewer.img.style.transform = 'translate(' + viewer.x + 'px,' + viewer.y + 'px) scale(' + viewer.scale + ')';
+    viewer.img.style.cursor = viewer.scale > 1 ? 'grab' : 'zoom-in';
+    viewer.count.textContent = (viewer.i + 1) + ' / ' + viewer.items.length + (it.alt ? '  \u00b7  ' + it.alt : '');
+    viewer.prev.disabled = viewer.i <= 0;
+    viewer.next.disabled = viewer.i >= viewer.items.length - 1;
+    viewer.zoomText.textContent = Math.round(viewer.scale * 100) + '%';
+  }
+  function viewerGo(step) {
+    if (!viewer) return;
+    // The list is read again each time: pictures further along may have been drawn since the viewer opened.
+    var cur = viewer.items[viewer.i];
+    var fresh = viewerPictures();
+    var at = -1;
+    for (var i = 0; i < fresh.length; i++) if (cur && fresh[i].src === cur.src) { at = i; break; }
+    if (at >= 0) { viewer.items = fresh; viewer.i = at; }
+    var to = viewer.i + step;
+    if (to < 0 || to >= viewer.items.length) { viewerPaint(); return; }
+    viewer.i = to;
+    viewer.scale = 1; viewer.x = 0; viewer.y = 0;
+    viewerPaint();
+  }
+  function viewerZoom(factor) {
+    if (!viewer) return;
+    viewer.scale = Math.min(8, Math.max(0.2, viewer.scale * factor));
+    if (viewer.scale <= 1) { viewer.x = 0; viewer.y = 0; }
+    viewerPaint();
+  }
+  function viewerClose() {
+    if (!viewer) return;
+    if (viewer.el.parentNode) viewer.el.parentNode.removeChild(viewer.el);
+    viewer = null;
+  }
+  function viewerOpen(img) {
+    viewerClose();
+    var items = viewerPictures();
+    var src = img.currentSrc || img.src;
+    var i = -1;
+    for (var k = 0; k < items.length; k++) if (items[k].src === src) { i = k; if (img.getAttribute('alt') === items[k].alt) break; }
+    if (i < 0) { items.push({ src: src, alt: img.getAttribute('alt') || '' }); i = items.length - 1; }
+    var el = document.createElement('div');
+    el.className = 'aiondx-viewer';
+    el.setAttribute('data-testid', 'aiondx-viewer');
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Picture viewer');
+    el.innerHTML = '<div class="aiondx-viewer-bar"><span class="aiondx-viewer-count"></span><span class="aiondx-viewer-tools">' +
+      '<button type="button" data-act="out" title="Zoom out (-)" aria-label="Zoom out">\u2212</button>' +
+      '<span class="aiondx-viewer-zoom"></span>' +
+      '<button type="button" data-act="in" title="Zoom in (+)" aria-label="Zoom in">+</button>' +
+      '<button type="button" data-act="fit" title="Fit to window (0)" aria-label="Fit to window">Fit</button>' +
+      '<button type="button" data-act="close" title="Close (Esc)" aria-label="Close">\u2715</button></span></div>' +
+      '<button type="button" class="aiondx-viewer-nav aiondx-viewer-prev" data-act="prev" title="Previous picture (\u2190)" aria-label="Previous picture">\u2039</button>' +
+      '<div class="aiondx-viewer-stage"><img draggable="false" alt=""></div>' +
+      '<button type="button" class="aiondx-viewer-nav aiondx-viewer-next" data-act="next" title="Next picture (\u2192)" aria-label="Next picture">\u203a</button>';
+    viewer = { el: el, img: el.querySelector('img'), items: items, i: i, scale: 1, x: 0, y: 0,
+      count: el.querySelector('.aiondx-viewer-count'), zoomText: el.querySelector('.aiondx-viewer-zoom'),
+      prev: el.querySelector('.aiondx-viewer-prev'), next: el.querySelector('.aiondx-viewer-next') };
+    var drag = null;
+    el.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
+      if (b) {
+        var act = b.getAttribute('data-act');
+        if (act === 'prev') viewerGo(-1);
+        else if (act === 'next') viewerGo(1);
+        else if (act === 'in') viewerZoom(1.25);
+        else if (act === 'out') viewerZoom(0.8);
+        else if (act === 'fit') { viewer.scale = 1; viewer.x = 0; viewer.y = 0; viewerPaint(); }
+        else if (act === 'close') viewerClose();
+        return;
+      }
+      if (drag && drag.moved) return;
+      if (ev.target === viewer.img) { if (viewer.scale > 1) { viewer.scale = 1; viewer.x = 0; viewer.y = 0; } else viewer.scale = 2; viewerPaint(); return; }
+      if (ev.target.classList && (ev.target.classList.contains('aiondx-viewer') || ev.target.classList.contains('aiondx-viewer-stage'))) viewerClose();
+    });
+    el.addEventListener('wheel', function (ev) { ev.preventDefault(); viewerZoom(ev.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
+    el.addEventListener('mousedown', function (ev) {
+      if (ev.target !== viewer.img || viewer.scale <= 1) return;
+      drag = { sx: ev.clientX, sy: ev.clientY, x: viewer.x, y: viewer.y, moved: false };
+      ev.preventDefault();
+    });
+    window.addEventListener('mousemove', function onMove(ev) {
+      if (!viewer || viewer.el !== el) { window.removeEventListener('mousemove', onMove); return; }
+      if (!drag) return;
+      var dx = ev.clientX - drag.sx, dy = ev.clientY - drag.sy;
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+      viewer.x = drag.x + dx; viewer.y = drag.y + dy;
+      viewerPaint();
+    });
+    window.addEventListener('mouseup', function onUp() {
+      if (!viewer || viewer.el !== el) { window.removeEventListener('mouseup', onUp); return; }
+      if (drag) setTimeout(function () { drag = null; }, 0);
+    });
+    document.body.appendChild(el);
+    viewerPaint();
+  }
+  function watchPictures() {
+    window.addEventListener('click', function (ev) {
+      if (disabled() || viewer) return;
+      if (ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+      var path = ev.composedPath ? ev.composedPath() : [];
+      var img = path[0];
+      if (!img || img.tagName !== 'IMG') return;
+      var inRow = false, linked = false;
+      for (var i = 0; i < path.length; i++) {
+        var n = path[i];
+        if (n.id && typeof n.id === 'string' && n.id.indexOf('message-') === 0) { inRow = true; break; }
+        if (n.tagName === 'A' || n.tagName === 'BUTTON') linked = true;
+      }
+      if (!inRow || linked) return;
+      var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+      if (w < 32 || h < 32) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      viewerOpen(img);
+    }, true);
+    window.addEventListener('keydown', function (ev) {
+      if (!viewer) return;
+      var k = ev.key, used = true;
+      if (k === 'Escape') viewerClose();
+      else if (k === 'ArrowLeft' || k === 'PageUp') viewerGo(-1);
+      else if (k === 'ArrowRight' || k === 'PageDown') viewerGo(1);
+      else if (k === '+' || k === '=') viewerZoom(1.25);
+      else if (k === '-' || k === '_') viewerZoom(0.8);
+      else if (k === '0') { viewer.scale = 1; viewer.x = 0; viewer.y = 0; viewerPaint(); }
+      else used = false;
+      if (used) { ev.preventDefault(); ev.stopPropagation(); }
+    }, true);
+    window.addEventListener('hashchange', viewerClose);
   }
 
   // ---------------------------------------------------------------- styles
@@ -4892,9 +5346,41 @@
     '.aiondx-usage-bar i{display:block;height:100%;border-radius:2px;transition:width .4s}',
     '.aiondx-usage-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.aiondx-usage[data-limit="reached"] .aiondx-usage-text{color:rgb(var(--danger-6))}',
-    '.aiondx-usage[data-narrow="1"]{display:none}',
+    '.aiondx-usage[data-narrow="1"] .aiondx-usage-text{display:none}',
     '.aiondx-usage[data-stale="1"]{opacity:.55}',
     '.aiondx-usage--compact{margin-inline-end:4px}',
+    '.aiondx-usage{cursor:pointer}',
+    '.aiondx-uspanel{position:fixed;inset:0;z-index:10070;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.4)}',
+    '.aiondx-uspanel-box{width:min(560px,92vw);max-height:88vh;overflow:auto;padding:16px 18px;border-radius:10px;background:var(--color-bg-2);color:var(--color-text-1);',
+    '  box-shadow:0 10px 40px rgba(0,0,0,.35);font-size:13px;line-height:20px}',
+    '.aiondx-uspanel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:15px}',
+    '.aiondx-uspanel button{border:1px solid var(--color-border-2);border-radius:6px;background:var(--color-fill-2);color:var(--color-text-1);cursor:pointer;padding:2px 10px}',
+    '.aiondx-uspanel button:hover{background:var(--color-fill-3)}',
+    '.aiondx-uspanel select,.aiondx-uspanel input[type=number]{border:1px solid var(--color-border-2);border-radius:6px;background:var(--color-bg-1);color:var(--color-text-1);padding:2px 6px}',
+    '.aiondx-uspanel input[type=number]{width:64px}',
+    '.aiondx-uspanel-now{padding:6px 8px;margin-bottom:10px;border-radius:6px;background:var(--color-fill-2);color:var(--color-text-2)}',
+    '.aiondx-uspanel-sec{display:flex;flex-direction:column;gap:8px;padding:10px 0;border-top:1px solid var(--color-border-2)}',
+    '.aiondx-uspanel-sec label{display:block}',
+    '.aiondx-uspanel-rule{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 0}',
+    '.aiondx-uspanel-none,.aiondx-uspanel-note{color:var(--color-text-3);font-size:12px}',
+    '.aiondx-uspanel-add{display:flex;flex-wrap:wrap;align-items:center;gap:6px}',
+    '.aiondx-uspanel code{padding:0 4px;border-radius:4px;background:var(--color-fill-2)}',
+    // The picture viewer.
+    '.aiondx-viewer{position:fixed;inset:0;z-index:10080;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.86);color:#fff}',
+    '.aiondx-viewer-bar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;',
+    '  background:linear-gradient(rgba(0,0,0,.55),transparent);font-size:13px;z-index:2}',
+    '.aiondx-viewer-count{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
+    '.aiondx-viewer-tools{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto}',
+    '.aiondx-viewer-zoom{min-width:44px;text-align:center;font-size:12px;opacity:.85}',
+    '.aiondx-viewer button{border:0;border-radius:6px;background:rgba(255,255,255,.14);color:#fff;cursor:pointer;min-width:30px;height:30px;padding:0 8px;font-size:15px;line-height:30px}',
+    '.aiondx-viewer button:hover:not(:disabled){background:rgba(255,255,255,.28)}',
+    '.aiondx-viewer button:disabled{opacity:.3;cursor:default}',
+    '.aiondx-viewer-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;font-size:34px !important;line-height:60px !important;z-index:2}',
+    '.aiondx-viewer-prev{left:14px}',
+    '.aiondx-viewer-next{right:14px}',
+    '.aiondx-viewer-stage{position:absolute;inset:48px 76px 24px;display:flex;align-items:center;justify-content:center;overflow:hidden}',
+    '.aiondx-viewer-stage img{max-width:100%;max-height:100%;object-fit:contain;user-select:none;transition:transform .08s ease-out}',
+    'body:has(.aiondx-viewer) .aiondx-toasts{z-index:10090}',
     '.aiondx-usage--compact .aiondx-usage-text{display:none}',
     '.aiondx-usage--compact .aiondx-usage-bars{width:36px}',
     // Respond now: a small tick box in each message box's top-right corner (inside the box's top padding),
@@ -6377,23 +6863,51 @@
     return out;
   }
   function absoluteLocalPath(p) { return /^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p) || /^\/(?:Users|home|tmp|private|var|mnt|Volumes)\//.test(p); }
-  /** Open a local path as Windows would, or show it in its folder. */
-  function openOutside(path, reveal) {
-    var fail = function (why) { toast('Could not open it' + (why ? ' (' + why + ')' : '') + '.', path); return false; };
-    return postJson(reveal ? '/api/shell/show-item-in-folder' : '/api/shell/open-file', { file_path: path })
-      .then(function (r) { return r.ok ? true : fail(r.status); }, function () { return fail(''); });
+  // Opening a path (a request of 2026-10-09, from the 2026-10-03 report that a folder chip answered 400 and an installer showed "too big to
+  // preview"). AionCore's /api/shell/open-file only takes a file, so a folder was refused. AionDX's AionCore (patch core-0005) has
+  // /api/shell/open-path: a folder opens in Explorer, a program or installer is shown selected in its folder, anything else opens in
+  // its own program, "reveal" shows a file selected, "run" starts a program. An AionCore without it gets the older routes.
+  var openPathGone = false;
+  /** Why an open failed, in words: the answer's own message when there is one, else what the status means. */
+  async function openFailText(r) {
+    var msg = '';
+    try { var j = await r.json(); msg = String((j && (j.message || j.error || (j.data && j.data.message))) || ''); } catch (e) {}
+    if (/not found/i.test(msg) || r.status === 400 || r.status === 404) return 'AionDX cannot find that path on this PC' + (msg && !/not found/i.test(msg) ? ' (' + msg + ')' : '');
+    return msg || 'status ' + r.status;
   }
-  function pathIsDir(path) {
-    if (/[\\/]$/.test(path)) return Promise.resolve(true);
+  /** Open a local path as Windows would, or show it in its folder (reveal), or start a program (run). */
+  function openOutside(path, reveal, run) {
+    var fail = function (why) { toast('Could not open it: ' + (why || 'AionDX did not answer') + '.', path); return false; };
+    var legacy = function () {
+      return pathInfo(path).then(function (inf) {
+        var url = inf.dir ? '/api/shell/open-folder-with' : reveal ? '/api/shell/show-item-in-folder' : '/api/shell/open-file';
+        var body = inf.dir ? { folder_path: path, tool: 'explorer' } : { file_path: path };
+        return postJson(url, body).then(function (r) { return r.ok ? true : openFailText(r).then(fail); });
+      });
+    };
+    if (openPathGone) return legacy().catch(function () { return fail(''); });
+    return postJson('/api/shell/open-path', { path: path, action: run ? 'run' : reveal ? 'reveal' : 'auto' }).then(function (r) {
+      if (r.status === 404 || r.status === 405) { openPathGone = true; return legacy(); }
+      return r.ok ? true : openFailText(r).then(fail);
+    }).catch(function () { return fail(''); });
+  }
+  var NO_PREVIEW_EXT = /\.(?:exe|msi|msix|msp|appx|bat|cmd|com|scr|ps1|vbs|jar|lnk|reg|dll|sys|bin|iso|img|vhd|vhdx|zip|7z|rar|gz|tgz|tar|bz2|xz|cab|dmg|apk|mp4|mkv|avi|mov|wmv|mp3|wav|flac|psd|blend|unitypackage|pak|dat|db|sqlite)$/i;
+  var PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+  /** Whether a path is a folder, and how big a file is. A trailing slash is a folder without asking. */
+  function pathInfo(path) {
+    if (/[\\/]$/.test(path)) return Promise.resolve({ dir: true, size: 0 });
     var c = dirCache[path];
-    if (c && Date.now() - c.at < 5 * 60000) return Promise.resolve(c.dir);
+    if (c && Date.now() - c.at < 5 * 60000) return Promise.resolve(c);
     return postJson('/api/fs/metadata', { path: path }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
       var d = j ? unwrap(j) : null;
-      var dir = !!(d && (d.is_directory || d.isDirectory));
-      dirCache[path] = { at: Date.now(), dir: dir };
-      return dir;
-    }, function () { return false; });
+      var inf = { at: Date.now(), dir: !!(d && (d.is_directory || d.isDirectory)), size: d && Number(d.size) > 0 ? Number(d.size) : 0 };
+      if (d) dirCache[path] = inf;
+      return inf;
+    }, function () { return { dir: false, size: 0 }; });
   }
+  function pathIsDir(path) { return pathInfo(path).then(function (i) { return i.dir; }); }
+  /** AionUi's preview cannot show it: a folder, a program, an archive, a media file, anything over the preview size. The click opens it outside. */
+  function noPreview(path, inf) { return !!inf && (inf.dir || NO_PREVIEW_EXT.test(path) || inf.size > PREVIEW_MAX_BYTES); }
   function decorateLocalLinks() {
     if (disabled()) return;
     markdownRoots().forEach(function (root) {
@@ -6416,30 +6930,55 @@
           }
           if (!chip.hasAttribute('data-aiondx-dir-checked')) {
             chip.setAttribute('data-aiondx-dir-checked', '1');
-            pathIsDir(path).then(function (dir) { if (dir) chip.setAttribute('data-aiondx-dir', '1'); });
+            pathInfo(path).then(function (inf) {
+              if (inf.dir) chip.setAttribute('data-aiondx-dir', '1');
+              if (noPreview(path, inf)) chip.setAttribute('data-aiondx-nopreview', '1');
+              chip.title = inf.dir ? 'Opens the folder in Explorer' : noPreview(path, inf) ? 'Shows the file in its folder (Explorer)' : 'Opens a preview; the arrow button opens it outside AionDX';
+            });
           }
         })(chips[i]);
       }
     });
   }
-  /** A click on a folder chip's label opens the folder in Explorer instead of AionUi's preview. */
+  /** A click on the label of a chip that AionUi cannot preview (a folder, a program, an archive, a big file) opens it outside instead:
+   *  a folder in Explorer, a file selected in its folder. A link written run:C:/path/setup.exe asks first, then starts the program. */
   function watchLocalLinks() {
     window.addEventListener('click', function (ev) {
       if (disabled() || ev.defaultPrevented) return;
       var path = ev.composedPath ? ev.composedPath() : [];
-      var label = null, chip = null;
+      var label = null, chip = null, anchor = null;
       for (var i = 0; i < path.length; i++) {
         var n = path[i];
         if (!n || n.nodeType !== 1) continue;
+        if (!anchor && n.tagName === 'A') anchor = n;
         if (!label && n.classList && n.classList.contains('markdown-local-file-link')) label = n;
         if (n.hasAttribute && n.hasAttribute('data-local-file-path')) { chip = n; break; }
       }
-      if (!label || !chip || chip.getAttribute('data-aiondx-dir') !== '1') return;
+      if (anchor && !chip) {
+        var href = anchor.getAttribute('href') || '';
+        var m = /^run:(?:\/\/)?(.+)$/i.exec(href) || /^https?:\/\/aiondx\.invalid\/run\?path=(.+)$/i.exec(href);
+        if (m) {
+          ev.preventDefault(); ev.stopPropagation();
+          var target = decodeLinkPath(m[1]);
+          if (!absoluteLocalPath(target)) { toast('Could not run it: the link needs a full path.', target); return; }
+          if (window.confirm('Run this program?\n\n' + target + '\n\nOnly continue if you expected this link.')) openOutside(target, false, true);
+        }
+        return;
+      }
+      if (!label || !chip) return;
+      var p = chip.getAttribute('data-local-file-path');
+      if (chip.getAttribute('data-aiondx-dir') !== '1' && chip.getAttribute('data-aiondx-nopreview') !== '1') return;
       ev.preventDefault();
       ev.stopPropagation();
       if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
-      openOutside(chip.getAttribute('data-local-file-path'), ev.shiftKey);
+      openOutside(p, ev.shiftKey);
     }, true);
+  }
+  function decodeLinkPath(x) {
+    var t = String(x || '').trim();
+    try { t = decodeURIComponent(t); } catch (e) {}
+    t = t.replace(/^file:\/\/\/?/i, '').replace(/^\/(?=[A-Za-z]:)/, '');
+    return t;
   }
 
   // ---------------------------------------------------------------- opening a team does not wake it (P-011)
@@ -6806,6 +7345,7 @@
     watchPermissionHover();
     watchAcctHover();
     watchLocalLinks();
+    watchPictures();
     window.addEventListener('resize', schedule);
     guardColumnScroll();
     watchPickerPress();
@@ -6861,6 +7401,14 @@
     accountLimit: function (convId) { return accountLimit(convId); },
     unsend: function () { return { results: unsendResults, pending: unsendPending }; },
     scanQueues: function () { return scanTeamQueues(); },
+    viewer: function () { return viewer ? { i: viewer.i, n: viewer.items.length, scale: viewer.scale, count: viewer.count.textContent, prevOff: viewer.prev.disabled, nextOff: viewer.next.disabled } : null; },
+    viewerPictures: function () { return viewerPictures(); },
+    usageSettings: function () { return { cfg: usageCfg, alerts: usageAlerts, fired: usageFired }; },
+    checkAlerts: function () { return checkUsageAlerts(); },
+    openUsagePanel: function (t) { return openUsagePanel(t); },
+    queuedRowsOf: function (q) { return queuedRows(q).map(function (m) { return { id: m.id, byBadge: !!m.byBadge }; }); },
+    setQueued: function (q) { rnQueued = q; renderRespondNow(); },
+    openOutside: function (p, r, run) { return openOutside(p, r, run); },
     drafts: function () { return { store: draftStore, restored: draftRestored }; },
     syncDrafts: function () { syncDrafts(false); },
     setLive: function (key, st) { agentLive[key] = { state: st }; },

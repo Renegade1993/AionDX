@@ -25,6 +25,8 @@
  *   out/renderer (the SendBox draft store, the upload hook)
  *     draft pictures  a picture or file attached to a message box is kept in localStorage (aiondx.sbdraft.v1) and comes back after
  *                     a restart; leaving a chat no longer cancels an upload still in flight.
+ *   out/renderer (the new-chat page's input hook)
+ *     draft pictures  the new-chat page's attached pictures and files are kept in localStorage (aiondx.guiddraft.v1) for a week.
  *   manifests, images, package.json description
  *
  * package.json's "version" and "name" stay AionUi's on purpose: AionUi refuses to start on data stamped by a newer version, and its
@@ -279,6 +281,24 @@ const abortRe = /function ([\w$]+)\(([\w$]+),([\w$]+)\)\{([\w$]+)\.useEffect\(\(
 if (abortRe.test(load(abort).text)) edit(abort, 'uploads: leaving a chat no longer cancels them', abortRe, (m, fn, e, t, react) => 'function ' + fn + '(' + e + ',' + t + '){' + react + '.useEffect(()=>{/* ' + MARK + ': an upload goes on when the chat is left */},[' + e + ',' + t + '])}');
 else if (load(abort).text.includes(MARK + ': an upload goes on')) say('uploads: already done');
 else fail('uploads: the abort hook was not found');
+
+// The new-chat page keeps its attachments in plain component state, so a picture added there was gone after a visit to another page.
+const guid = chunk('new-chat input', 'handleFilesUploaded:', 'handleFilesPicked:', 'isFileDragging:');
+const GUID_KEY = 'aiondx.guiddraft.v1';
+const GUID_CODE = '/* ' + MARK + ' BEGIN: the new-chat page keeps its attached pictures and files for a week (patches/0010-official-identity). */' +
+  'let __aiondxGuidKeep=false;const __aiondxGuidLoad=()=>{try{const r=JSON.parse(localStorage.getItem(' + JSON.stringify(GUID_KEY) + ')||"null");if(r&&r.v===1&&Array.isArray(r.files)&&r.files.length&&Date.now()-(r.at||0)<6048e5){__aiondxGuidKeep=true;return r.files}}catch{}return[]},' +
+  '__aiondxGuidSave=f=>{try{if(f&&f.length)localStorage.setItem(' + JSON.stringify(GUID_KEY) + ',JSON.stringify({v:1,at:Date.now(),files:f}));else localStorage.removeItem(' + JSON.stringify(GUID_KEY) + ')}catch{}};' +
+  '/* ' + MARK + ' END */';
+edit(guid, 'new-chat page: attachments kept', 'const js=({locationState:t})=>{const[r,u]=s.useState(""),[l,w]=s.useState([]),[h,y]=s.useState(""),[x,k]=s.useState(!1),[P,D]=s.useState(!1);s.useEffect(()=>{t?.workspace&&y(t.workspace)},[t]);',
+  GUID_CODE + 'const js=({locationState:t})=>{const[r,u]=s.useState(""),[l,w]=s.useState(__aiondxGuidLoad),[h,y]=s.useState(""),[x,k]=s.useState(!1),[P,D]=s.useState(!1);s.useEffect(()=>{__aiondxGuidSave(l)},[l]);s.useEffect(()=>{t?.workspace&&y(t.workspace)},[t]);',
+  { done: MARK + ' BEGIN: the new-chat page keeps' });
+
+// The page clears its input and files every time it opens (a layout effect on the location key); the first clear after files were restored leaves them,
+// and a send that succeeded forgets them.
+edit(guid, 'new-chat page: opening it keeps restored files', /:(\w+)\.current\?\1\.current=!1:\((\w+)\.setInput\(""\),\2\.setFiles\(\[\]\)\)/,
+  (m, ref, g) => ':' + ref + '.current?' + ref + '.current=!1:(' + g + '.setInput(""),__aiondxGuidKeep?__aiondxGuidKeep=!1:' + g + '.setFiles([]))', { done: '__aiondxGuidKeep?__aiondxGuidKeep=!1' });
+edit(guid, 'new-chat page: a sent message forgets its files', /\.then\(\(\)=>\{(\w+\(""\),\w+\(!1\),\w+\(null\),\w+\(!1\),\w+\(0\),\w+\(\[\]\),\w+\(""\))\}\)\.catch\((\w+)=>\{console\.error\("Failed to send message:"/,
+  (m, body, err) => '.then(()=>{__aiondxGuidSave([]),' + body + '}).catch(' + err + '=>{console.error("Failed to send message:"', { done: '.then(()=>{__aiondxGuidSave([]),' });
 
 // The version the page falls back to when the update check cannot answer.
 for (const f of rendererJs) {

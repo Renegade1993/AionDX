@@ -364,3 +364,18 @@ proving the data was not touched. The installer page (`installer\aiondx.iss`) ca
   `tools\test-installer-migrate.js` 15/15, which builds the real installer script under its own name, registry key and data folder and
   installs it silently against made-up AionUi folders. Never run against the real AionUi: it is installed machine-wide on this PC and
   was running. The Windows prompt and the wizard page's layout are therefore not exercised.
+
+## October 9th, 2026: version 1.13.0, usage alerts and `aiondx show`
+
+- `aiondx usage alert --at 80 [--window 5h|week] [--notify lead|all|self] [--message TEXT]`, `aiondx usage alerts`, `aiondx usage alert --remove`,
+  and the MCP tool `usage_alert`. A rule is stored in `aiondx.usagealert.team.<id>` or `aiondx.usagealert.conv.<id>`; the AionDX window compares
+  every reading with the rules and sends the message at once through AionCore's `steer` route, once per window. A team lead may notify the lead,
+  every member on that account, or itself; a member only itself; a solo chat only itself. An agent removes only the alerts it set, and the rules
+  the user made in the usage meter's panel are not changed by an agent.
+- `aiondx show PATH [--label TEXT]` and the MCP tool `show_file`: the Markdown that shows the user a picture, or gives a file or folder as a
+  button. A picture outside the working folder is copied into `.aiondx-pictures` there first (the chat only draws pictures from the working
+  folder); a folder, file or program gets a `file:///` link with every character the Markdown link or Windows could trip on escaped (".NET leaves
+  `!`, `(` and `)` alone, and a `)` ends the link); a program also gets a Run link that asks the user first.
+- Skill: a section on usage alerts, and the pictures section now starts with the one command. The skill's description line names pictures, links,
+  folders and installers so a skill search finds it.
+- Tests: `test-loop-tool.js` 190/190, `test-mcp-bridge.js` 81/81, `test-migrate.js` 23/23.

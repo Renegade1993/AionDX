@@ -98,7 +98,7 @@ namespace AionDx
 
     static class Program
     {
-        const string Version = "1.12.0";
+        const string Version = "1.13.0";
         const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aionui-dx.js HOLD_MIN)
         const long HoldMax = 240;      // aionui-dx.js HOLD_MIN_MAX
         const long ResumeWarmMaxMs = 50 * 60000;   // aionui-dx.js RESUME_WARM_MAX_MS
@@ -423,7 +423,38 @@ namespace AionDx
                         { "type", "object" },
                         { "properties", new Dictionary<string, object> {
                             { "all", Prop("boolean", "true adds every other account AionDX has a usage reading for.") } } } } },
-                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } }
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "show_file" },
+                    { "title", "Show a picture, link a file or folder" },
+                    { "description",
+                        "Show the user a picture, or give them a button for a file or folder, in the chat. Returns the exact Markdown to paste into your reply. " +
+                        "A picture is copied into your working folder first (the chat only draws pictures from there). A folder's button opens it in Explorer in one click; " +
+                        "a program or installer's button shows it selected in its folder, and a second link starts it after asking the user. Use it whenever the user " +
+                        "asks for a picture, a folder, an installer or 'a link'." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "path", Prop("string", "The file or folder on this PC.") },
+                            { "label", Prop("string", "Optional words for the button, for example 'the installer folder'.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "usage_alert" },
+                    { "title", "Usage alerts" },
+                    { "description",
+                        "Set a usage alert so a threshold is acted on at once, not at your next look. When the account's 5-hour or weekly usage reaches 'at' percent, " +
+                        "AionDX sends a message immediately (into the running turn, the way Respond now does) to the team lead (notify: lead), to every member on that account " +
+                        "(notify: all), or to you (notify: self). A lead may use lead, all or self; a member only self; a solo chat is always self. It goes off once per " +
+                        "window and works while AionDX is open. action: set (default when 'at' is given), list, or remove (takes away your alerts, not the user's)." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "action", Prop("string", "set, remove or list.") },
+                            { "at", Prop("number", "Percent of the window, 1 to 100, for example 80.") },
+                            { "window", Prop("string", "5h (default) or week.") },
+                            { "notify", Prop("string", "lead, all or self.") },
+                            { "message", Prop("string", "Optional text added to the alert (up to 400 characters).") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } }
             };
         }
 
@@ -449,6 +480,8 @@ namespace AionDx
                 else if (name == "mcp_set") text = McpSet(a);
                 else if (name == "mcp_tools") text = McpToolsText(Str(a, "server"), Str(a, "tool"), false, TimeoutArg(a, 60) * 1000);
                 else if (name == "usage_status") text = UsageText(Bool(a, "all") == true);
+                else if (name == "show_file") text = ShowText(Str(a, "path"), Str(a, "label"));
+                else if (name == "usage_alert") text = UsageAlertCmd(Str(a, "action") == null && Dbl(a, "at") > 0 ? new Dictionary<string, object>(a) { { "action", "set" } } : a);
                 else if (name == "github_status") text = GitHubStatusText(Bool(a, "repos") == true);
                 else if (name == "github_create_repo") text = GitHubCreate(Str(a, "name"), Bool(a, "public") == true, Str(a, "description"));
                 else if (name == "mcp_call")
@@ -458,7 +491,7 @@ namespace AionDx
                     isError = r.Item2;
                     text = isError ? "tool error" : "ok";
                 }
-                else throw new ToolError("Unknown tool: " + name + ". This server has loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo and usage_status.");
+                else throw new ToolError("Unknown tool: " + name + ". This server has loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file and usage_alert.");
             }
             catch (ToolError e) { text = e.Message; isError = true; content = null; }
             catch (Exception e) { text = "The Loop tool failed: " + e.Message; isError = true; content = null; }
@@ -479,13 +512,15 @@ namespace AionDx
             "Usage:\n" +
             "  aiondx doctor [--check]     put AionDX's bin folder first on PATH and report what is installed\n" +
             "  aiondx loop status [--member NAME|all]\n" +
-            "  aiondx loop set [--on|--off] [--until-stopped] [--message TEXT] [--hold MINUTES] [--resume-at TIME] [--resume-message TEXT] [--compact] [--note TEXT] [--member NAME|all]\n" +
+            "  aiondx loop set [--on|--off] [--until-stopped] [--message TEXT | --message-file FILE | --message-stdin] [--hold MINUTES] [--resume-at TIME] [--resume-message TEXT] [--compact] [--note TEXT] [--member NAME|all]\n" +
             "  aiondx priority --member NAME --message TEXT   (team lead) a message that goes ahead of the teammate's queue\n" +
             "  aiondx stop --member NAME [--reason TEXT] [--keep-process]   (team lead) really stop a teammate: pause it, Loop off, restart its process\n" +
             "  aiondx mcp list|tools|call|add|update|remove|test|enable|disable|status ...   the user's MCP servers (aiondx mcp help)\n" +
             "  aiondx setup scan | apply --all ...   bring the other AI apps' setup into AionDX (aiondx setup help)\n" +
             "  aiondx github [status | repos | create NAME [--public]]   the user's GitHub, through git's own sign-in (aiondx github help)\n" +
             "  aiondx usage [--all]        your Claude account's 5-hour and weekly usage, resets, and whether a limit is reached\n" +
+            "  aiondx usage alert --at 80  alert the team lead (or all, or you) the moment usage crosses 80% (see aiondx usage help)\n" +
+            "  aiondx show PATH [--label TEXT]   show the user a picture, or link a file or folder, in chat: prints the exact Markdown to paste\n" +
             "  aiondx migrate detect|run|backup|verify ...   move from AionUi to AionDX: back up the chats, remove AionUi, check them (aiondx migrate help)\n" +
             "--on and --off switch the Loop; --until-stopped (only when the user asks for it) keeps it on until the user stops it, " +
             "with no hold and no rest, and only the user's own request ends it (--until-stopped=false ends that mode); " +
@@ -752,7 +787,14 @@ namespace AionDx
         const string UsageHelp =
             "Usage:\n" +
             "  aiondx usage [--all]     your Claude account's usage: the 5-hour and weekly windows, how much is used, when each resets,\n" +
-            "                           and whether a limit is reached. --all adds every account AionDX has a reading for.";
+            "                           and whether a limit is reached. --all adds every account AionDX has a reading for.\n" +
+            "  aiondx usage alert --at PERCENT [--window 5h|week] [--notify lead|all|self] [--message TEXT]\n" +
+            "                           a usage alert: the moment the account's usage crosses PERCENT, AionDX sends a message at once (into the\n" +
+            "                           running turn, the way Respond now does) to the team lead, to every member on that account, or to you.\n" +
+            "                           Per team (a lead may use lead or all; any member may use self); a solo chat's alert is always for itself.\n" +
+            "                           It goes off once per window. It is checked by the AionDX window, so it works while AionDX is open.\n" +
+            "  aiondx usage alert --remove [--window 5h|week] [--notify ...]    take your alerts away (the user's own stay)\n" +
+            "  aiondx usage alerts      the alerts set for this team or chat";
 
         static double Dbl(Dictionary<string, object> d, string k)
         {
@@ -845,6 +887,238 @@ namespace AionDx
             return sb.ToString();
         }
 
+        // ------------------------------------------------------------------ messages that survive any shell (1.13.0)
+        //
+        // From a report by an agent on another PC: a shell mangled the double quotes in --message "long text" and the parser saw bare words.
+        // --message-file FILE and --message-stdin take the text as it is, whatever a shell does to arguments.
+
+        static string MessageFromFile(string file)
+        {
+            if (string.IsNullOrWhiteSpace(file)) throw new ToolError("--message-file needs a file name.");
+            try { return File.ReadAllText(file.Trim().Trim('"'), Encoding.UTF8).TrimEnd('\r', '\n'); }
+            catch (Exception e) { throw new ToolError("Could not read " + file + ": " + OneLine(e.Message)); }
+        }
+
+        static string MessageFromStdin()
+        {
+            try { return new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false)).ReadToEnd().TrimEnd('\r', '\n'); }
+            catch (Exception e) { throw new ToolError("Could not read the message from standard input: " + OneLine(e.Message)); }
+        }
+
+        // ------------------------------------------------------------------ show a picture, link a file or folder (1.13.0)
+        //
+        // a request of 2026-10-09, from the 2026-10-03 report that the method for showing the user a picture or a folder was in a
+        // section of the skill nobody searched. `aiondx show PATH` (and the show_file tool) takes any file or folder and prints the Markdown to
+        // paste: a picture gets copied into the working folder first (AionUi refuses a picture outside it) and comes back as an image line;
+        // every file or folder also comes back as a link that AionDX turns into a button: a folder opens in Explorer, a program or installer
+        // is shown in its folder, and a program gets a second link that asks the user, then runs it.
+
+        const string ShowHelp =
+            "Usage:\n" +
+            "  aiondx show PATH [--label TEXT]   the Markdown that shows the user a picture, or links a file or folder, as a button\n" +
+            "A picture is copied into your working folder (.aiondx-pictures) first, because the chat only draws pictures from there.\n" +
+            "Paste the lines it prints into your reply, as they are.";
+
+        static readonly string[] PictureExts = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg" };
+        static readonly string[] ProgramExts = { ".exe", ".msi", ".msix", ".bat", ".cmd", ".ps1", ".lnk", ".jar" };
+
+        static string FileUrl(string full, bool dir)
+        {
+            var segs = full.Replace('\\', '/').Split('/');
+            var parts = new List<string>();
+            for (int i = 0; i < segs.Length; i++)
+            {
+                if (segs[i].Length == 0) continue;
+                parts.Add(i == 0 && segs[i].EndsWith(":", StringComparison.Ordinal) ? segs[i] : Uri.EscapeDataString(segs[i]).Replace("!", "%21").Replace("'", "%27").Replace("(", "%28").Replace(")", "%29").Replace("*", "%2A"));   // .NET leaves these; a ")" would end the Markdown link
+            }
+            string url = "file:///" + string.Join("/", parts.ToArray());
+            if (dir && !url.EndsWith("/", StringComparison.Ordinal)) url += "/";
+            return url;
+        }
+
+        static bool UnderFolder(string path, string folder)
+        {
+            string f = folder.TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+            return path.StartsWith(f, StringComparison.OrdinalIgnoreCase);
+        }
+
+        static string ShowText(string path, string label)
+        {
+            if (string.IsNullOrWhiteSpace(path)) throw new ToolError("path is required: the file or folder to show.\n" + ShowHelp);
+            string full;
+            try { full = Path.GetFullPath(path.Trim().Trim('"')); }
+            catch (Exception) { throw new ToolError("That is not a path: " + path); }
+            bool isDir = Directory.Exists(full), isFile = File.Exists(full);
+            if (!isDir && !isFile) throw new ToolError("Nothing at " + full + ". Check the path; it has to exist on this PC.");
+            full = full.TrimEnd('\\');
+            string name = isDir ? new DirectoryInfo(full).Name : Path.GetFileName(full);
+            label = (string.IsNullOrWhiteSpace(label) ? name : label.Trim()).Replace("[", "(").Replace("]", ")").Replace("\r", " ").Replace("\n", " ");
+            string ext = Path.GetExtension(full).ToLowerInvariant();
+            var sb = new StringBuilder();
+            sb.Append("Paste these lines into your reply, exactly as they are.\n");
+            if (isFile && Array.IndexOf(PictureExts, ext) >= 0)
+            {
+                string cwd = Directory.GetCurrentDirectory();
+                string inside = full;
+                if (!UnderFolder(full, cwd))
+                {
+                    string dir = Path.Combine(cwd, ".aiondx-pictures");
+                    Directory.CreateDirectory(dir);
+                    string dest = Path.Combine(dir, name);
+                    if (File.Exists(dest) && (new FileInfo(dest).Length != new FileInfo(full).Length || File.GetLastWriteTimeUtc(dest) != File.GetLastWriteTimeUtc(full)))
+                        dest = Path.Combine(dir, Path.GetFileNameWithoutExtension(name) + "-" + DateTime.Now.ToString("yyyyMMddHHmmss", Inv) + ext);
+                    File.Copy(full, dest, true);
+                    inside = dest;
+                    sb.Append("(The picture was copied to ").Append(dest).Append(", because the chat only draws pictures from your working folder.)\n");
+                }
+                string rel = "./" + inside.Substring(cwd.TrimEnd('\\', '/').Length + 1).Replace('\\', '/');
+                sb.Append("The picture:\n![").Append(label).Append("](").Append(rel.IndexOf(' ') >= 0 ? "<" + rel + ">" : rel).Append(")\n");
+            }
+            sb.Append(isDir ? "A button that opens the folder in Explorer:\n" : Array.IndexOf(ProgramExts, ext) >= 0 ? "A button that shows the program in its folder, selected:\n" : "A button for the file:\n");
+            sb.Append("[").Append(label).Append("](").Append(FileUrl(full, isDir)).Append(")\n");
+            if (isFile && Array.IndexOf(ProgramExts, ext) >= 0)
+                sb.Append("A link that asks the user, then starts the program (only when they asked to run it):\n[Run ").Append(label).Append("](https://aiondx.invalid/run?path=").Append(Uri.EscapeDataString(full)).Append(")\n");
+            return sb.ToString();
+        }
+
+        static int ShowCli(string[] args, StreamWriter o)
+        {
+            if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h") { o.WriteLine(ShowHelp); return args.Length < 2 ? 2 : 0; }
+            try
+            {
+                string path = null, label = null;
+                for (int i = 1; i < args.Length; i++)
+                {
+                    string x = args[i];
+                    if (x == "--label") label = Next(args, ref i, x);
+                    else if (x.StartsWith("--label=", StringComparison.Ordinal)) label = x.Substring(8);
+                    else if (path == null) path = x;
+                    else throw new ToolError("Unexpected " + x + ".\n" + ShowHelp);
+                }
+                o.WriteLine(ShowText(path, label).TrimEnd());
+                Log("cli show ok");
+                return 0;
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+            catch (Exception e) { o.WriteLine("The show command failed: " + e.Message); return 1; }
+        }
+
+        // ------------------------------------------------------------------ usage alerts (1.13.0)
+        //
+        // a request of 2026-10-09: agents check their usage, see it under their limit, carry on, and are far over by the next
+        // check. An alert is a threshold on a window of the account a chat runs on, stored as
+        //   aiondx.usagealert.team.<team id> / aiondx.usagealert.conv.<conversation id> = { rules: [{ window: "5h"|"week", at: 0.8,
+        //     notify: "lead"|"all"|"self", message, by: "agent"|"user", who, slot, conv }], at, rev }
+        // The AionDX window (aionui-dx.js, checkUsageAlerts) compares every reading with the rules and, once per window, sends the
+        // message at once with the Respond-now route. The user's own rules (made in the usage meter's panel) are not for an agent to change.
+
+        const string UsageAlertPrefix = "aiondx.usagealert.";
+
+        static string UsageAlertWho(string notify, string who)
+        {
+            return notify == "all" ? "every member on that account" : notify == "self" ? (string.IsNullOrEmpty(who) ? "the agent that set it" : who) : "the team lead";
+        }
+
+        static string UsageAlertLine(Dictionary<string, object> r)
+        {
+            double at = Dbl(r, "at");
+            return "  " + (Str(r, "window") == "week" ? "Weekly" : "5-hour") + " window at " + Math.Round(at * 100) + "%: tell " + UsageAlertWho(Str(r, "notify"), Str(r, "who")) +
+                   (Str(r, "by") == "user" ? " (set by the user)" : " (set by " + (Str(r, "who") ?? "an agent") + ")") +
+                   (string.IsNullOrEmpty(Str(r, "message")) ? "" : ": \"" + Str(r, "message") + "\"");
+        }
+
+        /** usage_alert and aiondx usage alert / alerts. */
+        static string UsageAlertCmd(Dictionary<string, object> a)
+        {
+            string action = (Str(a, "action") ?? "list").ToLowerInvariant();
+            if (action != "list" && action != "set" && action != "remove") throw new ToolError("action must be set, remove or list.");
+            var ctx = LoadContext();
+            bool team = ctx.Self.Kind == "team";
+            string scope = team ? "team." + ctx.Self.TeamId : "conv." + ctx.Self.ConvId;
+            string key = UsageAlertPrefix + scope;
+            var rec = Sub(Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(key), null) as Dictionary<string, object>, key);
+            var rules = new List<object>();
+            var old = rec != null && rec.ContainsKey("rules") ? rec["rules"] as object[] : null;
+            if (old != null) rules.AddRange(old);
+
+            string window = (Str(a, "window") ?? "").Trim().ToLowerInvariant();
+            if (window == "5-hour" || window == "5hour" || window == "five_hour" || window == "five-hour") window = "5h";
+            if (window == "weekly" || window == "seven_day") window = "week";
+            if (window.Length > 0 && window != "5h" && window != "week") throw new ToolError("window must be 5h or week.");
+            string notify = (Str(a, "notify") ?? "").Trim().ToLowerInvariant();
+            if (notify.Length > 0 && notify != "lead" && notify != "all" && notify != "self") throw new ToolError("notify must be lead, all or self.");
+
+            if (action == "list")
+            {
+                var sb0 = new StringBuilder();
+                if (rules.Count == 0) return "No usage alerts are set for this " + (team ? "team" : "chat") + ". Set one with: aiondx usage alert --at 80 --window 5h" + (team && ctx.Self.Role == "lead" ? " --notify lead" : "") + "\n";
+                sb0.Append("Usage alerts for this ").Append(team ? "team" : "chat").Append(":\n");
+                foreach (var r in rules) { var rd = r as Dictionary<string, object>; if (rd != null) sb0.Append(UsageAlertLine(rd)).Append('\n'); }
+                return sb0.ToString();
+            }
+
+            if (action == "remove")
+            {
+                int removed = 0, kept = 0;
+                var left = new List<object>();
+                foreach (var r in rules)
+                {
+                    var rd = r as Dictionary<string, object>;
+                    bool match = rd != null && (window.Length == 0 || Str(rd, "window") == window) && (notify.Length == 0 || Str(rd, "notify") == notify);
+                    if (!match) { left.Add(r); continue; }
+                    if (Str(rd, "by") == "user") { kept++; left.Add(r); }
+                    else if (Str(rd, "conv") != ctx.Self.ConvId) left.Add(r);   // another agent's alert is not this one's to remove
+                    else removed++;
+                }
+                if (removed > 0) UsageAlertPut(key, left, rec);
+                return removed + " alert" + (removed == 1 ? "" : "s") + " removed." + (kept > 0 ? " " + kept + " set by the user stay; ask the user to remove " + (kept == 1 ? "it" : "them") + " (click the usage meter)." : "") + "\n";
+            }
+
+            // set
+            double at = Dbl(a, "at");
+            if (double.IsNaN(at))
+            {
+                double parsed;
+                var raw = (Str(a, "at") ?? "").Trim().TrimEnd('%');
+                if (double.TryParse(raw, System.Globalization.NumberStyles.Float, Inv, out parsed)) at = parsed;
+            }
+            if (double.IsNaN(at) || at <= 0) throw new ToolError("at is required: the percent of the window to alert at, for example 80.");
+            if (at > 1) at = at / 100.0;
+            if (at > 1.0) throw new ToolError("at must be between 1 and 100 (percent).");
+            at = Math.Round(at, 2);
+            if (window.Length == 0) window = "5h";
+            if (notify.Length == 0) notify = team && ctx.Self.Role == "lead" ? "lead" : "self";
+            if (!team && notify != "self") throw new ToolError("A solo chat's alert is for itself: leave notify out, or use self.");
+            if (team && notify != "self" && ctx.Self.Role != "lead") throw new ToolError("Only the team lead sets an alert for the lead or for every member. Use notify self for yourself.");
+            string message = (Str(a, "message") ?? "").Trim();
+            if (message.Length > 400) throw new ToolError("The message is limited to 400 characters; this one has " + message.Length + ".");
+            string who = ctx.Self.Name ?? "An agent";
+            var next = new List<object>();
+            foreach (var r in rules)
+            {
+                var rd = r as Dictionary<string, object>;
+                bool same = rd != null && Str(rd, "window") == window && Str(rd, "notify") == notify && (notify != "self" || Str(rd, "conv") == ctx.Self.ConvId);
+                if (same && Str(rd, "by") == "user") throw new ToolError("The user already set a " + (window == "week" ? "weekly" : "5-hour") + " alert for " + UsageAlertWho(notify, who) + ". Ask them to change it (click the usage meter).");
+                if (!same) next.Add(r);
+            }
+            if (next.Count >= 12) throw new ToolError("This " + (team ? "team" : "chat") + " already has 12 alerts; remove one first.");
+            next.Add(new Dictionary<string, object> {
+                { "window", window }, { "at", at }, { "notify", notify }, { "message", message }, { "by", "agent" }, { "who", who },
+                { "slot", ctx.Self.SlotId ?? "" }, { "conv", ctx.Self.ConvId ?? "" } });
+            UsageAlertPut(key, next, rec);
+            return "Saved. When the " + (window == "week" ? "weekly" : "5-hour") + " window reaches " + Math.Round(at * 100) + "% on the account " + (team ? "this team runs on" : "this chat runs on") +
+                   ", AionDX tells " + UsageAlertWho(notify, who) + " at once, into the running turn (the way Respond now does). It goes off once per window and is armed again after the reset.\n" +
+                   "It is checked by the AionDX window, so it works while AionDX is open. The user sees and can change it by clicking the usage meter.\n";
+        }
+
+        static void UsageAlertPut(string key, List<object> rules, Dictionary<string, object> old)
+        {
+            var body = new Dictionary<string, object>();
+            if (rules.Count == 0) body[key] = null;
+            else body[key] = new Dictionary<string, object> { { "rules", rules }, { "at", NowMs() }, { "rev", (old != null ? Long(old, "rev") : 0L) + 1 } };
+            Api("PUT", "/api/settings/client", Json.Serialize(body));
+        }
+
         /** One line for loop_status: "Usage: 5-hour 63% (resets 12:30), week 41%." or "", for this chat's own account. */
         static string UsageLine(Ctx ctx)
         {
@@ -875,6 +1149,28 @@ namespace AionDx
             if (args.Length > 1 && (args[1] == "help" || args[1] == "--help" || args[1] == "-h")) { o.WriteLine(UsageHelp); return 0; }
             try
             {
+                if (args.Length > 1 && (args[1] == "alert" || args[1] == "alerts"))
+                {
+                    var a = new Dictionary<string, object> { { "action", args[1] == "alerts" ? "list" : "set" } };
+                    for (int i = 2; i < args.Length; i++)
+                    {
+                        string x = args[i], inline = null;
+                        int eq = x.IndexOf('=');
+                        if (x.StartsWith("--", StringComparison.Ordinal) && eq > 0) { inline = x.Substring(eq + 1); x = x.Substring(0, eq); }
+                        switch (x)
+                        {
+                            case "--at": a["at"] = inline ?? Next(args, ref i, x); break;
+                            case "--window": a["window"] = inline ?? Next(args, ref i, x); break;
+                            case "--notify": a["notify"] = inline ?? Next(args, ref i, x); break;
+                            case "--message": a["message"] = inline ?? Next(args, ref i, x); break;
+                            case "--remove": a["action"] = "remove"; break;
+                            default: throw new ToolError("Unknown option " + args[i] + ".\n" + UsageHelp);
+                        }
+                    }
+                    o.WriteLine(UsageAlertCmd(a).TrimEnd());
+                    Log("cli usage alert ok");
+                    return 0;
+                }
                 bool all = false;
                 for (int i = 1; i < args.Length; i++)
                 {
@@ -1276,6 +1572,7 @@ namespace AionDx
             if (args[0] == "mcp") return McpCli(args, o);
             if (args[0] == "setup") return SetupCli(args, o);
             if (args[0] == "github") return GitHubCli(args, o);
+            if (args[0] == "show") return ShowCli(args, o);
             if (args[0] == "usage") return UsageCli(args, o);
             if (args[0] == "migrate") return MigrateCli(args, o);
             if (args[0] == "stop")
@@ -1355,6 +1652,8 @@ namespace AionDx
                             break;
                         case "--compact": a["compact"] = inline == null || BoolWord(inline, x); break;
                         case "--message": a["message"] = inline ?? Next(args, ref i, x); break;
+                        case "--message-file": a["message"] = MessageFromFile(inline ?? Next(args, ref i, x)); break;
+                        case "--message-stdin": a["message"] = MessageFromStdin(); break;
                         case "--note": a["note"] = inline ?? Next(args, ref i, x); break;
                         case "--hold":
                             {
@@ -1367,6 +1666,7 @@ namespace AionDx
                         case "--member": a["member"] = inline ?? Next(args, ref i, x); break;
                         case "--resume-at": a["resume_at"] = inline ?? Next(args, ref i, x); break;
                         case "--resume-message": a["resume_message"] = inline ?? Next(args, ref i, x); break;
+                        case "--resume-message-file": a["resume_message"] = MessageFromFile(inline ?? Next(args, ref i, x)); break;
                         default: throw new ToolError("Unknown option " + args[i] + ".\n" + CliHelp);
                     }
                 }

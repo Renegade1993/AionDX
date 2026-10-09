@@ -1,0 +1,171 @@
+diff --git a/crates/aionui-shell/src/shell.rs b/crates/aionui-shell/src/shell.rs
+index 8e62b50f..f9a1eae6 100644
+--- a/crates/aionui-shell/src/shell.rs
++++ b/crates/aionui-shell/src/shell.rs
+@@ -22,6 +22,27 @@ impl ShellService {
+         self.opener.open_detached(&path.to_string_lossy())
+     }
+ 
++    /// AionDX core-0005: open a path the way a person clicking a link to it means it. A folder opens in Explorer; a program or
++    /// installer is shown selected in its folder (it is not run unless `action` is "run"); anything else opens in its own program;
++    /// "reveal" shows any file selected in its folder. The path may use either slash, a `\\?\` prefix, or a leading slash before
++    /// the drive letter, and may hold spaces, "!" and anything else a Windows name can. Answers what was done.
++    pub async fn open_path(&self, raw: &str, action: &str) -> Result<&'static str, ShellError> {
++        let cleaned = clean_user_path(raw);
++        let path = Path::new(&cleaned);
++        let meta = std::fs::metadata(path).map_err(|_| ShellError::FileNotFound(raw.to_owned()))?;
++        if meta.is_dir() {
++            open_folder_here(path)?;
++            return Ok("opened_folder");
++        }
++        let reveal = action == "reveal" || (action != "run" && is_program_file(path));
++        if reveal {
++            reveal_here(path)?;
++            return Ok("revealed");
++        }
++        self.opener.open_detached(&path.to_string_lossy())?;
++        Ok(if action == "run" { "ran" } else { "opened" })
++    }
++
+     /// Write `text` to the OS clipboard (used by the copy-absolute-path endpoint,
+     /// which resolves the path server-side and copies it here so the client never
+     /// receives it).
+@@ -136,6 +157,72 @@ impl ShellService {
+     }
+ }
+ 
++/// AionDX core-0005: a path as a person or an agent writes it, made into one Windows can open.
++fn clean_user_path(raw: &str) -> String {
++    let mut s = raw.trim().trim_matches('"').to_owned();
++    if cfg!(windows) {
++        s = s.replace('/', "\\");
++        if let Some(rest) = s.strip_prefix("\\\\?\\UNC\\") {
++            s = format!("\\\\{rest}");
++        } else if let Some(rest) = s.strip_prefix("\\\\?\\") {
++            s = rest.to_owned();
++        }
++        let b = s.as_bytes();
++        if b.len() >= 3 && b[0] == b'\\' && b[1].is_ascii_alphabetic() && b[2] == b':' {
++            s.remove(0);
++        }
++    }
++    s
++}
++
++/// AionDX core-0005: files that run when opened. A link to one shows it in its folder instead of starting it.
++fn is_program_file(path: &Path) -> bool {
++    const PROGRAMS: &[&str] = &[
++        "exe", "msi", "msix", "msp", "appx", "bat", "cmd", "com", "scr", "ps1", "vbs", "vbe", "js", "jse", "wsf", "hta", "lnk",
++        "reg", "jar", "cpl",
++    ];
++    path.extension()
++        .and_then(|e| e.to_str())
++        .map(|e| PROGRAMS.contains(&e.to_ascii_lowercase().as_str()))
++        .unwrap_or(false)
++}
++
++/// AionDX core-0005: Explorer is given the argument text exactly as Explorer wants it (`/select,"path"`); a path with a space or a
++/// "!" in it must not be re-quoted by the argument builder.
++#[cfg(windows)]
++#[allow(clippy::disallowed_types)]
++fn spawn_explorer(raw_args: &str) -> Result<(), ShellError> {
++    use std::os::windows::process::CommandExt;
++    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
++    std::process::Command::new("explorer.exe")
++        .creation_flags(CREATE_NO_WINDOW)
++        .raw_arg(raw_args)
++        .spawn()
++        .map(|_| ())
++        .map_err(|e| ShellError::CommandFailed(format!("explorer: {e}")))
++}
++
++#[cfg(windows)]
++fn open_folder_here(path: &Path) -> Result<(), ShellError> {
++    spawn_explorer(&format!("\"{}\"", path.to_string_lossy()))
++}
++
++#[cfg(windows)]
++fn reveal_here(path: &Path) -> Result<(), ShellError> {
++    spawn_explorer(&format!("/select,\"{}\"", path.to_string_lossy()))
++}
++
++#[cfg(not(windows))]
++fn open_folder_here(path: &Path) -> Result<(), ShellError> {
++    open::that_detached(path).map_err(|e| ShellError::CommandFailed(format!("open: {e}")))
++}
++
++#[cfg(not(windows))]
++fn reveal_here(path: &Path) -> Result<(), ShellError> {
++    let parent = path.parent().unwrap_or(path);
++    open::that_detached(parent).map_err(|e| ShellError::CommandFailed(format!("open: {e}")))
++}
++
+ fn validate_file_exists(file_path: &str) -> Result<std::path::PathBuf, ShellError> {
+     let path = Path::new(file_path);
+     let canonical = path
+@@ -449,3 +536,26 @@ mod tests {
+         assert_eq!(command, r#"pushd "\\server\share\My Project""#);
+     }
+ }
++
++#[cfg(test)]
++mod open_path_tests {
++    use super::*;
++
++    #[test]
++    fn program_files_are_found_by_extension() {
++        assert!(is_program_file(Path::new("C:\\x\\Install Game (test build).exe")));
++        assert!(is_program_file(Path::new("setup.MSI")));
++        assert!(!is_program_file(Path::new("notes.txt")));
++        assert!(!is_program_file(Path::new("folder")));
++    }
++
++    #[cfg(windows)]
++    #[test]
++    fn user_paths_are_cleaned_for_windows() {
++        assert_eq!(clean_user_path("C:/Work/Game/! Outbound/"), "C:\\Work\\Game\\! Outbound\\");
++        assert_eq!(clean_user_path("/C:/a b/c"), "C:\\a b\\c");
++        assert_eq!(clean_user_path("\\\\?\\C:\\a"), "C:\\a");
++        assert_eq!(clean_user_path("\\\\?\\UNC\\srv\\share"), "\\\\srv\\share");
++        assert_eq!(clean_user_path("  \"C:\\a\"  "), "C:\\a");
++    }
++}
+diff --git a/crates/aionui-shell/src/routes.rs b/crates/aionui-shell/src/routes.rs
+index eedf9956..c2fbef8d 100644
+--- a/crates/aionui-shell/src/routes.rs
++++ b/crates/aionui-shell/src/routes.rs
+@@ -56,6 +56,7 @@ impl From<SttError> for ApiError {
+ pub fn shell_routes(state: ShellRouterState) -> Router {
+     Router::new()
+         .route("/api/shell/open-file", post(open_file))
++        .route("/api/shell/open-path", post(open_path))
+         .route("/api/shell/show-item-in-folder", post(show_item_in_folder))
+         .route("/api/shell/open-external", post(open_external))
+         .route("/api/shell/check-tool-installed", post(check_tool_installed))
+@@ -74,6 +75,26 @@ async fn open_file(
+     Ok(Json(ApiResponse::success()))
+ }
+ 
++/// AionDX core-0005: what a link to a path should do (see `ShellService::open_path`).
++#[derive(Debug, Clone, serde::Deserialize)]
++struct OpenPathRequest {
++    path: String,
++    #[serde(default)]
++    action: Option<String>,
++}
++
++async fn open_path(
++    State(state): State<ShellRouterState>,
++    body: Result<Json<OpenPathRequest>, axum::extract::rejection::JsonRejection>,
++) -> Result<Json<ApiResponse<serde_json::Value>>, ApiError> {
++    let Json(req) = body.map_err(ApiError::from)?;
++    let did = state
++        .shell_service
++        .open_path(&req.path, req.action.as_deref().unwrap_or("auto"))
++        .await?;
++    Ok(Json(ApiResponse::ok(serde_json::json!({ "did": did }))))
++}
++
+ async fn show_item_in_folder(
+     State(state): State<ShellRouterState>,
+     body: Result<Json<ShowItemInFolderRequest>, axum::extract::rejection::JsonRejection>,

@@ -1583,8 +1583,9 @@ async function pageTarget() {
       await js('window.__calls.length = 0; 0');
       await inShadow('span[data-local-file-path$="build/"] .markdown-local-file-link', 'el.click()');
       await sleep(300);
-      p = await posts('/api/shell/open-file');
-      check(sc, "clicking a folder chip opens the folder in Explorer, not AionUi's preview", p.length === 1 && p[0].body.file_path === 'C:/Work/Project/build/' && (await js('window.__previewClicks')) === 0, JSON.stringify(p));
+      // This stub has no /api/shell/open-path (an AionCore without core-0005): the older folder route is used.
+      p = await posts('/api/shell/open-folder-with');
+      check(sc, "clicking a folder chip opens the folder in Explorer, not AionUi's preview", p.length === 1 && p[0].body.folder_path === 'C:/Work/Project/build/' && p[0].body.tool === 'explorer' && (await js('window.__previewClicks')) === 0, JSON.stringify(p));
       await js('window.__calls.length = 0; 0');
       await inShadow('span[data-local-file-path$="notes.md"][data-local-file-path^="C:"] .markdown-local-file-link', 'el.click()');
       await sleep(300);
@@ -2678,11 +2679,11 @@ async function pageTarget() {
       um = await meter('');
       check(sc, 'a reading older than 30 minutes is shown dimmed, and its tooltip says how old it is',
         um && await js('document.querySelector(\'[data-testid="aiondx-usage"]\').getAttribute("data-stale")') === '1' && /\(45 minutes ago; it may be higher now\)/.test(um.title), JSON.stringify(um));
-      await putStore('aiondx.usage.acct.k1', { label: 'Main', at: Date.now() - 13 * 3600000, five_hour: { u: 0.5 }, seven_day: { u: 0.5 } });
+      await putStore('aiondx.usage.acct.k1', { label: 'Main', at: Date.now() - 4 * 24 * 3600000, five_hour: { u: 0.5 }, seven_day: { u: 0.5 } });
       await js('window.__aionDx.pullNow()');
       await js('window.__aionDx.repaint()');
       await sleep(300);
-      check(sc, 'a reading older than 12 hours is not shown', !(await meter('')));
+      check(sc, 'a reading older than three days is not shown', !(await meter('')));
       await putStore('aiondx.usage.acct.k1', { label: 'Main', at: Date.now() - 2 * 3600000, five_hour: { u: 0.9, reset: nowS - 600, status: 'allowed_warning' }, seven_day: { u: 0.4, reset: nowS + 86400 } });
       await js('window.__aionDx.pullNow()');
       await js('window.__aionDx.repaint()');
@@ -2702,7 +2703,7 @@ async function pageTarget() {
       const narrow = await js(`(() => { const m = document.querySelector('[data-testid="aiondx-usage"]'); const p = m.parentNode;
         const keep = p.style.cssText; p.style.cssText = keep + ';width:150px;max-width:150px;overflow:hidden'; window.__aionDx.repaint();
         const r = { narrow: m.getAttribute('data-narrow'), shown: getComputedStyle(m).display !== 'none' }; p.style.cssText = keep; window.__aionDx.repaint(); r.after = m.getAttribute('data-narrow'); return r; })()`);
-      check(sc, 'a chat too narrow for the meter hides it, and shows it again when there is room', narrow && narrow.narrow === '1' && narrow.shown === false && narrow.after === null, JSON.stringify(narrow));
+      check(sc, 'a chat too narrow for the meter hides its figures (the bars stay), and shows them again when there is room', narrow && narrow.narrow === '1' && narrow.shown === true && narrow.after === null, JSON.stringify(narrow));
       await load('team=1&theme=light');
       await putStore('aiondx.usage.acct.k2', { label: 'Second', at: Date.now(), status: 'rejected',
         five_hour: { u: 1, reset: nowS + 7200, status: 'rejected' }, seven_day: { u: 0.8, reset: nowS + 3 * 86400, status: 'allowed_warning' } });

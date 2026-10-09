@@ -296,3 +296,9 @@ making agents wait for a manual approval of every Bash command in YOLO mode.
 - Tests: `test-stream-proxy.js` 48/48 (the tap, usage records, the approver, the repair), `test-usage-for.js` 12/12,
   `test-account-switch.js` 13/13. Installed in `%APPDATA%\npm` (the morning's copies are `.bak-20261001`); new Claude
   processes use them, running ones keep the old until they restart.
+
+## October 9th, 2026: the tap's write gap follows a setting
+
+`claude-stream-proxy.js` wrote a reading that had not moved at most once a minute. The gap is now `aiondx.usage.config.writeSec` (5 to 600 seconds,
+60 by default), read from the store at most every 30 seconds; a reading that moved a whole percent or changed status is still written at once.
+The setting is on the usage meter's panel in the AionDX window.

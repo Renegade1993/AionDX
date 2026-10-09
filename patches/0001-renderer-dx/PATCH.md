@@ -842,3 +842,32 @@ member's Stop already pauses the member through AionCore's pause route.)
   undo never puts back what was sent. Scenario `undo`; `tools\test-live-undo.js` runs the same checks in the real app.
 - **Hooks for patch 0010**: `window.aiondxFeedback` (opens the AionDX issues page with what was typed) and `window.aiondxInstallUpdate`
   (installs a downloaded update through the main process, or opens the installer when that bridge is missing).
+
+## October 9th, 2026: build `2026-10-09.1`
+
+- **A picture viewer for the chat** (`watchPictures`, `viewerOpen`). A picture in a message opens in AionDX's own viewer: Previous and Next
+  buttons and the arrow keys walk through every picture shown in the chat (markdown pictures inside the message's shadow root, and
+  AionUi's tool pictures), the wheel zooms, a click zooms to 200%, a drag moves a zoomed picture, Esc closes. AionUi's own preview group
+  wraps the whole message list, but the list only draws the messages near the screen, so its arrows had nothing to go to; a markdown picture
+  (what an agent links in its text) had no viewer at all. The list is read again at each step, so pictures drawn since the viewer opened are
+  reached. Scenario in `tools\test-live-oct9.js`.
+- **Unsend in team columns** (`renderTeamUnsend`, `unsendQueued`). A message waiting in a member's queue is taken back through AionCore's
+  `steer` route with `unsend: true` (core-0004); one the member's chat already holds goes the way a solo chat's did. Before, only a solo chat
+  of a Claude agent showed Unsend, so team columns never did.
+- **Respond-now bolt when the text differs** (`queuedRows`). A message sent from the page can show other text than the mailbox row (the
+  page's copy before the chat is read again), so no bubble matched and the bolt waited for a visit to another chat. Queued messages that match no
+  bubble now take the newest "Unread" bubbles, newest to newest; a message still not placed writes a `bolt-no-row` diagnostic with what was
+  being looked for.
+- **The usage meter stays** (`renderAccounts`, `placeUsage`). The meter was removed in the moments a team's chat list or a chat's details were
+  being read again, after twelve hours without a reading, and whenever its text did not fit. It now stays through those reads, shows a reading up
+  to three days old (dimmed after thirty minutes, and a window past its reset reads 0%), and gives up only its figures, not the bars, when narrow.
+- **Usage settings and alerts** (click the usage meter). A panel sets how often the meter and the alert check follow the readings
+  (`aiondx.usage.config.pollSec`), how often AionCore's tap writes an unchanged reading (`writeSec`, read by `claude-stream-proxy.js`), and the
+  alerts for the team or chat: a window, a percent, and who is told (the team lead, every member on that account, or the agent that set it). When a
+  reading crosses a threshold the message goes at once through the `steer` route, into the running turn (a solo chat through its ordinary
+  send), once per window; `aiondx.usagefired.*` remembers it. Agents set the same rules with `aiondx usage alert` (patch 0007).
+- **Links that open** (`openOutside`, `watchLocalLinks`). Uses AionCore's `/api/shell/open-path` (core-0005) when it has it: a folder opens in
+  Explorer, a program is shown selected in its folder, anything else opens in its own program; an older AionCore gets the earlier routes (with
+  the folder route that accepts a folder). A chip for a folder, a program, an archive, a media file or anything over 5 MB opens outside on a
+  click instead of AionUi's preview ("too big to preview"). A link `https://aiondx.invalid/run?path=...` (or `run:...`) asks "Run this
+  program?" and then starts it. A failure says why.

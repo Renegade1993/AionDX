@@ -250,7 +250,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const tl = await solo.rpc('tools/list', {});
   const tools = (tl.result && tl.result.tools) || [];
-  check('tools/list offers loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo and usage_status', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status', tools.map((t) => t.name));
+  check('tools/list offers loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,usage_alert', tools.map((t) => t.name));
   const schemaText = JSON.stringify(tools.map((t) => t.inputSchema));
   check('schemas use only type, properties and description (every backend takes them)', !/additionalProperties|\$schema|"required"|"title"/.test(schemaText), schemaText);
   const set = tools.find((t) => t.name === 'loop_set') || { inputSchema: { properties: {} } };
@@ -501,7 +501,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const orphan = startTool('convS', { AIONUI_CONVERSATION_ID: '', AIONUI_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
-  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 11, tlOrphan.result && tlOrphan.result.tools.length);
+  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 13, tlOrphan.result && tlOrphan.result.tools.length);
   r = await orphan.call('loop_status');
   check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionUi chat/.test(r.text), r.text);
 
@@ -625,6 +625,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   c = await cli(['loop', 'set', '--on=true', '--message=Pick up at item 7 of queue.md.']);
   rec = kv['aiondx.loop.team.team1.slotW'];
   check('--flag=value forms work', c.status === 0 && rec.on === true && rec.msg === 'Pick up at item 7 of queue.md.', c.stdout);
+  const msgFile = path.join(LOGDIR, 'message.txt');
+  fs.writeFileSync(msgFile, 'Say "ready", then take item 8: "green" and \'quoted\'.\n');
+  c = await cli(['loop', 'set', '--on', '--message-file', msgFile]);
+  rec = kv['aiondx.loop.team.team1.slotW'];
+  check('--message-file takes the text as it is, quotes and all', c.status === 0 && rec.msg === 'Say "ready", then take item 8: "green" and \'quoted\'.', c.stdout + JSON.stringify(rec));
+  c = await cli(['loop', 'set', '--message-file', path.join(LOGDIR, 'no-such-file.txt')]);
+  check('a message file that is not there is named in the refusal', c.status === 1 && /Could not read .*no-such-file\.txt/.test(c.stdout), c.stdout);
   c = await cli(['loop', 'set', '--on', 'false']);
   check('--on false switches it off', c.status === 0 && kv['aiondx.loop.team.team1.slotW'].on === false, c.stdout);
   c = await cli(['loop', 'set', '--hold', '90', '--note', 'waiting on the spread']);
@@ -788,6 +795,90 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await usageTool.call('loop_status', {});
   check('and none when there is no reading', !/Usage:/.test(r.text), r.text.slice(-160));
   delete kv['aiondx.usage.acct.acctA']; delete kv['aiondx.usage.acct.acctB'];
+
+  // ---- usage alerts (1.13.0; a request of 2026-10-09) ----
+  let ua = await cli(['usage', 'alerts'], 'convL');
+  check('no alerts: it says so and how to set one', ua.status === 0 && /^No usage alerts are set for this team./.test(ua.stdout) && /aiondx usage alert --at 80 --window 5h --notify lead/.test(ua.stdout), ua.stdout);
+  ua = await cli(['usage', 'alert', '--at', '80', '--window', '5h', '--message', 'Wrap up and write the handoff.'], 'convL');
+  const alertRec = kv['aiondx.usagealert.team.team1'];
+  check('the lead sets a 5-hour alert for the lead: saved under the team, as the agent', ua.status === 0 && /^Saved\. When the 5-hour window reaches 80%/.test(ua.stdout) && alertRec && alertRec.rules.length === 1 &&
+    alertRec.rules[0].window === '5h' && alertRec.rules[0].at === 0.8 && alertRec.rules[0].notify === 'lead' && alertRec.rules[0].by === 'agent' && alertRec.rules[0].who === 'Lead' &&
+    alertRec.rules[0].message === 'Wrap up and write the handoff.', ua.stdout + JSON.stringify(alertRec));
+  ua = await cli(['usage', 'alert', '--at', '90%', '--window', 'week', '--notify', 'all'], 'convL');
+  check('the lead can alert every member on the account, weekly, with a percent sign', ua.status === 0 && kv['aiondx.usagealert.team.team1'].rules.length === 2 &&
+    kv['aiondx.usagealert.team.team1'].rules[1].notify === 'all' && kv['aiondx.usagealert.team.team1'].rules[1].window === 'week' && kv['aiondx.usagealert.team.team1'].rules[1].at === 0.9, ua.stdout);
+  ua = await cli(['usage', 'alert', '--at', '0.7'], 'convL');
+  check('setting the same window and target again replaces it; 0.7 reads as 70%', ua.status === 0 && kv['aiondx.usagealert.team.team1'].rules.length === 2 &&
+    kv['aiondx.usagealert.team.team1'].rules.some((r) => r.window === '5h' && r.at === 0.7), ua.stdout + JSON.stringify(kv['aiondx.usagealert.team.team1']));
+  ua = await cli(['usage', 'alert', '--at', '60', '--notify', 'lead'], 'convW');
+  check('a member may not alert the lead or the team', ua.status === 1 && /Only the team lead sets an alert for the lead or for every member/.test(ua.stdout), ua.stdout);
+  ua = await cli(['usage', 'alert', '--at', '60'], 'convW');
+  const wRule = kv['aiondx.usagealert.team.team1'].rules.find((r) => r.notify === 'self');
+  check('a member sets one for itself, remembering which member', ua.status === 0 && wRule && wRule.slot === 'slotW' && wRule.conv === 'convW' && wRule.at === 0.6, ua.stdout);
+  ua = await cli(['usage', 'alert', '--at', '0'], 'convL');
+  check('a threshold of zero is refused', ua.status === 1 && /at is required/.test(ua.stdout), ua.stdout);
+  ua = await cli(['usage', 'alert', '--at', '80', '--window', 'month'], 'convL');
+  check('an unknown window is refused', ua.status === 1 && /window must be 5h or week/.test(ua.stdout), ua.stdout);
+  kv['aiondx.usagealert.team.team1'].rules.push({ window: 'week', at: 0.5, notify: 'lead', by: 'user' });
+  ua = await cli(['usage', 'alert', '--at', '55', '--window', 'week', '--notify', 'lead'], 'convL');
+  check('an alert the user made is not for an agent to change', ua.status === 1 && /The user already set a weekly alert/.test(ua.stdout), ua.stdout);
+  ua = await cli(['usage', 'alerts'], 'convW');
+  check('the list shows every rule with who set it', ua.status === 0 && /5-hour window at 70%: tell the team lead \(set by Lead\)/.test(ua.stdout) && /Weekly window at 50%: tell the team lead \(set by the user\)/.test(ua.stdout), ua.stdout);
+  ua = await cli(['usage', 'alert', '--remove'], 'convW');
+  check('a member removes only its own alert', ua.status === 0 && /^1 alert removed\./.test(ua.stdout) && !kv['aiondx.usagealert.team.team1'].rules.some((r) => r.notify === 'self'), ua.stdout);
+  ua = await cli(['usage', 'alert', '--remove'], 'convL');
+  check('removing all of the lead\'s alerts leaves the user\'s and says so', ua.status === 0 && /^2 alerts removed\. 1 set by the user stay/.test(ua.stdout) &&
+    kv['aiondx.usagealert.team.team1'].rules.length === 1 && kv['aiondx.usagealert.team.team1'].rules[0].by === 'user', ua.stdout);
+  delete kv['aiondx.usagealert.team.team1'];
+  ua = await cli(['usage', 'alert', '--at', '85', '--notify', 'all'], 'convS');
+  check('a solo chat\'s alert is always for itself', ua.status === 1 && /A solo chat's alert is for itself/.test(ua.stdout), ua.stdout);
+  ua = await cli(['usage', 'alert', '--at', '85'], 'convS');
+  check('a solo chat sets its own alert under the conversation', ua.status === 0 && kv['aiondx.usagealert.conv.convS'] && kv['aiondx.usagealert.conv.convS'].rules[0].at === 0.85 &&
+    kv['aiondx.usagealert.conv.convS'].rules[0].notify === 'self', ua.stdout);
+  // ---- aiondx show / show_file (1.13.0) ----
+  const showRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-show-'));
+  const showWork = path.join(showRoot, 'work');
+  const showOut = path.join(showRoot, '! Outbound', 'My Maps');
+  fs.mkdirSync(showWork, { recursive: true });
+  fs.mkdirSync(showOut, { recursive: true });
+  fs.writeFileSync(path.join(showOut, 'map one.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+  fs.writeFileSync(path.join(showOut, 'Install Game (test build).exe'), 'MZ');
+  fs.writeFileSync(path.join(showOut, 'notes.txt'), 'hi');
+  const showRun = (args) => new Promise((resolve) => {
+    const c = spawn(CLI, args, { cwd: showWork, env: Object.assign({}, process.env, { AIONUI_CONVERSATION_ID: 'convS' }), windowsHide: true });
+    children.push(c);
+    let out = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.on('close', (code) => resolve({ status: code, stdout: out }));
+  });
+  let sh = await showRun(['show', path.join(showOut, 'map one.png'), '--label', 'the map']);
+  check('a picture outside the working folder is copied in and comes back as an image line plus a button', sh.status === 0 &&
+    fs.existsSync(path.join(showWork, '.aiondx-pictures', 'map one.png')) && sh.stdout.includes('![the map](<./.aiondx-pictures/map one.png>)') &&
+    /\[the map\]\(file:\/\/\/[A-Za-z]:\/.*%21%20Outbound\/My%20Maps\/map%20one\.png\)/.test(sh.stdout), sh.stdout);
+  sh = await showRun(['show', showOut]);
+  check('a folder with a space and a "!" in its name gets an escaped file link with a trailing slash, and no image line', sh.status === 0 && !/!\[/.test(sh.stdout.replace('Paste these lines', '')) &&
+    /\[My Maps\]\(file:\/\/\/[A-Za-z]:\/.*%21%20Outbound\/My%20Maps\/\)/.test(sh.stdout) && /opens the folder in Explorer/.test(sh.stdout), sh.stdout);
+  sh = await showRun(['show', path.join(showOut, 'Install Game (test build).exe')]);
+  check('an installer gets a button and a second link that asks before running it', sh.status === 0 && /shows the program in its folder, selected/.test(sh.stdout) &&
+    /https:\/\/aiondx\.invalid\/run\?path=[A-Za-z]%3A%5C/.test(sh.stdout), sh.stdout);
+  sh = await showRun(['show', path.join(showOut, 'notes.txt'), '--label=the notes']);
+  check('a text file is just a button', sh.status === 0 && /\[the notes\]\(file:\/\/\/.*notes\.txt\)/.test(sh.stdout) && !/aiondx\.invalid/.test(sh.stdout), sh.stdout);
+  sh = await showRun(['show', path.join(showOut, 'nothing here')]);
+  check('a path that does not exist says so', sh.status === 1 && /^Nothing at /.test(sh.stdout), sh.stdout);
+  const inWork = path.join(showWork, 'shot.png');
+  fs.writeFileSync(inWork, Buffer.from('89504e470d0a1a0a', 'hex'));
+  sh = await showRun(['show', inWork]);
+  check('a picture already in the working folder is not copied', sh.status === 0 && sh.stdout.includes('![shot.png](./shot.png)') && !/was copied/.test(sh.stdout), sh.stdout);
+  try { fs.rmSync(showRoot, { recursive: true, force: true }); } catch { /* left for the OS */ }
+
+  const alertTool = startTool('convS');
+  await alertTool.rpc('initialize', { protocolVersion: '2025-06-18' });
+  r = await alertTool.call('usage_alert', { at: 75, window: 'week' });
+  check('the usage_alert tool sets one when given a percent', !r.isError && /^Saved\. When the weekly window reaches 75%/.test(r.text) && kv['aiondx.usagealert.conv.convS'].rules.length === 2, r.text);
+  r = await alertTool.call('usage_alert', { action: 'list' });
+  check('and lists them', !r.isError && /Weekly window at 75%/.test(r.text) && /5-hour window at 85%/.test(r.text), r.text);
+  r = await alertTool.call('usage_alert', { action: 'remove' });
+  check('and removes them, which clears the record', !r.isError && /^2 alerts removed\./.test(r.text) && !('aiondx.usagealert.conv.convS' in kv), r.text);
 
   const logText = fs.readdirSync(LOGDIR).filter((f) => fs.statSync(path.join(LOGDIR, f)).isFile()).map((f) => fs.readFileSync(path.join(LOGDIR, f), 'utf8')).join('');
   check('the log has a line per call and never a token', /loop_set ok/.test(logText) && /loop_status error/.test(logText) && !logText.includes(TOKEN) && !logText.includes('tok-stale') &&

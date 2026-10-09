@@ -201,12 +201,25 @@ function startUsage(opts, log) {
   // A reading from the tap: written when a window moved a whole percent or a status changed, else at most once a
   // minute (the store logs every write, and a busy team has several Claude processes on one account).
   let lastSig = '', lastPut = 0;
+  // How often a reading that has not moved is written again: the owner's setting (the usage meter's panel, aiondx.usage.config.writeSec;
+  // 60 s by default). Read at most every 30 s, and any trouble keeps the last value.
+  let gapMs = 60000, gapAt = 0;
+  function refreshGap(now) {
+    if (now - gapAt < 30000) return;
+    gapAt = now;
+    api('GET', '/api/settings/client?keys=aiondx.usage.config').then((r) => (r.ok ? r.json() : null)).then((j) => {
+      const c = j && (j.data || j)['aiondx.usage.config'];
+      const sec = c && Number(c.writeSec);
+      if (sec >= 5 && sec <= 600) gapMs = sec * 1000;
+    }).catch(() => {});
+  }
   function record(usage, info) {
     if (stopped || !usage) return;
     const now = Date.now();
+    refreshGap(now);
     const pct = (w) => (w && w.u !== null ? Math.round(w.u * 100) : -1);
     const sig = [usage.status, usage.five_hour.status, usage.seven_day.status, pct(usage.five_hour), pct(usage.seven_day), info && info.status >= 400 ? 'err' : 'ok'].join('|');
-    if (sig === lastSig && now - lastPut < 60000) return;
+    if (sig === lastSig && now - lastPut < gapMs) return;
     lastSig = sig; lastPut = now; lastAt = now;
     const body = {};
     body[accKey] = Object.assign({ label: u.label || '', at: now, http: info ? info.status : 0, via: 'tap' }, usage);

@@ -1,0 +1,86 @@
+diff --git a/crates/aionui-api-types/src/team.rs b/crates/aionui-api-types/src/team.rs
+index c135de8d..5607e0e7 100644
+--- a/crates/aionui-api-types/src/team.rs
++++ b/crates/aionui-api-types/src/team.rs
+@@ -477,6 +477,9 @@ pub struct SteerTeamAgentRequest {
+     pub files: Option<Vec<ChatFileRef>>,
+     #[serde(default)]
+     pub message_id: Option<String>,
++    /// AionDX core-0004: with `message_id`, take the queued message back instead of moving it (the user unsent it).
++    #[serde(default)]
++    pub unsend: bool,
+ }
+ 
+ /// AionDX core-0002: what became of a steered message.
+@@ -491,6 +494,8 @@ pub enum TeamSteerOutcome {
+     MovedToFront,
+     /// That message is not waiting in the queue (already read, or not there).
+     NotQueued,
++    /// AionDX core-0004: the queued message was taken back; the member never reads it.
++    Unsent,
+ }
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+diff --git a/crates/aionui-team/src/service.rs b/crates/aionui-team/src/service.rs
+index 057b3874..3a2fb077 100644
+--- a/crates/aionui-team/src/service.rs
++++ b/crates/aionui-team/src/service.rs
+@@ -2551,6 +2551,9 @@ impl TeamSessionService {
+         self.ensure_session_inner(team_id, Some(user_id)).await?;
+         let session = self.published_session(team_id)?;
+         if let Some(message_id) = request.message_id.as_deref().filter(|id| !id.trim().is_empty()) {
++            if request.unsend {
++                return session.unsend_queued_message_from_user(slot_id, message_id).await;
++            }
+             return session.promote_queued_message_from_user(slot_id, message_id).await;
+         }
+         let (content, files) = self
+diff --git a/crates/aionui-team/src/session.rs b/crates/aionui-team/src/session.rs
+index e70998a3..1c653ef5 100644
+--- a/crates/aionui-team/src/session.rs
++++ b/crates/aionui-team/src/session.rs
+@@ -1728,6 +1728,44 @@ impl TeamSession {
+         })
+     }
+ 
++    /// AionDX core-0004: the user takes back one of their messages that is still waiting in a member's queue. It leaves
++    /// the queue and is marked read, so no later turn of the member opens with it. A message the member already took
++    /// (delivered into a running turn, or read) is not waiting any more: `NotQueued`.
++    pub async fn unsend_queued_message_from_user(
++        &self,
++        slot_id: &str,
++        message_id: &str,
++    ) -> Result<TeamSteerAgentResponse, TeamError> {
++        self.scheduler.get_agent(slot_id).await?;
++        let rows = self
++            .mailbox
++            .peek_unread_by_ids(&self.team.id, slot_id, &[message_id.to_owned()])
++            .await?;
++        let Some(row) = rows.into_iter().next() else {
++            return Ok(TeamSteerAgentResponse {
++                outcome: TeamSteerOutcome::NotQueued,
++                message_id: Some(message_id.to_owned()),
++            });
++        };
++        if row.from_agent_id != "user" {
++            return Err(TeamError::InvalidRequest(
++                "only a message from the user can be unsent".into(),
++            ));
++        }
++        if !self.work_coordinator.take_queued_message(slot_id, message_id) {
++            return Ok(TeamSteerAgentResponse {
++                outcome: TeamSteerOutcome::NotQueued,
++                message_id: Some(message_id.to_owned()),
++            });
++        }
++        self.mailbox.mark_read_batch(&self.team.id, &[message_id.to_owned()]).await?;
++        info!(team_id = %self.team.id, slot_id, message_id, "queued user message unsent");
++        Ok(TeamSteerAgentResponse {
++            outcome: TeamSteerOutcome::Unsent,
++            message_id: Some(message_id.to_owned()),
++        })
++    }
++
+     pub(crate) async fn interrupt_agent_from_agent(
+         &self,
+         from_slot_id: &str,

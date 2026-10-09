@@ -402,7 +402,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
   await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   const tl = await rpc('tools/list', {});
   const names = ((tl.result && tl.result.tools) || []).map((t) => t.name).join(',');
-  check('the MCP server offers mcp_tools and mcp_call (and the GitHub and usage tools after them)', names === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status', names);
+  check('the MCP server offers mcp_tools and mcp_call (and the GitHub and usage tools after them)', names === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,usage_alert', names);
   let m = await rpc('tools/call', { name: 'mcp_call', arguments: { server: 'fix', tool: 'image' } });
   const content = (m.result && m.result.content) || [];
   check('mcp_call hands the picture back as a picture the agent can see, and the text beside it', !m.result.isError && content[0] && content[0].type === 'image' &&

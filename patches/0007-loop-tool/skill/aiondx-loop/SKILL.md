@@ -1,6 +1,6 @@
 ---
 name: aiondx-loop
-description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when you want to show the user a picture, or link a file or folder, in chat: Markdown does both, and the section on pictures says how. It is the only keep-warm mechanism: do not write a script that pokes agents.
+description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. It is the only keep-warm mechanism: do not write a script that pokes agents.
 ---
 
 # The AionDX Loop
@@ -168,9 +168,45 @@ plan the work to fit. When a window shows LIMIT REACHED, or a message says you h
 requests until the reset time: do not retry or ask for a nudge before then, tell the user the time, and stop. The
 Loop pauses by itself for an account at its limit and carries on at the reset.
 
+### Usage alerts
+
+Checking now and then misses a jump: an account at 60% at one look can be at 95% at the next. A usage alert is a threshold
+that is acted on the moment a reading crosses it. AionDX sends the message at once, into the running turn (the way the
+Respond-now bolt does), to whoever you name:
+
+```
+"{{AIONDX}}" usage alert --at 80                            you, when your 5-hour window reaches 80%
+"{{AIONDX}}" usage alert --at 85 --window week --notify lead   the team lead, when the weekly window reaches 85%
+"{{AIONDX}}" usage alert --at 90 --notify all               every member on that account (team lead only)
+"{{AIONDX}}" usage alert --at 80 --message "Stop starting builds; write the handoff."
+"{{AIONDX}}" usage alerts                                   what is set for this team or chat
+"{{AIONDX}}" usage alert --remove                           take away the alerts you set
+```
+
+(`usage_alert` does the same as a tool.) A team lead may notify the lead, every member, or itself; a member only itself; a
+solo chat is always itself. Each alert goes off once per window and is armed again after the reset. It is checked by the
+AionDX window, so it works while AionDX is open. The user sees every alert, and changes it, by clicking the usage meter;
+an alert the user made is not yours to change. When a team starts a long job, the lead should set one for itself at about
+80% and one for every member at about 90%.
+
 ## Pictures, files and folders in chat
 
-The chat draws Markdown, so you can show the user a picture or link a file or folder instead of describing it.
+Two lines to remember: **a picture or a link is one command, `"{{AIONDX}}" show PATH`** (tool: `show_file`), which prints the
+exact Markdown to paste into your reply; and a link to a folder, installer or file is a button the user clicks once.
+
+```
+"{{AIONDX}}" show "C:/Work/Project/shots/map.png" --label "the map"     copies the picture into your working folder, prints the image line and a button
+"{{AIONDX}}" show "C:/Work/Game/! Outbound/"             a folder: the button opens it in Explorer
+"{{AIONDX}}" show "C:/Work/setup.exe" --label "the installer"           a button that shows it selected in its folder, and a Run link that asks the user first
+```
+
+What the user's click does: a folder opens in Explorer; a program, installer, archive, media file or anything too big to preview is
+shown in its folder with the file selected; any other file opens in AionDX's preview, and the arrow button beside the chip opens
+it in its own program (Shift+click shows it in its folder). The Run link (`https://aiondx.invalid/run?path=...`) asks "Run this
+program?" before starting it; give it only when the user asked you to run or install something. A click that fails says why.
+Pictures in a chat open in AionDX's viewer (previous and next arrows, the arrow keys, zoom, Esc).
+
+The chat draws Markdown, so you can also write them by hand:
 
 - A picture: `![what it shows](C:/Work/Project/shots/map.png)`, or a path relative to your working folder (`./shots/map.png`).
   The file has to be inside your working folder (AionUi refuses a picture outside it with "outside the allowed sandbox"),
