@@ -209,6 +209,35 @@ console.log = (...a) => { consoleLines.push(a.join(' ')); realLog(...a); };
       check('the default requester sends credentials and the csrf token', captured.init.credentials === 'include' && captured.init.headers['x-csrf-token'] === 'tok-abc');
     } finally { global.fetch = realFetch; }
 
+    // ---- the convenience client (the UI's window.__aionDxVoice shape) ----
+    await store.clearConfig();
+    const client = AionDxVoice.createVoiceClient({ request, fetch: makeFetch() });
+
+    threw = null;
+    try { await client.transcribe(fakeAudio); } catch (e) { threw = e; }
+    check('the client refuses to transcribe with no provider configured', threw && /no provider configured/.test(threw.message));
+
+    await client.setSettings({ provider: 'elevenlabs', apiKey: API_KEY, voiceId: 'v1' });
+    check('getSettings reads back what setSettings wrote', (await client.getSettings()).voiceId === 'v1');
+
+    requests.length = 0;
+    check('the client transcribes through the configured provider', (await client.transcribe(fakeAudio)) === 'hello world');
+    check('the client synthesizes through the configured provider', (await client.synthesize('hi there')).size === 4);
+
+    requests.length = 0;
+    await client.synthesize('hi there', 'another-voice');
+    check('the client\'s synthesize(text, voiceId) passes the voice id through', /\/v1\/text-to-speech\/another-voice$/.test(requests[requests.length - 1].url));
+
+    behavior.voicesBody = JSON.stringify({ voices: [{ voice_id: 'v9', name: 'Nine' }] });
+    check('the client lists voices through the configured provider', (await client.listVoices())[0].id === 'v9');
+    check('listProviders resolves (a Promise, for the UI\'s stub shape)', (await client.listProviders()).some((p) => p.id === 'elevenlabs'));
+
+    await client.setSettings({ voiceId: 'v2' });
+    check('setSettings merges rather than replacing (the key survives a voice-only change)', (await client.getSettings()).apiKey === API_KEY);
+    requests.length = 0;
+    await client.synthesize('hi again');
+    check('the client rebuilds its provider after setSettings changes the voice', /\/v1\/text-to-speech\/v2$/.test(requests[requests.length - 1].url));
+
     // ---- the key never appears in anything this test observed on the console ----
     check('the API key was never written to the console', !consoleLines.some((l) => l.includes(API_KEY)));
   } catch (e) {

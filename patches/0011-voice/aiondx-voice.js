@@ -185,11 +185,49 @@
     return entry.create(Object.assign({}, config, opts || {}));
   }
 
+  // ---------------------------------------------------------------- convenience client
+
+  /** A flat, "current provider" client over the two pieces above, for a caller (the composer's mic
+   *  and playback controls) that just wants "transcribe this" / "say this" without juggling a
+   *  provider and a settings store itself. opts are the same ones createSettingsStore and
+   *  createProvider take (request or baseUrl/csrfToken; fetch, for tests). The provider is rebuilt
+   *  from the stored config on first use and again whenever setSettings changes it; reading settings
+   *  between calls is one extra store read, not a network round trip to the provider itself. */
+  function createVoiceClient(opts) {
+    opts = opts || {};
+    var store = createSettingsStore(opts);
+    var cached = null; // { config, provider }
+
+    function sameConfig(a, b) {
+      return !!a && !!b && a.provider === b.provider && a.apiKey === b.apiKey && a.voiceId === b.voiceId;
+    }
+
+    function currentProvider() {
+      return store.getConfig().then(function (config) {
+        if (!config || !config.provider) throw new Error('voice: no provider configured');
+        if (cached && sameConfig(cached.config, config)) return cached.provider;
+        var provider = createProvider(config, opts);
+        cached = { config: config, provider: provider };
+        return provider;
+      });
+    }
+
+    return {
+      transcribe: function (audioBlob) { return currentProvider().then(function (p) { return p.transcribe(audioBlob); }); },
+      synthesize: function (text, voiceId) { return currentProvider().then(function (p) { return p.synthesize(text, voiceId ? { voiceId: voiceId } : undefined); }); },
+      listVoices: function () { return currentProvider().then(function (p) { return p.listVoices ? p.listVoices() : []; }); },
+      listProviders: function () { return Promise.resolve(listProviders()); },
+      getSettings: function () { return store.getConfig().then(function (c) { return c || {}; }); },
+      setSettings: function (patch) { cached = null; return store.setConfig(patch); },
+    };
+  }
+
   return {
     VOICE_CONFIG_KEY: VOICE_CONFIG_KEY,
     createSettingsStore: createSettingsStore,
     createElevenLabsProvider: createElevenLabsProvider,
     listProviders: listProviders,
     createProvider: createProvider,
+    createVoiceClient: createVoiceClient,
   };
 });

@@ -2,7 +2,7 @@
 
 **Target:** renderer only (a plain global script, like patch 0001's `aionui-dx.js`), plus one key in
 AionUi's per-user settings store. **Status:** core module and tests written and passing
-(`node patches\0011-voice\test-voice.js`, 37/37); not yet wired into `index.html` or
+(`node patches\0011-voice\test-voice.js`, 46/46); not yet wired into `index.html` or
 `tools\build-release.ps1`, and not yet installed. The composer's mic button and playback controls
 are the other half of this folder, built in parallel against this same interface.
 
@@ -26,6 +26,26 @@ interface VoiceProvider {
 plain object the settings store keeps. Adding a second provider later is one more entry in the
 file's `PROVIDERS` map and a `create` function with this shape; nothing that calls `createProvider`
 or uses the `VoiceProvider` it returns needs to change.
+
+**The convenience client.** `AionDxVoice.createVoiceClient(opts)` wraps the two pieces above into a
+flat "current provider" object for a caller that just wants "transcribe this" / "say this" without
+juggling a provider and a settings store itself - the shape the composer UI's `window.__aionDxVoice`
+stub already uses:
+
+```js
+client.transcribe(audioBlob)          // -> Promise<string>
+client.synthesize(text, voiceId?)     // -> Promise<Blob>
+client.listVoices()                   // -> Promise<{id,name}[]>, [] if the provider has none
+client.listProviders()                // -> Promise<{id,name}[]>
+client.getSettings()                  // -> Promise<{provider, apiKey, voiceId, at} | {}>
+client.setSettings(patch)             // -> Promise<the merged record>
+```
+
+It reads the stored config on first use, builds the matching provider, and rebuilds it only when
+`setSettings` actually changes `provider`/`apiKey`/`voiceId`; a plain `transcribe`/`synthesize` call
+costs one settings-store read plus the provider call, no extra round trip. `apiKey` comes back from
+`getSettings` as the user typed it (not masked) - masking it for display, if wanted, is on whoever
+renders the settings panel.
 
 **ElevenLabs.** `synthesize` posts to `POST /v1/text-to-speech/{voiceId}` (JSON body `{text,
 model_id}`, `model_id` defaults to `eleven_multilingual_v2`) and returns the response body as a
@@ -76,8 +96,8 @@ is - the key always comes from the settings record at call time).
 
 | file | what |
 |---|---|
-| `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore` |
-| `test-voice.js` | 37 checks against a stand-in HTTP server standing in for both ElevenLabs and the settings store - no real network, no real AionUi, no real key |
+| `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore`, and `createVoiceClient` (the flat convenience wrapper) |
+| `test-voice.js` | 46 checks against a stand-in HTTP server standing in for both ElevenLabs and the settings store - no real network, no real AionUi, no real key |
 
 ## Installing, checking, removing
 
