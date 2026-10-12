@@ -4,8 +4,8 @@
 in AionUi's per-user settings store. **Status:** both halves done, wired into the build, and QA-verified
 against a real AionUi 2.2.2 base (2026-10-11):
 - `node patches\0011-voice\test-voice.js` - 46/46.
-- `node patches\0011-voice\dev-smoke-test.js` - 16/16 (UI against a stub, real mouse + fake mic, headless Edge).
-- `node patches\0011-voice\dev-smoke-test-real.js` - 14/14 (UI against the real module, only `fetch` stubbed).
+- `node patches\0011-voice\dev-smoke-test.js` - 34/34 (UI against a stub, real mouse + fake mic, headless Edge).
+- `node patches\0011-voice\dev-smoke-test-real.js` - 18/18 (UI against the real module, only `fetch` stubbed).
 - `tools\build-release.ps1 -StageOnly` against AionUi 2.2.2's real `app.asar`, full apply order
   (0001, 0011, 0003, 0006, 0009, 0010): every patch's anchors matched, including both of 0011's
   (the `index.html` script-tag insertion and the two `Copy-Item`s) - no anchor-match failures. The
@@ -18,6 +18,42 @@ against a real AionUi 2.2.2 base (2026-10-11):
   path); nothing from `aiondx-voice.js` / `aiondx-voice-ui.js`.
 
 **Commit identity, fixed 2026-10-11:** the six commits this patch was originally built from carried identities `tools\privacy-check.js --commits` refuses before anything reaches GitHub - four of the Voice UI Engineer's commits used a local-only address instead of a GitHub no-reply one, and the Voice Core Engineer's two used this machine's own git identity, picked up from global git config rather than a committed-safe one. All six were rewritten (author and committer, each kept under their own name) with a scoped `git filter-branch --env-filter` to GitHub no-reply addresses. `node tools\privacy-check.js --commits` is clean on the rewritten chain; this branch is the canonical integration branch for the voice feature.
+
+## Build 2026-10-11.2: markdown-to-speech, a global "stop all reading", and a loading-race bug
+
+Live user testing on the staged build turned up three things, all in `aiondx-voice-ui.js` (the UI
+half; `aiondx-voice.js` is unchanged and stays a dumb TTS/STT client):
+
+- **Code blocks were read character-by-character.** The speaker button sent a reply's raw markdown
+  straight to `synthesize()`, so a fenced code block came out as ElevenLabs sounding out punctuation
+  and symbols. `spokenText(raw)` now runs before every `synthesize()` call: a fenced block becomes
+  "a snippet of &lt;lang&gt; code." (or "a code block." with no language hint), an inline code span
+  keeps its text with the backticks stripped, and heading `#`s, `**`/`*`/`__`/`_` emphasis, bullet
+  and numbered list markers, and blockquote `>` are stripped; a markdown link reads its text, not
+  the brackets or the URL. Plain text passes through unchanged apart from whitespace collapsing to
+  single spaces (the reply isn't being displayed, so a line break doesn't need to survive).
+- **A global "stop all reading" button**, the mic button's neighbour in the composer (same 28x28
+  Arco circle, one per composer, all of them reflecting and controlling the same page-wide
+  playback). Disabled with nothing playing; a click calls the same `stopPlayback()` a message's own
+  speaker button does.
+- **The bug behind the user's "had to shut down aiondx" report** (most likely cause, not confirmed
+  against the real Electron app - see below): clicking a second message's speaker button while the
+  first was still waiting on `synthesize()` never touched the first button - nothing reset it out of
+  "loading" - and if that first request eventually resolved, it could go on to create a second
+  `Audio` element fighting whatever was already playing. A stuck spinner with nothing to click, plus
+  a dangling request, is exactly what "the app hung" looks like from outside. Fixed with a generation
+  counter (`playGen`, bumped by every `startPlayback()`/`stopPlayback()`): a `synthesize()` result
+  checks it before touching the DOM or creating an `Audio`, and a message's own button is now
+  clickable while "loading" too (it cancels), not just while "playing" - there was no other way to
+  unstick a single stuck request short of the new global button.
+  **Not independently reproduced as a full application hang** - verified in headless Edge that the
+  race existed and is fixed, not that it was the literal cause of the reported shutdown. Worth asking
+  the user what else they were doing right before it hung (another tab/window, how many messages they
+  clicked play on, whether AionDX was otherwise responsive) in case there is a second contributor.
+- Regression coverage: `dev-smoke-test.js` gained 18 checks (6 for `spokenText`, 5 for the stop-all
+  button, 7 reproducing the loading-race and proving it is fixed - two messages' play buttons raced
+  with scripted clicks close enough together to land inside the stub's synthesize delay); `dev-smoke-test-real.js`
+  gained 4 (markdown stripping, the stop-all button, all against the real module).
 
 ## What it adds
 

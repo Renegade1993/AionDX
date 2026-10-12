@@ -124,6 +124,18 @@ async function pageTarget() {
     check('the real module called ElevenLabs\' text-to-speech endpoint',
       await js('window.__fetchCalls.some(c => c.url.indexOf("https://api.elevenlabs.io/v1/text-to-speech/") === 0 && c.method === "POST")'));
 
+    // ---- markdown stripped before it ever reaches the real synthesize() call ----
+    const spoken = await js(`window.__aionDxVoiceUI.spokenText(${JSON.stringify('# Title\n\nSee ```js\nconsole.log(1)\n``` and `x` and [a link](http://x).')})`);
+    check('spokenText strips markdown the same way against the real module build',
+      spoken === 'Title See a snippet of js code. and x and a link.', spoken);
+
+    // ---- the global stop-all control, against the real client ----
+    check('the stop-all button is present and starts disabled', await js('!!document.querySelector(".aiondx-voice-stopall-btn") && document.querySelector(".aiondx-voice-stopall-btn").disabled === true'));
+    await humanClick('#message-a1 .aiondx-voice-play-btn');
+    check('it enables once a real playback starts', await waitFor('document.querySelector(".aiondx-voice-stopall-btn").disabled === false'));
+    await humanClick('.aiondx-voice-stopall-btn');
+    check('clicking it stops a real in-flight playback', await waitFor('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "idle"', 20));
+
   } catch (e) {
     check('smoke test ran without throwing', false, e.stack || String(e));
   }

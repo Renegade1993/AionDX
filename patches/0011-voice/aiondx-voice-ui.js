@@ -80,21 +80,24 @@
   // ---------------------------------------------------------------- style
 
   var CSS = [
-    '.aiondx-voice-mic,.aiondx-voice-play{display:inline-flex;align-items:center;justify-content:center}',
-    '.aiondx-voice-mic-btn,.aiondx-voice-play-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1;position:relative}',
-    '.aiondx-voice-mic-btn .aiondx-voice-icon,.aiondx-voice-play-btn .aiondx-voice-icon{width:14px;height:14px;display:inline-flex;color:var(--text-secondary)}',
+    '.aiondx-voice-mic,.aiondx-voice-play,.aiondx-voice-stopall{display:inline-flex;align-items:center;justify-content:center}',
+    '.aiondx-voice-mic-btn,.aiondx-voice-play-btn,.aiondx-voice-stopall-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1;position:relative}',
+    '.aiondx-voice-mic-btn .aiondx-voice-icon,.aiondx-voice-play-btn .aiondx-voice-icon,.aiondx-voice-stopall-btn .aiondx-voice-icon{width:14px;height:14px;display:inline-flex;color:var(--text-secondary)}',
     '.aiondx-voice-play-btn .aiondx-voice-icon{width:12px;height:12px}',
-    '.aiondx-voice-mic-btn .aiondx-voice-icon svg,.aiondx-voice-play-btn .aiondx-voice-icon svg{width:100%;height:100%;display:block}',
+    '.aiondx-voice-mic-btn .aiondx-voice-icon svg,.aiondx-voice-play-btn .aiondx-voice-icon svg,.aiondx-voice-stopall-btn .aiondx-voice-icon svg{width:100%;height:100%;display:block}',
     '.aiondx-voice-mic-btn[data-state="recording"]{color:#fff;background-color:rgb(var(--danger-6)) !important;border-color:rgb(var(--danger-6)) !important}',
     '.aiondx-voice-mic-btn[data-state="recording"] .aiondx-voice-icon{color:#fff}',
     '.aiondx-voice-mic-btn[data-state="recording"]{animation:aiondx-voice-pulse 1.4s ease-out infinite}',
     '.aiondx-voice-mic-btn[data-state="error"]{color:rgb(var(--danger-6)) !important}',
     '.aiondx-voice-mic-btn[data-state="transcribing"],.aiondx-voice-play-btn[data-state="loading"]{cursor:default}',
     '.aiondx-voice-mic-btn[data-state="transcribing"] .aiondx-voice-icon svg,.aiondx-voice-play-btn[data-state="loading"] .aiondx-voice-icon svg{animation:aiondx-voice-spin 0.9s linear infinite}',
-    '.aiondx-voice-mic-btn[disabled],.aiondx-voice-play-btn[disabled]{opacity:.45;cursor:not-allowed}',
+    '.aiondx-voice-mic-btn[disabled],.aiondx-voice-play-btn[disabled],.aiondx-voice-stopall-btn[disabled]{opacity:.45;cursor:not-allowed}',
     '.aiondx-voice-play-btn[data-state="playing"]{color:rgb(var(--primary-6)) !important}',
     '.aiondx-voice-play-btn[data-state="playing"] .aiondx-voice-icon{color:rgb(var(--primary-6))}',
     '.aiondx-voice-play-btn[data-state="playing"]{animation:aiondx-voice-pulse-soft 1.6s ease-out infinite}',
+    '.aiondx-voice-stopall-btn[data-state="active"]{color:rgb(var(--primary-6)) !important}',
+    '.aiondx-voice-stopall-btn[data-state="active"] .aiondx-voice-icon{color:rgb(var(--primary-6))}',
+    '.aiondx-voice-stopall-btn[data-state="active"]{animation:aiondx-voice-pulse-soft 1.6s ease-out infinite}',
     '@keyframes aiondx-voice-pulse{0%{box-shadow:0 0 0 0 rgba(var(--danger-6),.45)}70%{box-shadow:0 0 0 7px rgba(var(--danger-6),0)}100%{box-shadow:0 0 0 0 rgba(var(--danger-6),0)}}',
     '@keyframes aiondx-voice-pulse-soft{0%{box-shadow:0 0 0 0 rgba(var(--primary-6),.35)}70%{box-shadow:0 0 0 6px rgba(var(--primary-6),0)}100%{box-shadow:0 0 0 0 rgba(var(--primary-6),0)}}',
     '@keyframes aiondx-voice-spin{to{transform:rotate(360deg)}}',
@@ -137,6 +140,9 @@
     '<path d="M6 18v12h8l12 10V8L14 18H6Z" fill="currentColor"/>' +
     '<path d="M34 16a12 12 0 0 1 0 16" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>' +
     '<path d="M39 10a20 20 0 0 1 0 28" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>';
+  var ICON_SPEAKER_MUTE = '<svg viewBox="0 0 48 48" fill="none" aria-hidden="true">' +
+    '<path d="M6 18v12h8l12 10V8L14 18H6Z" fill="currentColor"/>' +
+    '<path d="M30 16l12 16M42 16L30 32" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>';
 
   // ---------------------------------------------------------------- shared helpers
 
@@ -166,6 +172,30 @@
     return (content.textContent || '').trim();
   }
 
+  /** Markdown read character-by-character sounds broken (a user's report: a fenced code block came
+   *  out as ElevenLabs sounding out punctuation and symbols). This turns a reply's raw markdown into
+   *  something that reads naturally, before it ever reaches synthesize() - the TTS module stays a
+   *  dumb client and knows nothing about markdown.
+   *  Order matters: fenced blocks first (their own backticks would otherwise look like inline code
+   *  spans), then inline code, then the line-level markers, then links, then whitespace. */
+  function spokenText(raw) {
+    var text = String(raw || '');
+    text = text.replace(/```(\w+)?[^\n]*\n?[\s\S]*?```/g, function (m, lang) {
+      return lang ? ' a snippet of ' + lang + ' code. ' : ' a code block. ';
+    });
+    text = text.replace(/`([^`\n]+)`/g, '$1');            // inline code: usually a short identifier, read plainly
+    text = text.replace(/^\s{0,3}#{1,6}\s+/gm, '');        // headings
+    text = text.replace(/(\*\*\*|___)(.+?)\1/g, '$2');     // bold+italic, longest marker first
+    text = text.replace(/(\*\*|__)(.+?)\1/g, '$2');        // bold
+    text = text.replace(/(\*|_)(.+?)\1/g, '$2');           // italic
+    text = text.replace(/^\s{0,3}[-*+]\s+/gm, '');         // bullet lists
+    text = text.replace(/^\s{0,3}\d+[.)]\s+/gm, '');       // numbered lists
+    text = text.replace(/^\s{0,3}>\s?/gm, '');             // blockquotes
+    text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');   // links: read the text, not the brackets or URL
+    text = text.replace(/\s+/g, ' ').trim();               // collapse structural newlines into natural pauses
+    return text;
+  }
+
   function audioBlobFrom(result) {
     if (result instanceof Blob) return result;
     if (result && result.blob instanceof Blob) return result.blob;
@@ -191,7 +221,7 @@
   function foreignChange(records) {
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
-      if (!t.closest || !t.closest('.aiondx-voice-mic, .aiondx-voice-play, .aiondx-voice-panel')) return true;
+      if (!t.closest || !t.closest('.aiondx-voice-mic, .aiondx-voice-play, .aiondx-voice-stopall, .aiondx-voice-panel')) return true;
     }
     return false;
   }
@@ -326,9 +356,20 @@
 
   // ---------------------------------------------------------------- playback button (agent messages)
 
-  var currentPlayback = null;   // { wrap, audio, url }
+  var currentPlayback = null;   // { wrap, audio, url }, once audio exists (the "playing" phase)
+  var loadingWrap = null;       // the wrap waiting on synthesize(), before audio exists
+  // Bumped by every startPlayback() and stopPlayback(): a synthesize() call started before the bump
+  // checks this before touching the DOM or creating an Audio element, so a reply superseded by a
+  // second click (or a stop) while still "loading" cannot clobber whatever plays next. Before this,
+  // clicking a second message's speaker while the first was still loading left the first stuck in
+  // "loading" forever (nothing ever reset it) and, once its request eventually resolved, could start
+  // a second Audio element fighting the one already playing - a real bug, not just a UI nit: a
+  // dangling fetch plus a button with no way to escape "loading" looks exactly like the app hanging.
+  var playGen = 0;
 
   function stopPlayback() {
+    playGen++;
+    if (loadingWrap) { setPlayState(loadingWrap, 'idle'); loadingWrap = null; }
     if (!currentPlayback) return;
     var cp = currentPlayback;
     currentPlayback = null;
@@ -342,6 +383,7 @@
     st.state = state;
     st.detail = detail || '';
     paintPlay(wrap);
+    paintStopAllButtons();   // every message's play state feeds the one global "stop all reading" control
     if (state === 'error') {
       if (st.errTimer) clearTimeout(st.errTimer);
       st.errTimer = setTimeout(function () { if (wrap.__st === st && st.state === 'error') setPlayState(wrap, 'idle'); }, ERROR_HOLD_MS);
@@ -357,10 +399,12 @@
     else if (st.state === 'loading') html = ICON_SPINNER;
     if (icon.__shown !== html) { icon.innerHTML = html; icon.__shown = html; }
     var canUse = !!(voice() && typeof voice().synthesize === 'function');
-    btn.disabled = !canUse || st.state === 'loading';
+    // "loading" is clickable too (it cancels), unlike the mic's "transcribing": there is no way to
+    // retry a stuck play from anywhere else, so the same button has to be its own escape hatch.
+    btn.disabled = !canUse;
     var label = !canUse ? 'Play this reply: the voice module is not loaded'
       : st.state === 'playing' ? 'Stop playback'
-      : st.state === 'loading' ? 'Preparing audio...'
+      : st.state === 'loading' ? 'Preparing audio... click to cancel'
       : st.state === 'error' ? 'Could not play this reply: ' + (st.detail || 'synthesis failed') + '. Click to try again.'
       : 'Play this reply aloud';
     if (btn.getAttribute('aria-label') !== label) btn.setAttribute('aria-label', label);
@@ -369,11 +413,15 @@
 
   function startPlayback(wrap, content) {
     stopPlayback();
-    var text = messageText(content);
+    var text = spokenText(messageText(content));
     if (!text) { setPlayState(wrap, 'error', 'nothing to read'); return; }
+    var myGen = ++playGen;
+    loadingWrap = wrap;
     setPlayState(wrap, 'loading');
     var p = call('synthesize', text, (settingsCache.data || {}).voiceId);
     (p || Promise.reject(new Error('no voice module'))).then(function (result) {
+      if (myGen !== playGen) return;   // superseded by a newer play, or stopped, while this was in flight
+      loadingWrap = null;
       var url = audioUrlFrom(result);
       var ownUrl = false;
       if (!url) {
@@ -392,6 +440,8 @@
         if (currentPlayback === cp) { currentPlayback = null; setPlayState(wrap, 'error', 'playback was blocked'); }
       });
     }, function (e) {
+      if (myGen !== playGen) return;   // superseded; do not paint a stale error over whatever is current now
+      loadingWrap = null;
       console.log('[dx-voice] synthesize error', e);
       setPlayState(wrap, 'error', (e && e.message) || 'synthesis failed');
     });
@@ -411,7 +461,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       var st = wrap.__st;
-      if (st.state === 'playing') stopPlayback();
+      if (st.state === 'playing' || st.state === 'loading') stopPlayback();
       else if (st.state === 'idle' || st.state === 'error') startPlayback(wrap, content);
     });
     wrap.appendChild(btn);
@@ -439,6 +489,58 @@
       var wrap = buildPlayButton(content);
       content.parentNode.insertBefore(wrap, content.nextSibling);
     }
+  }
+
+  // ------------------------------------------------- global "stop all reading" button (composer)
+
+  /** One button per composer (the mic button's neighbour), all of them reflecting and controlling
+   *  the same page-wide playback state: only one reply ever plays at a time (startPlayback() always
+   *  calls stopPlayback() first), so stopping "all" is just stopping that one - but a single
+   *  discoverable control beats hunting down whichever message's speaker button is lit. */
+  function buildStopAllButton() {
+    var wrap = document.createElement('span');
+    wrap.className = 'aiondx-voice-stopall';
+    wrap.setAttribute('data-testid', 'aiondx-voice-stopall');
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'arco-btn arco-btn-secondary arco-btn-size-small arco-btn-shape-circle aiondx-voice-stopall-btn';
+    btn.setAttribute('data-testid', 'aiondx-voice-stopall-btn');
+    btn.innerHTML = '<span class="aiondx-voice-icon">' + ICON_SPEAKER_MUTE + '</span>';
+    btn.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      stopPlayback();
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  function paintStopAllButtons() {
+    var active = !!(loadingWrap || currentPlayback);
+    var btns = document.querySelectorAll('.aiondx-voice-stopall-btn');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      b.disabled = !active;
+      var want = active ? 'active' : 'idle';
+      if (b.getAttribute('data-state') !== want) b.setAttribute('data-state', want);
+      var label = active ? 'Stop all reading' : 'Nothing is being read aloud';
+      if (b.getAttribute('aria-label') !== label) b.setAttribute('aria-label', label);
+      if (b.hasAttribute('title')) b.removeAttribute('title');
+    }
+  }
+
+  function ensureStopAllButtons() {
+    var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
+    for (var i = 0; i < boxes.length; i++) {
+      var ta = boxes[i].tagName === 'TEXTAREA' ? boxes[i] : boxes[i].querySelector('textarea');
+      if (!ta || !ta.getClientRects().length) continue;
+      var panel = ta.closest('.sendbox-panel') || ta.parentElement;
+      var actions = panel && panel.querySelector('.sendbox-actions');
+      if (!actions || actions.querySelector('.aiondx-voice-stopall')) continue;
+      var mic = actions.querySelector('.aiondx-voice-mic');
+      actions.insertBefore(buildStopAllButton(), mic ? mic.nextSibling : actionsInsertAnchor(actions));
+    }
+    paintStopAllButtons();
   }
 
   // ---------------------------------------------------------------- settings panel (Settings > Appearance)
@@ -648,6 +750,7 @@
   function render() {
     try { ensureVoiceClient(); } catch (e) { console.log('[dx-voice] voice client init failed', e); }
     try { ensureMicButtons(); } catch (e) { console.log('[dx-voice] mic render failed', e); }
+    try { ensureStopAllButtons(); } catch (e) { console.log('[dx-voice] stop-all render failed', e); }
     try { ensurePlayButtons(); } catch (e) { console.log('[dx-voice] play render failed', e); }
     try { ensureVoicePanel(); } catch (e) { console.log('[dx-voice] settings render failed', e); }
   }
@@ -671,6 +774,8 @@
     repaint: function () { render(); },
     micState: function () { return activeMic ? activeMic.__st.state : 'idle'; },
     playing: function () { return !!currentPlayback; },
-    stopAll: function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); }
+    playbackActive: function () { return !!(loadingWrap || currentPlayback); },
+    stopAll: function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); },
+    spokenText: spokenText
   };
 })();
