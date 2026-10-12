@@ -1,10 +1,16 @@
 # 0011-voice: provider-agnostic voice (TTS/STT), ElevenLabs first
 
-**Target:** renderer only (a plain global script, like patch 0001's `aionui-dx.js`), plus one key in
-AionUi's per-user settings store. **Status:** core module and tests written and passing
-(`node patches\0011-voice\test-voice.js`, 46/46); not yet wired into `index.html` or
-`tools\build-release.ps1`, and not yet installed. The composer's mic button and playback controls
-are the other half of this folder, built in parallel against this same interface.
+**Target:** renderer only (two plain global scripts, like patch 0001's `aionui-dx.js`), plus one key
+in AionUi's per-user settings store. **Status:** both halves done and wired into the build, not yet
+installed. `aiondx-voice.js` (the provider module: the interface, ElevenLabs, the settings store,
+`createVoiceClient`) passes `node patches\0011-voice\test-voice.js`, 46/46. `aiondx-voice-ui.js` (the
+composer's mic button, a playback button on agent replies, and a Settings > Appearance section for
+provider/key/voice) builds its `window.__aionDxVoice` from `window.AionDxVoice.createVoiceClient(...)`
+the same way patch 0001 builds its own backend address, and is checked end to end two ways:
+`dev-smoke-test.js` (16/16, a UI-shaped stub) and `dev-smoke-test-real.js` (14/14, the real module
+with only `fetch` stubbed - the settings store and ElevenLabs' three endpoints, no real network or key).
+Both scripts are wired into `index.html` / `tools\build-release.ps1` / `tools\privacy-check.js` the
+same way `aionui-dx.js` is.
 
 ## What it adds
 
@@ -98,33 +104,36 @@ is - the key always comes from the settings record at call time).
 |---|---|
 | `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore`, and `createVoiceClient` (the flat convenience wrapper) |
 | `test-voice.js` | 46 checks against a stand-in HTTP server standing in for both ElevenLabs and the settings store - no real network, no real AionUi, no real key |
+| `aiondx-voice-ui.js` | the composer's mic button (idle/recording/transcribing, matching patch 0001's 28x28 Arco circle pills), a speaker button on each agent reply (idle/loading/playing, stops on a second click or the clip ending), and a settings panel section on Settings > Appearance (provider, API key, voice, from `listVoices()` when the provider offers one) |
+| `dev-harness.html`, `voice-provider.stub.js`, `dev-smoke-test.js` | a UI-only dev loop: a minimal composer/message/settings DOM plus a stand-in `window.__aionDxVoice` (not shipped), driven with real mouse and a fake microphone in headless Edge, 16/16 |
+| `dev-harness-real.html`, `dev-smoke-test-real.js` | the same real-mouse check against the actual `aiondx-voice.js`, with only `window.fetch` stubbed (the settings store and ElevenLabs' three endpoints) - no real network or key, 14/14 |
 
 ## Installing, checking, removing
 
-Not yet wired into the build. What is still needed, for whoever wires the UI half in:
+Wired into the build the same way `aionui-dx.js` is: two more script tags in `index.html`
+(`<script src="./aiondx-voice.js" defer></script>` then `<script src="./aiondx-voice-ui.js" defer></script>`,
+module before the UI that builds a client from it), a `Copy-Item` of each file to
+`out\renderer\`, both added to `tools\privacy-check.js`'s `--files` list, and `0011-voice` added to
+the release manifest's `patches` list - all in `tools\build-release.ps1`. `aiondx-voice-ui.js` builds
+`window.__aionDxVoice = window.AionDxVoice.createVoiceClient({ baseUrl: apiUrl(''), csrfToken: csrf })`
+with its own `apiUrl()`/`csrf()`, matching patch 0001's (same-origin paths silently fail in the
+desktop app - patch 0001's "Bug that shipped" section has the full story).
 
-1. A script tag in `index.html`, built the same way patch 0001's is
-   (`tools\build-release.ps1` line ~98: `<script src="./aionui-dx.js" defer></script>`) - one more
-   line for `<script src="./aiondx-voice.js" defer></script>`, and a `Copy-Item` of this file to
-   `out\renderer\aiondx-voice.js`, alongside the existing `Copy-Item` for `aionui-dx.js`.
-2. `tools\privacy-check.js`'s `--files` list (around line 300) should gain
-   `$ext\out\renderer\aiondx-voice.js` next to `aionui-dx.js` and `aiondx-themes.js`.
-3. Whatever calls `AionDxVoice.createSettingsStore` and `AionDxVoice.createProvider` from the
-   composer needs to pass `baseUrl`/`csrfToken` (or a `request` function) built the same way patch
-   0001's `apiUrl()` and `csrf()` are, so requests reach the backend in the desktop app and not a
-   same-origin path that resolves against the renderer's own address (patch 0001's "Bug that
-   shipped" section has the full story of why that distinction matters).
+Checks, none of them touching a real AionUi install:
+- `node patches\0011-voice\test-voice.js` - the module's own 46 checks.
+- `node patches\0011-voice\dev-smoke-test.js` - the UI against a stand-in client (real mouse + fake mic, headless Edge).
+- `node patches\0011-voice\dev-smoke-test-real.js` - the UI against the real module, only `fetch` stubbed.
 
-Until then: `node patches\0011-voice\test-voice.js` runs the module's own tests without installing
-anything.
+Removing: delete the two script tags and the two `Copy-Item` lines above, and the two files from
+`out\renderer\`; nothing else in the app references them. The settings record
+(`aiondx.voice.config`) is left in the store, the same as any other `aiondx.*` setting a removed
+patch leaves behind.
 
 ## Not yet done
 
-- The composer's mic button (record, call `transcribe`, drop the text in) and a play button for an
-  agent's reply (call `synthesize`, play the `Blob`) - the UI half of this folder, built in parallel
-  against the `VoiceProvider` interface above.
-- A Settings panel row to pick the provider, paste the API key and pick a voice (`listVoices`) -
-  calls `createSettingsStore` the same way.
-- The build wiring above (the script tag, the privacy-check file list).
 - A second provider, if ever wanted: one more `PROVIDERS` entry in `aiondx-voice.js`; everything
   else in this file and in the UI stays the same.
+- Not installed on a real machine yet; `dev-smoke-test.js` / `dev-smoke-test-real.js` are headless
+  checks against a throwaway DOM and a stubbed `fetch`, not `tools\dx-harness\click-test.js`'s full
+  app-shaped harness (which needs `vendor\extracted`, not present in a fresh clone) and not a real
+  ElevenLabs account.
