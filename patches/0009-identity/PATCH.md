@@ -128,3 +128,17 @@ hash the user was shown. A `claude.cmd` goes through `cmd.exe` and refuses `& | 
 Measured while building it: `claude plugin` ignores `CLAUDE_CONFIG_DIR` when started through the developer's launcher, so a test
 install went into the owner's own `~/.claude` (removed again the same minute: plugin uninstalled, `enabledPlugins` taken back
 out of settings.json, the cache folders deleted). Test plugin changes only through the harness stub.
+
+## October 12th, 2026: the model refresh at start, and signing an agent in from a button
+
+- **Model refresh.** After the per-user setup ends, and every twelve hours while AionDX runs, `__aiondxStart` starts
+  `aiondx-model-refresh.js` (patch 0002; from AionDX's bin folder, or `%APPDATA%\npm` in the developer layout) on the Node.js AionDX ships,
+  hidden and detached. `AIONDX_NO_REFRESH=1` skips it.
+- **`aiondx:signin`** (main process) and **`window.aiondxSignin`** (preload: `status`, `start`, `code`, `poll`, `cancel`, `register`). A
+  request of 2026-10-11: setting up agents took an agent and a long time. The agent's own CLI signs in, so its credentials stay where it keeps
+  them and AionDX never holds a key. For Claude Code: `claude auth login --claudeai`, hidden, its link read from its output, a pasted code
+  written to its input (it takes one there, checked offline with `tools\probe-claude-login.js`), `claude auth status --json` for the result.
+  Inherited tokens are taken out of its environment (they would sign it in as that token). An extra account (`account`: a short word) signs
+  in to `%USERPROFILE%\.claude-<name>`, and `register` adds it to the Claude launcher's `accounts` (a backup kept; a config that is not JSON
+  is left alone), so every chat's account menu can use it. One sign-in at a time, killed after ten minutes. `claude setup-token` was not
+  used: it prints nothing through pipes. Tests: `test-signin.js` (18, a stand-in Claude Code).

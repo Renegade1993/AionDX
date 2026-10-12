@@ -157,7 +157,18 @@ function startTap(opts) {
 // config switches it off.
 const USAGE_EVERY_MS = 5 * 60000;
 const USAGE_AFTER_TURN_MS = 90000;
-const USAGE_MODEL = 'claude-haiku-4-5-20251001';
+// Always the newest Haiku the account is offered (a request of 2026-10-12): the build Claude Code itself resolves `haiku` to, as the model
+// catalog (claude-model-catalog.js) last saved it in the account's config folder; this constant only when there is no catalog yet.
+const USAGE_MODEL = 'claude-haiku-5-5';
+function usageModel(configDir) {
+  try {
+    const st = JSON.parse(require('fs').readFileSync(require('path').join(configDir, 'aiondx-models.json'), 'utf8'));
+    const h = (st.models || []).find((m) => m && m.value === 'haiku');
+    const id = h && String(h.resolvedModel || '');
+    if (/^claude-haiku-[0-9a-z-]+$/.test(id)) return id;
+  } catch { /* no catalog yet */ }
+  return USAGE_MODEL;
+}
 
 function headerMap(headers) {
   const g = (k) => headers.get(k);
@@ -248,7 +259,7 @@ function startUsage(opts, log) {
         const r = await fetch(opts.usageUrl || 'https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { authorization: 'Bearer ' + token, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: USAGE_MODEL, max_tokens: 1, system: "You are Claude Code, Anthropic's official CLI for Claude.", messages: [{ role: 'user', content: '.' }] }),
+          body: JSON.stringify({ model: u.configDir ? usageModel(u.configDir) : USAGE_MODEL, max_tokens: 1, system: "You are Claude Code, Anthropic's official CLI for Claude.", messages: [{ role: 'user', content: '.' }] }),
           signal: AbortSignal.timeout(15000),
         });
         try { await r.arrayBuffer(); } catch { /* body not needed */ }
@@ -573,4 +584,4 @@ function isStreamSession(args) {
   return i >= 0 && args[i + 1] === 'stream-json';
 }
 
-module.exports = { startProxy, isStreamSession, startTap, readUsage };
+module.exports = { usageModel, startProxy, isStreamSession, startTap, readUsage };

@@ -104,8 +104,30 @@ function __aiondxIconFile(name) {
     const child = require("child_process").spawn(act, ["activate", "--quiet", "--from", "aionui-start"], { windowsHide: true, stdio: "ignore" });
     const timer = setTimeout(() => { try { child.kill(); } catch {} }, 90000);
     if (timer.unref) timer.unref();
-    child.on("error", () => clearTimeout(timer));
-    child.on("exit", () => clearTimeout(timer));
+    // Every agent's model picker current (a request of 2026-10-11): once the per-user setup has put the programs in place, and again every
+    // twelve hours while AionDX runs, aiondx-model-refresh.js asks each agent's CLI what it offers and rewrites the stored pickers. It runs
+    // on the Node.js AionDX ships (it reads AionCore's database with node:sqlite), hidden, and ends itself within four minutes.
+    // AIONDX_NO_REFRESH=1 skips it (tests).
+    const refresh = () => {
+      try {
+        if (process.env.AIONDX_NO_REFRESH === "1") return;
+        // AionDX's own bin folder, or %APPDATA%\\npm where a developer's layout keeps the Claude launcher and its scripts.
+        const ownBin = process.env.LOCALAPPDATA ? path__namespace.join(process.env.LOCALAPPDATA, "AionDX", "bin") : "";
+        const npmDir = process.env.APPDATA ? path__namespace.join(process.env.APPDATA, "npm") : "";
+        const script = [ownBin, npmDir].map((d) => d ? path__namespace.join(d, "aiondx-model-refresh.js") : "").find((f) => f && fs__namespace.existsSync(f));
+        if (!script) return;
+        const base = path__namespace.join(process.resourcesPath, "bundled-aioncore", "win32-x64", "managed-resources", "node");
+        const found = fs__namespace.existsSync(base) ? fs__namespace.readdirSync(base).filter((n) => /^node-v[0-9.]+-win-x64$/.test(n) && fs__namespace.existsSync(path__namespace.join(base, n, "node.exe"))).sort().pop() : null;
+        const node = found ? path__namespace.join(base, found, "node.exe") : "node";
+        const r = require("child_process").spawn(node, [script], { windowsHide: true, stdio: "ignore", detached: true });
+        r.on("error", () => {});
+        r.unref();
+      } catch {}
+    };
+    const every = setInterval(refresh, 12 * 3600000);
+    if (every.unref) every.unref();
+    child.on("error", () => { clearTimeout(timer); refresh(); });
+    child.on("exit", () => { clearTimeout(timer); refresh(); });
   } catch {}
 })();
 /** Right-click: Cut, Copy, Paste and Select all in a text box, and Copy on selected text. AionUi shows no menu
@@ -266,6 +288,115 @@ function __aiondxIconFile(name) {
     });
   } catch {}
 })();
+/** Signing an agent in from a button (a request of 2026-10-11: "the only way to setup agents in AionDX is to have a agent ... set them up").
+ *  The agent's own CLI does the sign-in, so its credentials end up where that CLI keeps them and AionDX never holds a key: for Claude Code,
+ *  claude auth login, which opens the sign-in page in the browser and, when the page shows a code instead of finishing, takes the code on
+ *  its input. The page's sign-in panel starts it here (hidden), shows the link, passes a pasted code on, and asks claude auth status when it
+ *  ends. One sign-in at a time; it is killed after ten minutes. An optional config folder (a second Claude account) must be a .claude*
+ *  folder in the user's profile. */
+(function __aiondxSignin() {
+  try {
+    const electron = require$$0$2;
+    const cp = require("child_process");
+    const os = require("os");
+    let run = null;   // { child, out, code, started }
+    const findClaude = () => {
+      const dirs = String(process.env.PATH || process.env.Path || "").split(path__namespace.delimiter).filter(Boolean);
+      for (const d of dirs) {
+        const f = path__namespace.join(d.replace(/^"|"$/g, ""), "claude.exe");
+        try { if (fs__namespace.statSync(f).isFile()) return f; } catch {}
+      }
+      const native = path__namespace.join(os.homedir(), ".local", "bin", "claude.exe");
+      return fs__namespace.existsSync(native) ? native : null;
+    };
+    const envFor = (configDir) => {
+      const env = Object.assign({}, process.env);
+      for (const k of ["ELECTRON_RUN_AS_NODE", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "AIONUI_CONVERSATION_ID"]) delete env[k];
+      if (configDir) { env.CLAUDE_CONFIG_DIR = configDir; env.CLAUDE_SECURESTORAGE_CONFIG_DIR = configDir; }
+      return env;
+    };
+    const plain = (s) => String(s || "").replace(/\\x1b\\[[0-9;?]*[A-Za-z]/g, "");
+    const linkIn = (s) => { const i = s.indexOf("https://"); if (i < 0) return null; return s.slice(i).split(/\\s/)[0]; };
+    // The Claude launcher's config (the account router's accounts), where a newly signed-in account is added so every chat's account
+    // menu offers it: beside the router AionDX installed, or beside the developer's copy in %APPDATA%\\npm.
+    const routerDir = () => {
+      if (process.env.AIONDX_ROUTER_DIR) return process.env.AIONDX_ROUTER_DIR;   // tests
+      const dirs = [process.env.LOCALAPPDATA ? path__namespace.join(process.env.LOCALAPPDATA, "AionDX", "bin") : "", process.env.APPDATA ? path__namespace.join(process.env.APPDATA, "npm") : ""];
+      return dirs.find((d) => d && fs__namespace.existsSync(path__namespace.join(d, "claude-account-router.js"))) || null;
+    };
+    electron.ipcMain.handle("aiondx:signin", async (_event, req) => {
+      try {
+        const op = req && req.op;
+        if (req && req.agent && req.agent !== "claude") return { ok: false, error: "Only Claude Code signs in from here so far." };
+        // An extra account signs in to its own folder, %USERPROFILE%\\.claude-<name>; none means this PC's usual Claude sign-in.
+        const account = req && req.account ? String(req.account) : "";
+        if (account && !/^[a-z0-9][a-z0-9-]{0,23}$/.test(account)) return { ok: false, error: "An account name is a short word: letters, digits and dashes." };
+        const configDir = account ? path__namespace.join(os.homedir(), ".claude-" + account) : "";
+        if (op === "register") {
+          if (!account) return { ok: false, error: "Which account?" };
+          const dir = routerDir();
+          if (!dir) return { ok: false, error: "AionDX's Claude launcher is not installed, so there is no account list to add it to." };
+          const file = path__namespace.join(dir, "claude-account-router.config.json");
+          let cfg = {};
+          try { cfg = JSON.parse(fs__namespace.readFileSync(file, "utf8")) || {}; } catch (e) { if (fs__namespace.existsSync(file)) return { ok: false, error: "The launcher's config is not readable JSON; it was left alone." }; }
+          if (!cfg.accounts || typeof cfg.accounts !== "object") cfg.accounts = {};
+          const label = String(req.label || account).slice(0, 60);
+          cfg.accounts[account] = Object.assign({}, cfg.accounts[account] || {}, { label, configDir });
+          if (fs__namespace.existsSync(file)) fs__namespace.copyFileSync(file, file + ".bak-signin");
+          fs__namespace.writeFileSync(file + ".tmp", JSON.stringify(cfg, null, 2));
+          fs__namespace.renameSync(file + ".tmp", file);
+          return { ok: true, id: account, label, configDir };
+        }
+        if (op === "status") {
+          const exe = findClaude();
+          if (!exe) return { ok: true, installed: false };
+          return await new Promise((resolve) => {
+            cp.execFile(exe, ["auth", "status", "--json"], { env: envFor(configDir), windowsHide: true, timeout: 30000 }, (err, stdout) => {
+              let j = null;
+              try { j = JSON.parse(stdout); } catch {}
+              resolve(j ? { ok: true, installed: true, loggedIn: !!j.loggedIn, method: j.authMethod || "", email: j.email || "", org: j.orgName || "", plan: j.subscriptionType || "" }
+                        : { ok: false, installed: true, error: String(err && err.message || "no answer") });
+            });
+          });
+        }
+        if (op === "start") {
+          if (run && run.code === null) return { ok: false, error: "A sign-in is already going; finish it or cancel it first." };
+          const exe = findClaude();
+          if (!exe) return { ok: false, error: "Claude Code is not installed on this PC." };
+          if (configDir) fs__namespace.mkdirSync(configDir, { recursive: true });
+          const child = cp.spawn(exe, ["auth", "login", "--claudeai"], { env: envFor(configDir), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+          const r = { child, out: "", code: null, started: Date.now() };
+          run = r;
+          child.stdout.on("data", (d) => { if (r.out.length < 20000) r.out += d; });
+          child.stderr.on("data", (d) => { if (r.out.length < 20000) r.out += d; });
+          child.on("error", (e) => { r.out += String(e && e.message || e); r.code = -1; });
+          child.on("exit", (code) => { r.code = code === null ? -1 : code; clearTimeout(r.timer); });
+          r.timer = setTimeout(() => { try { child.kill(); } catch {} }, 600000);
+          for (let i = 0; i < 60 && r.code === null && !linkIn(plain(r.out)); i++) await new Promise((res) => setTimeout(res, 250));
+          const url = linkIn(plain(r.out));
+          if (!url) return { ok: r.code === null, url: null, text: plain(r.out).slice(-400) };
+          return { ok: true, url };
+        }
+        if (op === "code") {
+          if (!run || run.code !== null) return { ok: false, error: "No sign-in is waiting for a code." };
+          const code = String(req.code || "").trim();
+          if (!code || code.length > 2000 || /[\\r\\n]/.test(code)) return { ok: false, error: "That does not look like a sign-in code." };
+          run.child.stdin.write(code + "\\n");
+          return { ok: true };
+        }
+        if (op === "poll") {
+          if (!run) return { ok: true, state: "none" };
+          return { ok: true, state: run.code === null ? "running" : run.code === 0 ? "done" : "failed", text: plain(run.out).slice(-400) };
+        }
+        if (op === "cancel") {
+          if (run && run.code === null) { try { run.child.kill(); } catch {} }
+          return { ok: true };
+        }
+        return { ok: false, error: "unknown request" };
+      } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    });
+  } catch {}
+})();
 ${HELPER_END}
 `;
 
@@ -367,6 +498,24 @@ else {
     '  run: (args) => electron.ipcRenderer.invoke("aiondx:plugins", { args })\n' +
     '});\n' + anchor);
   notes.push('preload: aiondxPlugins');
+}
+
+// ... and an agent's sign-in from a button (main process aiondx:signin).
+if (/aiondxSignin/.test(preload)) notes.push('preload: aiondxSignin already there');
+else {
+  const anchor = 'const backendPort = electron.ipcRenderer.sendSync("get-backend-port");';
+  const n = count(preload, anchor);
+  if (n !== 1) { console.error(`0009: preload (signin): expected 1 match, found ${n}. Nothing written.`); process.exit(1); }
+  preload = preload.replace(anchor, '/* AIONDX-0009: an agent\'s sign-in from a button (patches/0009-identity, main process aiondx:signin) */\n' +
+    'electron.contextBridge.exposeInMainWorld("aiondxSignin", {\n' +
+    '  status: (agent, account) => electron.ipcRenderer.invoke("aiondx:signin", { op: "status", agent, account }),\n' +
+    '  start: (agent, account) => electron.ipcRenderer.invoke("aiondx:signin", { op: "start", agent, account }),\n' +
+    '  register: (account, label) => electron.ipcRenderer.invoke("aiondx:signin", { op: "register", agent: "claude", account, label }),\n' +
+    '  code: (code) => electron.ipcRenderer.invoke("aiondx:signin", { op: "code", code }),\n' +
+    '  poll: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "poll" }),\n' +
+    '  cancel: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "cancel" })\n' +
+    '});\n' + anchor);
+  notes.push('preload: aiondxSignin');
 }
 
 fs.writeFileSync(mainFile, main);

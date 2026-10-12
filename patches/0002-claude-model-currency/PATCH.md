@@ -302,3 +302,41 @@ making agents wait for a manual approval of every Bash command in YOLO mode.
 `claude-stream-proxy.js` wrote a reading that had not moved at most once a minute. The gap is now `aiondx.usage.config.writeSec` (5 to 600 seconds,
 60 by default), read from the store at most every 30 seconds; a reading that moved a whole percent or changed status is still written at once.
 The setting is on the usage meter's panel in the AionDX window.
+
+## October 11th and 12th, 2026: pickers that stay current, the newest Haiku for usage, and no token in tool output
+
+From two reports from another PC (a model-refresh package built there, and a team lead's report that no chat ever got a usage reading).
+
+- **`claude-model-catalog.js`** (new). For one Claude config folder it asks Claude Code itself (`initialize`, no inference) what the account is
+  offered: each alias, the build it resolves to today, and its effort levels. It runs Claude Code in a scratch folder holding copies of the
+  folder's sign-in file and its account cache (`.claude.json`, in the folder or beside a default `.claude` folder), so the answer is the
+  account's own list (one account gets Fable 5 where the generic list says Fable 5.1), and with no `availableModels` allowlist in the way.
+  When that cache is over six hours old a first launch waits (at most 30 s) for Claude Code to renew it, and a second launch gives the answer.
+  New entries are added to the folder's `settings.json` `availableModels` (nothing removed; a list with nothing new is not touched, order
+  included; a backup is kept); what was learned goes to `<folder>\aiondx-models.json`. The router starts it, detached and hidden, when a
+  chat starts and that file is over six hours old (30 minutes after a failure); `"modelCatalog": false` switches that off. Tests:
+  `test-model-catalog.js` (31).
+- **`aiondx-model-refresh.js`** (new). What AionCore does at a chat start, for every Claude agent, at AionDX's start (patch 0009 starts it on
+  the Node.js AionDX ships, after the per-user setup) and every twelve hours: the agent's own environment (the router's mapping, else the
+  agent's variables), the catalog above, one more `initialize` with the real folder, and the agent's stored picker (`agent_metadata`
+  `available_models` and the `model` and `reasoning_effort` selects in `config_options`) rewritten in AionCore's exact shape: `ultracode`
+  only on a model with `xhigh`, a description only where there is one, the remembered model and effort kept when they still exist. The effort
+  select is built from every model with effort levels (AionCore builds it from the remembered model only, so an agent last left on a model
+  without them lost it). Disabled agents are refreshed too. Only those two columns and `updated_at` are written, only when the table has the
+  columns and the old values are the expected shape, and only when something changed. Checked offline against this PC's agents: the rows it
+  would write equal AionCore's except for the price text, which Claude Code adds when it is online. Providers are `{ id, backends, update,
+  refresh }`; Claude is the first. Tests: `test-model-refresh.js` (18).
+- **Claude Code installed with npm stays current.** The refresh's update step: for every npm prefix holding `@anthropic-ai/claude-code`, the
+  version on the `"cliChannel"` tag (default `latest`) from `npm view`; when newer and no `claude.exe` from that prefix is running, an install
+  into `<prefix>\.aiondx-staging`, a `--version` check of the staged copy, and a swap of the package folder by two renames (the old one put
+  back if the second fails). npm never writes into the real prefix, so a hand-made `claude.cmd` there survives. `"cliUpdate": false` switches
+  it off. A native install updates itself and is left alone. Tests: `test-cli-update.js` (11, with a stand-in npm).
+- **Usage readings with the newest Haiku.** When the old direct probe is asked for (`"usageProbe": true`), it uses the build `haiku`
+  resolves to in the account's saved catalog, and Haiku 5.5 when there is none yet.
+- **The router finds Claude Code in any npm prefix.** `claudeOnPath()` also looks in `<dir>\node_modules\@anthropic-ai\claude-code\bin` for
+  every PATH folder (even one holding another router) and in `%LOCALAPPDATA%\Programs\nodejs`.
+- **No account token in a tool's environment.** The router set both `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_AUTH_TOKEN`. Measured offline
+  (`tools\probe-subprocess-env.js`: proxies at a closed local port, dummy tokens, a hook that lists its variables): Claude Code removes
+  `CLAUDE_CODE_OAUTH_TOKEN` from every command it runs and passes `ANTHROPIC_AUTH_TOKEN` through, so a tool call that listed its variables
+  printed the token into the chat. The router now sets `CLAUDE_CODE_OAUTH_TOKEN` only and removes an inherited `ANTHROPIC_AUTH_TOKEN`. Not
+  usable on Windows (`tools\probe-token-fd.js`): `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` and `CCR_OAUTH_TOKEN_FILE`.

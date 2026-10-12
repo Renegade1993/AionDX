@@ -47,6 +47,18 @@ const PROXY_LIVE = path.join(NPM, 'claude-stream-proxy.js');
 if (sameFile(PROXY_SRC, PROXY_LIVE)) say('pass-through: installed copy matches this folder');
 else if (check) say('pass-through: ' + (fs.existsSync(PROXY_LIVE) ? 'installed copy differs from this folder' : 'not installed'));
 else { fs.copyFileSync(PROXY_SRC, PROXY_LIVE); say('pass-through: installed'); }
+// the model catalog refresher the router starts (2026-10-11)
+const CATALOG_SRC = path.join(__dirname, 'claude-model-catalog.js');
+const CATALOG_LIVE = path.join(NPM, 'claude-model-catalog.js');
+if (sameFile(CATALOG_SRC, CATALOG_LIVE)) say('model catalog: installed copy matches this folder');
+else if (check) say('model catalog: ' + (fs.existsSync(CATALOG_LIVE) ? 'installed copy differs from this folder' : 'not installed'));
+else { fs.copyFileSync(CATALOG_SRC, CATALOG_LIVE); say('model catalog: installed'); }
+// the picker refresh AionDX starts at launch and every twelve hours (2026-10-12)
+const REFRESH_SRC = path.join(__dirname, 'aiondx-model-refresh.js');
+const REFRESH_LIVE = path.join(NPM, 'aiondx-model-refresh.js');
+if (sameFile(REFRESH_SRC, REFRESH_LIVE)) say('picker refresh: installed copy matches this folder');
+else if (check) say('picker refresh: ' + (fs.existsSync(REFRESH_LIVE) ? 'installed copy differs from this folder' : 'not installed'));
+else { fs.copyFileSync(REFRESH_SRC, REFRESH_LIVE); say('picker refresh: installed'); }
 
 // 2. plain account names in the config
 const cfg = JSON.parse(fs.readFileSync(CONFIG, 'utf8'));

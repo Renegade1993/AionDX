@@ -772,7 +772,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     /^Claude usage for you \(main \(Plan A\)\), read 3 min ago, from Claude's own traffic:/.test(uc.stdout) && /5-hour window: 63% used, resets \d\d:\d\d, in 2 h 14 min\./.test(uc.stdout) &&
     /Weekly window: 41% used, resets \w{3} \d\d:\d\d, in \d+ h/.test(uc.stdout) && !/second account/.test(uc.stdout), uc.stdout);
   uc = await cli(['usage'], 'convL');
-  check('a chat with no reading is told when one appears, and that nothing is called to get it', uc.status === 0 && /^No usage reading for this chat yet\./.test(uc.stdout) && /nothing is called to get it/.test(uc.stdout), uc.stdout);
+  check('a chat with no reading is told why: which launcher started its Claude, or that this is not a Claude chat (2026-10-12)', uc.status === 0 && /^No usage reading for this chat yet\./.test(uc.stdout) && /(launcher|No Claude Code process was found above this one)/.test(uc.stdout), uc.stdout);
   uc = await cli(['usage', '--all'], 'convS');
   check('--all adds the other accounts', /another account \(second account\)/.test(uc.stdout) && /5-hour window: 12% used/.test(uc.stdout) && /main \(Plan A\)/.test(uc.stdout), uc.stdout);
   uc = await cli(['usage', '--bogus'], 'convS');
@@ -801,7 +801,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('no alerts: it says so and how to set one', ua.status === 0 && /^No usage alerts are set for this team./.test(ua.stdout) && /aiondx usage alert --at 80 --window 5h --notify lead/.test(ua.stdout), ua.stdout);
   ua = await cli(['usage', 'alert', '--at', '80', '--window', '5h', '--message', 'Wrap up and write the handoff.'], 'convL');
   const alertRec = kv['aiondx.usagealert.team.team1'];
-  check('the lead sets a 5-hour alert for the lead: saved under the team, as the agent', ua.status === 0 && /^Saved\. When the 5-hour window reaches 80%/.test(ua.stdout) && alertRec && alertRec.rules.length === 1 &&
+  check('the lead sets a 5-hour alert for the lead: saved under the team, as the agent', ua.status === 0 && /^(WARNING: [^\n]*\n)?Saved\. When the 5-hour window reaches 80%/.test(ua.stdout) && alertRec && alertRec.rules.length === 1 &&
     alertRec.rules[0].window === '5h' && alertRec.rules[0].at === 0.8 && alertRec.rules[0].notify === 'lead' && alertRec.rules[0].by === 'agent' && alertRec.rules[0].who === 'Lead' &&
     alertRec.rules[0].message === 'Wrap up and write the handoff.', ua.stdout + JSON.stringify(alertRec));
   ua = await cli(['usage', 'alert', '--at', '90%', '--window', 'week', '--notify', 'all'], 'convL');
@@ -874,7 +874,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const alertTool = startTool('convS');
   await alertTool.rpc('initialize', { protocolVersion: '2025-06-18' });
   r = await alertTool.call('usage_alert', { at: 75, window: 'week' });
-  check('the usage_alert tool sets one when given a percent', !r.isError && /^Saved\. When the weekly window reaches 75%/.test(r.text) && kv['aiondx.usagealert.conv.convS'].rules.length === 2, r.text);
+  check('the usage_alert tool sets one when given a percent', !r.isError && /^(WARNING: [^\n]*\n)?Saved\. When the weekly window reaches 75%/.test(r.text) && kv['aiondx.usagealert.conv.convS'].rules.length === 2, r.text);
   r = await alertTool.call('usage_alert', { action: 'list' });
   check('and lists them', !r.isError && /Weekly window at 75%/.test(r.text) && /5-hour window at 85%/.test(r.text), r.text);
   r = await alertTool.call('usage_alert', { action: 'remove' });

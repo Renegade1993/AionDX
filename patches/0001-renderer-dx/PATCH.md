@@ -871,3 +871,26 @@ member's Stop already pauses the member through AionCore's pause route.)
   the folder route that accepts a folder). A chip for a folder, a program, an archive, a media file or anything over 5 MB opens outside on a
   click instead of AionUi's preview ("too big to preview"). A link `https://aiondx.invalid/run?path=...` (or `run:...`) asks "Run this
   program?" and then starts it. A failure says why.
+
+## October 10th, 2026: build `2026-10-10.1`
+
+- **Unsend under a queued bubble** (`queuedFoot`, `unsendButton`). A message waiting in a team member's queue is drawn with the Respond-now
+  bolt but without an "Unread" badge (the member's chat does not hold it yet), and the October 9th Unsend had been attached to that badge, so it
+  never appeared. Each queued bubble now gets a line under it, "Waiting in the queue", with Unsend and Edit; the line goes when the message leaves
+  the queue. The queue scan (`scanTeamQueues`) now redraws the Unsend lines when it finishes instead of waiting for the next change of the page.
+  Proved in the real app by `tools\test-live-unsend.js`: a team, a Worker held in a tool call, a second message waiting, Unsend, and the mailbox
+  row gone from the queue.
+- **Edit** (`editUnread`, `finishEdit`). Beside Unsend, in the Unread badge and in the queued line: it takes the message back the same way and, once
+  that has worked, puts its text in the message box of that chat (after anything already typed, with a blank line between). If the message was
+  already read, nothing is changed and the box is left alone.
+- **Debug hooks**: `window.__aionDx.runUnsend()` and `teamUnsendState()`.
+
+## October 12th, 2026: build `2026-10-12.1`
+
+- **Sign in to your agents** (Welcome screen; `accountsStart`, `accountsStatus`, `accountsCode`, `accountsDone`). Offered on the first step
+  when the app has the sign-in bridge (patch 0009). Claude Code's row says whether it is signed in and as whom; Sign in starts its own sign-in
+  page, shows the link and a box for the code the page may show; Add another Claude account asks for a short name, signs that account in to
+  its own folder and adds it to `aiondx.accounts`, the list every Claude chat's account menu reads.
+- **Model names from the agents list** (`learnModels`). A disabled agent is skipped (the disabled built-in Claude still had Haiku 4.5 and its
+  name won over the enabled agents' Haiku 5.5), and a name the enabled agents disagree on in one answer goes back to plain.
+- Tests: click suite scenarios `one-click` (the sign-in page) and `model-labels` (disabled agents, disagreement).

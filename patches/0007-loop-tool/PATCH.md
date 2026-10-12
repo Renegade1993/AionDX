@@ -379,3 +379,25 @@ proving the data was not touched. The installer page (`installer\aiondx.iss`) ca
 - Skill: a section on usage alerts, and the pictures section now starts with the one command. The skill's description line names pictures, links,
   folders and installers so a skill search finds it.
 - Tests: `test-loop-tool.js` 190/190, `test-mcp-bridge.js` 81/81, `test-migrate.js` 23/23.
+
+## October 12th, 2026: version 1.14.0, chats behind an older launcher
+
+From a team lead's report on another PC: every chat said "No usage reading for this chat yet. It appears after this chat's Claude makes its
+next request", and none ever came. Claude Code there was an npm install in `%LOCALAPPDATA%\Programs\nodejs` (`%USERPROFILE%\nodejs-bin` a
+junction to it), beside an older hand-made account router, so the per-user setup logged "Claude Code: not installed" and never put AionDX's
+launcher, router and usage tap in place.
+
+- **The setup finds Claude Code inside any npm prefix** (`RealClaude`): `<dir>\node_modules\@anthropic-ai\claude-code\bin\claude.exe` for
+  every PATH folder, even one holding another router, and in `%LOCALAPPDATA%\Programs\nodejs`.
+- **"The developer layout" means AionDX's own router** in `%APPDATA%\npm` (`IsAionDxRouter`: it names `claude-stream-proxy.js`). An older
+  router there or anywhere no longer stops AionDX's launcher from going in.
+- **The older router's account mapping comes along** (`ForeignRouterConfig`): its `claude-account-router.config.json` is copied into
+  AionDX's bin folder when AionDX has none there, so moving chats onto AionDX's launcher does not change which account a chat is billed to.
+  An existing AionDX config is never replaced. Recorded in the manifest as `config/claude-account-router`.
+- **`aiondx usage` says why there is no reading** (`FindLaunch`, `LaunchText`, and `Native.ReadCommandLine`, the command line from the
+  process's PEB): it walks up from itself to the chat's `claude.exe` and looks at its parent. An older launcher is named, with what to do;
+  AionDX's launcher is named, with where its log is; a Claude started directly is said so. `aiondx launcher` prints just that paragraph.
+- **`aiondx usage alert` warns** when the chat has no reading yet, with the same paragraph, so a saved alert is not taken for a working one.
+- **`aiondx doctor` checks the Claude launcher** and, without `--check`, runs the per-user setup to put it in place.
+- Also copied and removed with the rest: `claude-model-catalog.js` and `aiondx-model-refresh.js` (patch 0002).
+- Tests: `test-launcher.js` (5: a real chain of stand-in processes, an older router, AionDX's, none), Loop tool 192.

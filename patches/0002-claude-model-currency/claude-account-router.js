@@ -148,14 +148,17 @@ function versionOf(exe, cache) {
  *  came from somewhere other than its own installer or npm (winget, say). */
 function claudeOnPath() {
   const out = [];
-  for (const d of String(process.env.PATH || '').split(';')) {
-    const dir = d.trim().replace(/^"|"$/g, '');
-    if (!dir) continue;
+  const add = (exe) => { if (fs.existsSync(exe) && !out.some((x) => x.toLowerCase() === exe.toLowerCase())) out.push(exe); };
+  const dirs = String(process.env.PATH || '').split(';').map((d) => d.trim().replace(/^"|"$/g, '')).filter(Boolean);
+  // An npm prefix of the user's own choosing (a request of 2026-10-12: a PC whose npm prefix is %LOCALAPPDATA%\Programs\nodejs, with an
+  // older hand-made router in it, so the folder itself is skipped below). The package's own claude.exe is Claude Code, never a shim.
+  if (process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'nodejs'));
+  for (const dir of dirs) {
     try {
+      add(path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'));
       if (path.resolve(dir).toLowerCase() === path.resolve(HERE).toLowerCase()) continue;
       if (fs.existsSync(path.join(dir, 'claude-account-router.js'))) continue;
-      const exe = path.join(dir, 'claude.exe');
-      if (fs.existsSync(exe) && !out.some((x) => x.toLowerCase() === exe.toLowerCase())) out.push(exe);
+      add(path.join(dir, 'claude.exe'));
     } catch { /* an unreadable PATH entry */ }
   }
   return out;
@@ -362,8 +365,8 @@ function usageFor(env, cfg, label) {
   const hash = (s) => require('crypto').createHash('sha256').update(s).digest('hex').slice(0, 12);
   const named = /^(its own agent|account|agent .*)$/.test(String(label || '')) ? '' : String(label || '');
   const token = String(env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN || '').trim();
-  if (token) return Object.assign({ key: hash(token), label: named, probe }, probe ? { token } : {});
   const dir = env.CLAUDE_CONFIG_DIR || path.join(env.USERPROFILE || env.HOME || realProfileDir(), '.claude');
+  if (token) return Object.assign({ key: hash(token), label: named, probe, configDir: dir }, probe ? { token } : {});
   const file = path.join(dir, '.credentials.json');
   let plan = '', hasToken = false;
   try {
@@ -371,7 +374,7 @@ function usageFor(env, cfg, label) {
     if (o && o.accessToken) { hasToken = true; plan = String(o.subscriptionType || ''); }
   } catch { /* a login kept in the system's secure store has no file: the meter does not need one */ }
   const lab = named || (plan ? plan[0].toUpperCase() + plan.slice(1) : '');
-  if (hasToken) return Object.assign({ key: hash('file:' + path.resolve(file).toLowerCase()), label: lab, probe }, probe ? { tokenFile: file } : {});
+  if (hasToken) return Object.assign({ key: hash('file:' + path.resolve(file).toLowerCase()), label: lab, probe, configDir: dir }, probe ? { tokenFile: file } : {});
   return { key: hash('dir:' + path.resolve(dir).toLowerCase()), label: lab, probe: false };
 }
 function proxyOff(env, convId, dbPath, usage, cfg) {
@@ -394,6 +397,30 @@ function proxyOff(env, convId, dbPath, usage, cfg) {
     apiBase: String(process.env.AIONUI_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers,
     log: (m) => routerLog(`conv=${convId} ${m}`),
   }).then((code) => process.exit(code), () => process.exit(1));
+}
+
+/** Keep this account's model picker current (a request of 2026-10-11): when the saved catalog in its config folder is older than six hours
+ *  (thirty minutes after a failed try), start claude-model-catalog.js, detached and hidden, with this chat's own environment. It asks Claude Code
+ *  what the account may use and updates availableModels in the folder's settings.json for the chats that start afterwards; this launch does not
+ *  wait for it. "modelCatalog": false in the router config switches it off. Any trouble here is swallowed: a chat must always start. */
+function keepCatalogCurrent(env, cfg) {
+  try {
+    if (cfg && cfg.modelCatalog === false) return;
+    const script = path.join(HERE, 'claude-model-catalog.js');
+    if (!fs.existsSync(script)) return;
+    const dir = env.CLAUDE_CONFIG_DIR || path.join(env.HOME || env.USERPROFILE || realProfileDir(), '.claude');
+    let st = null;
+    try { st = JSON.parse(fs.readFileSync(path.join(dir, 'aiondx-models.json'), 'utf8')); } catch { /* none yet */ }
+    const now = Date.now();
+    if (st && st.at && now - st.at < 6 * 3600000) return;
+    if (st && st.failedAt && now - st.failedAt < 30 * 60000) return;
+    if (st && st.startedAt && now - st.startedAt < 2 * 60000) return;
+    const child = require('child_process').spawn(process.execPath, [script, '--config-dir', dir, '--exe', RESOLVED.exe],
+      { env, detached: true, stdio: 'ignore', windowsHide: true });
+    child.on('error', () => {});
+    child.unref();
+    routerLog(`catalog refresh started for ${dir}`);
+  } catch { /* never in the way of a chat */ }
 }
 
 // ---- everything below is best-effort; any throw lands in the catch and passes through ----
@@ -431,7 +458,10 @@ try {
     }
     if (account.tokenFile && fs.existsSync(account.tokenFile)) {
       const tok = fs.readFileSync(account.tokenFile, 'utf8').trim();
-      if (tok) { env.CLAUDE_CODE_OAUTH_TOKEN = tok; env.ANTHROPIC_AUTH_TOKEN = tok; }
+      // CLAUDE_CODE_OAUTH_TOKEN only: Claude Code takes it out of the environment of every command it runs, and keeps ANTHROPIC_AUTH_TOKEN
+      // in, so a tool call that listed its variables printed the token into the chat (a report of 2026-10-12; measured offline with
+      // tools\probe-subprocess-env.js). A copy inherited from the parent goes too, so no command sees this account's token.
+      if (tok) { env.CLAUDE_CODE_OAUTH_TOKEN = tok; delete env.ANTHROPIC_AUTH_TOKEN; }
     }
     delete env.ANTHROPIC_API_KEY;
     label = account.label || 'account';
@@ -463,6 +493,7 @@ try {
     }
   } catch { /* logging must never break a launch */ }
 
+  keepCatalogCurrent(env, cfg);
   if (!(cfg && cfg.streamProxy === false) && isStreamSession()) proxyOff(env, convId, dbPath, usageFor(env, cfg, label), cfg);
   else handOff(env);
 } catch (e) {

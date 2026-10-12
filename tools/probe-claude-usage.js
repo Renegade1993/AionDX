@@ -18,7 +18,7 @@ const path = require('path');
 
 const CONFIG = path.join(process.env.APPDATA || '', 'npm', 'claude-account-router.config.json');
 const API = 'https://api.anthropic.com';
-const MODEL = 'claude-haiku-4-5-20251001';
+const MODEL = 'claude-haiku-5-5';
 
 function unified(headers) {
   const out = {};

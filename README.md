@@ -75,6 +75,10 @@ node tools\smoke-standalone.js                       # the staged app, first run
 node tools\test-live-undo.js                         # message-box undo, in the real app
 ```
 
+## Contributors
+
+- PotatoNateO
+
 ## Licence and credits
 
 AionUi and AionCore are Apache-2.0 software by iOfficeAI; AionDX is a modified redistribution of them. The licences

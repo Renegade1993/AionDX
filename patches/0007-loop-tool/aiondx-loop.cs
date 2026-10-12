@@ -98,7 +98,7 @@ namespace AionDx
 
     static class Program
     {
-        const string Version = "1.13.0";
+        const string Version = "1.14.0";
         const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aionui-dx.js HOLD_MIN)
         const long HoldMax = 240;      // aionui-dx.js HOLD_MIN_MAX
         const long ResumeWarmMaxMs = 50 * 60000;   // aionui-dx.js RESUME_WARM_MAX_MS
@@ -119,6 +119,7 @@ namespace AionDx
             if (args.Length > 0 && args[0] == "--version") { Console.Out.WriteLine("aiondx-loop " + Version); return 0; }
             if (args.Length > 0 && args[0] == "--identity") return PrintIdentity();
             if (args.Length > 0 && args[0] == "doctor") return Doctor(args);
+            if (args.Length > 0 && args[0] == "launcher") { Console.Out.WriteLine(LaunchText()); return 0; }   // which launcher started this chat's Claude
             if (args.Length > 0 && args[0] == "activate") return Activate(args, false);
             if (args.Length > 0 && args[0] == "deactivate") return Activate(args, true);
             if (args.Length > 0 && args[0] == "shortcuts") return Shortcuts(args);
@@ -870,8 +871,7 @@ namespace AionDx
             }
             if (mine != null) sb.Append(UsageRecordText(mine, ctx.Self.ConvId == null ? "this chat" : "you"));
             else
-                sb.Append("No usage reading for this chat yet. It appears after this chat's Claude makes its next request (a chat on another kind of agent has none). ")
-                  .Append("AionDX's launcher reads it from Claude's own responses, so nothing is called to get it.\n");
+                sb.Append("No usage reading for this chat yet. ").Append(LaunchText()).Append('\n');
             if (all && d != null)
             {
                 int others = 0;
@@ -1106,7 +1106,17 @@ namespace AionDx
                 { "window", window }, { "at", at }, { "notify", notify }, { "message", message }, { "by", "agent" }, { "who", who },
                 { "slot", ctx.Self.SlotId ?? "" }, { "conv", ctx.Self.ConvId ?? "" } });
             UsageAlertPut(key, next, rec);
-            return "Saved. When the " + (window == "week" ? "weekly" : "5-hour") + " window reaches " + Math.Round(at * 100) + "% on the account " + (team ? "this team runs on" : "this chat runs on") +
+            // An alert needs readings to cross. A chat with none yet gets told why, so a saved alert is not taken for a working one (a report of 2026-10-12).
+            string warn = "";
+            try
+            {
+                string convKey = "aiondx.usage.conv." + ctx.Self.ConvId;
+                var d = Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(convKey), null) as Dictionary<string, object>;
+                if (Sub(d, convKey) == null)
+                    warn = "WARNING: this chat has no usage reading yet, so this alert cannot go off until it has one. " + LaunchText() + "\n";
+            }
+            catch (Exception) { }
+            return warn + "Saved. When the " + (window == "week" ? "weekly" : "5-hour") + " window reaches " + Math.Round(at * 100) + "% on the account " + (team ? "this team runs on" : "this chat runs on") +
                    ", AionDX tells " + UsageAlertWho(notify, who) + " at once, into the running turn (the way Respond now does). It goes off once per window and is armed again after the reset.\n" +
                    "It is checked by the AionDX window, so it works while AionDX is open. The user sees and can change it by clicking the usage meter.\n";
         }
@@ -1734,6 +1744,31 @@ namespace AionDx
             }
             catch (Exception e) { o.WriteLine("PATH: could not read or change it: " + e.Message); problems++; }
 
+            // 1b. Which `claude` a chat starts (a report of 2026-10-12: an older hand-made launcher answered first, so chats had no usage
+            //     readings and no Unsend). With Claude Code installed, AionDX's launcher belongs in its bin folder; the fix is the per-user
+            //     setup, which also brings the older launcher's account mapping over so no chat changes account.
+            try
+            {
+                string claude = RealClaude(bin);
+                string own = Path.Combine(bin, "claude.exe");
+                bool dev = IsAionDxRouter(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "claude-account-router.js"));
+                if (claude == null) o.WriteLine("Claude launcher: Claude Code is not installed, nothing to do.");
+                else if (dev) o.WriteLine("Claude launcher: AionDX's, in %APPDATA%\\npm (the developer layout); Claude Code at " + claude + ".");
+                else if (File.Exists(own) && IsAionDxRouter(Path.Combine(bin, "claude-account-router.js")))
+                    o.WriteLine("Claude launcher: AionDX's (" + own + "); Claude Code at " + claude + "." +
+                        (File.Exists(Path.Combine(bin, "claude-account-router.config.json")) ? " Account mapping: " + Path.Combine(bin, "claude-account-router.config.json") + "." : ""));
+                else if (fix)
+                {
+                    o.WriteLine("Claude launcher: AionDX's is missing from " + bin + "; running the per-user setup to put it there...");
+                    int code = ActivateOnce(new[] { "activate", "--quiet", "--from", "doctor" }, false);
+                    bool okNow = File.Exists(own) && IsAionDxRouter(Path.Combine(bin, "claude-account-router.js"));
+                    o.WriteLine("Claude launcher: " + (okNow ? "installed. Chats started after AionDX's next start go through it (usage readings, Unsend)." : "still missing (setup exit " + code + "); see the newest log in " + Path.Combine(local, "AionDX", "logs") + "."));
+                    if (!okNow) problems++;
+                }
+                else { o.WriteLine("Claude launcher: AionDX's is not in " + bin + ", so chats get no usage readings or Unsend (run `aiondx doctor` to fix)."); problems++; }
+            }
+            catch (Exception e) { o.WriteLine("Claude launcher: could not check: " + e.Message); problems++; }
+
             // 2. What is installed.
             Action<string, string> have = (label, file) =>
             {
@@ -1972,9 +2007,9 @@ namespace AionDx
         // `aiondx deactivate` takes it all back out and leaves the manifest, marked removed, as the record.
         // Each run stops at 60 s (a deadline checked between steps; AionUi's start call also kills it at 90).
         const string ManifestSchema = "aiondx.manifest/1";
-        static readonly string[] ClaudeParts = { "claude.exe", "claude-account-router.js", "claude-stream-proxy.js" };
-        static readonly string[] OwnPrograms = { "aiondx.exe", "aiondx-loop.exe", "agy.exe", "claude.exe", "claude-account-router.js", "claude-stream-proxy.js",
-            "claude-account-router.log", "claude-account-router.exe-cache.json" };
+        static readonly string[] ClaudeParts = { "claude.exe", "claude-account-router.js", "claude-stream-proxy.js", "claude-model-catalog.js", "aiondx-model-refresh.js" };
+        static readonly string[] OwnPrograms = { "aiondx.exe", "aiondx-loop.exe", "agy.exe", "claude.exe", "claude-account-router.js", "claude-stream-proxy.js", "claude-model-catalog.js", "aiondx-model-refresh.js",
+            "claude-account-router.log", "claude-account-router.exe-cache.json", "claude-account-router.config.json" };
         static StreamWriter ActLog;
         static bool ActQuiet;
         static DateTime ActDeadline;
@@ -2095,15 +2130,51 @@ namespace AionDx
                 Path.Combine(roaming, "npm", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe")
             };
             foreach (var f in fixedOnes) if (File.Exists(f)) return f;
-            foreach (var d in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
+            var dirs = new List<string>((Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'));
+            // An npm prefix of the user's own choosing (a request of 2026-10-12: a PC whose prefix is %LOCALAPPDATA%\Programs\nodejs and
+            // holds an older hand-made router, so the folder itself was skipped and Claude Code read as "not installed"). The package's
+            // own claude.exe is Claude Code wherever the prefix is, even beside someone else's router.
+            string local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+            if (!string.IsNullOrEmpty(local)) dirs.Add(Path.Combine(local, "Programs", "nodejs"));
+            foreach (var d in dirs)
             {
                 string dir = d.Trim().Trim('"');
-                if (dir.Length == 0 || SameDir(dir, ownBin)) continue;
+                if (dir.Length == 0) continue;
                 try
                 {
-                    if (File.Exists(Path.Combine(dir, "claude-account-router.js"))) continue;
+                    string pkg = Path.Combine(dir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+                    if (File.Exists(pkg)) return pkg;
+                    if (SameDir(dir, ownBin) || File.Exists(Path.Combine(dir, "claude-account-router.js"))) continue;
                     foreach (var n in new[] { "claude.exe", "claude.cmd" })
                         if (File.Exists(Path.Combine(dir, n))) return Path.Combine(dir, n);
+                }
+                catch (ArgumentException) { }
+            }
+            return null;
+        }
+        /** AionDX's own router (it starts claude-stream-proxy.js), as against an older hand-made one with the same name. */
+        static bool IsAionDxRouter(string file)
+        {
+            try { return File.Exists(file) && File.ReadAllText(file).IndexOf("claude-stream-proxy.js", StringComparison.Ordinal) >= 0; }
+            catch (Exception) { return false; }
+        }
+        /** The account mapping of an older router that chats go through today: the claude-account-router.config.json beside a
+         *  claude-account-router.js that is not AionDX's, in a PATH folder, %APPDATA%\npm or %LOCALAPPDATA%\Programs\nodejs. */
+        static string ForeignRouterConfig(string ownBin)
+        {
+            var dirs = new List<string>((Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'));
+            dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm"));
+            string local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+            if (!string.IsNullOrEmpty(local)) dirs.Add(Path.Combine(local, "Programs", "nodejs"));
+            foreach (var d in dirs)
+            {
+                string dir = d.Trim().Trim('"');
+                if (dir.Length == 0) continue;
+                try
+                {
+                    if (SameDir(dir, ownBin)) continue;
+                    string router = Path.Combine(dir, "claude-account-router.js"), cfg = Path.Combine(dir, "claude-account-router.config.json");
+                    if (File.Exists(router) && File.Exists(cfg) && !IsAionDxRouter(router)) return cfg;
                 }
                 catch (ArgumentException) { }
             }
@@ -2286,9 +2357,26 @@ namespace AionDx
                     // 1. Programs.
                     Directory.CreateDirectory(bin);
                     CleanOld(bin);
-                    bool devLayout = File.Exists(Path.Combine(roaming, "npm", "claude-account-router.js"));
+                    // The developer's layout: AionDX's own router already in %APPDATA%\npm. An older hand-made router there (or anywhere) is
+                    // not that: AionDX's launcher goes in ahead of it, and its account mapping comes along (below).
+                    bool devLayout = IsAionDxRouter(Path.Combine(roaming, "npm", "claude-account-router.js"));
                     string claude = RealClaude(bin);
                     Say("Claude Code: " + (claude ?? "not installed") + (devLayout ? "; AionDX's Claude launcher already in %APPDATA%\\npm" : ""));
+                    if (claude != null && !devLayout)
+                    {
+                        string own = Path.Combine(bin, "claude-account-router.config.json");
+                        string foreign = ForeignRouterConfig(bin);
+                        var c = new Dictionary<string, object>();
+                        c["id"] = "config/claude-account-router"; c["scope"] = "user"; c["kind"] = "file"; c["path"] = own;
+                        if (File.Exists(own)) { c["action"] = "unchanged"; if (foreign != null) Say("account mapping: AionDX's own kept (" + foreign + " left as it is)"); }
+                        else if (foreign != null)
+                        {
+                            try { File.Copy(foreign, own); changed++; c["action"] = "imported"; c["from"] = foreign; Say("account mapping: brought over from " + foreign + ", so each chat keeps its account"); }
+                            catch (Exception e) { failed++; c["action"] = "failed"; Say("account mapping: FAILED to bring over " + foreign + ": " + e.Message); }
+                        }
+                        else c["action"] = "none";
+                        components.Add(c);
+                    }
                     foreach (var src in Directory.GetFiles(Path.Combine(payload, "bin")))
                     {
                         Deadline("copying programs");
@@ -5374,6 +5462,84 @@ namespace AionDx
             return null;
         }
 
+        // ------------------------------------------------------------------ which launcher started this chat's Claude (1.14.0)
+        //
+        // A report of 2026-10-12 from another PC: every chat of a team said "No usage reading for this chat yet. It appears after this
+        // chat's Claude makes its next request", and none ever came. The chats were started through an older hand-made router earlier
+        // on PATH than AionDX's, which has no usage tap. The walk up the process tree says which launcher it was.
+
+        sealed class Launch { public string Claude, Router, Note; public bool Found, RouterIsAionDx; }
+
+        /** The nearest claude.exe above this process, and the router (a node process running claude-account-router.js) above it. */
+        static Launch FindLaunch()
+        {
+            var l = new Launch();
+            try
+            {
+                var procs = Native.Snapshot();
+                uint pid = Native.GetCurrentProcessId();
+                long childStarted = Native.StartTime(pid);
+                var seen = new HashSet<uint> { pid };
+                bool inClaude = false;
+                for (int depth = 0; depth < 16; depth++)
+                {
+                    Tuple<uint, string> me;
+                    if (!procs.TryGetValue(pid, out me)) break;
+                    uint ppid = me.Item1;
+                    Tuple<uint, string> parent;
+                    if (ppid == 0 || !seen.Add(ppid) || !procs.TryGetValue(ppid, out parent)) break;
+                    long parentStarted = Native.StartTime(ppid);
+                    if (parentStarted == 0 || (childStarted != 0 && parentStarted > childStarted)) break;
+                    string exe = (parent.Item2 ?? "").ToLowerInvariant();
+                    string cmd = Native.ReadCommandLine(ppid) ?? "";
+                    if (!inClaude && exe == "claude.exe" && cmd.IndexOf("claude-account-router", StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        inClaude = true; l.Found = true; l.Claude = CmdExe(cmd) ?? parent.Item2;
+                    }
+                    else if (inClaude && exe == "node.exe")
+                    {
+                        var m = System.Text.RegularExpressions.Regex.Match(cmd, "\"([^\"]*claude-account-router\\.js)\"|(\\S*claude-account-router\\.js)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (m.Success)
+                        {
+                            l.Router = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+                            try { if (!Path.IsPathRooted(l.Router)) l.Router = Path.GetFullPath(l.Router); } catch (Exception) { }
+                            l.RouterIsAionDx = IsAionDxRouter(l.Router);
+                            return l;
+                        }
+                    }
+                    else if (inClaude) return l;   // the parent of Claude is not a router: started directly
+                    pid = ppid;
+                    childStarted = parentStarted;
+                }
+            }
+            catch (Exception e) { l.Note = OneLine(e.Message); }
+            return l;
+        }
+        static string CmdExe(string cmd)
+        {
+            if (string.IsNullOrEmpty(cmd)) return null;
+            if (cmd[0] == '"') { int e = cmd.IndexOf('"', 1); return e > 1 ? cmd.Substring(1, e - 1) : null; }
+            int sp = cmd.IndexOf(' ');
+            return sp > 0 ? cmd.Substring(0, sp) : cmd;
+        }
+        /** One paragraph on how this chat's Claude was started and what that means for usage readings. */
+        static string LaunchText()
+        {
+            var l = FindLaunch();
+            if (!l.Found) return "No Claude Code process was found above this one, so this is not a Claude chat's shell (or the process tree could not be read" +
+                (l.Note != null ? ": " + l.Note : "") + "). Only Claude chats started through AionDX's launcher get usage readings.";
+            if (l.Router == null)
+                return "This chat's Claude (" + l.Claude + ") was started directly, not through AionDX's launcher, so no usage reading is taken for it. " +
+                       "`aiondx doctor` puts AionDX's launcher first on PATH; the chats started after AionDX's next start get readings.";
+            if (!l.RouterIsAionDx)
+                return "This chat's Claude was started by " + l.Router + ", an older launcher that is not AionDX's, so no usage reading is taken for it " +
+                       "(AionDX's launcher reads the numbers from Claude's own responses; that one does not). `aiondx doctor` puts AionDX's launcher first and " +
+                       "brings that launcher's account mapping (claude-account-router.config.json) over, so each chat keeps its account; the chats started after " +
+                       "AionDX's next start get readings.";
+            return "This chat's Claude runs through AionDX's launcher (" + l.Router + "), which takes the reading from Claude's own responses. If none has " +
+                   "come after a request, look for \"usage:\" lines in the claude-account-router.log beside it.";
+        }
+
         static int PrintIdentity()
         {
             try
@@ -5606,6 +5772,31 @@ namespace AionDx
                     env[entry.Substring(0, eq)] = entry.Substring(eq + 1);
                 }
                 return env;
+            }
+            catch (Exception) { return null; }
+            finally { CloseHandle(h); }
+        }
+
+        /** Another process's command line, read from its PEB (x64: ProcessParameters +0x70 CommandLine, a UNICODE_STRING:
+         *  length at +0x70, buffer at +0x78). Null when it cannot be read. */
+        public static string ReadCommandLine(uint pid)
+        {
+            var h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+            if (h == IntPtr.Zero) return null;
+            try
+            {
+                var pbi = new PROCESS_BASIC_INFORMATION();
+                int ret;
+                if (NtQueryInformationProcess(h, 0, ref pbi, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out ret) != 0) return null;
+                long pp = ReadPtr(h, pbi.PebBaseAddress.ToInt64() + 0x20);
+                if (pp == 0) return null;
+                var len = Read(h, pp + 0x70, 2);
+                long buf = ReadPtr(h, pp + 0x78);
+                if (len == null || buf == 0) return null;
+                int n = BitConverter.ToUInt16(len, 0);
+                if (n <= 0 || n > 65534) return null;
+                var raw = Read(h, buf, n);
+                return raw == null ? null : Encoding.Unicode.GetString(raw);
             }
             catch (Exception) { return null; }
             finally { CloseHandle(h); }

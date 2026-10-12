@@ -1255,6 +1255,37 @@ async function pageTarget() {
       await sleep(400);
       await js('window.__aionDx.repaint()');
       check(sc, 'a chat that is not Claude gets no Unsend', (await btn()) === null);
+      // Edit (2026-10-10): the same take-back, and the message's text comes back in the message box.
+      await load('theme=light');
+      await js('window.__aionDx.repaint()');
+      await sleep(400);
+      await js('window.__aionDx.repaint()');
+      const edBtn = () => js(`(() => { const b = document.querySelector('[data-testid="message-status-badge"] [data-testid="aiondx-edit"]'); return b ? { text: b.textContent, disabled: b.disabled } : null; })()`);
+      let eb = await edBtn();
+      check(sc, 'an Unread message also gets Edit beside Unsend', eb && eb.text === 'Edit' && !eb.disabled, JSON.stringify(eb));
+      const shown = await js(`(document.getElementById('message-m-77').querySelector('[data-testid="message-text-content"]').textContent || '').trim()`);
+      await js(`(() => { const t = document.querySelector('[data-testid="sendbox-input"]'); const d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); d.set.call(t, 'half-typed'); t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await humanClick('[data-testid="aiondx-edit"]');
+      await sleep(400);
+      const ereq = (await store())['aiondx.unsend.req.' + MSG];
+      check(sc, 'clicking Edit asks the router for the take-back', ereq && ereq.conv === 'harness1' && ereq.messageId === 'm-77', JSON.stringify(ereq));
+      check(sc, 'the box is left alone until the message is back', (await js(`document.querySelector('[data-testid="sendbox-input"]').value`)) === 'half-typed');
+      await putStore('aiondx.unsend.result.' + MSG, { cancelled: true, conv: 'harness1', messageId: 'm-77', at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await sleep(400);
+      const boxNow = await js(`document.querySelector('[data-testid="sendbox-input"]').value`);
+      check(sc, 'once taken back, its text is in the box after what was typed', boxNow === 'half-typed\n\n' + shown && shown.length > 0, JSON.stringify([boxNow, shown]));
+      // Too late: the box keeps only what was typed.
+      await load('theme=light');
+      await js('window.__aionDx.repaint()');
+      await sleep(400);
+      await js('window.__aionDx.repaint()');
+      await humanClick('[data-testid="aiondx-edit"]');
+      await sleep(300);
+      await putStore('aiondx.unsend.result.' + MSG, { cancelled: false, conv: 'harness1', messageId: 'm-77', at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await sleep(400);
+      check(sc, 'if the agent had already taken it, Edit puts nothing in the box', (await js(`document.querySelector('[data-testid="sendbox-input"]').value`)) === '' && /^Too late to unsend/.test((await toasts())[0] || ''), JSON.stringify([await toasts()]));
       // And nothing waits above the box any more.
       await load('team=1&theme=light');
       await js('window.__aionDx.pulseNow()');
@@ -2488,6 +2519,53 @@ async function pageTarget() {
       await humanClick('.aiondx-w-back');
       v = await w();
       check(sc, 'and Back returns to Look for my setup', v && v.buttons[0] === 'Look for my setup', JSON.stringify(v));
+
+      // Sign in to your agents (2026-10-12): the agent's own sign-in, started from a button. A stand-in for the main process's bridge.
+      await js(`(() => {
+        window.__si = { calls: [], state: 'running', logged: false };
+        window.aiondxSignin = {
+          status: (a, acc) => Promise.resolve({ ok: true, installed: true, loggedIn: window.__si.logged, email: window.__si.logged ? 'someone@example.com' : '', plan: 'pro' }),
+          start: (a, acc) => { window.__si.calls.push(['start', a, acc || '']); window.__si.state = 'running'; return Promise.resolve({ ok: true, url: 'https://claude.com/cai/oauth/authorize?x=1' }); },
+          code: (c) => { window.__si.calls.push(['code', c]); window.__si.state = 'done'; window.__si.logged = true; return Promise.resolve({ ok: true }); },
+          poll: () => Promise.resolve({ ok: true, state: window.__si.state }),
+          cancel: () => { window.__si.calls.push(['cancel']); return Promise.resolve({ ok: true }); },
+          register: (acc, label) => { window.__si.calls.push(['register', acc, label]); return Promise.resolve({ ok: true, id: acc, label }); },
+        };
+        window.prompt = () => 'work';
+        return 0; })()`);
+      await humanClick('.aiondx-w-agy');
+      await humanClick('.aiondx-w-back');
+      v = await w();
+      check(sc, 'with the sign-in bridge, the first step offers Sign in to your agents', v && v.buttons.includes('Sign in to your agents'), JSON.stringify(v));
+      await humanClick('.aiondx-w-accounts');
+      await sleep(300);
+      const acc = () => js(`(() => { const r = document.querySelector('[data-testid="aiondx-acc-claude"]'); const f = document.querySelector('.aiondx-acc-flow'); return r ? { state: r.querySelector('.aiondx-acc-state').textContent,
+        signin: r.querySelector('.aiondx-acc-signin').textContent, flow: f.hidden ? null : f.querySelector('.aiondx-acc-flow-msg').textContent, link: (f.querySelector('a') || {}).href || null,
+        status: (document.querySelector('.aiondx-welcome-status') || {}).textContent } : null; })()`);
+      let a = await acc();
+      check(sc, 'the page names Claude Code and whether it is signed in', a && a.state === 'Not signed in.' && a.signin === 'Sign in', JSON.stringify(a));
+      await humanClick('.aiondx-acc-signin');
+      await sleep(400);
+      a = await acc();
+      check(sc, "Sign in starts Claude Code's own sign-in and shows its link and a box for the code", a && a.flow && /opened in your browser/.test(a.flow) && a.link === 'https://claude.com/cai/oauth/authorize?x=1' &&
+        JSON.stringify((await js('window.__si.calls'))[0]) === JSON.stringify(['start', 'claude', '']), JSON.stringify([a, await js('window.__si.calls')]));
+      await typeInto('.aiondx-acc-code', 'CODE-123');
+      await humanClick('.aiondx-acc-send');
+      await sleep(2600);
+      a = await acc();
+      check(sc, 'a pasted code goes to the sign-in, and when it finishes the page says who is signed in', JSON.stringify((await js('window.__si.calls'))[1]) === JSON.stringify(['code', 'CODE-123']) &&
+        a.flow === null && a.state === 'Signed in as someone@example.com (pro).' && a.signin === 'Sign in again' && /^Signed in\./.test(a.status), JSON.stringify(a));
+      await humanClick('.aiondx-acc-add');
+      await sleep(400);
+      await typeInto('.aiondx-acc-code', 'CODE-456');
+      await humanClick('.aiondx-acc-send');
+      await sleep(2800);
+      const calls = await js('window.__si.calls');
+      a = await acc();
+      check(sc, "Add another Claude account signs it in to its own folder and adds it to every chat's account menu",
+        JSON.stringify(calls[2]) === JSON.stringify(['start', 'claude', 'work']) && JSON.stringify(calls[4]) === JSON.stringify(['register', 'work', 'Work (pro)']) &&
+        ((await store())['aiondx.accounts'] || { accounts: [] }).accounts.some((x) => x.id === 'work' && x.label === 'Work (pro)') && /"Work \(pro\)" is now in every Claude chat's account menu/.test(a.status), JSON.stringify([calls, a, (await store())['aiondx.accounts']]));
+      await js(`(() => { delete window.aiondxSignin; return 0; })()`);
     }
 
     // ---- model names with their versions (2026-09-26, the friend's install: "only shows Fable, Opus, Sonnet") ----
@@ -2533,6 +2611,16 @@ async function pageTarget() {
       check(sc, "the new-chat page's model picker gets it", (await js(`document.querySelector('#fake-guid .guid-model-label').textContent`)) === 'Haiku 4.5',
         await js(`document.querySelector('#fake-guid .guid-model-label').textContent`));
       await js(`(() => { document.getElementById('fake-guid').remove(); return 0; })()`);
+      // 2026-10-12: a disabled agent with an old list after the enabled ones no longer wins, and a name the enabled agents disagree on goes plain.
+      await js(`(() => { window.__stub.routes['GET /api/agents/management'] = { success: true, data: [
+        { id: 'cc33dd44', name: 'Claude Code (Main)', backend: 'claude', enabled: true, config_options: [{ id: 'model', options: [{ value: 'haiku', name: 'Haiku', description: 'Haiku 5.5 · Fastest' }, { value: 'fable', name: 'Fable', description: 'Fable 5.1 · Most capable' }] }] },
+        { id: 'ee55ff66', name: 'Claude Code (Second)', backend: 'claude', enabled: true, config_options: [{ id: 'model', options: [{ value: 'haiku', name: 'Haiku', description: 'Haiku 5.5 · Fastest' }, { value: 'fable', name: 'Fable', description: 'Fable 5 · Most capable' }] }] },
+        { id: '2d23ff1c', name: 'Claude Code', backend: 'claude', enabled: false, config_options: [{ id: 'model', options: [{ value: 'haiku', name: 'Haiku', description: 'Haiku 4.5 · Fastest' }] }] }] }; return 0; })()`);
+      await js(`fetch('http://127.0.0.1:58699/api/agents/management', { credentials: 'include' }).then(r => r.json()); 0`);
+      await sleep(500);
+      const labs = JSON.parse(await js("localStorage.getItem('aionui.dx.modelLabels') || '{}'"));
+      check(sc, "a disabled agent's old list does not overwrite the enabled agents' newer name", labs.Haiku === 'Haiku 5.5', JSON.stringify(labs));
+      check(sc, 'a name the enabled agents disagree on is left plain', labs.Fable === undefined, JSON.stringify(labs));
     }
 
     // ---- Welcome to AionDX (2026-09-26) ----

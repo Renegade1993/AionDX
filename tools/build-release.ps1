@@ -183,6 +183,8 @@ Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\a
 Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\claude.exe", "$root\patches\0005-claude-exe-shim\claude-shim.cs") 'build claude.exe'
 Copy-Item "$root\patches\0002-claude-model-currency\claude-account-router.js" $bin
 Copy-Item "$root\patches\0002-claude-model-currency\claude-stream-proxy.js" $bin
+Copy-Item "$root\patches\0002-claude-model-currency\claude-model-catalog.js" $bin
+Copy-Item "$root\patches\0002-claude-model-currency\aiondx-model-refresh.js" $bin
 Copy-Item "$root\patches\0009-identity\icon\aiondx.ico" "$payload\icons\aiondx.ico"
 Copy-Item "$root\patches\0007-loop-tool\skill\aiondx-loop" "$payload\skills\aiondx-loop" -Recurse
 Copy-Item "$root\patches\0004-setup-butler\skill\aiondx-setup" "$payload\skills\aiondx-setup" -Recurse
@@ -300,6 +302,11 @@ Copy-Item "$dist\README.txt" "$stage\README.txt"
 Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aionui-dx.js", "$ext\out\renderer\aiondx-themes.js", "$stage\README.txt") 'privacy check: renderer and README'
 Run $node @("$root\tools\privacy-check.js", '--block', "$ext\out\main\index.js") 'privacy check: main process block'
 Run $node @("$root\tools\privacy-check.js", '--dir', $payload) 'privacy check: payload'
+
+# 7c. Nothing in what ships gives anyone access to the owner's GitHub or any other account (K, October 10th: a friend said an
+# installer sent to him gave him access). The whole staged app, the tracked files and the git history are read for tokens, sign-in
+# addresses, private keys and key files; the GitHub side (collaborators and so on) is checked by hand with --github before an upload.
+Run $node @("$root\tools\security-sweep.js", '--payload', $stage) 'security sweep: staged app, files, history'
 
 if ($StageOnly) { Say "stage only: the staged app is in $stage; no installer compiled"; exit 0 }
 

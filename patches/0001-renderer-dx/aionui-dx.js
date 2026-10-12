@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-09.1';
+  var BUILD = '2026-10-12.1';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -4284,6 +4284,96 @@
     return lines;
   }
 
+  // ---- the Welcome screen's "Sign in to your agents" (build 2026-10-12.1)
+  var accounts = { timer: null, account: '' };
+  function accountsBox() { return welcome.el && welcome.step === 'accounts' ? welcome.el.firstChild : null; }
+  function accountsFlow(on, msg) {
+    var box = accountsBox();
+    if (!box) return;
+    var f = box.querySelector('.aiondx-acc-flow');
+    f.hidden = !on;
+    if (msg !== undefined) {
+      var m = f.querySelector('.aiondx-acc-flow-msg');
+      m.textContent = '';
+      if (msg && msg.url) {
+        m.appendChild(document.createTextNode('The sign-in page opened in your browser. If it did not, '));
+        var a = document.createElement('a');
+        a.href = msg.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'open it here';
+        m.appendChild(a);
+        m.appendChild(document.createTextNode('. When the page shows a code instead of finishing, paste it below.'));
+      } else if (msg) m.textContent = String(msg);
+    }
+    box.querySelectorAll('.aiondx-acc-signin, .aiondx-acc-add').forEach(function (b) { b.disabled = !!on; });
+  }
+  function accountsStop() { if (accounts.timer) { clearInterval(accounts.timer); accounts.timer = null; } }
+  function accountsStatus() {
+    var box = accountsBox();
+    if (!box || !window.aiondxSignin) return Promise.resolve();
+    var st = box.querySelector('.aiondx-acc-state');
+    return window.aiondxSignin.status('claude').then(function (r) {
+      if (!accountsBox()) return;
+      if (!r || !r.ok) st.textContent = 'Could not ask Claude Code: ' + ((r && r.error) || 'no answer') + '.';
+      else if (!r.installed) st.textContent = 'Not installed on this PC.';
+      else if (r.loggedIn) st.textContent = 'Signed in' + (r.email ? ' as ' + r.email : '') + (r.plan ? ' (' + r.plan + ')' : '') + '.';
+      else st.textContent = 'Not signed in.';
+      var b = box.querySelector('.aiondx-acc-signin');
+      b.textContent = r && r.loggedIn ? 'Sign in again' : 'Sign in';
+      b.disabled = !!(r && r.installed === false);
+      box.querySelector('.aiondx-acc-add').disabled = !!(r && r.installed === false);
+    }, function () { if (accountsBox()) st.textContent = 'Could not ask Claude Code.'; });
+  }
+  async function accountsStart(account) {
+    accounts.account = account;
+    accountsFlow(true, account ? 'Starting the sign-in for the account "' + account + '"...' : 'Starting the sign-in...');
+    welcomeStatus('', '');
+    var r = await window.aiondxSignin.start('claude', account || undefined);
+    if (!r || !r.ok) { accountsFlow(false); welcomeStatus('The sign-in did not start: ' + ((r && (r.error || r.text)) || 'no answer') + '.', ''); return; }
+    accountsFlow(true, r.url ? { url: r.url } : 'The sign-in page should be open in your browser.');
+    var box = accountsBox();
+    if (box) box.querySelector('.aiondx-acc-code').focus();
+    accountsStop();
+    var started = Date.now();
+    accounts.timer = setInterval(function () {
+      if (!accountsBox() || Date.now() - started > 11 * 60000) { accountsStop(); return; }
+      window.aiondxSignin.poll().then(function (p) {
+        if (!p || p.state === 'running' || p.state === 'none') return;
+        accountsStop();
+        accountsFlow(false);
+        if (p.state === 'done') accountsDone(account);
+        else welcomeStatus('The sign-in did not finish.', p.text || '');
+      }, function () {});
+    }, 1500);
+  }
+  function accountsCode() {
+    var box = accountsBox();
+    if (!box) return;
+    var input = box.querySelector('.aiondx-acc-code');
+    var code = input.value.trim();
+    if (!code) return;
+    window.aiondxSignin.code(code).then(function (r) {
+      if (r && r.ok) { input.value = ''; accountsFlow(true, 'Code sent. Waiting for Claude Code to finish the sign-in...'); }
+      else welcomeStatus((r && r.error) || 'The code could not be passed on.', '');
+    });
+  }
+  async function accountsDone(account) {
+    if (!account) { welcomeStatus('Signed in. Claude chats started from now on use this sign-in.', ''); accountsStatus(); return; }
+    var st = await window.aiondxSignin.status('claude', account);
+    var label = account.charAt(0).toUpperCase() + account.slice(1) + (st && st.plan ? ' (' + st.plan + ')' : '');
+    var reg = await window.aiondxSignin.register(account, label);
+    if (!reg || !reg.ok) { welcomeStatus('Signed in, but the account could not be added to the chats\' account menu: ' + ((reg && reg.error) || 'no answer') + '.', ''); return; }
+    // the chats' account menu reads aiondx.accounts
+    try {
+      var cur = await getJson('/api/settings/client?keys=' + encodeURIComponent(ACCOUNTS_KEY));
+      var rec = (cur && cur.data && cur.data[ACCOUNTS_KEY]) || {};
+      var list = Array.isArray(rec.accounts) ? rec.accounts.filter(function (a) { return a && a.id !== account; }) : [];
+      list.push({ id: account, label: label });
+      var body = {};
+      body[ACCOUNTS_KEY] = Object.assign({ v: 1 }, rec, { accounts: list });
+      await putPrefs(body);
+    } catch (e) { /* the launcher has it; the menu catches up when the list is next written */ }
+    welcomeStatus('Signed in as ' + ((st && st.email) || 'the new account') + '. "' + label + '" is now in every Claude chat\'s account menu.', '');
+  }
+
   function showWelcome(step) {
     if (step === 1 && !oneClick()) step = 'agy';   // WebUI, or an app without the one-click setup
     welcome.step = step;
@@ -4305,11 +4395,14 @@
         '<div class="aiondx-welcome-actions">' +
           '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-default aiondx-w-scan">Look for my setup</button>' +
           '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-default aiondx-w-agy">Set up with Antigravity instead</button>' +
+          (window.aiondxSignin ? '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-default aiondx-w-accounts">Sign in to your agents</button>' : '') +
           '<button type="button" class="arco-btn arco-btn-text arco-btn-size-default aiondx-w-later">Not now</button>' +
         '</div>' +
         '<p class="aiondx-welcome-foot">Not now closes this; Settings &gt; Appearance &gt; Open AionDX setup brings it back.</p>';
       box.querySelector('.aiondx-w-scan').addEventListener('click', function (ev) { once(ev.currentTarget, runWelcomeScan); });
       box.querySelector('.aiondx-w-agy').addEventListener('click', function () { showWelcome('agy'); });
+      var accBtn = box.querySelector('.aiondx-w-accounts');
+      if (accBtn) accBtn.addEventListener('click', function () { showWelcome('accounts'); });
       box.querySelector('.aiondx-w-later').addEventListener('click', laterWelcome);
       loadAgents(true).then(function (list) {
         for (var i = 0; i < list.length; i++) if (list[i].backend === 'antigravity') { welcome.agy = list[i]; break; }
@@ -4380,6 +4473,48 @@
       box.querySelector('.aiondx-w-finish').addEventListener('click', closeWelcome);
       var agyBtn = box.querySelector('.aiondx-w-agy');
       if (agyBtn) agyBtn.addEventListener('click', function () { showWelcome('agy'); });
+    } else if (step === 'accounts') {
+      // A request of 2026-10-11: signing an agent in took an agent (or an outside model) and a long time. Here a button starts the agent's
+      // own sign-in (main process aiondx:signin): its sign-in page opens in the browser, a code it shows can be pasted here, and the agent
+      // keeps its own credentials, as it does outside AionDX. Claude Code first; another account gets its own folder and joins every
+      // chat's account menu.
+      box.innerHTML =
+        '<img class="aiondx-welcome-mark" src="./aiondx-mark.svg" alt="">' +
+        '<h2 id="aiondx-welcome-title" class="aiondx-welcome-title">Sign in to your agents</h2>' +
+        '<p class="aiondx-welcome-text">Each agent signs in with its own sign-in page, in your browser. AionDX starts it and keeps nothing: the agent keeps its sign-in, as it does outside AionDX.</p>' +
+        '<div class="aiondx-acc-row" data-testid="aiondx-acc-claude">' +
+          '<div class="aiondx-acc-name">Claude Code</div>' +
+          '<div class="aiondx-acc-state">Checking...</div>' +
+          '<div class="aiondx-acc-actions">' +
+            '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-acc-signin">Sign in</button>' +
+            '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-acc-add">Add another Claude account</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="aiondx-acc-flow" hidden>' +
+          '<div class="aiondx-acc-flow-msg"></div>' +
+          '<div class="aiondx-signin-row"><input class="arco-input aiondx-acc-code" type="text" spellcheck="false" autocomplete="off" placeholder="Code from the sign-in page, if it shows one">' +
+          '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-acc-send">Submit</button>' +
+          '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-acc-cancel">Cancel</button></div>' +
+        '</div>' +
+        '<div class="aiondx-welcome-status" aria-live="polite"></div>' +
+        '<div class="aiondx-welcome-actions">' +
+          '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-default aiondx-w-back">Back</button>' +
+          '<button type="button" class="arco-btn arco-btn-text arco-btn-size-default aiondx-w-later">Done</button>' +
+        '</div>';
+      box.querySelector('.aiondx-w-back').addEventListener('click', function () { accountsStop(); showWelcome(1); });
+      box.querySelector('.aiondx-w-later').addEventListener('click', function () { accountsStop(); laterWelcome(); });
+      box.querySelector('.aiondx-acc-signin').addEventListener('click', function () { accountsStart(''); });
+      box.querySelector('.aiondx-acc-add').addEventListener('click', function () {
+        var name = window.prompt('A short name for the other Claude account (letters, digits and dashes), for example: work');
+        if (name === null) return;
+        name = String(name).trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9-]{0,23}$/.test(name)) { welcomeStatus('An account name is a short word: letters, digits and dashes.', ''); return; }
+        accountsStart(name);
+      });
+      box.querySelector('.aiondx-acc-send').addEventListener('click', accountsCode);
+      box.querySelector('.aiondx-acc-code').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); accountsCode(); } });
+      box.querySelector('.aiondx-acc-cancel').addEventListener('click', function () { window.aiondxSignin.cancel(); accountsStop(); accountsFlow(false); welcomeStatus('Sign-in cancelled.', ''); });
+      accountsStatus();
     } else if (step === 'agy') {
       box.innerHTML =
         '<img class="aiondx-welcome-mark" src="./aiondx-mark.svg" alt="">' +
@@ -4814,7 +4949,7 @@
   /** For team pages, every few seconds: which of your messages each member still has waiting in its queue. */
   async function scanTeamQueues() {
     var r = route();
-    if (!r || r.kind !== 'team' || disabled()) { if (Object.keys(rnQueued).length) { rnQueued = {}; renderRespondNow(); } return; }
+    if (!r || r.kind !== 'team' || disabled()) { if (Object.keys(rnQueued).length) { rnQueued = {}; renderRespondNow(); renderUnsend(); } return; }
     var next = {};
     try {
       var rs = await getJson('/api/teams/' + r.id + '/run-state');
@@ -4840,6 +4975,7 @@
     }
     rnQueued = next;
     renderRespondNow();
+    renderUnsend();   // the queue just changed: Unsend lines follow it at once, not at the next change of the page
   }
 
   // ---------------------------------------------------------------- unsend (build 2026-09-25.5)
@@ -4877,6 +5013,7 @@
       if (!r) {
         if (p.msgId && Date.now() - p.at > UNSEND_WAIT_MS) {
           delete unsendPending[mid];
+          delete unsendEdits[mid];
           var clear = {};
           clear[UNSEND_REQ + p.msgId] = null;
           putPrefs(clear);
@@ -4886,12 +5023,13 @@
         return;
       }
       delete unsendPending[mid];
+      if (!r.cancelled) delete unsendEdits[mid];
       // Shown once: the router's answer can go from the store (the struck-through row keeps its mark here).
       unsendShown[p.msgId] = r;
       var drop = {};
       drop[UNSEND_RES + p.msgId] = null;
       putPrefs(drop);
-      if (r.cancelled) notify(convTarget(p.conv), 'Unsent. The agent never saw it.', '');
+      if (r.cancelled) { notify(convTarget(p.conv), 'Unsent. The agent never saw it.', ''); finishEdit(mid); }
       else notify(convTarget(p.conv), 'Too late to unsend: the agent had already picked it up.', r.error ? String(r.error) : '');
     });
   }
@@ -4900,7 +5038,7 @@
     if (unsendPending[messageId]) return;
     unsendPending[messageId] = { conv: convId, msgId: null, at: Date.now() };
     renderUnsend();
-    var fail = function (text) { delete unsendPending[messageId]; notify(convTarget(convId), text, ''); renderUnsend(); };
+    var fail = function (text) { delete unsendPending[messageId]; delete unsendEdits[messageId]; notify(convTarget(convId), text, ''); renderUnsend(); };
     try { await unsendSteps(convId, messageId, fail); }
     catch (e) { fail('Could not unsend: ' + (e && e.message ? e.message : 'the request failed') + '.'); }
   }
@@ -4948,33 +5086,114 @@
       var badge = badges[i];
       var row = badge.closest('[id^="message-"]');
       if (!row) continue;
-      var mid = row.id.slice('message-'.length);
       var mine = null;
       if (queued) for (var q = 0; q < queued.length; q++) if (queued[q].row === row) { mine = queued[q]; break; }
       if (!mine && chatToo === false) continue;   // a message not in the queue, in a chat that is not Claude's: nothing to take back
-      var btn = badge.querySelector('.aiondx-unsend');
-      if (!btn) {
-        btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'aiondx-unsend';
-        btn.setAttribute('data-testid', 'aiondx-unsend');
-        btn.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          var b = ev.currentTarget;
-          var go = b._q ? unsendQueued(b._q, b._conv, b._mid) : unsendMessage(b._conv, b._mid);
-          go.catch(function (e) { console.log('[dx] unsend error', e); });
-        });
-        badge.appendChild(btn);
-      }
-      btn._conv = convId;
-      btn._mid = mid;
-      btn._q = mine;
-      var pending = !!unsendPending[mid];
-      var label = pending ? 'Unsending...' : 'Unsend';
-      if (btn.textContent !== label) btn.textContent = label;
-      btn.disabled = pending;
+      unsendButton(badge, row, convId, mine);
     }
+    // A message waiting in a team member's queue is drawn without an Unread badge (the member's chat does not hold it yet): its
+    // Unsend sits in a line of its own under the bubble. Found 2026-10-10 in the real app; a badge was all the first version looked for.
+    var live = [];
+    if (queued) queued.forEach(function (m) {
+      if (!m.row || !m.row.id || m.row.querySelector('[data-testid="message-status-badge"]')) return;
+      var foot = queuedFoot(m.row);
+      if (!foot) return;
+      live.push(foot);
+      unsendButton(foot, m.row, convId, m);
+    });
+    [].slice.call(scope.querySelectorAll('.aiondx-unsend-foot')).forEach(function (f) {
+      if (live.indexOf(f) < 0 && f.parentNode) f.parentNode.removeChild(f);
+    });
+  }
+  /** The line under a queued bubble that holds its Unsend (made once; the bubble's own parts are the page's). */
+  function queuedFoot(row) {
+    var foot = row.querySelector('.aiondx-unsend-foot');
+    if (foot) return foot;
+    var content = row.querySelector('[data-testid="message-text-content"]');
+    var bubble = content && content.parentElement;
+    if (!bubble || !bubble.parentNode) return null;
+    foot = document.createElement('div');
+    foot.className = 'aiondx-unsend-foot';
+    foot.setAttribute('data-testid', 'aiondx-unsend-foot');
+    foot.appendChild(document.createTextNode('Waiting in the queue'));
+    bubble.parentNode.insertBefore(foot, bubble.nextSibling);
+    return foot;
+  }
+  /** The Unsend button inside host (an Unread badge, or a queued bubble's line), set for this row. */
+  function unsendButton(host, row, convId, mine) {
+    var mid = row.id.slice('message-'.length);
+    var btn = host.querySelector('.aiondx-unsend');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'aiondx-unsend';
+      btn.setAttribute('data-testid', 'aiondx-unsend');
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var b = ev.currentTarget;
+        var go = b._q ? unsendQueued(b._q, b._conv, b._mid) : unsendMessage(b._conv, b._mid);
+        go.catch(function (e) { console.log('[dx] unsend error', e); });
+      });
+      host.appendChild(btn);
+    }
+    btn._conv = convId;
+    btn._mid = mid;
+    btn._q = mine;
+    var pending = !!unsendPending[mid];
+    var label = pending ? 'Unsending...' : 'Unsend';
+    if (btn.textContent !== label) btn.textContent = label;
+    btn.disabled = pending;
+    // Edit: take it back, and the text comes back in the message box to change and send again (a request of 2026-10-09: edit a
+    // message that was sent and is unread).
+    var ed = host.querySelector('.aiondx-edit');
+    if (!ed) {
+      ed = document.createElement('button');
+      ed.type = 'button';
+      ed.className = 'aiondx-edit';
+      ed.setAttribute('data-testid', 'aiondx-edit');
+      ed.textContent = 'Edit';
+      ed.title = 'Take this message back and put its text in the message box, to change it and send it again';
+      ed.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var b = ev.currentTarget;
+        editUnread(b._row, b._conv, b._q).catch(function (e) { console.log('[dx] edit error', e); });
+      });
+      host.appendChild(ed);
+    }
+    ed._row = row;
+    ed._conv = convId;
+    ed._q = mine;
+    ed.disabled = pending;
+    return btn;
+  }
+  var unsendEdits = {};      // bubble id -> { text, convId, key }: put back in the message box once the message has been taken back
+  /** Edit an unread message: take it back like Unsend, then its text goes into the message box of the chat it was sent from. */
+  async function editUnread(row, convId, q) {
+    var mid = row.id.slice('message-'.length);
+    if (unsendPending[mid]) return;
+    var c = row.querySelector('[data-testid="message-text-content"]');
+    var text = c ? String(c.innerText || c.textContent || '').replace(/\r/g, '').trim() : '';
+    if (!text) { notify(q ? q.t : convTarget(convId), 'Could not edit: the message text was not found.', ''); return; }
+    unsendEdits[mid] = { text: text, convId: convId, key: q ? q.t.key : null, at: Date.now() };
+    await (q ? unsendQueued(q, convId, mid) : unsendMessage(convId, mid));
+  }
+  /** The message was taken back: its text goes in the box (after what is typed there already). */
+  function finishEdit(mid) {
+    var e = unsendEdits[mid];
+    if (!e) return;
+    delete unsendEdits[mid];
+    var ts = targets().filter(function (x) {
+      if (e.key) return x.key === e.key;
+      if (x.kind === 'conv') return x.convId === e.convId;
+      return !!(teamCache[x.teamId] && teamCache[x.teamId].map[x.slotId] === e.convId);
+    });
+    var ta = ts.length ? boxIn(panelOf(ts[0].actions)) : null;
+    if (!ta) { notify(e.key ? { kind: 'team', key: e.key } : convTarget(e.convId), 'Taken back. The message box is not on screen: your text was ' + e.text.slice(0, 300), ''); return; }
+    var cur = String(ta.value || '');
+    setComposerValue(ta, cur.trim() ? cur.replace(/\s+$/, '') + '\n\n' + e.text : e.text);
+    try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (x) { /* a box without a caret */ }
   }
   var teamUnsent = {};       // bubble id -> true: taken back from a team member's queue
   /** A team page: the Unread bubbles of each member on screen. A message still in the member's queue is taken back there; one the member's
@@ -4995,7 +5214,10 @@
         return { row: row, id: m.id, t: q.t };
       }) : [];
       var claude = !!(info && info.backend === 'claude');
-      if (!queued.length && !claude) return;
+      if (!queued.length && !claude) {
+        [].slice.call(scope.querySelectorAll('.aiondx-unsend-foot')).forEach(function (f) { if (f.parentNode) f.parentNode.removeChild(f); });
+        return;
+      }
       unsendButtons(scope, convId, queued, claude);
     });
     Object.keys(teamUnsent).forEach(function (id) {
@@ -5008,7 +5230,7 @@
     if (unsendPending[domId]) return;
     unsendPending[domId] = { conv: convId, msgId: null, at: Date.now() };
     renderUnsend();
-    var done = function (text) { delete unsendPending[domId]; notify(q.t, text, ''); renderUnsend(); };
+    var done = function (text) { delete unsendPending[domId]; delete unsendEdits[domId]; notify(q.t, text, ''); renderUnsend(); };
     try {
       var r = await steerAgent(q.t, { message_id: q.id, unsend: true });
       if (r.status === 404 || r.status === 405) { done('This AionCore cannot take a queued message back yet.'); return; }
@@ -5016,6 +5238,7 @@
       var outcome = await steerAnswer(r);
       if (outcome === 'unsent') {
         teamUnsent[domId] = true;
+        finishEdit(domId);
         done('Unsent. ' + rnWho(q.t) + ' will never read it.');
         scanTeamQueues().catch(function () {});
         return;
@@ -5284,6 +5507,14 @@
     '.aiondx-welcome-fact-title{font-size:13px;font-weight:600;line-height:19px;color:var(--color-text-1)}',
     '.aiondx-welcome-fact-desc{font-size:12px;line-height:18px;color:var(--color-text-2);margin-top:2px}',
     '.aiondx-welcome-status{min-height:18px;margin:10px 0 0;font-size:13px;line-height:19px;color:var(--color-text-2);overflow-wrap:anywhere}',
+    // "Sign in to your agents"
+    '.aiondx-acc-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:14px 0 0;padding:10px 12px;border:1px solid var(--color-border-2);border-radius:8px}',
+    '.aiondx-acc-name{font-weight:600;color:var(--color-text-1)}',
+    '.aiondx-acc-state{flex:1;min-width:160px;font-size:13px;color:var(--color-text-2)}',
+    '.aiondx-acc-actions{display:flex;gap:8px}',
+    '.aiondx-acc-flow{margin:10px 0 0;font-size:13px;color:var(--color-text-1)}',
+    '.aiondx-acc-flow .aiondx-signin-row{margin-top:8px}',
+    '.aiondx-acc-code{flex:1;min-width:0;height:28px;padding:0 8px}',
     '.aiondx-welcome-code{display:block;margin-top:6px;padding:8px 10px;border-radius:6px;background:var(--color-fill-2);',
     '  font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:17px;white-space:pre-wrap;word-break:break-all;user-select:all}',
     '.aiondx-welcome-copy{margin-top:6px}',
@@ -5406,6 +5637,16 @@
     '  font:inherit;font-size:12px;color:rgb(var(--danger-6));cursor:pointer;user-select:none}',
     '[data-testid="message-status-badge"] .aiondx-unsend:hover{text-decoration:underline}',
     '[data-testid="message-status-badge"] .aiondx-unsend[disabled]{color:var(--color-text-3);cursor:default;text-decoration:none}',
+    // ...and under a bubble still waiting in a team member's queue, which has no Unread badge.
+    '.aiondx-unsend-foot{margin-top:4px;font-size:12px;color:var(--color-text-3);user-select:none;text-align:end}',
+    '.aiondx-unsend-foot .aiondx-unsend{margin-inline-start:8px;padding:0;border:none;background:none;font:inherit;font-size:12px;',
+    '  color:rgb(var(--danger-6));cursor:pointer}',
+    '.aiondx-unsend-foot .aiondx-unsend:hover{text-decoration:underline}',
+    '.aiondx-edit{margin-inline-start:8px;padding:0;border:none;background:none;font:inherit;font-size:12px;color:rgb(var(--primary-6));cursor:pointer;user-select:none}',
+    '.aiondx-edit:hover{text-decoration:underline}',
+    '.aiondx-edit[disabled]{color:var(--color-text-3);cursor:default;text-decoration:none}',
+    '.aiondx-unsend-foot .aiondx-unsend[disabled]{color:var(--color-text-3);cursor:default;text-decoration:none}',
+    '[data-aiondx-unsent] .aiondx-unsend-foot{display:none}',
     '[data-aiondx-unsent] [data-testid="message-text-content"] > *{text-decoration:line-through;opacity:.5}',
     '[data-aiondx-unsent] [data-testid="message-status-badge"]{display:none}',
     '[data-aiondx-unsent] [data-testid="message-text-content"]::after{content:"Unsent";display:block;margin-top:2px;',
@@ -6293,7 +6534,7 @@
     if (schedMenu && (node === schedMenu || schedMenu.contains(node))) return true;
     if (welcome.el && (node === welcome.el || welcome.el.contains(node))) return true;
     if (colourMenu && (node === colourMenu || colourMenu.contains(node))) return true;
-    if (node.classList && (node.classList.contains('aiondx-unsend') || node.classList.contains('aiondx-rn') || node.classList.contains('aiondx-rn-bolt') ||
+    if (node.classList && (node.classList.contains('aiondx-unsend') || node.classList.contains('aiondx-unsend-foot') || node.classList.contains('aiondx-edit') || node.classList.contains('aiondx-rn') || node.classList.contains('aiondx-rn-bolt') ||
         node.classList.contains('aiondx-usage') || node.classList.contains('aiondx-mcp-switch') || node.classList.contains('aiondx-sched-wrap'))) return true;
     for (var ak in acctEls) {
       if (Object.prototype.hasOwnProperty.call(acctEls, ak) && (node === acctEls[ak] || acctEls[ak].contains(node))) return true;
@@ -7059,17 +7300,27 @@
   /** Reads a runtime/ensure answer (or any JSON with model options) for names to give versions. */
   function learnModels(json) {
     var changed = false;
+    // A request of 2026-10-12 (another PC): after Claude Code moved to Haiku 5.5 the pickers still said "Haiku 4.5". The agents answer holds
+    // every agent, a disabled one included, and the last one read won; the disabled built-in still had the old list. Disabled agents are
+    // now skipped, and a name whose agents disagree within one answer (two accounts offered different Fables) goes back to plain.
+    var seen = {};
     var visit = function (node, depth) {
       if (!node || typeof node !== 'object' || depth > 8) return;
       if (Array.isArray(node)) { node.forEach(function (x) { visit(x, depth + 1); }); return; }
+      if ((node.enabled === false || node.enabled === 0) && (node.backend !== undefined || node.agent_id !== undefined)) return;
       var name = node.name || node.label, desc = node.description;
       if (typeof name === 'string' && typeof desc === 'string' && (node.value !== undefined || node.id !== undefined)) {
         var v = versionedName(name, desc);
-        if (v && modelLabels[name] !== v) { modelLabels[name] = v; changed = true; }
+        if (v) { if (!seen[name]) seen[name] = {}; seen[name][v] = true; }
       }
       Object.keys(node).forEach(function (k) { if (node[k] && typeof node[k] === 'object') visit(node[k], depth + 1); });
     };
     visit(json, 0);
+    Object.keys(seen).forEach(function (name) {
+      var vs = Object.keys(seen[name]);
+      if (vs.length === 1) { if (modelLabels[name] !== vs[0]) { modelLabels[name] = vs[0]; changed = true; } }
+      else if (modelLabels[name] !== undefined) { delete modelLabels[name]; changed = true; }
+    });
     if (changed) { try { localStorage.setItem(MODEL_LS, JSON.stringify(modelLabels)); } catch (e) {} schedule(); }
   }
   function tapModels(r) {
@@ -7400,6 +7651,13 @@
     fireSched: function () { return fireScheduled(); },
     accountLimit: function (convId) { return accountLimit(convId); },
     unsend: function () { return { results: unsendResults, pending: unsendPending }; },
+    runUnsend: function () { try { renderUnsend(); return 'ok'; } catch (e) { return String((e && e.stack) || e); } },
+    teamUnsendState: function () {
+      var r = route();
+      var tc = r && r.kind === 'team' ? teamCache[r.id] : null;
+      return { route: r && r.kind, hasTeam: !!tc, map: tc ? tc.map : null, queued: Object.keys(rnQueued).map(function (k) { return k + ':' + rnQueued[k].items.length; }),
+        backends: tc ? Object.keys(tc.map).map(function (sl) { var i = convInfo[tc.map[sl]]; return sl.slice(0, 8) + '=' + (i ? i.backend : 'unloaded'); }) : [], disabled: !!disabled() };
+    },
     scanQueues: function () { return scanTeamQueues(); },
     viewer: function () { return viewer ? { i: viewer.i, n: viewer.items.length, scale: viewer.scale, count: viewer.count.textContent, prevOff: viewer.prev.disabled, nextOff: viewer.next.disabled } : null; },
     viewerPictures: function () { return viewerPictures(); },
