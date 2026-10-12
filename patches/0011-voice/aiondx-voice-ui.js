@@ -47,6 +47,28 @@
 
   // ---------------------------------------------------------------- the provider module
 
+  // Same backend-address and CSRF logic as patch 0001's apiUrl()/csrf(), reimplemented here since
+  // aionui-dx.js's are private to its own closure: a same-origin path silently fails in the
+  // desktop app (see patch 0001's "Bug that shipped" section), so the voice client needs the
+  // absolute http://127.0.0.1:<port> address too.
+  function csrf() {
+    if (window.__coreCsrfToken) return window.__coreCsrfToken;
+    var m = document.cookie.match(/(?:^|;\s*)aionui-csrf-token=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  function apiUrl(path) {
+    var port = window.__backendPort;
+    return (port ? 'http://127.0.0.1:' + port : '') + path;
+  }
+  /** window.AionDxVoice is aiondx-voice.js's module (its own script tag, loaded alongside this
+   *  one). Building window.__aionDxVoice from it is deferred to here, rather than done inside
+   *  aiondx-voice.js itself, since only this file knows the app's own request plumbing. A page
+   *  that already set window.__aionDxVoice itself (dev-harness.html's stub) is left alone. */
+  function ensureVoiceClient() {
+    if (window.__aionDxVoice || !window.AionDxVoice || typeof window.AionDxVoice.createVoiceClient !== 'function') return;
+    window.__aionDxVoice = window.AionDxVoice.createVoiceClient({ baseUrl: apiUrl(''), csrfToken: csrf });
+  }
+
   function voice() { return window.__aionDxVoice || null; }
   function call(method) {
     var v = voice();
@@ -423,7 +445,7 @@
 
   var pickerEl = null;
   var providerCache = { at: 0, list: null };
-  var voiceCache = { at: 0, providerId: null, list: null, unsupported: false };
+  var voiceCache = { at: 0, key: null, list: null, unsupported: false };
   // getSettings()/setSettings() are both Promise-returning (the settings store is one PUT/GET
   // record behind /api/settings/client), so the panel reads from this cache instead of blocking
   // a render pass on a network round trip. A save updates it optimistically, then again from the
@@ -486,7 +508,7 @@
 
     providerSel.addEventListener('change', function () {
       saveSettings({ provider: providerSel.value });
-      voiceCache = { at: 0, providerId: null, list: null, unsupported: false };   // the new provider's voices have not been fetched yet
+      voiceCache = { at: 0, key: null, list: null, unsupported: false };   // the new provider's voices have not been fetched yet
       refreshVoicePanel();
     });
     var keyTimer = null;
@@ -593,21 +615,24 @@
     fillSelect(providerSel, providers, settings.provider, null);
     if (!settings.provider && providers.length) providerSel.value = providers[0].id;
 
-    // Voices: refetched whenever the chosen provider changes, since listVoices() is allowed to be a
-    // network call and an optional one (a provider with no voice list rejects or is absent).
+    // Voices: refetched whenever the chosen provider changes, or an API key arrives after it (a
+    // provider with no key rejects, which looked identical to "no voice list" until the key
+    // landed and the cache, keyed on providerId alone, never asked again). Also an optional
+    // network call: a provider with no voice list rejects or is absent, not a hard failure.
     var providerId = providerSel.value;
-    if (voiceCache.providerId !== providerId && !voiceCache.loading) {
+    var voiceKey = providerId + '|' + (settings.apiKey ? 'k' : '');
+    if (voiceCache.key !== voiceKey && !voiceCache.loading) {
       voiceCache.loading = true;
       var vp = call('listVoices');
       Promise.resolve(vp).then(function (list) {
-        voiceCache = { at: Date.now(), providerId: providerId, list: Array.isArray(list) ? list : [], unsupported: false };
+        voiceCache = { at: Date.now(), key: voiceKey, list: Array.isArray(list) ? list : [], unsupported: false };
         schedule();
       }, function () {
-        voiceCache = { at: Date.now(), providerId: providerId, list: [], unsupported: true };
+        voiceCache = { at: Date.now(), key: voiceKey, list: [], unsupported: true };
         schedule();
       });
     }
-    if (voiceCache.unsupported || (voiceCache.providerId === providerId && !voiceCache.list.length)) {
+    if (voiceCache.unsupported || (voiceCache.key === voiceKey && !voiceCache.list.length)) {
       note.hidden = false;
       note.textContent = 'This provider has no voice list; it uses its own default voice.';
       voiceSel.hidden = true;
@@ -621,6 +646,7 @@
   // ---------------------------------------------------------------- render loop
 
   function render() {
+    try { ensureVoiceClient(); } catch (e) { console.log('[dx-voice] voice client init failed', e); }
     try { ensureMicButtons(); } catch (e) { console.log('[dx-voice] mic render failed', e); }
     try { ensurePlayButtons(); } catch (e) { console.log('[dx-voice] play render failed', e); }
     try { ensureVoicePanel(); } catch (e) { console.log('[dx-voice] settings render failed', e); }

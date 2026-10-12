@@ -100,6 +100,16 @@ if ($idx -notmatch 'aionui-dx\.js') {
 }
 Copy-Item "$root\patches\0001-renderer-dx\aionui-dx.js" "$ext\out\renderer\aionui-dx.js" -Force
 Say "patch 0001: aionui-dx.js ($rendererBuild) and its script tag"
+# Patch 0011: aiondx-voice.js (the provider-agnostic TTS/STT module, window.AionDxVoice) loads
+# before aiondx-voice-ui.js (the composer's mic button, playback control and settings panel,
+# window.__aionDxVoice built from it) - both deferred, so document order is execution order.
+if ($idx -notmatch 'aiondx-voice\.js') {
+  $idx = $idx -replace '(<script src="\./aionui-dx\.js" defer></script>)', "`$1`r`n    <script src=`"./aiondx-voice.js`" defer></script>`r`n    <script src=`"./aiondx-voice-ui.js`" defer></script>"
+  Set-Content "$ext\out\renderer\index.html" $idx -NoNewline -Encoding utf8
+}
+Copy-Item "$root\patches\0011-voice\aiondx-voice.js" "$ext\out\renderer\aiondx-voice.js" -Force
+Copy-Item "$root\patches\0011-voice\aiondx-voice-ui.js" "$ext\out\renderer\aiondx-voice-ui.js" -Force
+Say "patch 0011: aiondx-voice.js, aiondx-voice-ui.js and their script tags"
 foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-identity')) {
   Run $node @("$root\patches\$p\apply.js", $ext) "patch $p"
   Say "patch $p applied"
@@ -211,6 +221,10 @@ Files AionDX changed or added:
        and self-update read AionDX's own GitHub releases; no crash reports or usage analytics are sent to AionUi's
        services; feedback opens AionDX's GitHub issues; pictures attached to a message box are kept across a restart
        (out/main/index.js, out/preload/index.js, out/renderer/assets/*.js, the web-app manifests, static/images)
+  0011 voice: a microphone button in the composer (speech to text), a speaker button on an agent's
+       reply (text to speech), and a Settings > Appearance section to pick the provider, API key and
+       voice, backed by ElevenLabs (out/renderer/aiondx-voice.js, out/renderer/aiondx-voice-ui.js and
+       two script tags in out/renderer/index.html)
 - resources\aiondx\: AionDX's own programs, skills and icon.
 - resources\bundled-aioncore\win32-x64\managed-resources\node\node-v$NODE_VER-win-x64\: Node.js $NODE_VER from
   nodejs.org, unchanged (MIT; its LICENSE is in that folder), for a PC without Node.
@@ -237,7 +251,7 @@ $release = [ordered]@{
   files = [ordered]@{ 'AionDX.exe' = $exeSha; 'resources/app.asar' = $asarSha; 'resources/bundled-aioncore/win32-x64/aioncore.exe' = $coreSha }
   appBytes = $stageBytes
   patches = @('0001-renderer-dx', '0002-claude-model-currency', '0003-local-account', '0004-setup-butler', '0005-claude-exe-shim',
-    '0006-butler-to-antigravity', '0007-loop-tool', '0008-agy-signin', '0009-identity', '0010-official-identity') + @($(if ($coreRec) { @($coreRec.patches) } else { @() }))
+    '0006-butler-to-antigravity', '0007-loop-tool', '0008-agy-signin', '0009-identity', '0010-official-identity', '0011-voice') + @($(if ($coreRec) { @($coreRec.patches) } else { @() }))
   userFiles = @($userFiles)
 }
 [IO.File]::WriteAllText("$payload\release.json", ($release | ConvertTo-Json -Depth 6), $utf8)
@@ -297,7 +311,7 @@ Copy-Item "$dist\README.txt" "$stage\README.txt"
 # 7b. Nothing about this PC, its user, their accounts, people or other projects ships (a request of 2026-09-27, after team
 # names, a tester's name and this PC's name were found in the shipped comments and release.json). Every file AionDX
 # adds to the app: its renderer scripts, its block of the main process, the payload, the README. Any hit stops the build.
-Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aionui-dx.js", "$ext\out\renderer\aiondx-themes.js", "$stage\README.txt") 'privacy check: renderer and README'
+Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aionui-dx.js", "$ext\out\renderer\aiondx-themes.js", "$ext\out\renderer\aiondx-voice.js", "$ext\out\renderer\aiondx-voice-ui.js", "$stage\README.txt") 'privacy check: renderer and README'
 Run $node @("$root\tools\privacy-check.js", '--block', "$ext\out\main\index.js") 'privacy check: main process block'
 Run $node @("$root\tools\privacy-check.js", '--dir', $payload) 'privacy check: payload'
 
