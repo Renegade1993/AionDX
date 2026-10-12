@@ -44,6 +44,10 @@
 
   var BUILD = '2026-10-11.1';
   var ERROR_HOLD_MS = 2600;   // how long a mic/playback button shows its error state before resetting
+  var DEFAULT_WAKE_PHRASE = 'Hey AionDX';
+  // Checked against a whole captured utterance, the same simple case-insensitive-substring rule
+  // AionDxVoice.startWakeListener uses for its own wake phrase - not a fuzzy matcher.
+  var HF_STOP_PHRASES = ['stop listening', 'stop conversation', 'exit voice mode', 'stop hands-free'];
 
   // ---------------------------------------------------------------- the provider module
 
@@ -59,6 +63,14 @@
   function apiUrl(path) {
     var port = window.__backendPort;
     return (port ? 'http://127.0.0.1:' + port : '') + path;
+  }
+  /** Which solo conversation is open, for hands-free mode's polling. Reimplemented rather than
+   *  shared with aionui-dx.js's own route(), same reasoning as apiUrl()/csrf() above. Team pages
+   *  are out of scope for hands-free (one mic, one composer, one "current conversation" - a team's
+   *  per-member columns don't map onto that cleanly), so only #/conversation/<id> matches. */
+  function route() {
+    var m = location.hash.match(/^#\/conversation\/([^/?#]+)/);
+    return m ? { kind: 'conv', id: m[1] } : null;
   }
   /** window.AionDxVoice is aiondx-voice.js's module (its own script tag, loaded alongside this
    *  one). Building window.__aionDxVoice from it is deferred to here, rather than done inside
@@ -102,6 +114,14 @@
     '@keyframes aiondx-voice-pulse-soft{0%{box-shadow:0 0 0 0 rgba(var(--primary-6),.35)}70%{box-shadow:0 0 0 6px rgba(var(--primary-6),0)}100%{box-shadow:0 0 0 0 rgba(var(--primary-6),0)}}',
     '@keyframes aiondx-voice-spin{to{transform:rotate(360deg)}}',
     '.aiondx-voice-playrow{margin-top:2px}',
+    // The hands-free badge: a small status pill, never a button - it only ever reflects state.
+    '.aiondx-voice-hf{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--color-text-3);white-space:nowrap;padding:0 4px;max-width:180px;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-voice-hf-dot{width:7px;height:7px;border-radius:50%;background:var(--color-text-3);flex:0 0 auto}',
+    '.aiondx-voice-hf[data-state="wake"] .aiondx-voice-hf-dot{background:rgb(var(--primary-6));animation:aiondx-voice-pulse-soft 2.2s ease-out infinite}',
+    '.aiondx-voice-hf[data-state="listening"] .aiondx-voice-hf-dot{background:rgb(var(--danger-6));animation:aiondx-voice-pulse 1.4s ease-out infinite}',
+    '.aiondx-voice-hf[data-state="waiting-reply"] .aiondx-voice-hf-dot{background:rgb(var(--warning-6))}',
+    '.aiondx-voice-hf[data-state="speaking"] .aiondx-voice-hf-dot{background:rgb(var(--primary-6))}',
+    '.aiondx-voice-toggle{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-1);flex:1 1 auto}',
     // The settings panel, styled like patch 0001's accent picker (.aiondx-accent) so it reads as
     // the same product: a titled block under the AionDX colours card.
     '.aiondx-voice-panel{margin-top:16px;padding-top:16px;border-top:1px solid var(--color-fill-3)}',
@@ -164,6 +184,17 @@
     try { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (e) {}
   }
 
+  /** Hands-free mode's turn: the mic button's own insertion path, then a click on the send button -
+   *  "reuse that path, don't duplicate it" for the text landing in the box, plus the one extra step
+   *  (send button, not just a click button) that only auto-send needs. */
+  function sendComposerText(ta, text) {
+    insertTranscript(ta, text);
+    var panel = ta.closest('.sendbox-panel') || ta.parentElement;
+    var actions = panel && panel.querySelector('.sendbox-actions');
+    var sendBtn = actions && actions.querySelector('[data-testid="sendbox-send-btn"]');
+    if (sendBtn && !sendBtn.disabled) sendBtn.click();
+  }
+
   /** A reply's text sits in an open shadow root (ShadowView), not the host's own light DOM, so
    *  content.textContent alone is empty for a rendered agent message. */
   function messageText(content) {
@@ -221,7 +252,7 @@
   function foreignChange(records) {
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
-      if (!t.closest || !t.closest('.aiondx-voice-mic, .aiondx-voice-play, .aiondx-voice-stopall, .aiondx-voice-panel')) return true;
+      if (!t.closest || !t.closest('.aiondx-voice-mic, .aiondx-voice-play, .aiondx-voice-stopall, .aiondx-voice-hf, .aiondx-voice-panel')) return true;
     }
     return false;
   }
@@ -510,13 +541,20 @@
       ev.preventDefault();
       ev.stopPropagation();
       stopPlayback();
+      stopHandsFreeForGood();   // the exit control for hands-free mode too: stop reading AND stop listening, for good
     });
     wrap.appendChild(btn);
     return wrap;
   }
 
+  /** active covers hands-free mode too, not just an in-flight synthesize()/playback: it is the
+   *  button's one exit control for a conversation that is only listening right now, nothing
+   *  playing yet, so it has to be clickable (and so enabled) through every stage of that, not just
+   *  while something is actually reading aloud. A disabled button never receives a real click at
+   *  all, so this was a genuine bug, not just a label: hands-free had no way to stop by this
+   *  button except during the "speaking" stage. */
   function paintStopAllButtons() {
-    var active = !!(loadingWrap || currentPlayback);
+    var active = !!(loadingWrap || currentPlayback || hf.active);
     var btns = document.querySelectorAll('.aiondx-voice-stopall-btn');
     for (var i = 0; i < btns.length; i++) {
       var b = btns[i];
@@ -541,6 +579,207 @@
       actions.insertBefore(buildStopAllButton(), mic ? mic.nextSibling : actionsInsertAnchor(actions));
     }
     paintStopAllButtons();
+  }
+
+  // ---------------------------------------------------------------- hands-free conversation mode
+  //
+  // Say a wake phrase, then talk back and forth with an agent without touching a button each turn.
+  // Built entirely on top of AionDxVoice's wake-phrase listener and utterance capture
+  // (startWakeListener/stopWakeListener/captureUtterance) - this file only sequences those calls
+  // and reuses its own existing pieces: insertTranscript/sendComposerText for landing a turn in the
+  // composer, startPlayback/spokenText for reading a reply back, stopPlayback (via the stop-all
+  // button) for stopping it. One cycle: wake phrase -> captureUtterance() -> send -> poll the
+  // conversation until the turn finishes -> auto-play the newest reply -> once that playback ends,
+  // captureUtterance() again - never back to the wake phrase, per the user's own framing of it as a
+  // continuous conversation, not a wake-once-per-turn assistant. A spoken stop phrase (checked the
+  // same simple substring way the wake phrase is) or the stop-all button ends it.
+  //
+  // hf.gen is bumped by every teardown and every stage transition's own start; every async step
+  // (a captureUtterance() resolve/reject, a status poll, the playback watcher) checks it against
+  // the value it captured before beginning, the same stale-result guard startPlayback's playGen
+  // uses - so a stop (or a conversation switch) mid-flight can never have a late callback restart
+  // a stage, land a message, or kick off a playback that the user already asked to stop.
+
+  var hf = { active: false, state: 'off', convId: null, wakeStop: null, abort: null, pollTimer: null, gen: 0 };
+  // Test-only: {levelSource, createRecorder} to hand startWakeListener/captureUtterance a fake mic
+  // instead of the real one, the same injection test-wake.js uses for aiondx-voice.js itself. Set
+  // through window.__aionDxVoiceUI.setHfTestSource, never touched in production.
+  var hfInjectedOpts = {};
+
+  function hfModule() { return window.AionDxVoice || null; }
+  function hfTranscribe(blob, opts) { return call('transcribe', blob, opts); }
+  function saysStopHF(text) {
+    var t = String(text || '').toLowerCase();
+    return HF_STOP_PHRASES.some(function (p) { return t.indexOf(p) >= 0; });
+  }
+  function setHfState(state) { hf.state = state; paintHandsFreeBadge(); paintStopAllButtons(); }
+
+  /** Stops the running listeners only, leaving the "hands-free enabled" setting untouched: used
+   *  for a conversation switch or a page unload, where the feature should pick back up on
+   *  whichever conversation is open next, not be switched off outright. ensureHandsFree() calls
+   *  this itself before restarting fresh, so it must never flip the setting - that would be
+   *  indistinguishable from the user turning the whole feature off. */
+  function teardownHandsFree() {
+    hf.gen++;
+    if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }
+    if (hf.abort) { try { hf.abort.abort(); } catch (e) {} hf.abort = null; }
+    if (hf.pollTimer) { clearTimeout(hf.pollTimer); hf.pollTimer = null; }
+    var m = hfModule();
+    if (m && typeof m.stopWakeListener === 'function') { try { m.stopWakeListener(); } catch (e) {} }
+    hf.active = false;
+    hf.convId = null;
+    setHfState('off');
+  }
+
+  /** The user's own "stop" - the stop-all button or a spoken stop phrase. Unlike teardownHandsFree
+   *  alone, this also switches the setting off, so ensureHandsFree() does not just start the wake
+   *  listener right back up on its next pass (which runs within the same render tick, since
+   *  nothing else changed). The settings panel's checkbox updates on its own next refresh. */
+  function stopHandsFreeForGood() {
+    teardownHandsFree();
+    saveSettings({ handsFree: false });
+  }
+
+  function startWakeStage(ta, convId) {
+    var myGen = hf.gen;
+    var m = hfModule();
+    if (!m || typeof m.startWakeListener !== 'function') { teardownHandsFree(); return; }
+    setHfState('wake');
+    var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
+    var opts = Object.assign({
+      phrase: phrase,
+      transcribe: hfTranscribe,
+      onWake: function () { if (myGen === hf.gen) startListenStage(ta, convId); },
+      onError: function (e) { if (myGen === hf.gen) { console.log('[dx-voice] wake listener error', e); stopHandsFreeForGood(); } }
+    }, hfInjectedOpts);
+    hf.wakeStop = m.startWakeListener(opts);
+  }
+
+  function startListenStage(ta, convId) {
+    var myGen = hf.gen;
+    if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }   // release the wake mic before opening a fresh one
+    var m = hfModule();
+    if (!m || typeof m.captureUtterance !== 'function') { teardownHandsFree(); return; }
+    setHfState('listening');
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    hf.abort = controller;
+    var opts = Object.assign({ transcribe: hfTranscribe, signal: controller ? controller.signal : undefined }, hfInjectedOpts);
+    m.captureUtterance(opts).then(function (text) {
+      hf.abort = null;
+      if (myGen !== hf.gen) return;
+      if (saysStopHF(text)) { stopHandsFreeForGood(); return; }
+      var clean = String(text || '').trim();
+      if (!clean) { startListenStage(ta, convId); return; }   // VAD cut a clip transcribe() read as empty: just listen again
+      sendComposerText(ta, clean);
+      waitForReplyThenPlay(ta, convId, myGen);
+    }, function (e) {
+      hf.abort = null;
+      if (myGen !== hf.gen) return;
+      console.log('[dx-voice] captureUtterance error', e);
+      startListenStage(ta, convId);   // a timeout with nothing said, or a hiccup: keep listening, the conversation stays live
+    });
+  }
+
+  /** Polls the conversation until the agent's turn finishes, then auto-plays its newest reply - the
+   *  same play button a manual click would use, just triggered here instead of by the user. */
+  function waitForReplyThenPlay(ta, convId, myGen) {
+    setHfState('waiting-reply');
+    function poll() {
+      if (myGen !== hf.gen) return;
+      fetch(apiUrl('/api/conversations/' + convId), { credentials: 'include' }).then(function (r) { return r.ok ? r.json() : null; }, function () { return null; }).then(function (j) {
+        if (myGen !== hf.gen) return;
+        var data = j && (j.data || j);
+        var status = data && data.status;
+        if (status && status !== 'finished') { hf.pollTimer = setTimeout(poll, 1000); return; }
+        var rows = Array.prototype.filter.call(document.querySelectorAll('[id^="message-"][data-message-type="text"]'), isAgentRow);
+        var row = rows[rows.length - 1];
+        var wrap = row && row.querySelector('.aiondx-voice-play');
+        var content = row && row.querySelector('[data-testid="message-text-content"]');
+        if (!wrap || !content) { hf.pollTimer = setTimeout(poll, 500); return; }   // the reply's row exists but ensurePlayButtons() has not reached it yet this frame
+        setHfState('speaking');
+        startPlayback(wrap, content);
+        watchPlaybackThenListenAgain(wrap, ta, convId, myGen);
+      });
+    }
+    poll();
+  }
+
+  /** Not back to the wake phrase - the user's own framing of this as a continuous conversation, so
+   *  every turn after the first starts straight at captureUtterance(). */
+  function watchPlaybackThenListenAgain(wrap, ta, convId, myGen) {
+    var tick = setInterval(function () {
+      if (myGen !== hf.gen) { clearInterval(tick); return; }
+      var st = wrap.__st.state;
+      if (st === 'idle' || st === 'error') {
+        clearInterval(tick);
+        if (myGen !== hf.gen) return;
+        startListenStage(ta, convId);
+      }
+    }, 150);
+  }
+
+  /** The entry point from render(): starts, restarts (on a conversation switch) or tears down
+   *  hands-free mode to match the setting and the page, without ever touching an already-running
+   *  cycle for the conversation it is already running on. */
+  function ensureHandsFree() {
+    var settings = settingsCache.data || {};
+    var enabled = !!settings.handsFree;
+    var r = route();
+    if (!enabled || !r) { if (hf.active) teardownHandsFree(); return; }
+    if (hf.active && hf.convId === r.id) return;
+    if (hf.active) teardownHandsFree();
+    var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
+    var ta = null;
+    for (var i = 0; i < boxes.length; i++) {
+      var cand = boxes[i].tagName === 'TEXTAREA' ? boxes[i] : boxes[i].querySelector('textarea');
+      if (cand && cand.getClientRects().length && !cand.closest('[data-slot-id]')) { ta = cand; break; }   // the solo composer; team columns are out of scope
+    }
+    if (!ta) return;   // not rendered yet this frame; ensureHandsFree() runs again next render
+    var m = hfModule();
+    if (!m || typeof m.startWakeListener !== 'function' || typeof m.captureUtterance !== 'function') return;
+    hf.active = true;
+    hf.convId = r.id;
+    startWakeStage(ta, r.id);
+  }
+
+  function buildHandsFreeBadge() {
+    var el = document.createElement('span');
+    el.className = 'aiondx-voice-hf';
+    el.setAttribute('data-testid', 'aiondx-voice-hf-badge');
+    el.innerHTML = '<span class="aiondx-voice-hf-dot" aria-hidden="true"></span><span class="aiondx-voice-hf-text"></span>';
+    return el;
+  }
+  function paintHandsFreeBadge() {
+    var show = hf.active && hf.state !== 'off';
+    var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
+    var label = hf.state === 'wake' ? 'Listening for “' + phrase + '”'
+      : hf.state === 'listening' ? 'Listening for your message…'
+      : hf.state === 'waiting-reply' ? 'Waiting for the reply…'
+      : hf.state === 'speaking' ? 'Reading the reply aloud…'
+      : '';
+    var badges = document.querySelectorAll('.aiondx-voice-hf');
+    for (var i = 0; i < badges.length; i++) {
+      var b = badges[i];
+      b.hidden = !show;
+      if (b.getAttribute('data-state') !== hf.state) b.setAttribute('data-state', hf.state);
+      var text = b.querySelector('.aiondx-voice-hf-text');
+      if (text.textContent !== label) text.textContent = label;
+      var aria = 'Hands-free conversation mode' + (label ? ': ' + label : ' is off');
+      if (b.getAttribute('aria-label') !== aria) b.setAttribute('aria-label', aria);
+    }
+  }
+  function ensureHandsFreeBadges() {
+    var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
+    for (var i = 0; i < boxes.length; i++) {
+      var ta = boxes[i].tagName === 'TEXTAREA' ? boxes[i] : boxes[i].querySelector('textarea');
+      if (!ta || !ta.getClientRects().length) continue;
+      var panel = ta.closest('.sendbox-panel') || ta.parentElement;
+      var actions = panel && panel.querySelector('.sendbox-actions');
+      if (!actions || actions.querySelector('.aiondx-voice-hf')) continue;
+      var stopall = actions.querySelector('.aiondx-voice-stopall');
+      actions.insertBefore(buildHandsFreeBadge(), stopall ? stopall.nextSibling : actionsInsertAnchor(actions));
+    }
+    paintHandsFreeBadge();
   }
 
   // ---------------------------------------------------------------- settings panel (Settings > Appearance)
@@ -601,12 +840,19 @@
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-voice">Voice</label>' +
         '<select id="aiondx-voice-voice" data-testid="aiondx-voice-voice"></select></div>' +
       '<div class="aiondx-voice-note" data-testid="aiondx-voice-note" hidden></div>' +
+      '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-handsfree">Hands-free</label>' +
+        '<label class="aiondx-voice-toggle"><input type="checkbox" id="aiondx-voice-handsfree" data-testid="aiondx-voice-handsfree"> Hands-free conversation mode</label></div>' +
+      '<div class="aiondx-voice-note">Say the wake phrase, then talk back and forth without touching the mic or speaker buttons. Off by default; the stop-all button (or saying a stop phrase) ends it.</div>' +
+      '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-wakephrase">Wake phrase</label>' +
+        '<input type="text" id="aiondx-voice-wakephrase" data-testid="aiondx-voice-wakephrase" placeholder="' + DEFAULT_WAKE_PHRASE + '"></div>' +
       '<div class="aiondx-voice-status" data-testid="aiondx-voice-status"></div>';
 
     var providerSel = el.querySelector('#aiondx-voice-provider');
     var keyInput = el.querySelector('#aiondx-voice-apikey');
     var reveal = el.querySelector('.aiondx-voice-reveal');
     var voiceSel = el.querySelector('#aiondx-voice-voice');
+    var handsFreeBox = el.querySelector('#aiondx-voice-handsfree');
+    var wakeInput = el.querySelector('#aiondx-voice-wakephrase');
 
     providerSel.addEventListener('change', function () {
       saveSettings({ provider: providerSel.value });
@@ -625,6 +871,12 @@
       reveal.textContent = show ? 'Hide' : 'Show';
     });
     voiceSel.addEventListener('change', function () { saveSettings({ voiceId: voiceSel.value }); });
+    handsFreeBox.addEventListener('change', function () { saveSettings({ handsFree: handsFreeBox.checked }); });
+    var wakeTimer = null;
+    wakeInput.addEventListener('input', function () {
+      if (wakeTimer) clearTimeout(wakeTimer);
+      wakeTimer = setTimeout(function () { wakeTimer = null; saveSettings({ wakePhrase: wakeInput.value.trim() || DEFAULT_WAKE_PHRASE }); }, 400);
+    });
     return el;
   }
 
@@ -689,14 +941,21 @@
     var keyInput = pickerEl.querySelector('#aiondx-voice-apikey');
     var voiceSel = pickerEl.querySelector('#aiondx-voice-voice');
     var note = pickerEl.querySelector('[data-testid="aiondx-voice-note"]');
+    var handsFreeBox = pickerEl.querySelector('#aiondx-voice-handsfree');
+    var wakeInput = pickerEl.querySelector('#aiondx-voice-wakephrase');
 
     var disabled = !v;
-    [providerSel, keyInput, voiceSel, pickerEl.querySelector('.aiondx-voice-reveal')].forEach(function (c) { c.disabled = disabled; });
+    [providerSel, keyInput, voiceSel, pickerEl.querySelector('.aiondx-voice-reveal'), handsFreeBox, wakeInput].forEach(function (c) { c.disabled = disabled; });
     if (disabled) { setStatus('Voice module not loaded yet.', false); return; }
 
     ensureSettingsLoaded();
     var settings = settingsCache.data || {};
     if (document.activeElement !== keyInput && typeof settings.apiKey === 'string' && keyInput.value !== settings.apiKey) keyInput.value = settings.apiKey;
+    if (handsFreeBox.checked !== !!settings.handsFree) handsFreeBox.checked = !!settings.handsFree;
+    if (document.activeElement !== wakeInput) {
+      var wantWake = settings.wakePhrase || DEFAULT_WAKE_PHRASE;
+      if (wakeInput.value !== wantWake) wakeInput.value = wantWake;
+    }
 
     // Providers: cached 30 s, since listProviders() is likely a plain in-memory list, not a network call.
     if (!providerCache.list && !providerCache.loading) {
@@ -753,6 +1012,11 @@
     try { ensureStopAllButtons(); } catch (e) { console.log('[dx-voice] stop-all render failed', e); }
     try { ensurePlayButtons(); } catch (e) { console.log('[dx-voice] play render failed', e); }
     try { ensureVoicePanel(); } catch (e) { console.log('[dx-voice] settings render failed', e); }
+    // After the settings panel, so settingsCache (which ensureHandsFree reads) is as fresh as this
+    // pass can make it; after the mic/stop-all/play buttons, so the composer/play-button lookups
+    // inside it find what this same pass just ensured exists.
+    try { ensureHandsFree(); } catch (e) { console.log('[dx-voice] hands-free render failed', e); }
+    try { ensureHandsFreeBadges(); } catch (e) { console.log('[dx-voice] hands-free badge render failed', e); }
   }
 
   function start() {
@@ -761,8 +1025,11 @@
     new MutationObserver(function (records) { if (foreignChange(records)) schedule(); })
       .observe(document.body, { childList: true, subtree: true });
     window.addEventListener('resize', schedule);
-    window.addEventListener('hashchange', function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); schedule(); });
-    window.addEventListener('pagehide', function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); });
+    // Leaving the conversation: ensureHandsFree() would tear down and restart on the next render
+    // pass anyway (it checks hf.convId against the new route()), but a stop here is immediate
+    // rather than waiting a frame, and pagehide has no "next frame" to rely on at all.
+    window.addEventListener('hashchange', function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); teardownHandsFree(); schedule(); });
+    window.addEventListener('pagehide', function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); teardownHandsFree(); });
     setInterval(render, 2000);   // a fallback poll, same resiliency margin patch 0001 keeps against a missed mutation
   }
 
@@ -775,7 +1042,14 @@
     micState: function () { return activeMic ? activeMic.__st.state : 'idle'; },
     playing: function () { return !!currentPlayback; },
     playbackActive: function () { return !!(loadingWrap || currentPlayback); },
-    stopAll: function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); },
-    spokenText: spokenText
+    stopAll: function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); stopHandsFreeForGood(); },
+    spokenText: spokenText,
+    // Hands-free: hf.state for a test to assert against, and a way to hand startWakeListener/
+    // captureUtterance a fake mic plus faster VAD timing (the same injection test-wake.js uses
+    // for aiondx-voice.js itself: levelSource, createRecorder, pollMs, minSpeechMs, silenceMs,
+    // threshold, maxSegmentMs) - test-only, never touched outside dev-smoke-test-handsfree.js.
+    hfState: function () { return { active: hf.active, state: hf.state, convId: hf.convId }; },
+    setHfTestOpts: function (opts) { hfInjectedOpts = Object.assign({}, hfInjectedOpts, opts || {}); },
+    clearHfTestOpts: function () { hfInjectedOpts = {}; }
   };
 })();

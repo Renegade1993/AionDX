@@ -104,11 +104,77 @@ hands-free back-and-forth: say a wake phrase to start talking, no mic-button cli
   replacing the first), the module-level stop, `captureUtterance` resolving / timing out / aborting
   (both an already-aborted signal and one aborted mid-call), and the stale-result protection for both
   functions.
-- Not yet done: the UI wiring (a wake-phrase toggle, a "listening..." indicator, folding this into
-  the existing "stop all" button) - for the Voice UI Engineer, queued up behind the other two voice
-  tasks. `createMicSource`'s real-mic path is untested against an actual microphone or a real
+- `createMicSource`'s real-mic path is untested against an actual microphone or a real
   `AudioContext`/`MediaRecorder` - only its constructor-injection path is exercised, by
   `test-wake.js`'s fakes.
+
+## Build 2026-10-11.4: hands-free conversation mode (the UI wiring for build .3's wake listener)
+
+Say the wake phrase, then talk back and forth with an agent without touching the mic or speaker
+button each turn. All in `aiondx-voice-ui.js`; it only sequences `aiondx-voice.js`'s
+`startWakeListener`/`stopWakeListener`/`captureUtterance` and reuses its own existing pieces
+(`insertTranscript`/`sendComposerText` for landing a turn in the composer, `startPlayback`/
+`spokenText` for reading a reply back, the stop-all button for stopping it) - `aiondx-voice.js`
+stays untouched, still a dumb client with no DOM.
+
+- **Settings:** a checkbox ("Hands-free conversation mode", off by default) and a wake-phrase text
+  field (default "Hey AionDX") on the same voice settings panel, saved onto the same
+  `aiondx.voice.config` record (`setSettings({handsFree, wakePhrase})` - the store's merge means
+  this never touches `provider`/`apiKey`/`voiceId`).
+- **The cycle, once enabled on a solo conversation page:** `startWakeListener` in the background
+  ("wake" stage, a small badge next to the mic button: `Listening for "Hey AionDX"`) -> the wake
+  phrase heard -> `captureUtterance()` ("listening" stage: `Listening for your message...`) -> the
+  turn's text goes through `sendComposerText` (the mic button's own text-insertion path, then a
+  click on the real send button - "reuse that path" plus the one extra step auto-send needs) ->
+  polls `GET /api/conversations/{id}` ("waiting-reply" stage) until the turn finishes -> the newest
+  reply auto-plays through the existing `startPlayback`/`spokenText` pipeline ("speaking" stage, no
+  click) -> once that playback ends, straight back to `captureUtterance()` - **not** back to the
+  wake phrase, per the user's own framing of this as one continuous conversation, not a
+  wake-once-per-turn assistant.
+- **Stopping:** the stop-all button doubles as the exit control (it already stopped playback; now
+  it also tears down the wake/utterance listeners and switches the setting off) - which meant that
+  button had to become *enabled* through the "wake"/"listening"/"waiting-reply" stages too, not
+  only while something is actually playing, since a disabled button never receives a real click at
+  all (a genuine bug the first version of this build had, not just a label one: there was no way to
+  stop a listening-but-not-yet-playing cycle from that button). A spoken stop phrase
+  ("stop listening", "stop conversation", "exit voice mode", "stop hands-free" - checked the same
+  simple case-insensitive-substring way the wake phrase itself is, against whatever
+  `captureUtterance()` resolves with) does the same. Toggling the setting off, a hashchange
+  (leaving the conversation) or `pagehide` (closing the tab) also tear it down - cleanly, since
+  `stopWakeListener`/an aborted `captureUtterance` always release the mic and `AudioContext` on
+  `aiondx-voice.js`'s side.
+- **Soft vs. hard teardown, and why both exist:** `teardownHandsFree()` stops the running listeners
+  without touching the `handsFree` setting (for a conversation switch or a page unload, where the
+  feature should resume on whatever page is open next); `stopHandsFreeForGood()` additionally saves
+  `handsFree: false` (for the user's own stop - the stop-all button or a spoken stop phrase).
+  Conflating them was the first version's actual bug here: a spoken "stop listening" tore the
+  listeners down but left the setting on, and the very next render pass (`ensureHandsFree()`,
+  which the setting alone still told to run) started the wake listener right back up inside the
+  same tick - an immediate, silent resurrection the user would have had no way to explain.
+- **Stale-result guard:** `hf.gen`, bumped by every teardown and every stage's own start; every
+  async step (a `captureUtterance()` resolve/reject, a status poll, the playback-ended watcher)
+  checks it against the value it captured before beginning - the same pattern `startPlayback`'s
+  `playGen` already uses for the loading-race bug, applied here so a stop or a conversation switch
+  mid-flight can never have a late callback restart a stage, land a message, or start a playback
+  the user already asked to stop.
+- **Out of scope for this build:** team pages (`ensureHandsFree` only matches `#/conversation/<id>`
+  - a team's per-member columns don't map onto "the current conversation" cleanly); a persistent
+  `captureUtterance` failure (a revoked mic permission, say) just keeps retrying rather than backing
+  off or giving up, since the conversation is meant to "stay live" - acceptable for now, worth
+  revisiting if that turns out to spin uselessly in practice.
+- Tests: `node patches\0011-voice\dev-smoke-test-handsfree.js`, 16 checks, real mouse input,
+  against the real `aiondx-voice.js` (its wake listener and utterance capture, unmodified) and the
+  real `aiondx-voice-ui.js`, with only `window.fetch` stubbed and the VAD's mic swapped for a fake
+  level source + fake recorder through `aiondx-voice-ui.js`'s own test-only
+  `window.__aionDxVoiceUI.setHfTestOpts` hook (the same injection technique `test-wake.js` uses for
+  `aiondx-voice.js` directly): the wake phrase is heard, the turn is captured and auto-sent, the
+  reply auto-plays once the turn finishes, playback ending leads straight back to listening (not
+  the wake phrase), a spoken stop phrase tears everything down, the stop-all button does too, and so
+  does unchecking the setting. `dev-smoke-test.js` (34/34) and `dev-smoke-test-real.js` (18/18) are
+  unaffected regressions-checked, since neither harness sets `window.AionDxVoice`'s wake/utterance
+  functions into motion (the setting defaults off, and neither harness's page sets a conversation
+  hash `ensureHandsFree()` would match) - `dev-harness-handsfree.html` is its own page, built for
+  this feature specifically.
 
 ## What it adds
 
