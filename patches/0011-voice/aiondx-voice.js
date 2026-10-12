@@ -137,7 +137,7 @@
         });
       },
 
-      transcribe: function (audio) {
+      transcribe: function (audio, transcribeOpts) {
         if (!apiKey) return Promise.reject(new Error('elevenlabs: no API key configured'));
         if (!audio) return Promise.reject(new Error('elevenlabs: no audio to transcribe'));
         var form = new FormData();
@@ -147,6 +147,7 @@
           method: 'POST',
           headers: authHeaders(),
           body: form,
+          signal: transcribeOpts && transcribeOpts.signal,
         }).then(function (r) {
           if (!r.ok) return errorText(r).then(function (t) { throw new Error('elevenlabs transcribe failed: http ' + r.status + (t ? ' ' + t : '')); });
           return r.json().then(function (j) { return (j && (j.text || j.transcript)) || ''; });
@@ -213,13 +214,306 @@
     }
 
     return {
-      transcribe: function (audioBlob) { return currentProvider().then(function (p) { return p.transcribe(audioBlob); }); },
+      transcribe: function (audioBlob, transcribeOpts) { return currentProvider().then(function (p) { return p.transcribe(audioBlob, transcribeOpts); }); },
       synthesize: function (text, voiceId) { return currentProvider().then(function (p) { return p.synthesize(text, voiceId ? { voiceId: voiceId } : undefined); }); },
       listVoices: function () { return currentProvider().then(function (p) { return p.listVoices ? p.listVoices() : []; }); },
       listProviders: function () { return Promise.resolve(listProviders()); },
       getSettings: function () { return store.getConfig().then(function (c) { return c || {}; }); },
       setSettings: function (patch) { cached = null; return store.setConfig(patch); },
     };
+  }
+
+  // ---------------------------------------------------------------- voice activity detection
+
+  /** The real microphone: getUserMedia -> an AudioContext/AnalyserNode for a 0..1-ish RMS level,
+   *  and a MediaRecorder-backed recorder. Every constructor is injectable (opts.getUserMedia,
+   *  opts.AudioContext, opts.MediaRecorder) so startWakeListener/captureUtterance are fully
+   *  testable under Node, where none of these exist, by passing opts.levelSource/opts.createRecorder
+   *  instead and skipping this function entirely. Only used when a caller does not supply its own
+   *  levelSource/createRecorder (e.g. the UI's existing mic-button plumbing, so two parts of the app
+   *  are not fighting over one MediaStream). */
+  function createMicSource(opts) {
+    opts = opts || {};
+    var getUserMedia = opts.getUserMedia || (typeof navigator !== 'undefined' && navigator.mediaDevices && function (c) { return navigator.mediaDevices.getUserMedia(c); });
+    var AudioContextCtor = opts.AudioContext || (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext));
+    var MediaRecorderCtor = opts.MediaRecorder || (typeof window !== 'undefined' && window.MediaRecorder) || (typeof MediaRecorder !== 'undefined' ? MediaRecorder : undefined);
+    if (!getUserMedia) return Promise.reject(new Error('voice: no microphone access (getUserMedia) available'));
+    if (!AudioContextCtor) return Promise.reject(new Error('voice: no AudioContext available'));
+    if (!MediaRecorderCtor) return Promise.reject(new Error('voice: no MediaRecorder available'));
+
+    return Promise.resolve(getUserMedia({ audio: true })).then(function (stream) {
+      var ctx = new AudioContextCtor();
+      var source = ctx.createMediaStreamSource(stream);
+      var analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      var buf = new Float32Array(analyser.fftSize);
+
+      function getLevel() {
+        analyser.getFloatTimeDomainData(buf);
+        var sum = 0;
+        for (var i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        return Math.sqrt(sum / buf.length); // RMS of one frame; silence is close to 0, speech well above it
+      }
+
+      function createRecorder() {
+        var rec = new MediaRecorderCtor(stream);
+        var chunks = [];
+        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        return {
+          start: function () { chunks = []; rec.start(); },
+          stop: function () {
+            return new Promise(function (resolve) {
+              rec.onstop = function () { resolve(new Blob(chunks, { type: rec.mimeType || 'audio/webm' })); };
+              try { rec.stop(); } catch (e) { resolve(new Blob(chunks)); }
+            });
+          },
+        };
+      }
+
+      function close() {
+        try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* already stopped */ }
+        try { ctx.close(); } catch (e) { /* already closed */ }
+      }
+
+      return { levelSource: { getLevel: getLevel }, createRecorder: createRecorder, close: close };
+    });
+  }
+
+  /** opts.levelSource + opts.createRecorder, both given together, or neither (real mic, via
+   *  createMicSource). Resolves to { levelSource, createRecorder, close, owned }; `owned` is true
+   *  only when this call opened the mic itself, so the caller knows whether it, not someone else's
+   *  mic-button code, is responsible for closing it. */
+  function resolveSource(opts) {
+    if (opts.levelSource || opts.createRecorder) {
+      if (!opts.levelSource || typeof opts.levelSource.getLevel !== 'function') return Promise.reject(new Error('voice: opts.levelSource.getLevel is required when opts.createRecorder is given'));
+      if (typeof opts.createRecorder !== 'function') return Promise.reject(new Error('voice: opts.createRecorder is required when opts.levelSource is given'));
+      return Promise.resolve({ levelSource: opts.levelSource, createRecorder: opts.createRecorder, close: null, owned: false });
+    }
+    return createMicSource(opts).then(function (s) { return { levelSource: s.levelSource, createRecorder: s.createRecorder, close: s.close, owned: true }; });
+  }
+
+  /** The shared state machine behind both startWakeListener and captureUtterance: poll
+   *  levelSource.getLevel() every pollMs; once it has read >= threshold for minSpeechMs straight,
+   *  start a recording (createRecorder().start()); once it then reads < threshold for silenceMs
+   *  straight (or the segment runs past maxSegmentMs regardless), stop the recording and hand the
+   *  clip to transcribe(). onSegment(text) fires for every clip that comes back with text, however
+   *  short; it is on the caller (the wake-phrase check, or captureUtterance's single resolve) to
+   *  decide what a result means. A clip that fails to transcribe (silence ElevenLabs could not read,
+   *  a network blip) is dropped silently - the loop just keeps listening, never throws out of tick(). */
+  function runVad(config) {
+    config = config || {};
+    var levelSource = config.levelSource;
+    var createRecorder = config.createRecorder;
+    var transcribe = config.transcribe;
+    var onSegment = config.onSegment;
+    if (!levelSource || typeof levelSource.getLevel !== 'function') throw new Error('voice vad: levelSource is required');
+    if (typeof createRecorder !== 'function') throw new Error('voice vad: createRecorder is required');
+    if (typeof transcribe !== 'function') throw new Error('voice vad: transcribe is required');
+    if (typeof onSegment !== 'function') throw new Error('voice vad: onSegment is required');
+
+    var threshold = config.threshold != null ? config.threshold : 0.02;
+    var pollMs = config.pollMs || 50;
+    var silenceMs = config.silenceMs != null ? config.silenceMs : 800;
+    var minSpeechMs = config.minSpeechMs != null ? config.minSpeechMs : 150;
+    var maxSegmentMs = config.maxSegmentMs || 12000;
+
+    var stopped = false;
+    var timer = null;
+    var recording = false;
+    var activeRecorder = null;
+    var speakingSince = 0;
+    var silenceSince = 0;
+    var segmentStartedAt = 0;
+    var controller = null; // aborts a transcribe call still in flight when stop() is called
+
+    function finishSegment(recorderToStop) {
+      controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var signal = controller ? controller.signal : undefined;
+      Promise.resolve(recorderToStop.stop()).then(function (blob) {
+        if (stopped) return null;
+        return transcribe(blob, { signal: signal });
+      }).then(function (text) {
+        controller = null;
+        if (stopped || text == null) return;
+        onSegment(text);
+      }, function () {
+        controller = null; // a failed or aborted clip: say nothing, keep listening
+      });
+    }
+
+    function tick() {
+      if (stopped) return;
+      var level;
+      try { level = levelSource.getLevel(); } catch (e) { level = 0; }
+      var speaking = level >= threshold;
+      var now = Date.now();
+      if (!recording) {
+        if (speaking) {
+          if (!speakingSince) speakingSince = now;
+          if (now - speakingSince >= minSpeechMs) {
+            var rec;
+            try { rec = createRecorder(); rec.start(); } catch (e) { speakingSince = 0; return; }
+            activeRecorder = rec;
+            recording = true;
+            segmentStartedAt = now;
+            silenceSince = 0;
+          }
+        } else {
+          speakingSince = 0;
+        }
+        return;
+      }
+      if (speaking) silenceSince = 0;
+      else if (!silenceSince) silenceSince = now;
+      var tooLong = now - segmentStartedAt >= maxSegmentMs;
+      var paused = silenceSince && now - silenceSince >= silenceMs;
+      if (tooLong || paused) {
+        var done = activeRecorder;
+        activeRecorder = null;
+        recording = false;
+        speakingSince = 0;
+        silenceSince = 0;
+        finishSegment(done);
+      }
+    }
+
+    timer = setInterval(tick, pollMs);
+
+    return {
+      stop: function () {
+        if (stopped) return;
+        stopped = true;
+        clearInterval(timer);
+        if (controller) { try { controller.abort(); } catch (e) { /* best effort */ } }
+        if (recording && activeRecorder) { try { activeRecorder.stop(); } catch (e) { /* best effort */ } }
+        recording = false;
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------- wake phrase + utterance capture
+
+  var activeWakeListener = null; // the one wake listener this module runs at a time
+
+  /** Listens on the mic in the background for opts.phrase, without streaming everything to the
+   *  provider: runVad only sends a clip to transcribe() once the VAD has seen actual speech. A clip
+   *  whose transcript contains opts.phrase (case-insensitive substring - deliberately simple, not a
+   *  fuzzy matcher) calls opts.onWake(text); every other clip is dropped, optionally surfaced through
+   *  opts.onCandidate(text) for a "didn't catch that" debug affordance. Returns a function that stops
+   *  everything this call started (the VAD loop, and the mic/AudioContext if this call opened them -
+   *  never a mic a caller supplied itself); starting a new listener stops any previous one first, so
+   *  only one ever runs. opts.transcribe is required: typically a configured client's own transcribe,
+   *  e.g. window.__aionDxVoice.transcribe. opts.levelSource + opts.createRecorder are optional - give
+   *  both to reuse a mic stream the UI already owns, or neither to let this open the real mic itself. */
+  function startWakeListener(opts) {
+    opts = opts || {};
+    var phrase = String(opts.phrase || '').trim().toLowerCase();
+    if (!phrase) throw new Error('voice wake listener: opts.phrase is required');
+    if (typeof opts.transcribe !== 'function') throw new Error('voice wake listener: opts.transcribe is required');
+    var onWake = typeof opts.onWake === 'function' ? opts.onWake : function () {};
+    var onCandidate = typeof opts.onCandidate === 'function' ? opts.onCandidate : null;
+
+    if (activeWakeListener) activeWakeListener.stop();
+
+    var stopped = false;
+    var vad = null;
+    var ownedClose = null;
+    var handle = {
+      stop: function () {
+        if (stopped) return;
+        stopped = true;
+        if (vad) vad.stop();
+        if (ownedClose) ownedClose();
+        if (activeWakeListener === handle) activeWakeListener = null;
+      },
+    };
+    activeWakeListener = handle;
+
+    resolveSource(opts).then(function (src) {
+      if (stopped) { if (src.owned && src.close) src.close(); return; }
+      if (src.owned) ownedClose = src.close;
+      vad = runVad({
+        levelSource: src.levelSource,
+        createRecorder: src.createRecorder,
+        transcribe: opts.transcribe,
+        threshold: opts.threshold,
+        pollMs: opts.pollMs,
+        silenceMs: opts.silenceMs,
+        minSpeechMs: opts.minSpeechMs,
+        maxSegmentMs: opts.maxSegmentMs,
+        onSegment: function (text) {
+          if (onCandidate) onCandidate(text);
+          if (String(text || '').toLowerCase().indexOf(phrase) >= 0) onWake(text);
+        },
+      });
+    }, function (err) {
+      handle.stop();
+      if (typeof opts.onError === 'function') opts.onError(err);
+    });
+
+    return handle.stop;
+  }
+
+  /** Stops whichever wake listener is currently running (a no-op if none is). The same as calling
+   *  the stop function startWakeListener returned, for a caller that did not keep it. */
+  function stopWakeListener() {
+    if (activeWakeListener) activeWakeListener.stop();
+  }
+
+  /** One hands-free turn: wait for speech, then a pause, then resolve with its transcript - the
+   *  same VAD and the same clip-to-transcribe() path as the wake listener, just a single segment
+   *  instead of a loop. opts.maxMs (default 15000) bounds the whole call, including opening the mic
+   *  and waiting for the user to start talking; it rejects, never resolves with '', when nothing was
+   *  said in time. opts.signal (a standard AbortSignal) cancels it early - stop-all wiring can pass
+   *  the same signal it uses elsewhere. Same opts as startWakeListener otherwise (transcribe
+   *  required; levelSource/createRecorder optional). */
+  function captureUtterance(opts) {
+    opts = opts || {};
+    if (typeof opts.transcribe !== 'function') return Promise.reject(new Error('voice captureUtterance: opts.transcribe is required'));
+    var maxMs = opts.maxMs != null ? opts.maxMs : 15000;
+
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      var vad = null;
+      var ownedClose = null;
+      var overallTimer = null;
+
+      function finish(fn, arg) {
+        if (settled) return;
+        settled = true;
+        if (overallTimer) clearTimeout(overallTimer);
+        if (vad) vad.stop();
+        if (ownedClose) ownedClose();
+        if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
+        fn(arg);
+      }
+
+      function onAbort() { finish(reject, new Error('voice captureUtterance: aborted')); }
+
+      if (opts.signal) {
+        if (opts.signal.aborted) { onAbort(); return; }
+        opts.signal.addEventListener('abort', onAbort);
+      }
+
+      overallTimer = setTimeout(function () { finish(reject, new Error('voice captureUtterance: timed out waiting for speech')); }, maxMs);
+
+      resolveSource(opts).then(function (src) {
+        if (settled) { if (src.owned && src.close) src.close(); return; }
+        if (src.owned) ownedClose = src.close;
+        vad = runVad({
+          levelSource: src.levelSource,
+          createRecorder: src.createRecorder,
+          transcribe: opts.transcribe,
+          threshold: opts.threshold,
+          pollMs: opts.pollMs,
+          silenceMs: opts.silenceMs,
+          minSpeechMs: opts.minSpeechMs,
+          maxSegmentMs: opts.maxSegmentMs,
+          onSegment: function (text) { finish(resolve, text); },
+        });
+      }, function (err) { finish(reject, err); });
+    });
   }
 
   return {
@@ -229,5 +523,9 @@
     listProviders: listProviders,
     createProvider: createProvider,
     createVoiceClient: createVoiceClient,
+    createMicSource: createMicSource,
+    startWakeListener: startWakeListener,
+    stopWakeListener: stopWakeListener,
+    captureUtterance: captureUtterance,
   };
 });

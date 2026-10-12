@@ -55,6 +55,61 @@ half; `aiondx-voice.js` is unchanged and stays a dumb TTS/STT client):
   with scripted clicks close enough together to land inside the stub's synthesize delay); `dev-smoke-test-real.js`
   gained 4 (markdown stripping, the stop-all button, all against the real module).
 
+## Build 2026-10-11.3: wake-phrase listener and utterance capture (hands-free conversations)
+
+New in `aiondx-voice.js` only (still a dumb, UI-agnostic client; no DOM/window touched) toward
+hands-free back-and-forth: say a wake phrase to start talking, no mic-button click per turn.
+
+- `AionDxVoice.startWakeListener({ phrase, onWake, transcribe, onCandidate?, onError?, levelSource?,
+  createRecorder?, threshold?, pollMs?, silenceMs?, minSpeechMs?, maxSegmentMs? }) -> stopFn`.
+  Polls a VAD-style level reading (RMS over the mic, via Web Audio's `AnalyserNode` by default)
+  rather than streaming everything to ElevenLabs: a clip is only cut and sent to `transcribe()` once
+  the level has read above `threshold` for `minSpeechMs` straight, and only once silence then holds
+  for `silenceMs` (or the clip hits `maxSegmentMs` regardless). A clip whose transcript contains
+  `phrase` (case-insensitive substring - deliberately simple, not a fuzzy matcher) calls
+  `onWake(text)`; every other clip is dropped, optionally surfaced through `onCandidate(text)` for a
+  "didn't catch that" debug affordance. Starting a new listener stops any previous one first - only
+  one runs at a time. `transcribe` is required (typically `window.__aionDxVoice.transcribe`);
+  `levelSource` + `createRecorder`, given together, let a caller reuse a mic stream it already owns
+  (the composer's existing mic-button plumbing) instead of this module opening its own via
+  `getUserMedia`.
+- `AionDxVoice.stopWakeListener()` - stops whichever listener is active, a no-op if none is; the same
+  as calling the function `startWakeListener` returned, for a caller that did not keep it (the "stop
+  all" button's use case).
+- `AionDxVoice.captureUtterance({ transcribe, levelSource?, createRecorder?, maxMs?, signal?, ... })
+  -> Promise<string>` - one hands-free turn: the same VAD, a single segment instead of a loop,
+  resolving with its transcript. `maxMs` (default 15000) bounds the whole call, including opening the
+  mic; it rejects, never resolves `''`, if nothing was said in time. `opts.signal` (a standard
+  `AbortSignal`) cancels it early, for the same "stop all" wiring.
+- **No lingering mic, audio context or request after a stop.** The wake listener's `stop()` and
+  cancelling `captureUtterance` (its timeout, an aborted signal, or settling normally) always: clear
+  the poll timer, abort an in-flight `transcribe()` call where `AbortController` exists (an
+  `AbortSignal` is now threaded through to `createElevenLabsProvider`'s and `createVoiceClient`'s
+  `transcribe(audio, { signal })`, new in this build), stop an active recording, and close the mic
+  stream/`AudioContext` - but only the ones this call opened itself; a caller-supplied
+  `levelSource`/`createRecorder` is never touched, since the caller owns that lifecycle. A transcribe
+  result that arrives after a stop is dropped rather than firing a stale `onWake` or resolving an
+  already-settled promise.
+- `AionDxVoice.createMicSource(opts)` - the default mic (real `getUserMedia` + `AudioContext` +
+  `AnalyserNode` for the level, `MediaRecorder` for the clip), exported for a caller that wants its
+  `{levelSource, createRecorder, close}` directly without going through the wake/utterance functions.
+  Every constructor is injectable (`opts.getUserMedia`/`opts.AudioContext`/`opts.MediaRecorder`),
+  which is how `test-wake.js` runs this file's whole state machine under plain Node with no
+  microphone at all - a controllable fake level and a fake recorder, never this function in anger
+  (one check just confirms it fails cleanly, instead of throwing something unhelpful, when there is
+  no `getUserMedia` to call).
+- Tests: `node patches\0011-voice\test-wake.js`, 22 checks, real timers (small ms values - `pollMs`
+  10, `minSpeechMs` 40, `silenceMs` 60 - chosen with margin for Windows' coarser timer resolution
+  rather than a fake clock): wake-phrase match and non-match, two listeners in a row (the second
+  replacing the first), the module-level stop, `captureUtterance` resolving / timing out / aborting
+  (both an already-aborted signal and one aborted mid-call), and the stale-result protection for both
+  functions.
+- Not yet done: the UI wiring (a wake-phrase toggle, a "listening..." indicator, folding this into
+  the existing "stop all" button) - for the Voice UI Engineer, queued up behind the other two voice
+  tasks. `createMicSource`'s real-mic path is untested against an actual microphone or a real
+  `AudioContext`/`MediaRecorder` - only its constructor-injection path is exercised, by
+  `test-wake.js`'s fakes.
+
 ## What it adds
 
 `aiondx-voice.js`: a small interface any text-to-speech / speech-to-text provider can implement,
@@ -145,8 +200,9 @@ is - the key always comes from the settings record at call time).
 
 | file | what |
 |---|---|
-| `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore`, and `createVoiceClient` (the flat convenience wrapper) |
+| `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore`, `createVoiceClient` (the flat convenience wrapper), and the wake-phrase/utterance-capture VAD engine (`startWakeListener`, `stopWakeListener`, `captureUtterance`, `createMicSource`) |
 | `test-voice.js` | 46 checks against a stand-in HTTP server standing in for both ElevenLabs and the settings store - no real network, no real AionUi, no real key |
+| `test-wake.js` | 22 checks for the wake-phrase listener and utterance capture, against a fake level source and a fake recorder - no real microphone |
 | `aiondx-voice-ui.js` | the composer's mic button (idle/recording/transcribing, matching patch 0001's 28x28 Arco circle pills), a speaker button on each agent reply (idle/loading/playing, stops on a second click or the clip ending), and a settings panel section on Settings > Appearance (provider, API key, voice, from `listVoices()` when the provider offers one) |
 | `dev-harness.html`, `voice-provider.stub.js`, `dev-smoke-test.js` | a UI-only dev loop: a minimal composer/message/settings DOM plus a stand-in `window.__aionDxVoice` (not shipped), driven with real mouse and a fake microphone in headless Edge, 16/16 |
 | `dev-harness-real.html`, `dev-smoke-test-real.js` | the same real-mouse check against the actual `aiondx-voice.js`, with only `window.fetch` stubbed (the settings store and ElevenLabs' three endpoints) - no real network or key, 14/14 |
@@ -183,4 +239,5 @@ patch leaves behind.
   patch 0001's app-shaped harness. Not yet run: against a real ElevenLabs account (both dev-smoke
   suites stub the network), or inside `click-test.js`'s own `harness.html` alongside patch 0001's
   checks.
-- Still unresolved: the commit-identity finding above.
+- The wake-phrase listener and utterance capture (build 2026-10-11.3 above) are core-module-only so
+  far; the UI wiring and a real-microphone check are listed in that section.
