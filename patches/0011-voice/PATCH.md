@@ -1,16 +1,23 @@
 # 0011-voice: provider-agnostic voice (TTS/STT), ElevenLabs first
 
 **Target:** renderer only (two plain global scripts, like patch 0001's `aionui-dx.js`), plus one key
-in AionUi's per-user settings store. **Status:** both halves done and wired into the build, not yet
-installed. `aiondx-voice.js` (the provider module: the interface, ElevenLabs, the settings store,
-`createVoiceClient`) passes `node patches\0011-voice\test-voice.js`, 46/46. `aiondx-voice-ui.js` (the
-composer's mic button, a playback button on agent replies, and a Settings > Appearance section for
-provider/key/voice) builds its `window.__aionDxVoice` from `window.AionDxVoice.createVoiceClient(...)`
-the same way patch 0001 builds its own backend address, and is checked end to end two ways:
-`dev-smoke-test.js` (16/16, a UI-shaped stub) and `dev-smoke-test-real.js` (14/14, the real module
-with only `fetch` stubbed - the settings store and ElevenLabs' three endpoints, no real network or key).
-Both scripts are wired into `index.html` / `tools\build-release.ps1` / `tools\privacy-check.js` the
-same way `aionui-dx.js` is.
+in AionUi's per-user settings store. **Status:** both halves done, wired into the build, and QA-verified
+against a real AionUi 2.2.2 base (2026-10-11):
+- `node patches\0011-voice\test-voice.js` - 46/46.
+- `node patches\0011-voice\dev-smoke-test.js` - 16/16 (UI against a stub, real mouse + fake mic, headless Edge).
+- `node patches\0011-voice\dev-smoke-test-real.js` - 14/14 (UI against the real module, only `fetch` stubbed).
+- `tools\build-release.ps1 -StageOnly` against AionUi 2.2.2's real `app.asar`, full apply order
+  (0001, 0011, 0003, 0006, 0009, 0010): every patch's anchors matched, including both of 0011's
+  (the `index.html` script-tag insertion and the two `Copy-Item`s) - no anchor-match failures. The
+  asar packed and verified clean (41726 entries, 36275 checked against sources). Staged app: 860 MB.
+- `tools\privacy-check.js`, the three calls `build-release.ps1` itself runs on the staged output
+  (renderer + README, the main-process block, the whole payload dir) - all clean, including
+  `aiondx-voice.js` / `aiondx-voice-ui.js` in the renderer list.
+- `tools\audit-literals.js` against the staged, extracted asar - 2 distinct contexts, both
+  pre-existing and unrelated to voice (an MCP image-gen referer header, an installer failure-marker
+  path); nothing from `aiondx-voice.js` / `aiondx-voice-ui.js`.
+
+**Commit identity, fixed 2026-10-11:** the six commits this patch was originally built from carried identities `tools\privacy-check.js --commits` refuses before anything reaches GitHub - four of the Voice UI Engineer's commits used a local-only address instead of a GitHub no-reply one, and the Voice Core Engineer's two used this machine's own git identity, picked up from global git config rather than a committed-safe one. All six were rewritten (author and committer, each kept under their own name) with a scoped `git filter-branch --env-filter` to GitHub no-reply addresses. `node tools\privacy-check.js --commits` is clean on the rewritten chain; this branch is the canonical integration branch for the voice feature.
 
 ## What it adds
 
@@ -133,7 +140,11 @@ patch leaves behind.
 
 - A second provider, if ever wanted: one more `PROVIDERS` entry in `aiondx-voice.js`; everything
   else in this file and in the UI stays the same.
-- Not installed on a real machine yet; `dev-smoke-test.js` / `dev-smoke-test-real.js` are headless
-  checks against a throwaway DOM and a stubbed `fetch`, not `tools\dx-harness\click-test.js`'s full
-  app-shaped harness (which needs `vendor\extracted`, not present in a fresh clone) and not a real
-  ElevenLabs account.
+- `dev-smoke-test.js` / `dev-smoke-test-real.js` already use `click-test.js`'s own technique (real
+  mouse via the DevTools protocol, one headless Edge, the same hold-and-release timing) against a
+  purpose-built mic/playback/settings DOM; QA judged that sufficient dx-harness-style coverage for
+  all three surfaces rather than duplicating it inside `click-test.js` itself, which is specific to
+  patch 0001's app-shaped harness. Not yet run: against a real ElevenLabs account (both dev-smoke
+  suites stub the network), or inside `click-test.js`'s own `harness.html` alongside patch 0001's
+  checks.
+- Still unresolved: the commit-identity finding above.
