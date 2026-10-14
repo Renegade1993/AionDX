@@ -894,3 +894,37 @@ member's Stop already pauses the member through AionCore's pause route.)
 - **Model names from the agents list** (`learnModels`). A disabled agent is skipped (the disabled built-in Claude still had Haiku 4.5 and its
   name won over the enabled agents' Haiku 5.5), and a name the enabled agents disagree on in one answer goes back to plain.
 - Tests: click suite scenarios `one-click` (the sign-in page) and `model-labels` (disabled agents, disagreement).
+
+## October 13th, 2026: build `2026-10-13.1`
+
+- **Schedule send, a new box.** The four fixed times and the single date-and-time field are gone. The menu has two modes: In, with days, hours and
+  minutes typed by hand (a number box each, 15 minutes at first, up to 366 days), and At, with a date (today, or the day an hour from now falls
+  on) and a time. A line under the fields says when the message will go; Enter in a field schedules; the last mode chosen stays while the page is
+  open. The Waiting list, Send now, Try again and Cancel are as before.
+- **Stop backstop** (`stopBackstop`). The log of a chat that would not stop showed the first Stop landing, a new turn 17 seconds later (a message
+  typed after it), and the second press of Stop never reaching the server. After a press of Stop in a solo chat AionDX reads the chat's turn,
+  waits 2.5 seconds, and if the same turn is still running and no cancel is under way sends the cancel itself with the server's turn id and says
+  "Stop sent again." A different turn is left alone. The cancel route needs the turn id in its body (an empty body is a 400).
+- Tests: click suite scenario `sched` (both modes, Enter, 90 minutes, an empty In, a time in the past) and three Stop backstop cases in `loop`.
+
+## October 13th, 2026 (later): build `2026-10-13.1`, clearing agent caches
+
+- **Clear agent caches** (`openCaches`, `paintCaches`, `scanCacheRow`, `confirmCacheClear`). Settings > Appearance, under AionDX setup, has a "Clear agent
+  caches" button when the app has the bridge (patch 0009). It opens a panel with an age chooser (Everything, 1 day, 1 week, 1 month, 3 months,
+  6 months) and a row per profile, each scanned at that age: Caches and History, with sizes and file counts and a button each. A click asks first
+  ("Remove 2,009 files (454 MB) from Devin, older than 1 month?"; History adds that a Claude chat whose transcript goes cannot be resumed); Remove does it and
+  the row is read again. Everything is for caches only: History says to choose an age. Tests: click suite scenario `caches`.
+
+## October 13th, 2026 (evening): the fallback Stop and Force stop
+
+- **A Stop that is there when AionUi's is not** (`paintStop`, `fallbackStop`). AionUi draws its Stop button from the stream it has seen, so a turn it missed (a Loop
+  nudge, a scheduled or queued message, a page reconnecting) runs with no Stop on screen, and a press during a turn change can reach the server with the wrong
+  turn id (the server logs "cancel ignored because turn id mismatched"). A solo chat that AionDX's 3-second check finds working for 3 seconds with no
+  `.sendbox-stop-button` in its box gets AionDX's own Stop: it turns the Loop off and holds the draft box as AionUi's does, reads the turn id from the server
+  and cancels with it. Together with `stopBackstop` (after AionUi's own Stop, the same turn still running 2.5 seconds on gets the cancel again).
+- **Force stop.** A chat or team member still working 12 seconds after a Stop (AionUi's, this one, or the backstop) gets "Force stop": a second click within 5
+  seconds posts runtime/restart, which in AionCore cancels the turn, ends the agent process and starts it again; the chat keeps its history. Team members get
+  only the Force stop (their Stop in AionUi pauses the member).
+- A bug found by the new test and fixed before it shipped: the fallback's wrapper carried the draft button's anchor class, which `renderSched` uses to find its
+  own anchor, so the two buttons moved each other on every repaint and no click could finish. The wrapper has its own class.
+- Tests: click scenario `stop-fallback`; `tools\dx-harness\quick-stop.js` runs it alone, with the raw mouse events, in about 20 seconds.

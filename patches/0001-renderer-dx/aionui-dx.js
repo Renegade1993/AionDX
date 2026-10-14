@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-12.1';
+  var BUILD = '2026-10-13.1';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -1150,6 +1150,9 @@
       '<div class="aiondx-accent-title aiondx-setup-title">AionDX setup</div>' +
       '<div class="aiondx-accent-desc">Bring your agents, instructions and tools over from the other AI apps on this PC, with Antigravity or an agent of your choice.</div>' +
       '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-setup-open" data-testid="aiondx-setup-open">Open AionDX setup</button>' +
+      (cacheBridge() ? '<div class="aiondx-accent-title aiondx-cache-title">Agent caches</div>' +
+        '<div class="aiondx-accent-desc">See what Claude Code, Devin and AionUi keep on this PC, and clear the caches, or the history older than a week, a month or more.</div>' +
+        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-open" data-testid="aiondx-cache-open">Clear agent caches</button>' : '') +
       '<div class="aiondx-accent-title aiondx-ctx-title">Context ring</div>' +
       '<div class="aiondx-accent-desc">The ring beside the message box fills as the context window does, and changes colour as it goes. ' +
         'Each colour starts at the percentage in its box.</div>' +
@@ -1163,6 +1166,8 @@
       welcome.opened = true;
       showWelcome(1);
     });
+    var cacheOpen = el.querySelector('.aiondx-cache-open');
+    if (cacheOpen) cacheOpen.addEventListener('click', function (ev) { ev.preventDefault(); openCaches(); });
     var row = el.querySelector('.aiondx-accent-row');
     ACCENTS.forEach(function (a) {
       var b = document.createElement('button');
@@ -2566,6 +2571,8 @@
       if (!t) return;
       // First, before AionUi's own handler cancels the turn: the draft box must not send its next message when it ends.
       holdDraftBox(b, t);
+      if (t.kind === 'conv') stopBackstop(t.convId);
+      else stopSent[t.key] = Date.now();   // a member still working 12 s on gets Force stop
       if (!state(t).on) return;
       setOn(t, false, 'you pressed Stop', true);
       notify(t, 'Loop off for {who}: you pressed Stop.', '');
@@ -2588,7 +2595,182 @@
   }
 
 
+  // ---------------------------------------------------------------- clearing agent caches (2026-10-13)
+
+  // a request of 2026-10-13: clear the caches of one agent profile (Claude Code's accounts and Devin first), or only what is older than
+  // a week, a month and so on. Settings > Appearance > Clear agent caches opens this panel. The work is the main process's aiondx:cache
+  // (aiondx-cache.js, patch 0009): two groups per profile, caches (rebuild themselves) and history (transcripts, logs, local edit history,
+  // cleared by age only). Each profile is scanned with the chosen age before anything is removed, and a Remove needs a second click.
+  var cachePanel = { el: null, days: 7, profiles: null, token: 0 };
+  var CACHE_AGES = [[0, 'Everything (caches only)'], [1, '1 day'], [7, '1 week'], [30, '1 month'], [90, '3 months'], [180, '6 months']];
+  function cacheBridge() { return window.aiondxCache && typeof window.aiondxCache.scan === 'function' ? window.aiondxCache : null; }
+  function sizeText(n) {
+    n = Number(n) || 0;
+    if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+    if (n >= 1048576) return Math.round(n / 1048576) + ' MB';
+    if (n >= 1024) return Math.round(n / 1024) + ' KB';
+    return n + ' B';
+  }
+  function filesText(n) { n = Number(n) || 0; return n.toLocaleString('en-US') + (n === 1 ? ' file' : ' files'); }
+  function cacheStatus(text, bad) {
+    var el = cachePanel.el && cachePanel.el.querySelector('.aiondx-cache-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('aiondx-plugins-status--bad', !!bad);
+  }
+  function openCaches() {
+    if (!cachePanel.el) {
+      cachePanel.el = document.createElement('div');
+      cachePanel.el.className = 'aiondx-welcome-backdrop aiondx-cache-backdrop';
+      cachePanel.el.setAttribute('data-testid', 'aiondx-cache');
+      cachePanel.el.innerHTML =
+        '<div class="aiondx-welcome aiondx-cache" role="dialog" aria-modal="true" aria-labelledby="aiondx-cache-title">' +
+          '<button type="button" class="aiondx-plugins-close" aria-label="Close">×</button>' +
+          '<h2 id="aiondx-cache-title" class="aiondx-welcome-title">Clear agent caches</h2>' +
+          '<p class="aiondx-welcome-text">Caches rebuild themselves. History is what the agents kept from your work: Claude Code’s session transcripts, ' +
+            'file history and to-do lists, Devin’s logs and local edit history, and AionUi’s logs. History is cleared by age only, and a Claude chat whose ' +
+            'transcript is removed cannot be resumed. Sign-ins, settings, memory, skills and databases are never touched, and neither is a file used in the last ten minutes.</p>' +
+          '<label class="aiondx-cache-age">Older than <select class="aiondx-cache-days" aria-label="Older than"></select></label>' +
+          '<div class="aiondx-welcome-status aiondx-cache-status" aria-live="polite"></div>' +
+          '<div class="aiondx-cache-list"></div>' +
+        '</div>';
+      var box = cachePanel.el.firstChild;
+      var sel = box.querySelector('.aiondx-cache-days');
+      CACHE_AGES.forEach(function (a) {
+        var o = document.createElement('option');
+        o.value = String(a[0]);
+        o.textContent = a[1];
+        if (a[0] === cachePanel.days) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener('change', function () { cachePanel.days = Number(sel.value); paintCaches(); });
+      cachePanel.el.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Escape') closeCaches(); });
+      cachePanel.el.addEventListener('mousedown', function (ev) { if (ev.target === cachePanel.el) closeCaches(); });
+      box.querySelector('.aiondx-plugins-close').addEventListener('click', closeCaches);
+      document.body.appendChild(cachePanel.el);
+    }
+    cachePanel.el.hidden = false;
+    cachePanel.profiles = null;
+    paintCaches();
+  }
+  function closeCaches() { if (cachePanel.el) cachePanel.el.hidden = true; cachePanel.token++; }
+  async function paintCaches() {
+    var bridge = cacheBridge();
+    var list = cachePanel.el && cachePanel.el.querySelector('.aiondx-cache-list');
+    if (!list) return;
+    if (!bridge) { cacheStatus('This works in the AionDX app, not in the browser (WebUI).', true); return; }
+    var token = ++cachePanel.token;
+    var stale = function () { return token !== cachePanel.token || cachePanel.el.hidden; };
+    if (!cachePanel.profiles) {
+      cacheStatus('Looking for agent profiles...');
+      var p = await bridge.profiles();
+      if (stale()) return;
+      if (!p || !p.ok) { cacheStatus((p && p.error) || 'The cache tool did not answer.', true); return; }
+      cachePanel.profiles = p.profiles;
+    }
+    list.textContent = '';
+    var rows = cachePanel.profiles.map(function (pr) {
+      var row = document.createElement('div');
+      row.className = 'aiondx-cache-row';
+      row.setAttribute('data-profile', pr.id);
+      row.innerHTML = '<div class="aiondx-cache-name"></div><div class="aiondx-cache-dir"></div><div class="aiondx-cache-body">Reading...</div>';
+      row.querySelector('.aiondx-cache-name').textContent = pr.label;
+      row.querySelector('.aiondx-cache-dir').textContent = pr.dir;
+      list.appendChild(row);
+      return row;
+    });
+    cacheStatus(cachePanel.profiles.length ? 'Reading each profile...' : 'No agent profiles were found on this PC.');
+    for (var i = 0; i < rows.length; i++) {
+      if (stale()) return;
+      await scanCacheRow(rows[i], cachePanel.profiles[i], bridge, stale);
+    }
+    if (!stale()) cacheStatus(cachePanel.profiles.length ? 'Choose what to clear. Nothing is removed until you confirm.' : '');
+  }
+  async function scanCacheRow(row, pr, bridge, stale) {
+    var body = row.querySelector('.aiondx-cache-body');
+    var r = await bridge.scan(pr.id, cachePanel.days);
+    if (stale && stale()) return;
+    body.textContent = '';
+    if (!r || !r.ok) { body.textContent = (r && r.error) || 'Could not read this profile.'; return; }
+    [['cache', 'Caches'], ['history', 'History']].forEach(function (g) {
+      var x = r.groups[g[0]] || {};
+      var line = document.createElement('div');
+      line.className = 'aiondx-cache-line';
+      line.setAttribute('data-group', g[0]);
+      line.innerHTML = '<span class="aiondx-cache-line-label"></span><span class="aiondx-cache-line-info"></span><span class="aiondx-cache-line-act"></span>';
+      line.querySelector('.aiondx-cache-line-label').textContent = g[1];
+      var info = line.querySelector('.aiondx-cache-line-info');
+      var act = line.querySelector('.aiondx-cache-line-act');
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-clear';
+      btn.textContent = 'Clear ' + g[1].toLowerCase();
+      if (x.error) { info.textContent = x.error; btn.disabled = true; }
+      else if (!x.count) { info.textContent = 'Nothing to clear' + (cachePanel.days ? ' at this age.' : '.'); btn.disabled = true; }
+      else {
+        info.textContent = sizeText(x.bytes) + ' in ' + filesText(x.count) + (x.partial ? ' (read partly: it took too long)' : '');
+        info.title = (x.targets || []).map(function (t) { return t.label + ': ' + sizeText(t.bytes) + ' in ' + filesText(t.files); }).join('\n');
+        btn.addEventListener('click', function () { confirmCacheClear(row, pr, g, x, line, act, btn, bridge); });
+      }
+      act.appendChild(btn);
+      body.appendChild(line);
+    });
+  }
+  function confirmCacheClear(row, pr, g, x, line, act, btn, bridge) {
+    var info = line.querySelector('.aiondx-cache-line-info');
+    var days = cachePanel.days;
+
+    info.textContent = 'Remove ' + filesText(x.count) + ' (' + sizeText(x.bytes) + ') from ' + pr.label + (days ? ', older than ' + CACHE_AGES.filter(function (a) { return a[0] === days; })[0][1] : '') + '?' +
+      (g[0] === 'history' ? ' Claude chats whose transcript goes cannot be resumed.' : '');
+    info.classList.add('aiondx-cache-confirm');
+    act.textContent = '';
+    var yes = document.createElement('button');
+    yes.type = 'button';
+    yes.className = 'arco-btn arco-btn-primary arco-btn-status-danger arco-btn-size-small aiondx-cache-yes';
+    yes.textContent = 'Remove';
+    var no = document.createElement('button');
+    no.type = 'button';
+    no.className = 'arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-no';
+    no.textContent = 'Cancel';
+    act.appendChild(yes);
+    act.appendChild(no);
+    no.addEventListener('click', function () { info.classList.remove('aiondx-cache-confirm'); scanCacheRow(row, pr, bridge); });
+    yes.addEventListener('click', async function () {
+      yes.disabled = true; no.disabled = true;
+      info.textContent = 'Removing...';
+      var r = await bridge.clear(pr.id, g[0], days);
+      var msg = r && r.ok ? 'Removed ' + filesText(r.deleted) + ' (' + sizeText(r.bytes) + ').' + (r.skipped ? ' ' + filesText(r.skipped) + ' left: in use, or newer than ten minutes.' : '')
+        : ((r && r.error) || 'The clear did not finish.');
+      cacheStatus(pr.label + ': ' + msg, !(r && r.ok));
+      await scanCacheRow(row, pr, bridge);
+    });
+  }
+
   // ---------------------------------------------------------------- Stop must stop (2026-10-01)
+
+  // a request of 2026-10-13: a chat could not be stopped. AionCore's log showed the first Stop landing (the turn ended within half a
+  // second), a new turn starting seventeen seconds later, and the second press of Stop never reaching the server at all. AionUi's
+  // button had no usable turn for the new turn, so nothing was sent. After a press of Stop in a solo chat AionDX now reads the
+  // chat's turn from the server, waits 2.5 seconds, and when that same turn is still running and no cancel is under way it sends the
+  // cancel itself, with the turn id the server gave. A different turn (a message sent after the press) is left alone.
+  var STOP_BACKSTOP_MS = 2500;
+  var stopWatch = {};   // conversation id -> a backstop already waiting
+  async function stopBackstop(convId) {
+    if (!convId || stopWatch[convId]) return;
+    stopWatch[convId] = true;
+    stopSent['conv:' + convId] = Date.now();   // a chat still working 12 s on gets Force stop (fallbackStop)
+    try {
+      var g = await getJson('/api/conversations/' + convId);
+      var turn = g.data && g.data.runtime && convBusy(g.data) ? g.data.runtime.turn_id : null;
+      if (!turn) return;
+      await new Promise(function (res) { setTimeout(res, STOP_BACKSTOP_MS); });
+      var h = await getJson('/api/conversations/' + convId);
+      var rt = h.data && h.data.runtime;
+      if (!rt || !convBusy(h.data) || rt.turn_id !== turn || rt.state === 'cancelling') return;
+      var r = await postJson('/api/conversations/' + convId + '/cancel', { turn_id: turn });
+      toast(r && r.ok ? 'Stop sent again.' : 'Stop could not be sent.', r && r.ok ? 'The chat was still working after you pressed Stop.' : 'The chat is still working. HTTP ' + (r && r.status));
+    } catch (e) { /* the button's own Stop stands */ } finally { delete stopWatch[convId]; }
+  }
 
   // a request of 2026-10-01. AionUi's draft box (the queue of messages added with the draft button) has two modes: Manual, which sends
   // nothing by itself, and Auto, which sends the next message as soon as a turn ends, and a turn the Stop button cancelled ends like
@@ -5539,7 +5721,20 @@
     '.aiondx-welcome-done li{word-break:break-word}',
     '.aiondx-setup-open{margin-top:8px}',
     // Claude Code plugins (/plugin).
-    '.aiondx-plugins-backdrop[hidden]{display:none !important}',
+    '.aiondx-plugins-backdrop[hidden],.aiondx-cache-backdrop[hidden]{display:none !important}',
+    '.aiondx-cache{position:relative;width:min(720px,94vw)}',
+    '.aiondx-cache-age{display:flex;align-items:center;gap:8px;margin:6px 0 4px;font-size:13px;color:var(--color-text-2)}',
+    '.aiondx-cache-days{height:28px;padding:0 8px;border:1px solid var(--color-border-2);border-radius:6px;background:var(--color-bg-2);color:var(--color-text-1)}',
+    '.aiondx-cache-list{display:flex;flex-direction:column;gap:8px;margin-top:6px;max-height:50vh;overflow-y:auto;padding-right:4px}',
+    '.aiondx-cache-row{padding:10px 12px;border:1px solid var(--color-border-2);border-radius:8px}',
+    '.aiondx-cache-name{font-size:14px;font-weight:600;color:var(--color-text-1)}',
+    '.aiondx-cache-dir{font-size:12px;color:var(--color-text-3);overflow-wrap:anywhere}',
+    '.aiondx-cache-body{margin-top:6px;font-size:13px;color:var(--color-text-2)}',
+    '.aiondx-cache-line{display:flex;align-items:center;gap:10px;padding:4px 0}',
+    '.aiondx-cache-line-label{flex:0 0 64px;color:var(--color-text-1)}',
+    '.aiondx-cache-line-info{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}',
+    '.aiondx-cache-line-act{flex:0 0 auto;display:flex;gap:6px}',
+    '.aiondx-cache-confirm{color:rgb(var(--danger-6))}',
     '.aiondx-plugins{position:relative;width:min(720px,94vw)}',
     '.aiondx-plugins-close{position:absolute;top:14px;right:16px;width:28px;height:28px;border:0;border-radius:6px;background:transparent;',
     '  color:var(--color-text-2);font-size:20px;line-height:28px;cursor:pointer}',
@@ -5696,15 +5891,27 @@
     '.aiondx-bg-reset{padding:0 4px;border:none;background:none;font:inherit;font-size:12px;color:rgb(var(--primary-6));cursor:pointer}',
     '.aiondx-bg-reset[disabled]{color:var(--color-text-3);cursor:default}',
     // Schedule send: the round button before AionUi's draft button, its count, and its menu.
+    '.aiondx-stop-wrap{display:inline-flex}',
+    '.aiondx-stop{color:rgb(var(--danger-6))}',
+    '.aiondx-stop-sq{display:block;width:12px;height:12px;margin:0 auto;border-radius:2px;background:currentColor}',
+    '.aiondx-stop.aiondx-stop--force{border-color:rgb(var(--danger-6)) !important;background:rgba(var(--danger-6),.12)}',
     '.aiondx-sched-wrap{position:relative}',
     '.aiondx-sched-count{position:absolute;top:-3px;right:-3px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:rgb(var(--warning-6));',
     '  color:#111;font-size:10px;line-height:14px;text-align:center;pointer-events:none}',
     '.aiondx-sched-count:empty{display:none}',
     '.aiondx-sched-menu{width:340px}',
     '.aiondx-sched-menu .arco-dropdown-menu{max-height:min(460px,75vh);overflow-y:auto}',
-    '.aiondx-sched-quick-item.aiondx-sched-off{opacity:.45;cursor:default}',
-    '.aiondx-sched-custom{display:flex;align-items:center;gap:8px;padding:6px 12px}',
-    '.aiondx-sched-when{flex:1 1 auto;min-width:0;height:28px;padding:0 6px;border:1px solid var(--color-border-2);border-radius:4px;background:var(--color-bg-2);color:var(--color-text-1)}',
+    '.aiondx-sched-modes{display:flex;gap:4px;margin:2px 12px 8px;padding:2px;border-radius:6px;background:var(--color-fill-2)}',
+    '.aiondx-sched-mode{flex:1 1 0;height:26px;padding:0 8px;border-radius:4px;color:var(--color-text-2);font-size:13px}',
+    '.aiondx-sched-mode.aiondx-sched-mode-on{background:var(--color-bg-2);color:var(--color-text-1);font-weight:600}',
+    '.aiondx-sched-pane{display:flex;align-items:center;gap:8px;padding:0 12px 6px}',
+    '.aiondx-sched-field{flex:1 1 0;min-width:0;display:flex;align-items:center;gap:4px;font-size:12px;color:var(--color-text-2)}',
+    '.aiondx-sched-field input,.aiondx-sched-date,.aiondx-sched-time{min-width:0;height:28px;padding:0 6px;border:1px solid var(--color-border-2);border-radius:4px;background:var(--color-bg-2);color:var(--color-text-1)}',
+    '.aiondx-sched-field input{width:100%}',
+    '.aiondx-sched-date{flex:1 1 auto}',
+    '.aiondx-sched-time{flex:0 0 112px}',
+    '.aiondx-sched-custom{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 12px}',
+    '.aiondx-sched-preview{min-width:0;font-size:12px;color:var(--color-text-2)}',
     '.aiondx-sched-item{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:6px 12px;font-size:12px;line-height:18px;color:var(--color-text-2)}',
     '.aiondx-sched-item-when{color:var(--color-text-1);font-weight:600}',
     '.aiondx-sched-item-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -6656,6 +6863,7 @@
       }
       for (var k in pills) if (Object.prototype.hasOwnProperty.call(pills, k)) paintPill(pills[k]);
       applyPendingMoves();
+      renderSched();   // also places the fallback Stop (paintStop), which waits on this state
     } finally {
       pulsing = false;
     }
@@ -6726,8 +6934,8 @@
   // ---------------------------------------------------------------- schedule send (R-003, 2026-10-01)
 
   // a request of 2026-10-01.
-  // A round button beside AionUi's draft button holds what is typed in the box and sends it later: in 15 minutes, an hour,
-  // three hours, tomorrow at 9:00, or at a time picked. Each is a record in the settings store (aiondx.sched.<id> = { id,
+  // A round button beside AionUi's draft button holds what is typed in the box and sends it later: in a number of days, hours and
+  // minutes typed by hand, or at a date and time picked (since 2026-10-13; before it, four fixed times). Each is a record in the settings store (aiondx.sched.<id> = { id,
   // scope, text, due, at }), so it survives closing the app and shows in any window. Every window checks every 5 seconds
   // and sends what is due through the same route a Loop nudge takes; a window claims a record in the store first, so two
   // windows do not both send it. A message due while the app was closed goes out when it opens, and the notice says it
@@ -6744,6 +6952,7 @@
   var schedBusy = {};       // id -> a send in flight
   var schedEls = {};        // target key -> its button wrapper
   var schedMenu = null;
+  var schedMode = 'in';     // which way of saying when the menu shows: 'in' (days, hours, minutes) or 'at' (date and time)
   var ICON_SCHED = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="13.5" r="6.5" stroke="currentColor" stroke-width="2"/>' +
     '<path d="M12 10.3v3.4l2.2 1.4M9.8 3.5h4.4M12 3.5V7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
@@ -6878,6 +7087,75 @@
   }
 
   /** The button before AionUi's draft button in each message box. */
+  // ---------------------------------------------------------------- a Stop that is there when AionUi's is not (2026-10-13)
+
+  // a request of 2026-10-13: "some agents just keep going when the UI gives me no stop command, or clicking it does nothing (then it
+  // disappears)". AionUi draws its Stop from its own idea of the turn (the stream it has seen), so a turn it missed (one a Loop nudge,
+  // a scheduled or queued message started, or one begun while the page was reconnecting) runs with no Stop on screen, and a press during
+  // a turn change can send nothing. AionDX already asks every 3 seconds whether each chat is working (agentLive). A solo chat that has
+  // been working for 3 seconds with no Stop button of AionUi's gets one of AionDX's, which cancels with the turn id the server gives.
+  // A chat still working 12 seconds after a Stop (AionUi's or this one) gets "Force stop": the agent process is ended and restarted, the
+  // chat keeping its history (POST runtime/restart). Team members are not covered yet.
+  var STOP_SHOW_MS = 3000, STOP_FORCE_MS = 12000;
+  var stopEls = {};      // target key -> the fallback button
+  var stopSeen = {};     // target key -> since when it has worked with no Stop of AionUi's on screen
+  var stopSent = {};     // conversation id -> when a Stop was last sent
+  var forceArmed = {};   // conversation id -> until when a second click restarts the agent
+  function paintStop(t, wrap) {
+    var now = Date.now();
+    var a = agentLive[t.key];
+    var working = !!a && a.state === 'working';
+    var native = !!(t.actions && t.actions.querySelector('.sendbox-stop-button'));
+    // A team member gets only the Force stop: AionUi's Stop for a member pauses it, and the plain cancel is a solo chat's.
+    var plain = t.kind === 'conv';
+    if (plain && working && !native) { if (!stopSeen[t.key]) stopSeen[t.key] = now; } else delete stopSeen[t.key];
+    if (!working) delete stopSent[t.key];
+    var force = working && !!stopSent[t.key] && now - stopSent[t.key] >= STOP_FORCE_MS;
+    var show = working && (force || (plain && !!stopSeen[t.key] && now - stopSeen[t.key] >= STOP_SHOW_MS));
+    var el = stopEls[t.key];
+    if (!show) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
+    if (!el) {
+      el = document.createElement('span');
+      el.className = 'aiondx-stop-wrap';   // not the draft button's anchor class: renderSched finds its own anchor by that class and would shuffle the two
+      el.innerHTML = '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-default arco-btn-shape-circle aiondx-stop" data-testid="aiondx-stop-btn"><span class="aiondx-stop-sq"></span></button>';
+      el.firstChild.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); fallbackStop(el._t, !!el._force); });
+      stopEls[t.key] = el;
+    }
+    el._t = t;
+    el._force = force;
+    if (el.parentNode !== wrap.parentNode || el.nextSibling !== wrap) wrap.parentNode.insertBefore(el, wrap);
+    var btn = el.firstChild;
+    btn.classList.toggle('aiondx-stop--force', force);
+    var tip = force ? 'Force stop: the agent did not stop. This ends it and starts it again; the chat keeps its history.' : 'Stop: AionUi shows no Stop button, but this chat is still working.';
+    if (btn.title !== tip) { btn.title = tip; btn.setAttribute('aria-label', tip); }
+  }
+  async function fallbackStop(t, force) {
+    var convId = t.convId;
+    if (!convId && t.kind === 'conv') return;
+    if (force) {
+      if (!(forceArmed[t.key] > Date.now())) {
+        forceArmed[t.key] = Date.now() + 5000;
+        toast('Click Force stop again to restart the agent.', 'Whatever it is running ends. It keeps this chat\'s history.');
+        return;
+      }
+      delete forceArmed[t.key];
+      stopSent[t.key] = Date.now();
+      var rr = await postJson(t.kind === 'conv' ? '/api/conversations/' + convId + '/runtime/restart'
+        : '/api/teams/' + t.teamId + '/agents/' + encodeURIComponent(t.slotId) + '/runtime/restart', {});
+      toast(rr && rr.ok ? 'The agent was restarted.' : 'The agent could not be restarted.', rr && rr.ok ? 'Its turn ended.' : 'HTTP ' + (rr && rr.status));
+      return;
+    }
+    // As AionUi's own Stop: the Loop goes off and the draft box does not send its next message.
+    if (stopEls[t.key]) holdDraftBox(stopEls[t.key], t);
+    if (state(t).on) { setOn(t, false, 'you pressed Stop', true); notify(t, 'Loop off for {who}: you pressed Stop.', ''); }
+    var g = await getJson('/api/conversations/' + convId);
+    var turn = g.data && g.data.runtime && convBusy(g.data) ? g.data.runtime.turn_id : null;
+    stopSent[t.key] = Date.now();
+    if (!turn) { toast('Nothing is running in this chat.'); return; }
+    var r = await postJson('/api/conversations/' + convId + '/cancel', { turn_id: turn });
+    toast(r && r.ok ? 'Stop sent.' : 'Stop could not be sent.', r && r.ok ? 'If it keeps working, Force stop appears.' : 'HTTP ' + (r && r.status));
+  }
+
   function renderSched() {
     var live = {};
     targets().forEach(function (t) {
@@ -6901,6 +7179,7 @@
       }
       wrap._t = t;
       if (wrap.parentNode !== anchor.parentNode || wrap.nextSibling !== anchor) anchor.parentNode.insertBefore(wrap, anchor);
+      paintStop(t, wrap);
       var btn = wrap.firstChild;
       var box = draftBox(t);
       var has = !!(box && String(box.value || '').trim());
@@ -6914,6 +7193,12 @@
       if (count.textContent !== label) count.textContent = label;
       var tip = 'Schedule send' + (n ? ': ' + n + ' waiting' : has ? ': send this message later' : ': type a message first');
       if (btn.getAttribute('aria-label') !== tip) { btn.setAttribute('aria-label', tip); btn.title = tip; }
+    });
+    Object.keys(stopEls).forEach(function (k) {
+      if (live[k]) return;
+      if (stopEls[k].parentNode) stopEls[k].parentNode.removeChild(stopEls[k]);
+      delete stopEls[k];
+      delete stopSeen[k];
     });
     Object.keys(schedEls).forEach(function (k) {
       if (live[k]) return;
@@ -6972,43 +7257,71 @@
     var scope = draftScope(t);
     var box = draftBox(t);
     var has = !!(box && String(box.value || '').trim());
+    // A request of 2026-10-13: the fixed times (15 minutes, 1 hour, 3 hours, tomorrow 9:00) were not enough. Two ways to say when:
+    // "In" a number of days, hours and minutes typed by hand, or "At" a date (today at first) and a time.
     m.innerHTML = '<div class="arco-dropdown-menu"><div class="arco-dropdown-menu-group-title">Send this message later</div>' +
-      '<div class="aiondx-sched-quick"></div>' +
-      '<div class="aiondx-sched-custom"><input type="datetime-local" class="aiondx-sched-when" aria-label="Send at"><button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-sched-go">Schedule</button></div>' +
+      '<div class="aiondx-sched-modes" role="tablist">' +
+        '<button type="button" class="aiondx-bg-reset aiondx-sched-mode" data-mode="in" role="tab">In</button>' +
+        '<button type="button" class="aiondx-bg-reset aiondx-sched-mode" data-mode="at" role="tab">At</button></div>' +
+      '<div class="aiondx-sched-pane aiondx-sched-pane-in">' +
+        '<label class="aiondx-sched-field"><input type="number" min="0" max="365" step="1" inputmode="numeric" class="aiondx-sched-days" aria-label="Days"><span>days</span></label>' +
+        '<label class="aiondx-sched-field"><input type="number" min="0" max="999" step="1" inputmode="numeric" class="aiondx-sched-hours" aria-label="Hours"><span>hours</span></label>' +
+        '<label class="aiondx-sched-field"><input type="number" min="0" max="9999" step="1" inputmode="numeric" class="aiondx-sched-mins" aria-label="Minutes"><span>minutes</span></label></div>' +
+      '<div class="aiondx-sched-pane aiondx-sched-pane-at">' +
+        '<input type="date" class="aiondx-sched-date" aria-label="Date"><input type="time" class="aiondx-sched-time" aria-label="Time"></div>' +
+      '<div class="aiondx-sched-custom"><span class="aiondx-sched-preview"></span><button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-sched-go">Schedule</button></div>' +
       '<div class="aiondx-note aiondx-sched-note"></div>' +
       '<div class="arco-dropdown-menu-group-title aiondx-sched-waiting-title">Waiting</div><div class="aiondx-sched-list"></div></div>';
-    var quick = m.querySelector('.aiondx-sched-quick');
     var now = Date.now();
-    var nine = new Date(); nine.setHours(9, 0, 0, 0);
-    if (nine.getTime() <= now + 60000) nine.setDate(nine.getDate() + 1);
-    [['In 15 minutes', now + 15 * 60000], ['In 1 hour', now + 3600000], ['In 3 hours', now + 3 * 3600000],
-     [(nine.getDate() === new Date().getDate() ? 'Today' : 'Tomorrow') + ' at 9:00', nine.getTime()]].forEach(function (q) {
-      var it = document.createElement('div');
-      it.className = 'arco-dropdown-menu-item aiondx-sched-quick-item' + (has ? '' : ' aiondx-sched-off');
-      it.setAttribute('role', 'menuitem');
-      it.innerHTML = '<span class="aiondx-item-title"></span><span class="aiondx-item-desc"></span>';
-      it.querySelector('.aiondx-item-title').textContent = q[0];
-      it.querySelector('.aiondx-item-desc').textContent = whenText(q[1]);
-      it.addEventListener('click', function (ev) {
+    var days = m.querySelector('.aiondx-sched-days'), hours = m.querySelector('.aiondx-sched-hours'), mins = m.querySelector('.aiondx-sched-mins');
+    var dateIn = m.querySelector('.aiondx-sched-date'), timeIn = m.querySelector('.aiondx-sched-time');
+    var preview = m.querySelector('.aiondx-sched-preview');
+    var go = m.querySelector('.aiondx-sched-go');
+    days.value = '0'; hours.value = '0'; mins.value = '15';
+    // The date starts as today; the time an hour on, to the next five minutes. When that falls after midnight the date follows it.
+    var start = localInput(Math.ceil((now + 3600000) / 300000) * 300000).split('T');
+    dateIn.value = start[0]; timeIn.value = start[1];
+    dateIn.min = localInput(now).split('T')[0];
+    /** The moment the box describes, or 0 when it is not complete. */
+    function chosen() {
+      if (schedMode === 'at') return dateIn.value && timeIn.value ? new Date(dateIn.value + 'T' + timeIn.value).getTime() || 0 : 0;
+      var n = function (el) { var v = parseInt(el.value, 10); return v > 0 ? v : 0; };
+      var total = n(days) * 86400000 + n(hours) * 3600000 + n(mins) * 60000;
+      return total > 0 && total <= 366 * 86400000 ? Date.now() + total : 0;
+    }
+    function refreshPick() {
+      m.querySelectorAll('.aiondx-sched-mode').forEach(function (b) {
+        var on = b.getAttribute('data-mode') === schedMode;
+        b.classList.toggle('aiondx-sched-mode-on', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      m.querySelector('.aiondx-sched-pane-in').style.display = schedMode === 'in' ? '' : 'none';
+      m.querySelector('.aiondx-sched-pane-at').style.display = schedMode === 'at' ? '' : 'none';
+      var ms = chosen();
+      preview.textContent = ms ? 'Sends ' + whenText(ms) : (schedMode === 'in' ? 'Type how long to wait.' : 'Pick a date and time.');
+      go.disabled = !has;
+    }
+    m.querySelectorAll('.aiondx-sched-mode').forEach(function (b) {
+      b.addEventListener('click', function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        if (!has) return;
-        if (scheduleSend(t, q[1])) closeSchedMenu();
+        schedMode = b.getAttribute('data-mode');
+        refreshPick();
       });
-      quick.appendChild(it);
     });
-    var when = m.querySelector('.aiondx-sched-when');
-    when.min = localInput(now + 60000);
-    when.value = localInput(Math.ceil((now + 3600000) / 300000) * 300000);
-    var go = m.querySelector('.aiondx-sched-go');
-    go.disabled = !has;
+    [days, hours, mins, dateIn, timeIn].forEach(function (el) {
+      el.addEventListener('input', refreshPick);
+      el.addEventListener('change', refreshPick);
+      el.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); go.click(); } });
+    });
     go.addEventListener('click', function (ev) {
       ev.preventDefault();
       ev.stopPropagation();
-      var ms = when.value ? new Date(when.value).getTime() : 0;
-      if (!(ms > 0)) { toast('Pick a date and time first.'); return; }
+      var ms = chosen();
+      if (!(ms > 0)) { toast(schedMode === 'in' ? 'Type how long to wait first.' : 'Pick a date and time first.'); return; }
       if (scheduleSend(t, ms)) closeSchedMenu();
     });
+    refreshPick();
     m.querySelector('.aiondx-sched-note').textContent = has ? 'Text only: attachments in the box are not scheduled.' : 'Type the message in the box first.';
     var list = m.querySelector('.aiondx-sched-list');
     var items = schedPending(scope);
@@ -7670,6 +7983,7 @@
     drafts: function () { return { store: draftStore, restored: draftRestored }; },
     syncDrafts: function () { syncDrafts(false); },
     setLive: function (key, st) { agentLive[key] = { state: st }; },
+    stopTimes: function (show, force) { STOP_SHOW_MS = show; STOP_FORCE_MS = force; },
     shared: function () { return shared; },
     pullNow: function () { return pullShared(); },
     build: BUILD,

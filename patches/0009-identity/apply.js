@@ -397,6 +397,75 @@ function __aiondxIconFile(name) {
     });
   } catch {}
 })();
+/** Clearing an agent profile's caches, and its old history by age (a request of 2026-10-13). The work is aiondx-cache.js (patches/0009-identity;
+ *  copied out of the asar into userData and run as Node, so scanning tens of thousands of files never freezes the window). It looks only at a
+ *  fixed list of folders per profile and never credentials, settings, memory or databases; see its header. Ops: profiles, scan, clear. One at a
+ *  time; killed after two and a half minutes. */
+(function __aiondxCache() {
+  try {
+    const electron = require$$0$2;
+    const cp = require("child_process");
+    let busy = false;
+    const script = () => {
+      if (process.env.AIONDX_CACHE_SCRIPT) return process.env.AIONDX_CACHE_SCRIPT;   // tests
+      const src = path__namespace.join(__dirname, "..", "aiondx", "aiondx-cache.js");
+      const dst = path__namespace.join(electron.app.getPath("userData"), "aiondx-cache.js");
+      const body = fs__namespace.readFileSync(src);
+      if (!fs__namespace.existsSync(dst) || !fs__namespace.readFileSync(dst).equals(body)) fs__namespace.writeFileSync(dst, body);
+      return dst;
+    };
+    electron.ipcMain.handle("aiondx:cache", async (_event, req) => {
+      try {
+        const op = req && req.op;
+        const args = [];
+        if (op === "profiles") args.push("profiles");
+        else if (op === "scan" || op === "clear") {
+          const id = String(req.profile || "");
+          if (!/^[a-z0-9][a-z0-9:-]{0,40}$/.test(id)) return { ok: false, error: "Which profile?" };
+          const days = Number(req.days);
+          if (!Number.isInteger(days) || days < 0 || days > 3650) return { ok: false, error: "That age is not a number of days." };
+          args.push(op, id, "--days", String(days));
+          if (op === "clear") {
+            if (req.group !== "cache" && req.group !== "history") return { ok: false, error: "Clear the caches or the history?" };
+            args.push("--group", req.group, "--yes");
+          }
+        } else return { ok: false, error: "unknown request" };
+        if (busy) return { ok: false, error: "Another scan or clear is still running." };
+        busy = true;
+        try {
+          return await new Promise((resolve) => {
+            cp.execFile(process.execPath, [script()].concat(args), { env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: "1" }), windowsHide: true, timeout: 150000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+              let j = null;
+              try { j = JSON.parse(String(stdout).trim().split("\\n").pop()); } catch {}
+              if (op === "profiles") resolve(Array.isArray(j) ? { ok: true, profiles: j } : { ok: false, error: "No answer from the cache tool." });
+              else resolve(j && typeof j === "object" ? Object.assign({ ok: true }, j) : { ok: false, error: String(err && err.message || "No answer from the cache tool.") });
+            });
+          });
+        } finally { busy = false; }
+      } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    });
+  } catch {}
+})();
+/** Opening AionDX again while the one just closed is still finishing (a request of 2026-10-13: "it pops up for half a second, and then dies ...
+ *  you have to wait a minute"). Closing keeps the single-instance lock while AionCore is stopped; a second start then lost the lock, made the
+ *  closing process show its window, and quit, and the window went with the closing process. Now a closing AionDX leaves a marker (its process id
+ *  and the time) when the quit begins; a starting one that finds the marker's process still alive waits for it, up to a minute, before asking for
+ *  the lock, and then starts as the first instance; an AionCore the dead process left behind is ended. A function declaration, so it can be
+ *  called from before the lock request (the helper block sits after it in the file; an IIFE here ran too late, found on 2026-10-13 with
+ *  tools\\test-live-restart.js), and the closing process is never asked to show anything. See aiondx-restart.js. AIONDX_NO_RESTART_WAIT=1, and the multi-instance and test
+ *  modes, skip it. */
+function __aiondxRestartStart() {
+  try {
+    if (process.env.AIONDX_NO_RESTART_WAIT === "1" || process.env.AIONUI_MULTI_INSTANCE === "1" || process.env.AIONUI_E2E_TEST === "1") return;
+    const restart = require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-restart.js"));
+    const said = restart.atStart({ resourcesDir: process.resourcesPath });
+    if (said) console.log("[AionDX] " + said);
+    // Right after a previous AionDX, the lock file may be held a moment longer than its process: take the lock here, trying for a few seconds.
+    const last = restart.lastStart();
+    if (last && last.recent && last.gone) console.log("[AionDX] " + (restart.takeLock(require$$0$2.app, 8000) ? "single-instance lock taken" : "could not take the single-instance lock in 8 s"));
+    require$$0$2.app.on("before-quit", () => restart.markQuitting());
+  } catch {}
+}
 ${HELPER_END}
 `;
 
@@ -407,6 +476,8 @@ const EDITS = [
   ['app id', 'const WINDOWS_APP_USER_MODEL_ID = "com.aionui.app";',
     'const WINDOWS_APP_USER_MODEL_ID = (() => { try { return fs__namespace.existsSync(path__namespace.join(process.resourcesPath || "", "aiondx", "release.json")) ? "com.aiondx.app" : "com.aionui.app"; } catch { return "com.aionui.app"; } })();',
     1, /com\.aiondx\.app/],
+  // The previous AionDX may still be closing: wait for it before the single-instance lock is asked for (see __aiondxRestartStart).
+  ['restart wait', 'const gotTheLock = skipSingleInstanceLock ?', '__aiondxRestartStart();\nconst gotTheLock = skipSingleInstanceLock ?', 1, /__aiondxRestartStart\(\);\nconst gotTheLock/],
   ['helper block', 'const createWindow = ({ showOnReady = true } = {}) => {',
     HELPER + 'const createWindow = ({ showOnReady = true } = {}) => {', 1, /AIONDX-0009 BEGIN/],
   ['window icon', '  mainWindow = new require$$0$2.BrowserWindow({\n    width: windowWidth,',
@@ -518,6 +589,21 @@ else {
   notes.push('preload: aiondxSignin');
 }
 
+// ... and clearing an agent profile's caches (main process aiondx:cache).
+if (/aiondxCache/.test(preload)) notes.push('preload: aiondxCache already there');
+else {
+  const anchor = 'const backendPort = electron.ipcRenderer.sendSync("get-backend-port");';
+  const n = count(preload, anchor);
+  if (n !== 1) { console.error(`0009: preload (cache): expected 1 match, found ${n}. Nothing written.`); process.exit(1); }
+  preload = preload.replace(anchor, '/* AIONDX-0009: clearing an agent profile\'s caches (patches/0009-identity, main process aiondx:cache) */\n' +
+    'electron.contextBridge.exposeInMainWorld("aiondxCache", {\n' +
+    '  profiles: () => electron.ipcRenderer.invoke("aiondx:cache", { op: "profiles" }),\n' +
+    '  scan: (profile, days) => electron.ipcRenderer.invoke("aiondx:cache", { op: "scan", profile, days }),\n' +
+    '  clear: (profile, group, days) => electron.ipcRenderer.invoke("aiondx:cache", { op: "clear", profile, group, days })\n' +
+    '});\n' + anchor);
+  notes.push('preload: aiondxCache');
+}
+
 fs.writeFileSync(mainFile, main);
 fs.writeFileSync(preloadFile, preload);
 fs.writeFileSync(layoutFiles[0], layout);
@@ -567,4 +653,8 @@ for (const dir of [path.join(ext, 'out', 'renderer', 'pwa'), path.join(ext, 'pub
 fs.mkdirSync(path.join(ext, 'out', 'aiondx'), { recursive: true });
 fs.copyFileSync(PNG(256), path.join(ext, 'out', 'aiondx', 'app.png'));
 notes.push('out/aiondx/app.png');
+fs.copyFileSync(path.join(__dirname, 'aiondx-cache.js'), path.join(ext, 'out', 'aiondx', 'aiondx-cache.js'));
+notes.push('out/aiondx/aiondx-cache.js');
+fs.copyFileSync(path.join(__dirname, 'aiondx-restart.js'), path.join(ext, 'out', 'aiondx', 'aiondx-restart.js'));
+notes.push('out/aiondx/aiondx-restart.js');
 for (const n of notes) console.log('0009: ' + n);

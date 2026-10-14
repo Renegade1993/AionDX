@@ -27,6 +27,20 @@ const ROOT = path.join(__dirname, '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const reg = (args) => spawnSync('reg.exe', args, { encoding: 'utf8', windowsHide: true, timeout: 15000 });
 
+/** tools\hidden-run.exe, compiled from hidden-run.cs when it is missing or older than its source. Null when it cannot be built (the app then shows). */
+function hiddenRun() {
+  const src = path.join(__dirname, 'hidden-run.cs');
+  const exe = path.join(__dirname, 'hidden-run.exe');
+  try {
+    if (!fs.existsSync(exe) || fs.statSync(exe).mtimeMs < fs.statSync(src).mtimeMs) {
+      const csc = path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
+      const r = spawnSync(csc, ['/nologo', '/target:winexe', '/out:' + exe, src], { windowsHide: true, timeout: 60000, encoding: 'utf8' });
+      if (r.status !== 0) { console.log('live-app: could not build hidden-run.exe, the app will show: ' + String(r.stdout || r.stderr).slice(0, 300)); return null; }
+    }
+    return exe;
+  } catch (e) { return null; }
+}
+
 async function launch(opts) {
   opts = opts || {};
   const stage = opts.stage || path.join(ROOT, 'vendor', 'release', 'stage', 'AionDX');
@@ -42,7 +56,11 @@ async function launch(opts) {
   const env = Object.assign({}, process.env, { AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONUI_E2E_TEST: '1', AIONUI_E2E_USER_DATA_DIR: profile }, opts.env || {});
   // The Claude Code session this runs in must not be mistaken for the app's own: no AionUi runtime variables go in.
   Object.keys(env).forEach((k) => { if (/^AIONUI_(RUNTIME_TOKEN|BASE_URL|USER_ID|CONVERSATION_ID|CDP_)/.test(k)) delete env[k]; });
-  const child = spawn(exe, ['--user-data-dir=' + profile, '--remote-debugging-port=' + port].concat(opts.args || []), { env, stdio: 'ignore', windowsHide: true, detached: false });
+  // On a desktop nobody sees (tools\hidden-run.cs), so a test never puts a window on the user's screen. AIONDX_VISIBLE_TESTS=1 shows it.
+  const appArgs = ['--user-data-dir=' + profile, '--remote-debugging-port=' + port].concat(opts.args || []);
+  const quiet = process.env.AIONDX_VISIBLE_TESTS !== '1' ? hiddenRun() : null;
+  const child = quiet ? spawn(quiet, [exe].concat(appArgs), { env, stdio: 'ignore', windowsHide: true, detached: false })
+    : spawn(exe, appArgs, { env, stdio: 'ignore', windowsHide: true, detached: false });
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -110,7 +128,7 @@ async function launch(opts) {
     }
     await send('Page.reload', { ignoreCache: true });
   };
-  return { js, send, key, type, events, close, port, profile, page, sleep, overrideScript };
+  return { js, send, key, type, events, close, port, profile, page, sleep, overrideScript, pid: child.pid };
 }
 
 module.exports = { launch, sleep };
