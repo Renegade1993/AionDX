@@ -162,9 +162,10 @@ stays untouched, still a dumb client with no DOM.
   `captureUtterance` failure (a revoked mic permission, say) just keeps retrying rather than backing
   off or giving up, since the conversation is meant to "stay live" - acceptable for now, worth
   revisiting if that turns out to spin uselessly in practice.
-- Tests: `node patches\0011-voice\dev-smoke-test-handsfree.js`, 16 checks, real mouse input,
-  against the real `aiondx-voice.js` (its wake listener and utterance capture, unmodified) and the
-  real `aiondx-voice-ui.js`, with only `window.fetch` stubbed and the VAD's mic swapped for a fake
+- Tests: `node patches\0011-voice\dev-smoke-test-handsfree.js`, 22 checks (16 the day this build
+  landed, 6 more the next day for the fixes below), real mouse input, against the real
+  `aiondx-voice.js` (its wake listener and utterance capture, unmodified) and the real
+  `aiondx-voice-ui.js`, with only `window.fetch` stubbed and the VAD's mic swapped for a fake
   level source + fake recorder through `aiondx-voice-ui.js`'s own test-only
   `window.__aionDxVoiceUI.setHfTestOpts` hook (the same injection technique `test-wake.js` uses for
   `aiondx-voice.js` directly): the wake phrase is heard, the turn is captured and auto-sent, the
@@ -175,6 +176,38 @@ stays untouched, still a dumb client with no DOM.
   functions into motion (the setting defaults off, and neither harness's page sets a conversation
   hash `ensureHandsFree()` would match) - `dev-harness-handsfree.html` is its own page, built for
   this feature specifically.
+
+### 2026-10-13 fixes: "the toggle shows no badge at all"
+
+A user report: enabling the setting on the staged build showed no "Listening for ..." badge
+anywhere, nothing visibly changed. Three things, found by code review (a live-app repro attempt
+hit tooling trouble and was not pursued further):
+
+- **The badge is easy to never see.** It only ever renders inside a conversation's own composer
+  (`.sendbox-actions`) - never on the Settings page the toggle itself lives on. Toggling it and
+  staying on Settings, without opening a conversation, correctly shows nothing - not a bug, but
+  indistinguishable from one. Fixed by adding a second, persistent status line inside the settings
+  panel itself (`handsFreeStatusText`/`paintHandsFreeNote`, next to the wake-phrase field): "running:
+  &lt;stage&gt;", "on, but only runs inside a conversation - open one to start it", or the stopped
+  reason - visible from the one screen the toggle is on, independent of whether a conversation
+  composer is anywhere in view.
+- **A real failure to start (mic permission denied, say) said nothing anywhere but the console,**
+  and silently switched the setting back off - from the user's side, indistinguishable from the
+  toggle simply not working. `hf.lastError` is now set by the wake listener's `onError` and surfaced
+  by that same settings-panel line ("Hands-free mode stopped: &lt;reason&gt;. Turn it back on to try
+  again."), styled as a problem (the same `data-ok="0"` red the save-status line already uses).
+  Cleared on a fresh, deliberate start (`ensureHandsFree`'s own restart) or a deliberate stop (the
+  user unchecking the box, the stop-all button, a spoken stop phrase) so a stale error never lingers
+  past the point where it stopped being true. Getting the order right mattered: checking it had to
+  come *before* checking whether the setting itself is still on, since the failure path also
+  switches that off in the same breath - checking the setting first would blank the very note that
+  explains why in the same tick it had something to say.
+- **A real race in `saveSettings`:** its optimistic write didn't bump `settingsCache.at`, so a
+  `getSettings()` refetch already in flight (every render pass the panel is visible can start one,
+  on a ~5 s cache) could land after it and silently revert whatever was just saved, with nothing
+  surfacing the revert - plausible as a quieter, intermittent version of the same "toggle did
+  nothing" symptom. Fixed by bumping `settingsCache.at` at the optimistic write too, not only once
+  the save resolves.
 
 ## What it adds
 

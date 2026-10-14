@@ -541,6 +541,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       stopPlayback();
+      hf.lastError = '';   // a deliberate stop, not a failure: nothing to explain
       stopHandsFreeForGood();   // the exit control for hands-free mode too: stop reading AND stop listening, for good
     });
     wrap.appendChild(btn);
@@ -600,7 +601,12 @@
   // uses - so a stop (or a conversation switch) mid-flight can never have a late callback restart
   // a stage, land a message, or kick off a playback that the user already asked to stop.
 
-  var hf = { active: false, state: 'off', convId: null, wakeStop: null, abort: null, pollTimer: null, gen: 0 };
+  // lastError: set only when a real failure stopped hands-free mode (a mic permission denial, the
+  // module missing, ...), and surfaced in the settings panel (see handsFreeStatusText) since the
+  // badge that would otherwise show it lives in a conversation's composer - easy for the user to
+  // never be looking at when hands-free stops itself. Cleared on a fresh, deliberate start or stop
+  // so a stale error does not linger and read as still-current.
+  var hf = { active: false, state: 'off', convId: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '' };
   // Test-only: {levelSource, createRecorder} to hand startWakeListener/captureUtterance a fake mic
   // instead of the real one, the same injection test-wake.js uses for aiondx-voice.js itself. Set
   // through window.__aionDxVoiceUI.setHfTestSource, never touched in production.
@@ -612,7 +618,7 @@
     var t = String(text || '').toLowerCase();
     return HF_STOP_PHRASES.some(function (p) { return t.indexOf(p) >= 0; });
   }
-  function setHfState(state) { hf.state = state; paintHandsFreeBadge(); paintStopAllButtons(); }
+  function setHfState(state) { hf.state = state; paintHandsFreeBadge(); paintStopAllButtons(); paintHandsFreeNote(); }
 
   /** Stops the running listeners only, leaving the "hands-free enabled" setting untouched: used
    *  for a conversation switch or a page unload, where the feature should pick back up on
@@ -650,7 +656,12 @@
       phrase: phrase,
       transcribe: hfTranscribe,
       onWake: function () { if (myGen === hf.gen) startListenStage(ta, convId); },
-      onError: function (e) { if (myGen === hf.gen) { console.log('[dx-voice] wake listener error', e); stopHandsFreeForGood(); } }
+      onError: function (e) {
+        if (myGen !== hf.gen) return;
+        console.log('[dx-voice] wake listener error', e);
+        hf.lastError = (e && e.message) || 'could not start the microphone';
+        stopHandsFreeForGood();
+      }
     }, hfInjectedOpts);
     hf.wakeStop = m.startWakeListener(opts);
   }
@@ -667,7 +678,7 @@
     m.captureUtterance(opts).then(function (text) {
       hf.abort = null;
       if (myGen !== hf.gen) return;
-      if (saysStopHF(text)) { stopHandsFreeForGood(); return; }
+      if (saysStopHF(text)) { hf.lastError = ''; stopHandsFreeForGood(); return; }   // a deliberate stop, not a failure
       var clean = String(text || '').trim();
       if (!clean) { startListenStage(ta, convId); return; }   // VAD cut a clip transcribe() read as empty: just listen again
       sendComposerText(ta, clean);
@@ -739,6 +750,7 @@
     if (!m || typeof m.startWakeListener !== 'function' || typeof m.captureUtterance !== 'function') return;
     hf.active = true;
     hf.convId = r.id;
+    hf.lastError = '';   // a fresh start (the checkbox just turned on, or a conversation switch): any previous error is stale now
     startWakeStage(ta, r.id);
   }
 
@@ -749,14 +761,19 @@
     el.innerHTML = '<span class="aiondx-voice-hf-dot" aria-hidden="true"></span><span class="aiondx-voice-hf-text"></span>';
     return el;
   }
-  function paintHandsFreeBadge() {
-    var show = hf.active && hf.state !== 'off';
+  /** The one state->words mapping, shared by the composer badge and the settings panel's status
+   *  line - so the two can never drift apart on what "waiting-reply" or "speaking" is called. */
+  function hfStageLabel() {
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
-    var label = hf.state === 'wake' ? 'Listening for “' + phrase + '”'
+    return hf.state === 'wake' ? 'Listening for “' + phrase + '”'
       : hf.state === 'listening' ? 'Listening for your message…'
       : hf.state === 'waiting-reply' ? 'Waiting for the reply…'
       : hf.state === 'speaking' ? 'Reading the reply aloud…'
       : '';
+  }
+  function paintHandsFreeBadge() {
+    var show = hf.active && hf.state !== 'off';
+    var label = hfStageLabel();
     var badges = document.querySelectorAll('.aiondx-voice-hf');
     for (var i = 0; i < badges.length; i++) {
       var b = badges[i];
@@ -767,6 +784,36 @@
       var aria = 'Hands-free conversation mode' + (label ? ': ' + label : ' is off');
       if (b.getAttribute('aria-label') !== aria) b.setAttribute('aria-label', aria);
     }
+  }
+  /** For the settings panel's own status line - the composer badge is easy to never be looking at
+   *  (it is not even on screen while the user is on the Settings page itself), so this is the one
+   *  place that always says what hands-free mode is actually doing, including why it stopped if a
+   *  real failure is what stopped it, instead of a checkbox that just quietly reverted. */
+  function handsFreeStatusText(settings) {
+    // lastError checked first, ahead of the setting itself: a real failure (stopHandsFreeForGood)
+    // also switches handsFree off, so checking the setting first would blank this note in the same
+    // instant it has something to say - the user would never get to read why it stopped, which was
+    // the whole point of adding it. It only goes quiet once something deliberately clears
+    // lastError (a fresh start, or the user unchecking the box themselves).
+    if (hf.lastError) return 'Hands-free mode stopped: ' + hf.lastError + '. Turn it back on to try again.';
+    if (!settings.handsFree) return '';
+    if (!hf.active) return 'Hands-free mode is on, but it only runs inside a conversation — open one to start it.';
+    return 'Hands-free mode is running: ' + hfStageLabel();
+  }
+  /** Called from refreshVoicePanel() (the settings panel's own render pass) and directly from
+   *  setHfState() (so a user sitting on the Settings page watching sees it change the instant a
+   *  stage transition happens, not up to 2 s later on the next poll). A no-op off the Settings
+   *  page, since pickerEl only exists while that page is open. */
+  function paintHandsFreeNote() {
+    if (!pickerEl) return;
+    var hfNote = pickerEl.querySelector('[data-testid="aiondx-voice-hf-status"]');
+    if (!hfNote) return;
+    var settings = settingsCache.data || {};
+    var hfText = handsFreeStatusText(settings);
+    hfNote.hidden = !hfText;
+    if (hfNote.textContent !== hfText) hfNote.textContent = hfText;
+    var hfOk = !hf.lastError ? '1' : '0';
+    if (hfNote.getAttribute('data-ok') !== hfOk) hfNote.setAttribute('data-ok', hfOk);
   }
   function ensureHandsFreeBadges() {
     var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
@@ -845,6 +892,7 @@
       '<div class="aiondx-voice-note">Say the wake phrase, then talk back and forth without touching the mic or speaker buttons. Off by default; the stop-all button (or saying a stop phrase) ends it.</div>' +
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-wakephrase">Wake phrase</label>' +
         '<input type="text" id="aiondx-voice-wakephrase" data-testid="aiondx-voice-wakephrase" placeholder="' + DEFAULT_WAKE_PHRASE + '"></div>' +
+      '<div class="aiondx-voice-status" data-testid="aiondx-voice-hf-status" data-ok="1" hidden></div>' +
       '<div class="aiondx-voice-status" data-testid="aiondx-voice-status"></div>';
 
     var providerSel = el.querySelector('#aiondx-voice-provider');
@@ -871,7 +919,10 @@
       reveal.textContent = show ? 'Hide' : 'Show';
     });
     voiceSel.addEventListener('change', function () { saveSettings({ voiceId: voiceSel.value }); });
-    handsFreeBox.addEventListener('change', function () { saveSettings({ handsFree: handsFreeBox.checked }); });
+    handsFreeBox.addEventListener('change', function () {
+      if (!handsFreeBox.checked) hf.lastError = '';   // the user's own deliberate off: any earlier error is no longer the reason
+      saveSettings({ handsFree: handsFreeBox.checked });
+    });
     var wakeTimer = null;
     wakeInput.addEventListener('input', function () {
       if (wakeTimer) clearTimeout(wakeTimer);
@@ -901,6 +952,15 @@
   function saveSettings(patch) {
     if (!voice() || typeof voice().setSettings !== 'function') { setStatus('Voice module not loaded: nothing was saved.', false); return; }
     settingsCache.data = Object.assign({}, settingsCache.data, patch);   // optimistic, so the panel does not flicker back while the request is in flight
+    // Also bumped here, not only after the save resolves: ensureSettingsLoaded() runs on every
+    // render pass the settings panel is visible for, and if settingsCache.at was already more than
+    // SETTINGS_TTL_MS old (easy - the user can sit on the page for a while before touching
+    // anything), a render in between this optimistic write and the save resolving would fire its
+    // own getSettings() and could land after the save's own resolve, overwriting the just-saved
+    // value with whatever the server still had queued to answer. A real bug this surfaced: the
+    // hands-free checkbox could revert itself to unchecked moments after being checked, with
+    // nothing in the UI explaining why - indistinguishable from "the toggle did nothing."
+    settingsCache.at = Date.now();
     setStatus('Saving...');
     Promise.resolve(call('setSettings', patch)).then(function (merged) {
       if (merged && typeof merged === 'object') settingsCache.data = merged;
@@ -956,6 +1016,7 @@
       var wantWake = settings.wakePhrase || DEFAULT_WAKE_PHRASE;
       if (wakeInput.value !== wantWake) wakeInput.value = wantWake;
     }
+    paintHandsFreeNote();
 
     // Providers: cached 30 s, since listProviders() is likely a plain in-memory list, not a network call.
     if (!providerCache.list && !providerCache.loading) {
@@ -1042,7 +1103,7 @@
     micState: function () { return activeMic ? activeMic.__st.state : 'idle'; },
     playing: function () { return !!currentPlayback; },
     playbackActive: function () { return !!(loadingWrap || currentPlayback); },
-    stopAll: function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); stopHandsFreeForGood(); },
+    stopAll: function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); hf.lastError = ''; stopHandsFreeForGood(); },
     spokenText: spokenText,
     // Hands-free: hf.state for a test to assert against, and a way to hand startWakeListener/
     // captureUtterance a fake mic plus faster VAD timing (the same injection test-wake.js uses

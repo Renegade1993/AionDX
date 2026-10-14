@@ -100,6 +100,12 @@ async function pageTarget() {
       await waitFor('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"'));
     check('the wake-phrase default is "Hey AionDX"', await js('document.querySelector("#aiondx-voice-wakephrase").value') === 'Hey AionDX');
     check('the badge names the wake phrase', (await js('document.querySelector(".aiondx-voice-hf-text").textContent')).includes('Hey AionDX'));
+    // The settings panel's own status line, not just the composer badge: the bug report this test
+    // suite exists for was "no badge appears anywhere", and the badge lives only in a
+    // conversation's composer - never visible from the Settings page itself. This line is.
+    check('the settings panel itself says hands-free is running, not just the composer badge',
+      (await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent')).includes('running'));
+    check('that status line is not hidden', await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").hidden') === false);
 
     // ---- saying the wake phrase moves to "listening for your message" ----
     await speak('Hey AionDX');
@@ -147,6 +153,21 @@ async function pageTarget() {
     await humanClick('#aiondx-voice-handsfree');
     check('unchecking the setting tears hands-free down',
       await waitFor('window.__aionDxVoiceUI.hfState().active === false', 40));
+
+    // ---- a real failure to start must say so, not silently revert (the reported bug) ----
+    // Breaking createRecorder makes aiondx-voice.js's own opts validation reject immediately
+    // (the same shape a real getUserMedia/permission failure rejects with), standing in for a
+    // mic the OS or Electron refuses - without needing a real denied permission to reproduce.
+    await js(`window.__aionDxVoiceUI.setHfTestOpts({ createRecorder: undefined })`);
+    await humanClick('#aiondx-voice-handsfree');
+    check('a startup failure switches hands-free off again', await waitFor('window.__aionDxVoiceUI.hfState().active === false', 40));
+    check('and the checkbox reflects it (not left checked with nothing running)',
+      await waitFor('document.querySelector("#aiondx-voice-handsfree").checked === false', 20));
+    check('the settings panel explains why, instead of the toggle just silently reverting',
+      await waitFor('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent.indexOf("stopped") >= 0', 20),
+      await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent'));
+    check('that error note is marked as a problem (not the neutral styling)',
+      await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").getAttribute("data-ok")') === '0');
 
   } catch (e) {
     check('smoke test ran without throwing', false, e.stack || String(e));
