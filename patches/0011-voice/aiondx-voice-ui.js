@@ -120,7 +120,7 @@
     '.aiondx-voice-playrow{margin-top:2px}',
     // The hands-free badge: a small status pill, never a button - it only ever reflects state.
     '.aiondx-voice-hf{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--color-text-3);white-space:nowrap;padding:0 4px;max-width:180px;overflow:hidden;text-overflow:ellipsis}',
-    '.aiondx-voice-hf-dot{width:7px;height:7px;border-radius:50%;background:var(--color-text-3);flex:0 0 auto}',
+    '.aiondx-voice-hf-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--color-text-3);flex:0 0 auto}',
     '.aiondx-voice-hf[data-state="wake"] .aiondx-voice-hf-dot{background:rgb(var(--primary-6));animation:aiondx-voice-pulse-soft 2.2s ease-out infinite}',
     '.aiondx-voice-hf[data-state="listening"] .aiondx-voice-hf-dot{background:rgb(var(--danger-6));animation:aiondx-voice-pulse 1.4s ease-out infinite}',
     '.aiondx-voice-hf[data-state="waiting-reply"] .aiondx-voice-hf-dot{background:rgb(var(--warning-6))}',

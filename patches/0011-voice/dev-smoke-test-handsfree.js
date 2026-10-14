@@ -100,6 +100,11 @@ async function pageTarget() {
       await waitFor('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"'));
     check('the wake-phrase default is "Hey AionDX"', await js('document.querySelector("#aiondx-voice-wakephrase").value') === 'Hey AionDX');
     check('the badge names the wake phrase', (await js('document.querySelector(".aiondx-voice-hf-text").textContent')).includes('Hey AionDX'));
+    // The dot is a bare <span>, inline by default, so width/height do nothing to it unless some
+    // rule gives it a box - color and animation were being applied correctly but to a zero-size
+    // element, which is indistinguishable from "not lit" no matter what data-state says.
+    check('the state dot actually has a visible box, not just a colour nothing renders',
+      (await js('document.querySelector(".aiondx-voice-hf-dot").getBoundingClientRect().width')) > 0);
     // The settings panel's own status line, not just the composer badge: the bug report this test
     // suite exists for was "no badge appears anywhere", and the badge lives only in a
     // conversation's composer - never visible from the Settings page itself. This line is.
