@@ -137,7 +137,7 @@ async function pageTarget() {
     await speak('okay please stop listening now');
     check('a spoken stop phrase ends hands-free mode entirely',
       await waitFor('window.__aionDxVoiceUI.hfState().active === false', 40));
-    check('the badge is hidden once it is torn down', await js('document.querySelector(".aiondx-voice-hf-badge") ? document.querySelector("[data-testid=\\"aiondx-voice-hf-badge\\"]").hidden : true'));
+    check('the badge is hidden once it is torn down', await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-badge\\"]").hidden === true'));
 
     // ---- re-enabling, then the stop-all button tears it down too (the exit control, not just voice) ----
     await humanClick('#aiondx-voice-handsfree');   // unchecked by the teardown above's refresh; this checks it again

@@ -64,13 +64,17 @@
     var port = window.__backendPort;
     return (port ? 'http://127.0.0.1:' + port : '') + path;
   }
-  /** Which solo conversation is open, for hands-free mode's polling. Reimplemented rather than
-   *  shared with aionui-dx.js's own route(), same reasoning as apiUrl()/csrf() above. Team pages
-   *  are out of scope for hands-free (one mic, one composer, one "current conversation" - a team's
-   *  per-member columns don't map onto that cleanly), so only #/conversation/<id> matches. */
+  /** Which conversation or team is open, for hands-free mode's polling. Reimplemented rather than
+   *  shared with aionui-dx.js's own route(), same reasoning as apiUrl()/csrf() above. A team page
+   *  (#/team/<id>) targets the lead's own column specifically - a user testing hands-free "on the
+   *  lead agent" is on this route, not #/conversation/<id>, which is what the first version of
+   *  this feature matched exclusively; a teammate's column is still out of scope. */
   function route() {
     var m = location.hash.match(/^#\/conversation\/([^/?#]+)/);
-    return m ? { kind: 'conv', id: m[1] } : null;
+    if (m) return { kind: 'conv', id: m[1] };
+    m = location.hash.match(/^#\/team\/([^/?#]+)/);
+    if (m) return { kind: 'team', id: m[1] };
+    return null;
   }
   /** window.AionDxVoice is aiondx-voice.js's module (its own script tag, loaded alongside this
    *  one). Building window.__aionDxVoice from it is deferred to here, rather than done inside
@@ -606,7 +610,10 @@
   // badge that would otherwise show it lives in a conversation's composer - easy for the user to
   // never be looking at when hands-free stops itself. Cleared on a fresh, deliberate start or stop
   // so a stale error does not linger and read as still-current.
-  var hf = { active: false, state: 'off', convId: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '' };
+  // key: a string identifying what hf is currently running for ('conv:<id>' or 'team:<id>'), so
+  // ensureHandsFree() can tell "already running for this exact target, leave it alone" apart from
+  // "switched to a different one, restart" without caring about conv vs team itself.
+  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '' };
   // Test-only: {levelSource, createRecorder} to hand startWakeListener/captureUtterance a fake mic
   // instead of the real one, the same injection test-wake.js uses for aiondx-voice.js itself. Set
   // through window.__aionDxVoiceUI.setHfTestSource, never touched in production.
@@ -619,6 +626,36 @@
     return HF_STOP_PHRASES.some(function (p) { return t.indexOf(p) >= 0; });
   }
   function setHfState(state) { hf.state = state; paintHandsFreeBadge(); paintStopAllButtons(); paintHandsFreeNote(); }
+
+  /** A solo conversation's lone composer (r.kind === 'conv'), or a team page's lead column
+   *  specifically (r.kind === 'team') - a user talking hands-free "to the lead agent" is on this
+   *  route, not #/conversation/<id>, which the first version of this feature matched exclusively.
+   *  A teammate's own column is still out of scope: picking which of several members a wake phrase
+   *  should address is a bigger design question than this build takes on.
+   *  Returns { kind, id, ta, scope } (scope is where a reply's message rows are looked for - the
+   *  whole document for a solo chat, just the lead's column on a team page) or null when the
+   *  composer is not in the DOM yet this frame (ensureHandsFree() tries again next render). */
+  function findHfTarget(r) {
+    if (r.kind === 'conv') {
+      var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
+      for (var i = 0; i < boxes.length; i++) {
+        var cand = boxes[i].tagName === 'TEXTAREA' ? boxes[i] : boxes[i].querySelector('textarea');
+        if (cand && cand.getClientRects().length && !cand.closest('[data-slot-id]')) {
+          return { kind: 'conv', id: r.id, ta: cand, scope: document };
+        }
+      }
+      return null;
+    }
+    if (r.kind === 'team') {
+      var col = document.querySelector('[data-slot-id][data-role="leader"]');   // TeamPage.tsx's own attribute for the lead's column
+      if (!col) return null;
+      var box = col.querySelector('[data-testid="sendbox-input"]');
+      var ta = box ? (box.tagName === 'TEXTAREA' ? box : box.querySelector('textarea')) : null;
+      if (!ta || !ta.getClientRects().length) return null;
+      return { kind: 'team', id: r.id, ta: ta, scope: col };
+    }
+    return null;
+  }
 
   /** Stops the running listeners only, leaving the "hands-free enabled" setting untouched: used
    *  for a conversation switch or a page unload, where the feature should pick back up on
@@ -633,7 +670,8 @@
     var m = hfModule();
     if (m && typeof m.stopWakeListener === 'function') { try { m.stopWakeListener(); } catch (e) {} }
     hf.active = false;
-    hf.convId = null;
+    hf.key = null;
+    hf.target = null;
     setHfState('off');
   }
 
@@ -646,7 +684,7 @@
     saveSettings({ handsFree: false });
   }
 
-  function startWakeStage(ta, convId) {
+  function startWakeStage(target) {
     var myGen = hf.gen;
     var m = hfModule();
     if (!m || typeof m.startWakeListener !== 'function') { teardownHandsFree(); return; }
@@ -655,7 +693,7 @@
     var opts = Object.assign({
       phrase: phrase,
       transcribe: hfTranscribe,
-      onWake: function () { if (myGen === hf.gen) startListenStage(ta, convId); },
+      onWake: function () { if (myGen === hf.gen) startListenStage(target); },
       onError: function (e) {
         if (myGen !== hf.gen) return;
         console.log('[dx-voice] wake listener error', e);
@@ -666,7 +704,7 @@
     hf.wakeStop = m.startWakeListener(opts);
   }
 
-  function startListenStage(ta, convId) {
+  function startListenStage(target) {
     var myGen = hf.gen;
     if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }   // release the wake mic before opening a fresh one
     var m = hfModule();
@@ -680,36 +718,58 @@
       if (myGen !== hf.gen) return;
       if (saysStopHF(text)) { hf.lastError = ''; stopHandsFreeForGood(); return; }   // a deliberate stop, not a failure
       var clean = String(text || '').trim();
-      if (!clean) { startListenStage(ta, convId); return; }   // VAD cut a clip transcribe() read as empty: just listen again
-      sendComposerText(ta, clean);
-      waitForReplyThenPlay(ta, convId, myGen);
+      if (!clean) { startListenStage(target); return; }   // VAD cut a clip transcribe() read as empty: just listen again
+      sendComposerText(target.ta, clean);
+      waitForReplyThenPlay(target, myGen);
     }, function (e) {
       hf.abort = null;
       if (myGen !== hf.gen) return;
       console.log('[dx-voice] captureUtterance error', e);
-      startListenStage(ta, convId);   // a timeout with nothing said, or a hiccup: keep listening, the conversation stays live
+      startListenStage(target);   // a timeout with nothing said, or a hiccup: keep listening, the conversation stays live
     });
   }
 
-  /** Polls the conversation until the agent's turn finishes, then auto-plays its newest reply - the
+  /** Has the turn finished? A solo chat's own status; a team's lead checked through run-state,
+   *  the same source and the same "idle means done" rule patch 0001's Loop uses for a team member -
+   *  a solo conversation's GET has no equivalent slot_work to read, so the two need their own call. */
+  function hfTurnFinished(target) {
+    if (target.kind === 'team') {
+      return fetch(apiUrl('/api/teams/' + target.id + '/run-state'), { credentials: 'include' })
+        .then(function (r) { return r.ok ? r.json() : null; }, function () { return null; })
+        .then(function (j) {
+          var data = j && (j.data || j);
+          var slots = data && Array.isArray(data.slot_work) ? data.slot_work : null;
+          if (!slots) return false;   // no answer yet: do not guess it is done
+          var lead = slots.filter(function (s) { return s.role === 'lead'; })[0];
+          return !lead || lead.state === 'idle';
+        });
+    }
+    return fetch(apiUrl('/api/conversations/' + target.id), { credentials: 'include' })
+      .then(function (r) { return r.ok ? r.json() : null; }, function () { return null; })
+      .then(function (j) {
+        var data = j && (j.data || j);
+        var status = data && data.status;
+        return !status || status === 'finished';
+      });
+  }
+
+  /** Polls until the agent's turn finishes, then auto-plays the newest reply in target.scope - the
    *  same play button a manual click would use, just triggered here instead of by the user. */
-  function waitForReplyThenPlay(ta, convId, myGen) {
+  function waitForReplyThenPlay(target, myGen) {
     setHfState('waiting-reply');
     function poll() {
       if (myGen !== hf.gen) return;
-      fetch(apiUrl('/api/conversations/' + convId), { credentials: 'include' }).then(function (r) { return r.ok ? r.json() : null; }, function () { return null; }).then(function (j) {
+      hfTurnFinished(target).then(function (done) {
         if (myGen !== hf.gen) return;
-        var data = j && (j.data || j);
-        var status = data && data.status;
-        if (status && status !== 'finished') { hf.pollTimer = setTimeout(poll, 1000); return; }
-        var rows = Array.prototype.filter.call(document.querySelectorAll('[id^="message-"][data-message-type="text"]'), isAgentRow);
+        if (!done) { hf.pollTimer = setTimeout(poll, 1000); return; }
+        var rows = Array.prototype.filter.call(target.scope.querySelectorAll('[id^="message-"][data-message-type="text"]'), isAgentRow);
         var row = rows[rows.length - 1];
         var wrap = row && row.querySelector('.aiondx-voice-play');
         var content = row && row.querySelector('[data-testid="message-text-content"]');
         if (!wrap || !content) { hf.pollTimer = setTimeout(poll, 500); return; }   // the reply's row exists but ensurePlayButtons() has not reached it yet this frame
         setHfState('speaking');
         startPlayback(wrap, content);
-        watchPlaybackThenListenAgain(wrap, ta, convId, myGen);
+        watchPlaybackThenListenAgain(wrap, target, myGen);
       });
     }
     poll();
@@ -717,41 +777,38 @@
 
   /** Not back to the wake phrase - the user's own framing of this as a continuous conversation, so
    *  every turn after the first starts straight at captureUtterance(). */
-  function watchPlaybackThenListenAgain(wrap, ta, convId, myGen) {
+  function watchPlaybackThenListenAgain(wrap, target, myGen) {
     var tick = setInterval(function () {
       if (myGen !== hf.gen) { clearInterval(tick); return; }
       var st = wrap.__st.state;
       if (st === 'idle' || st === 'error') {
         clearInterval(tick);
         if (myGen !== hf.gen) return;
-        startListenStage(ta, convId);
+        startListenStage(target);
       }
     }, 150);
   }
 
-  /** The entry point from render(): starts, restarts (on a conversation switch) or tears down
+  /** The entry point from render(): starts, restarts (on a conversation/team switch) or tears down
    *  hands-free mode to match the setting and the page, without ever touching an already-running
-   *  cycle for the conversation it is already running on. */
+   *  cycle for the target it is already running on. */
   function ensureHandsFree() {
     var settings = settingsCache.data || {};
     var enabled = !!settings.handsFree;
     var r = route();
     if (!enabled || !r) { if (hf.active) teardownHandsFree(); return; }
-    if (hf.active && hf.convId === r.id) return;
+    var target = findHfTarget(r);
+    if (!target) return;   // the composer is not rendered yet this frame; ensureHandsFree() runs again next render
+    var key = target.kind + ':' + target.id;
+    if (hf.active && hf.key === key) return;
     if (hf.active) teardownHandsFree();
-    var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
-    var ta = null;
-    for (var i = 0; i < boxes.length; i++) {
-      var cand = boxes[i].tagName === 'TEXTAREA' ? boxes[i] : boxes[i].querySelector('textarea');
-      if (cand && cand.getClientRects().length && !cand.closest('[data-slot-id]')) { ta = cand; break; }   // the solo composer; team columns are out of scope
-    }
-    if (!ta) return;   // not rendered yet this frame; ensureHandsFree() runs again next render
     var m = hfModule();
     if (!m || typeof m.startWakeListener !== 'function' || typeof m.captureUtterance !== 'function') return;
     hf.active = true;
-    hf.convId = r.id;
-    hf.lastError = '';   // a fresh start (the checkbox just turned on, or a conversation switch): any previous error is stale now
-    startWakeStage(ta, r.id);
+    hf.key = key;
+    hf.target = target;   // which composer the badge belongs to - a team page has more than one on screen at once
+    hf.lastError = '';   // a fresh start (the checkbox just turned on, or a target switch): any previous error is stale now
+    startWakeStage(target);
   }
 
   function buildHandsFreeBadge() {
@@ -771,17 +828,29 @@
       : hf.state === 'speaking' ? 'Reading the reply aloud…'
       : '';
   }
+  /** The .sendbox-actions row a composer's textarea lives in - shared by the badge scoping below
+   *  and ensureMicButtons/ensureStopAllButtons/ensureHandsFreeBadges' own insertion logic. */
+  function actionsFor(ta) {
+    var panel = ta.closest('.sendbox-panel') || ta.parentElement;
+    return panel && panel.querySelector('.sendbox-actions');
+  }
   function paintHandsFreeBadge() {
     var show = hf.active && hf.state !== 'off';
     var label = hfStageLabel();
+    // On a team page every column gets its own badge element (ensureHandsFreeBadges inserts one
+    // per composer, not knowing yet which one hf will end up targeting), but hf only ever runs for
+    // one of them: show it there and nowhere else, or every other member's column would flash the
+    // lead's "listening" state too.
+    var mineActions = show && hf.target && hf.target.ta ? actionsFor(hf.target.ta) : null;
     var badges = document.querySelectorAll('.aiondx-voice-hf');
     for (var i = 0; i < badges.length; i++) {
       var b = badges[i];
-      b.hidden = !show;
+      var mine = !!mineActions && b.closest('.sendbox-actions') === mineActions;
+      b.hidden = !mine;
       if (b.getAttribute('data-state') !== hf.state) b.setAttribute('data-state', hf.state);
       var text = b.querySelector('.aiondx-voice-hf-text');
       if (text.textContent !== label) text.textContent = label;
-      var aria = 'Hands-free conversation mode' + (label ? ': ' + label : ' is off');
+      var aria = 'Hands-free conversation mode' + (mine && label ? ': ' + label : ' is off');
       if (b.getAttribute('aria-label') !== aria) b.setAttribute('aria-label', aria);
     }
   }
@@ -1109,7 +1178,7 @@
     // captureUtterance a fake mic plus faster VAD timing (the same injection test-wake.js uses
     // for aiondx-voice.js itself: levelSource, createRecorder, pollMs, minSpeechMs, silenceMs,
     // threshold, maxSegmentMs) - test-only, never touched outside dev-smoke-test-handsfree.js.
-    hfState: function () { return { active: hf.active, state: hf.state, convId: hf.convId }; },
+    hfState: function () { return { active: hf.active, state: hf.state, key: hf.key }; },
     setHfTestOpts: function (opts) { hfInjectedOpts = Object.assign({}, hfInjectedOpts, opts || {}); },
     clearHfTestOpts: function () { hfInjectedOpts = {}; }
   };

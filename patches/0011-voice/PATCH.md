@@ -209,6 +209,50 @@ hit tooling trouble and was not pursued further):
   nothing" symptom. Fixed by bumping `settingsCache.at` at the optimistic write too, not only once
   the save resolves.
 
+### The actual root cause: team pages were not matched at all
+
+Follow-up from the user: they were testing the wake word in an actual conversation with the lead
+agent specifically - not sitting on the Settings screen. That conversation is `#/team/<id>`, not
+`#/conversation/<id>` - the only route `ensureHandsFree()` matched. On a team page it did exactly
+nothing, every time, by design (`route()` returned `null`), which is the real, fully reproducible
+explanation the three fixes above do not cover by themselves.
+
+Extended `route()`/`ensureHandsFree()` to also match a team page, targeting the lead's own column
+specifically (`div[data-slot-id][data-role="leader"]`, `TeamPage.tsx`'s own attribute - the same
+one patch 0001 reads for its Loop pills). A teammate's own column is still out of scope: picking
+which of several members a wake phrase should address is a bigger design question than this fix
+takes on. `ta`/`convId` threaded through the engine as separate parameters became a single
+`target = { kind, id, ta, scope }` so the rest of the cycle (sending, polling, auto-play) does not
+need to know which kind of page it is running on:
+
+- **Sending** needs no special handling at all: `sendComposerText` already just clicks whichever
+  composer's own real send button it is given, and that button already does the right thing for
+  its own context (solo, team lead, or - untouched by this feature - a teammate) because it is
+  AionUi's own button, not a path this file reimplements.
+- **"Has the turn finished"** does differ: a solo chat's own `GET /api/conversations/{id}` status
+  has no team equivalent, so a team target polls `GET /api/teams/{id}/run-state`'s `slot_work`
+  instead, the same source and the same "state is idle" rule patch 0001's Loop already uses for a
+  team member's turn.
+- **Finding the newest reply** is now scoped to `target.scope` (the lead's own column element on a
+  team page, the whole document for a solo chat) rather than the whole page - a team page can have
+  several composers and several messages on screen in different columns at once.
+- **The badge was showing in every composer on the page, not just the one hands-free is actually
+  running for** - a side effect only visible once team pages have more than one composer in view
+  at a time; a solo chat only ever has one, so this went unnoticed in build .4. `hf.target` is kept
+  so `paintHandsFreeBadge` can tell a composer that happens to share the page from the one it is
+  actually bound to, and show only in the latter.
+- Tests: `node patches\0011-voice\dev-smoke-test-handsfree-team.js`, 12 checks, a two-column team
+  page (lead + a teammate) with its own `run-state` stub: enabling targets the lead's column, the
+  badge shows there and nowhere else, the wake phrase and the turn both flow through the lead's
+  composer, the teammate's composer is never touched, "waiting" correctly does not resolve while
+  `run-state` still says the lead is running, the reply (inside the lead's column) auto-plays once
+  it goes idle, and the lead column's own stop-all button ends it. Also fixed a weak assertion in
+  `dev-smoke-test-handsfree.js` found while writing the team version of it: its "badge is hidden"
+  check tested `.aiondx-voice-hf-badge`, which is a `data-testid` value, not a class - the check
+  always took its vacuously-true fallback branch and never actually looked at the badge. Still
+  22/22, now checking something. `dev-smoke-test.js` (34/34), `dev-smoke-test-real.js` (18/18),
+  `test-voice.js` (46/46) and `test-wake.js` (22/22) regression-checked clean.
+
 ## What it adds
 
 `aiondx-voice.js`: a small interface any text-to-speech / speech-to-text provider can implement,
