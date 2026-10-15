@@ -613,7 +613,7 @@
   // key: a string identifying what hf is currently running for ('conv:<id>' or 'team:<id>'), so
   // ensureHandsFree() can tell "already running for this exact target, leave it alone" apart from
   // "switched to a different one, restart" without caring about conv vs team itself.
-  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '' };
+  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '', sawActivity: false, wakeStartedAt: 0 };
   // Test-only: {levelSource, createRecorder} to hand startWakeListener/captureUtterance a fake mic
   // instead of the real one, the same injection test-wake.js uses for aiondx-voice.js itself. Set
   // through window.__aionDxVoiceUI.setHfTestSource, never touched in production.
@@ -688,12 +688,18 @@
     var myGen = hf.gen;
     var m = hfModule();
     if (!m || typeof m.startWakeListener !== 'function') { teardownHandsFree(); return; }
+    hf.sawActivity = false;
+    hf.wakeStartedAt = Date.now();
     setHfState('wake');
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
     var opts = Object.assign({
       phrase: phrase,
       transcribe: hfTranscribe,
       onWake: function () { if (myGen === hf.gen) startListenStage(target); },
+      // Any candidate, matched or not, is proof the mic + VAD pipeline is actually alive - see
+      // hfStageLabel's stall hint, which is otherwise the only way to tell "it's listening and
+      // just hasn't heard the phrase" apart from "it isn't really listening at all."
+      onCandidate: function () { if (myGen === hf.gen && !hf.sawActivity) { hf.sawActivity = true; paintHandsFreeBadge(); paintHandsFreeNote(); } },
       onError: function (e) {
         if (myGen !== hf.gen) return;
         console.log('[dx-voice] wake listener error', e);
@@ -820,10 +826,20 @@
   }
   /** The one state->words mapping, shared by the composer badge and the settings panel's status
    *  line - so the two can never drift apart on what "waiting-reply" or "speaking" is called. */
+  var HF_STALL_MS = 8000;   // long enough to not false-positive on a quiet room, short enough to be useful
   function hfStageLabel() {
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
-    return hf.state === 'wake' ? 'Listening for “' + phrase + '”'
-      : hf.state === 'listening' ? 'Listening for your message…'
+    if (hf.state === 'wake') {
+      // sawActivity is set by onCandidate - proof the VAD actually heard *something* and sent it
+      // to transcribe(), whether or not it matched the phrase. Silent since this stage started
+      // (no candidate, no match) past HF_STALL_MS points at the mic/VAD pipeline itself, not
+      // "the phrase wasn't understood" - worth telling apart, since the badge otherwise looks
+      // identical ("Listening...") whether the mic is live or not. ensureHandsFreeBadges() repaints
+      // this every ~2s regardless of a state change, so the hint appears without extra wiring.
+      var stalled = !hf.sawActivity && hf.wakeStartedAt && (Date.now() - hf.wakeStartedAt > HF_STALL_MS);
+      return 'Listening for “' + phrase + '”' + (stalled ? ' — no microphone activity detected yet' : '');
+    }
+    return hf.state === 'listening' ? 'Listening for your message…'
       : hf.state === 'waiting-reply' ? 'Waiting for the reply…'
       : hf.state === 'speaking' ? 'Reading the reply aloud…'
       : '';
