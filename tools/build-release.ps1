@@ -31,7 +31,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+(\.\d+){1,3}(-[0-9A-Za-z.]+)?$') { throw "-Version must look like 0.1.0 (got '$Version')" }
-$root = 'C:\AI Projects\AionDX'
+$root = Split-Path -Parent $PSScriptRoot   # the repo root (this script lives in tools\); was a hardcoded 'C:\AI Projects\AionDX' junction, which an untrusted-mount-point restriction now blocks for child processes
 # The base: an installed AionUi, else the copy unpacked from its official installer (tools\fetch-aionui-base.js).
 if (-not (Test-Path (Join-Path $AionUiDir 'AionUi.exe'))) { $AionUiDir = Join-Path $root 'vendor\aionui-base' }
 $STOCK_SHA = '95b6352bca6400e2990781398a0644f185e5b1b9f42706125ddeee21e72c7d73'   # AionUi 2.2.2's app.asar
