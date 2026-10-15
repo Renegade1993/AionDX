@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  Standalone dev harness for aiondx-voice-ui.js, independent of tools\dx-harness\harness.html
+  (which belongs to patch 0001 and needs vendor\extracted, not checked into this clone). No real
+  AionUi styling: just the anchors the script's selectors look for
+  ([data-testid="sendbox-input"], .sendbox-actions, [id^="message-"][data-message-type="text"],
+  [data-testid^="theme-card-"]), enough to drive it with real mouse/DevTools input and a fake
+  microphone. Not part of the shipped build.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; padding: 24px; background: #fff; color: #1d2129; }
+  .sendbox-panel { border: 1px solid #e5e6eb; border-radius: 12px; padding: 12px; max-width: 480px; }
+  .sendbox-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  textarea { width: 100%; box-sizing: border-box; border: none; outline: none; resize: none; font: inherit; font-size: 14px; }
+  .arco-btn { border: 1px solid #c9cdd4; background: #fff; cursor: pointer; }
+  .arco-btn-shape-circle { border-radius: 50%; }
+  .arco-btn-size-small { width: 28px; height: 28px; }
+  .arco-btn-size-mini { width: 22px; height: 22px; }
+  [id^="message-"] { max-width: 480px; margin: 16px 0; padding: 8px 10px; background: #f2f3f5; border-radius: 8px; }
+  #settings-area { margin-top: 24px; }
+  [data-testid^="theme-card-"] { display: inline-block; width: 40px; height: 40px; background: #eee; }
+</style>
+</head>
+<body>
+  <div class="sendbox-panel">
+    <textarea data-testid="sendbox-input" rows="2" placeholder="Message..."></textarea>
+    <div class="sendbox-actions">
+      <span class="sendbox-draft-tooltip-anchor"><button type="button" data-testid="sendbox-add-to-draft-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8801;</button></span>
+      <span class="sendbox-send-tooltip-anchor"><button type="button" data-testid="sendbox-send-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8593;</button></span>
+    </div>
+  </div>
+
+  <div id="message-a1" data-message-type="text" data-message-position="left">
+    <div data-testid="message-text-content">Hello from the agent, this is a test reply to read aloud.</div>
+  </div>
+
+  <div id="settings-area">
+    <div data-testid="theme-card-dark"></div>
+  </div>
+
+  <script src="voice-provider.stub.js"></script>
+  <script src="aiondx-voice-ui.js"></script>
+</body>
+</html>

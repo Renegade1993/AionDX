@@ -1,0 +1,91 @@
+<!doctype html>
+<!--
+  Like dev-harness.html, but loads the real aiondx-voice.js (window.AionDxVoice) instead of
+  voice-provider.stub.js, and stubs window.fetch instead of the whole voice client: the settings
+  store's GET/PUT /api/settings/client, and ElevenLabs' three endpoints. This is what proves the
+  UI works against the real module, not just a UI-shaped stand-in. No real network call, no real
+  API key; window.__backendPort is left unset, so apiUrl() builds the same-origin paths this
+  stub serves.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; padding: 24px; background: #fff; color: #1d2129; }
+  .sendbox-panel { border: 1px solid #e5e6eb; border-radius: 12px; padding: 12px; max-width: 480px; }
+  .sendbox-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  textarea { width: 100%; box-sizing: border-box; border: none; outline: none; resize: none; font: inherit; font-size: 14px; }
+  .arco-btn { border: 1px solid #c9cdd4; background: #fff; cursor: pointer; }
+  .arco-btn-shape-circle { border-radius: 50%; }
+  .arco-btn-size-small { width: 28px; height: 28px; }
+  .arco-btn-size-mini { width: 22px; height: 22px; }
+  [id^="message-"] { max-width: 480px; margin: 16px 0; padding: 8px 10px; background: #f2f3f5; border-radius: 8px; }
+  #settings-area { margin-top: 24px; }
+  [data-testid^="theme-card-"] { display: inline-block; width: 40px; height: 40px; background: #eee; }
+</style>
+<script>
+  (function () {
+    // ---- stub backend: the settings store's one record, and ElevenLabs' three endpoints ----
+    var store = {};   // key -> value, as aionui-system client_pref.rs keeps it
+    window.__fetchCalls = [];
+    var realFetch = window.fetch.bind(window);
+    window.fetch = function (url, opts) {
+      opts = opts || {};
+      var u = String(url);
+      window.__fetchCalls.push({ url: u, method: opts.method || 'GET' });
+
+      if (u.indexOf('/api/settings/client') === 0) {
+        if (opts.method === 'PUT') {
+          var body = JSON.parse(opts.body || '{}');
+          Object.keys(body).forEach(function (k) { if (body[k] === null) delete store[k]; else store[k] = body[k]; });
+          return Promise.resolve(new Response(JSON.stringify({ success: true }), { status: 200 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ success: true, data: store }), { status: 200 }));
+      }
+      if (u.indexOf('https://api.elevenlabs.io/v1/text-to-speech/') === 0) {
+        // A short silent WAV (reused as a stand-in for an mp3 blob; the UI only treats it as playable audio).
+        var sampleRate = 8000, seconds = 1.5, dataSize = Math.round(sampleRate * seconds);
+        var buf = new ArrayBuffer(44 + dataSize);
+        var view = new DataView(buf);
+        var writeStr = function (offset, s) { for (var i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); };
+        writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
+        writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate, true); view.setUint16(32, 1, true); view.setUint16(34, 8, true);
+        writeStr(36, 'data'); view.setUint32(40, dataSize, true);
+        new Uint8Array(buf, 44).fill(128);
+        return Promise.resolve(new Response(buf, { status: 200, headers: { 'Content-Type': 'audio/wav' } }));
+      }
+      if (u === 'https://api.elevenlabs.io/v1/speech-to-text') {
+        return Promise.resolve(new Response(JSON.stringify({ text: 'real-module transcript' }), { status: 200 }));
+      }
+      if (u === 'https://api.elevenlabs.io/v1/voices') {
+        return Promise.resolve(new Response(JSON.stringify({ voices: [
+          { voice_id: 'rachel-id', name: 'Rachel' }, { voice_id: 'adam-id', name: 'Adam' }
+        ] }), { status: 200 }));
+      }
+      return realFetch(url, opts);
+    };
+  })();
+</script>
+</head>
+<body>
+  <div class="sendbox-panel">
+    <textarea data-testid="sendbox-input" rows="2" placeholder="Message..."></textarea>
+    <div class="sendbox-actions">
+      <span class="sendbox-draft-tooltip-anchor"><button type="button" data-testid="sendbox-add-to-draft-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8801;</button></span>
+      <span class="sendbox-send-tooltip-anchor"><button type="button" data-testid="sendbox-send-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8593;</button></span>
+    </div>
+  </div>
+
+  <div id="message-a1" data-message-type="text" data-message-position="left">
+    <div data-testid="message-text-content">Hello from the real module, this is a test reply to read aloud.</div>
+  </div>
+
+  <div id="settings-area">
+    <div data-testid="theme-card-dark"></div>
+  </div>
+
+  <script src="aiondx-voice.js"></script>
+  <script src="aiondx-voice-ui.js"></script>
+</body>
+</html>
