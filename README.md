@@ -20,6 +20,8 @@ Windows SmartScreen asks you to confirm it ("More info", then "Run anyway").
 - **Drafts that survive a restart.** What you typed, and the pictures and files you attached, are kept per chat.
 - **Schedule send, Stop that really stops, YOLO mode that does not ask about every Bash command, undo and redo in the
   message box,** and more.
+- **Voice (optional).** A microphone button in the message box and a speaker button on an agent's reply, through ElevenLabs
+  with your own account and key. Nothing is sent until you enter a key and press one of the buttons.
 - **A first screen that brings your setup over** from the other AI apps on the PC.
 - **Its own look,** its own name everywhere, and no sign-in with anyone.
 - **No telemetry.** The crash reports and usage analytics that AionUi sends to its own services are switched off. AionDX itself
@@ -77,7 +79,7 @@ node tools\test-live-undo.js                         # message-box undo, in the 
 
 ## Contributors
 
-- PotatoNateO
+- PotatoNateO: the voice feature (speech to text and text to speech, ElevenLabs first; `patches/0011-voice`).
 
 ## Licence and credits
 

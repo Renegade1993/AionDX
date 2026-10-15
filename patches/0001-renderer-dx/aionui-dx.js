@@ -6335,6 +6335,7 @@
   /** Every message box on screen should carry a Loop button; record the ones that do not, and why not. */
   function diagnoseMissing() {
     if (disabled()) return;
+    if (!every('diag', 4000)) return;   // it asks for layout (getClientRects), which a big page pays for in full each time; it only records a fault
     var r = route();
     var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
     for (var i = 0; i < boxes.length; i++) {
@@ -6376,6 +6377,7 @@
       }
     }
     try { diagnoseMissing(); } catch (e) {}
+    var big = bigPage();
     Object.keys(pills).forEach(function (k) {
       if (live[k]) return;
       var el = pills[k].el;
@@ -6384,7 +6386,9 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle].forEach(function (step) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle].forEach(function (step, idx) {
+      // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
+      if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
     });
     if (menu) refreshMenu();
@@ -6707,6 +6711,7 @@
   // hidden; "older than verified" stays, since it can matter.
   var DRIFT_RE = /is newer than the version AionUi verified|\u9ad8\u4e8e AionUi \u9a8c\u8bc1\u8fc7\u7684\u7248\u672c|\u9ad8\u65bc AionUi \u9a57\u8b49\u904e\u7684\u7248\u672c/;
   function hideDriftNotices() {
+    if (!every('drift', 1000)) return;   // a sweep of every message row: once a second is plenty for a notice at the start of a chat
     var rows = document.querySelectorAll('[id^="message-"]:not([data-aiondx-drift])');
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
@@ -6723,11 +6728,50 @@
 
   // ---------------------------------------------------------------- wiring
 
-  var scheduled = false;
+  // a request of 2026-10-14 ("the ui is lagging so brutally bad for some conversations or teams"). render() runs on every change of the page, and
+  // a streaming reply changes it many times a second. On a chat with thousands of rows its sweeps of the whole page cost tens of milliseconds each
+  // (measured in the test harness at 3,000 rows: about 40% of the page's time while a reply streamed). So:
+  //   - the whole-page sweeps (drift notices, sidebar spinners, the diagnosis) each run at most once per interval, and the 1-second timer below
+  //     catches up on what a skipped run missed;
+  //   - where one render has just taken more than 8 ms, on a page with over 400 messages the next waits eight times as long (at most 0.75 s), so a heavy page is repainted a few times
+  //     a second, not on every frame. A page where render takes under 8 ms is repainted on the next frame as before.
+  // window.__aionDx.repaint() (tests, debugging) runs everything at once.
+  var sweepAt = {}, sweepWait = {};
+  function every(name, ms) {
+    var now = Date.now();
+    if (sweepAt[name] && now - sweepAt[name] < ms) {
+      // Skipped: one repaint is booked for when the interval is up, so a change that arrived in between (a spinner's verdict) is not left until the 15-second timer.
+      if (!sweepWait[name]) sweepWait[name] = setTimeout(function () { sweepWait[name] = 0; schedule(); }, ms - (now - sweepAt[name]) + 20);
+      return false;
+    }
+    sweepAt[name] = now;
+    return true;
+  }
+  /** A page with a long message list (AionUi's list has one child per message; a team has one list per member). A settings change or a click on a small page is never slowed. */
+  var bigAt = 0, bigVal = false;
+  function bigPage() {
+    var now = Date.now();
+    if (now - bigAt < 1000) return bigVal;   // the answer is asked for many times a second and a sweep of a big page is not free
+    bigAt = now;
+    var ls = document.querySelectorAll('[data-testid="message-list-content"]');
+    var n = 0;
+    for (var i = 0; i < ls.length; i++) n += ls[i].childElementCount;
+    bigVal = n > 400;
+    return bigVal;
+  }
+  var scheduled = false, lastRenderMs = 0, lastRenderAt = 0;
+  function timedRender() {
+    var t0 = performance.now();
+    render();
+    lastRenderMs = performance.now() - t0;
+    lastRenderAt = Date.now();
+  }
   function schedule() {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(function () { scheduled = false; render(); });
+    var wait = lastRenderMs > 8 && bigPage() ? Math.min(750, lastRenderMs * 8) - (Date.now() - lastRenderAt) : 0;
+    if (wait > 0) setTimeout(function () { scheduled = false; timedRender(); }, wait);
+    else requestAnimationFrame(function () { scheduled = false; timedRender(); });
   }
 
   function ours(node) {
@@ -7383,6 +7427,7 @@
     });
   }
   function reconcileSpinners() {
+    if (!every('spin', 500)) return;
     var list = document.querySelectorAll('[data-testid^="team-spinner-"], [data-testid^="collapsed-team-spinner-"]');
     for (var i = 0; i < list.length; i++) {
       var el = list[i];
@@ -7948,7 +7993,7 @@
     off: function () { var t = firstTarget(); if (t) setOn(t, false, 'console'); },
     tickNow: function () { return tick(); },
     stored: function () { return storedTargets().map(function (t) { return { key: t.key, on: state(t).on }; }); },
-    repaint: function () { render(); },
+    repaint: function () { sweepAt = {}; render(); },
     pulseNow: function () { return Promise.resolve(pulseRun).then(function () { return pulse(); }); },
     agent: function (key) { return agentLive[key] || null; },
     heldWakes: function () { return heldWakes; },

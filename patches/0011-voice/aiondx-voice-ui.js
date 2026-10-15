@@ -180,11 +180,46 @@
 
   // ---------------------------------------------------------------- re-render scheduling
 
-  var scheduled = false;
+  // Pacing for long chats (2026-10-14, after the lag in chats of thousands of messages: AionUi draws every loaded message, and this file
+  // walked every reply row on every change of the page). On a page with over 400 messages, the composer and reply scans run at most every
+  // 400 ms, and a repaint that has just taken over 8 ms is followed by one only after eight times as long (at most 0.75 s). A small page
+  // is painted on the next frame as before. A scan that was skipped books a repaint for when its interval is up.
+  var BIG_PAGE_ROWS = 400;
+  var bigAt = 0, bigVal = false;
+  function bigPage() {
+    var now = Date.now();
+    if (now - bigAt < 1000) return bigVal;   // asked for many times a second; a sweep of a big page is not free
+    bigAt = now;
+    var ls = document.querySelectorAll('[data-testid="message-list-content"]');
+    var n = 0;
+    for (var i = 0; i < ls.length; i++) n += ls[i].childElementCount;
+    bigVal = n > BIG_PAGE_ROWS;
+    return bigVal;
+  }
+  var dueAt = {}, dueWait = {};
+  function due(name, ms) {
+    if (!bigPage()) return true;
+    var now = Date.now();
+    if (dueAt[name] && now - dueAt[name] < ms) {
+      if (!dueWait[name]) dueWait[name] = setTimeout(function () { dueWait[name] = 0; schedule(); }, ms - (now - dueAt[name]) + 20);
+      return false;
+    }
+    dueAt[name] = now;
+    return true;
+  }
+  var scheduled = false, lastRenderMs = 0, lastRenderAt = 0;
+  function timedRender() {
+    var t0 = performance.now();
+    render();
+    lastRenderMs = performance.now() - t0;
+    lastRenderAt = Date.now();
+  }
   function schedule() {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(function () { scheduled = false; render(); });
+    var wait = lastRenderMs > 8 && bigPage() ? Math.min(750, lastRenderMs * 8) - (Date.now() - lastRenderAt) : 0;
+    if (wait > 0) setTimeout(function () { scheduled = false; timedRender(); }, wait);
+    else requestAnimationFrame(function () { scheduled = false; timedRender(); });
   }
   /** True when at least one mutation touched something outside this script's own elements, so a
    *  change this script itself made (painting a button) does not re-trigger itself. */
@@ -426,19 +461,45 @@
     return row.getAttribute('data-message-position') === 'left' && !row.querySelector('.bg-3');
   }
 
+  var lastFullScan = 0;
   function ensurePlayButtons() {
-    var rows = document.querySelectorAll('[id^="message-"][data-message-type="text"]');
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i];
-      if (!isAgentRow(row)) continue;
-      var content = row.querySelector('[data-testid="message-text-content"]');
-      // The button is inserted as content's sibling, not its child, so the dedupe check has to
-      // look in the row (an earlier version checked inside content and never found its own button,
-      // which piled up a fresh one on every render pass).
-      if (!content || row.querySelector('.aiondx-voice-play')) continue;
-      var wrap = buildPlayButton(content);
-      content.parentNode.insertBefore(wrap, content.nextSibling);
-    }
+    // Rows already looked at carry data-aiondx-voice ("1" has its button, "0" is not an agent reply), so a chat of thousands of rows is not walked
+    // row by row on every change of the page. Every 10 seconds all rows are looked at again, in case React dropped a button.
+    var full = Date.now() - lastFullScan > 10000;
+    if (full) lastFullScan = Date.now();
+    var rows = document.querySelectorAll('[id^="message-"][data-message-type="text"]' + (full ? '' : ':not([data-aiondx-voice])'));
+    // On a page with a long message list (see bigPage) only the newest replies get their speaker button here; an older reply gets its button when
+    // the pointer reaches it (watchHover). A speaker button on every one of thousands of replies roughly doubled the page's layout cost in the test.
+    var from = bigPage() ? Math.max(0, rows.length - BIG_PAGE_BUTTONS) : 0;
+    // The rows left out are marked "2" (button on hover), so they do not come back into the next scan and get their buttons ten at a time.
+    for (var j = 0; j < from; j++) if (!rows[j].hasAttribute('data-aiondx-voice')) rows[j].setAttribute('data-aiondx-voice', '2');
+    for (var i = from; i < rows.length; i++) playButtonFor(rows[i]);
+  }
+  /** Gives one reply its speaker button, if it is an agent's and drawn. Marks the row so it is not looked at again. */
+  function playButtonFor(row) {
+    if (!isAgentRow(row)) { row.setAttribute('data-aiondx-voice', '0'); return; }
+    var content = row.querySelector('[data-testid="message-text-content"]');
+    // The button is inserted as content's sibling, not its child, so the dedupe check has to
+    // look in the row (an earlier version checked inside content and never found its own button,
+    // which piled up a fresh one on every render pass).
+    if (!content) return;   // not drawn yet: looked at again next time
+    if (row.querySelector('.aiondx-voice-play')) { row.setAttribute('data-aiondx-voice', '1'); return; }
+    var wrap = buildPlayButton(content);
+    content.parentNode.insertBefore(wrap, content.nextSibling);
+    row.setAttribute('data-aiondx-voice', '1');
+  }
+  var BIG_PAGE_BUTTONS = 40;
+  var hoverWatched = false;
+  /** On a big page, the speaker button of an older reply appears when the pointer reaches the reply. */
+  function watchHover() {
+    if (hoverWatched) return;
+    hoverWatched = true;
+    document.addEventListener('mouseover', function (ev) {
+      if (!bigPage()) return;
+      var row = ev.target && ev.target.closest ? ev.target.closest('[id^="message-"][data-message-type="text"]') : null;
+      if (!row || (row.hasAttribute('data-aiondx-voice') && row.getAttribute('data-aiondx-voice') !== '2')) return;
+      try { playButtonFor(row); } catch (e) { console.log('[dx-voice] hover button failed', e); }
+    }, true);
   }
 
   // ---------------------------------------------------------------- settings panel (Settings > Appearance)
@@ -491,6 +552,7 @@
     el.innerHTML =
       '<div class="aiondx-voice-title">AionDX voice</div>' +
       '<div class="aiondx-voice-desc">Speak into the microphone button on the composer, and have an agent\u2019s reply read back with the speaker button on its message.</div>' +
+      '<div class="aiondx-voice-desc" data-testid="aiondx-voice-privacy">What you say, and each reply you play back, is sent to the provider you pick (ElevenLabs today), under your own account and key. Nothing is sent until you enter a key and press the microphone or a speaker button. The key is kept in AionDX\u2019s settings on this PC, as typed.</div>' +
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-provider">Provider</label>' +
         '<select id="aiondx-voice-provider" data-testid="aiondx-voice-provider"></select></div>' +
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-apikey">API key</label>' +
@@ -647,13 +709,14 @@
 
   function render() {
     try { ensureVoiceClient(); } catch (e) { console.log('[dx-voice] voice client init failed', e); }
-    try { ensureMicButtons(); } catch (e) { console.log('[dx-voice] mic render failed', e); }
-    try { ensurePlayButtons(); } catch (e) { console.log('[dx-voice] play render failed', e); }
-    try { ensureVoicePanel(); } catch (e) { console.log('[dx-voice] settings render failed', e); }
+    if (due('mic', 400)) try { ensureMicButtons(); } catch (e) { console.log('[dx-voice] mic render failed', e); }
+    if (due('play', 400)) try { ensurePlayButtons(); } catch (e) { console.log('[dx-voice] play render failed', e); }
+    if (due('panel', 1000)) try { ensureVoicePanel(); } catch (e) { console.log('[dx-voice] settings render failed', e); }
   }
 
   function start() {
     ensureStyle();
+    watchHover();
     render();
     new MutationObserver(function (records) { if (foreignChange(records)) schedule(); })
       .observe(document.body, { childList: true, subtree: true });

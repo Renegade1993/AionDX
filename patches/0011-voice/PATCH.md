@@ -148,3 +148,18 @@ patch leaves behind.
   suites stub the network), or inside `click-test.js`'s own `harness.html` alongside patch 0001's
   checks.
 - Still unresolved: the commit-identity finding above.
+
+## October 14th, 2026: changes made while merging into main (the AionDX owner's review)
+
+The patch was merged as it came (commit 0091a9b; its own tests pass: `test-voice.js` 46, `dev-smoke-test.js` 16, `dev-smoke-test-real.js` 14). Three changes on top, in `aiondx-voice-ui.js`:
+
+- **Pacing on long chats.** The owner reported lag in chats of thousands of messages. AionUi draws every loaded message with no virtualization, and this file's render ran on every change of the page,
+  with a `querySelector` per reply row and a forced layout (`getClientRects`) for each composer. In the harness (`tools\dx-harness\quick-lag.js`, 3,000 rows, a reply streaming in) the original added about
+  70% to the browser's own time and 8 seconds of page queries; with these changes it costs about what no voice UI costs. On a page with over 400 messages the composer, reply and panel scans run at most every
+  400 ms and a repaint after a slow render waits (at most 0.75 s); a small page is painted on the next frame as before.
+- **Reply scan.** Rows already looked at carry `data-aiondx-voice` (1 has its button, 0 is not an agent reply, 2 was left for hover), so only new rows are walked; every 10 seconds all rows are looked at again in
+  case React dropped a button. On a big page only the newest 40 replies get their speaker button; an older reply gets its button when the pointer reaches it (a speaker button on every one of thousands of
+  replies doubled the page's layout cost). A small page has a speaker button on every reply, as designed.
+- **What leaves the PC.** The settings panel now says that what is said, and each reply played back, goes to the chosen provider under the user's own account and key, that nothing is sent until a key is entered
+  and a button pressed, and that the key is kept in AionDX's settings on this PC as typed. (The key sits in the same settings store the agents' own API can read; storing it with the operating system's
+  protection instead is a possible next step.)

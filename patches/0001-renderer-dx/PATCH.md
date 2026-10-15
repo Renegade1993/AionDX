@@ -928,3 +928,12 @@ member's Stop already pauses the member through AionCore's pause route.)
 - A bug found by the new test and fixed before it shipped: the fallback's wrapper carried the draft button's anchor class, which `renderSched` uses to find its
   own anchor, so the two buttons moved each other on every repaint and no click could finish. The wrapper has its own class.
 - Tests: click scenario `stop-fallback`; `tools\dx-harness\quick-stop.js` runs it alone, with the raw mouse events, in about 20 seconds.
+
+## October 14th, 2026: build `2026-10-13.1` again, render throttles for long chats
+
+- A request of October 14th ("the ui ... lagging so brutally bad for some conversations or teams"). Diagnosis in `! LLM Files\Research\2026-10-14_ui-lag-diagnosis.md`: AionUi renders every
+  loaded message with no virtualization, and AionDX's `render()`, which runs on every change of the page, swept the whole page three ways (a forced layout, two whole-page
+  `querySelectorAll`s). At 3,000 rows it took about 40% of the page's time while a reply streamed.
+- `every(name, ms)` throttles `hideDriftNotices` (1 s), `reconcileSpinners` (0.5 s) and `diagnoseMissing` (4 s); a skipped run books one repaint for when its interval is up. `schedule()` repaints on the
+  next frame as before unless the last render took over 8 ms, in which case it waits eight times as long (at most 0.75 s). `__aionDx.repaint()` runs everything at once. AionDX's share of the work at 3,000 rows
+  fell from 2,455 ms to 424 ms in the headless measurement (`tools\dx-harness\quick-lag.js`); the browser's own layout of the list is unchanged.
