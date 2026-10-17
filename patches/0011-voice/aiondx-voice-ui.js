@@ -613,7 +613,7 @@
   // key: a string identifying what hf is currently running for ('conv:<id>' or 'team:<id>'), so
   // ensureHandsFree() can tell "already running for this exact target, leave it alone" apart from
   // "switched to a different one, restart" without caring about conv vs team itself.
-  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '', sawActivity: false, wakeStartedAt: 0 };
+  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '', sawActivity: false, wakeStartedAt: 0, transcribeErrorMsg: '', transcribeErrorAt: 0 };
   // Test-only: {levelSource, createRecorder} to hand startWakeListener/captureUtterance a fake mic
   // instead of the real one, the same injection test-wake.js uses for aiondx-voice.js itself. Set
   // through window.__aionDxVoiceUI.setHfTestSource, never touched in production.
@@ -690,6 +690,8 @@
     if (!m || typeof m.startWakeListener !== 'function') { teardownHandsFree(); return; }
     hf.sawActivity = false;
     hf.wakeStartedAt = Date.now();
+    hf.transcribeErrorMsg = '';
+    hf.transcribeErrorAt = 0;
     setHfState('wake');
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
     var opts = Object.assign({
@@ -700,6 +702,20 @@
       // hfStageLabel's stall hint, which is otherwise the only way to tell "it's listening and
       // just hasn't heard the phrase" apart from "it isn't really listening at all."
       onCandidate: function () { if (myGen === hf.gen && !hf.sawActivity) { hf.sawActivity = true; paintHandsFreeBadge(); paintHandsFreeNote(); } },
+      // A failed transcribe() still proves the mic/VAD recorded and sent a real clip - that is
+      // "activity" too, and a sharper signal than the stall hint: this is the exact bug a user
+      // report traced to "every clip was failing to transcribe, with nothing ever saying so."
+      // The wake listener keeps running regardless (Core Engineer's own design, symmetric with
+      // onCandidate) - one bad clip says nothing about the next one.
+      onTranscribeError: function (e) {
+        if (myGen !== hf.gen) return;
+        console.log('[dx-voice] wake transcribe error', e);
+        hf.sawActivity = true;
+        hf.transcribeErrorMsg = (e && e.message) || 'transcription failed';
+        hf.transcribeErrorAt = Date.now();
+        paintHandsFreeBadge();
+        paintHandsFreeNote();
+      },
       onError: function (e) {
         if (myGen !== hf.gen) return;
         console.log('[dx-voice] wake listener error', e);
@@ -830,12 +846,21 @@
   function hfStageLabel() {
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
     if (hf.state === 'wake') {
-      // sawActivity is set by onCandidate - proof the VAD actually heard *something* and sent it
-      // to transcribe(), whether or not it matched the phrase. Silent since this stage started
-      // (no candidate, no match) past HF_STALL_MS points at the mic/VAD pipeline itself, not
-      // "the phrase wasn't understood" - worth telling apart, since the badge otherwise looks
-      // identical ("Listening...") whether the mic is live or not. ensureHandsFreeBadges() repaints
-      // this every ~2s regardless of a state change, so the hint appears without extra wiring.
+      // A failed transcribe() takes priority over the plain stall hint below: it is strictly more
+      // informative (proof the mic/VAD recorded and sent a real clip, plus the actual reason it
+      // did not turn into a wake) and, bug-for-bug, is exactly the case the stall hint alone would
+      // have gotten backwards - every clip failing to transcribe still counts as real activity
+      // (onTranscribeError sets sawActivity too), so without this check the badge would have kept
+      // saying "no microphone activity detected" while the mic was demonstrably working.
+      if (hf.transcribeErrorMsg && hf.transcribeErrorAt >= hf.wakeStartedAt) {
+        return 'Listening for “' + phrase + '” — transcription failed: ' + hf.transcribeErrorMsg;
+      }
+      // sawActivity is set by onCandidate or onTranscribeError - proof the VAD actually heard
+      // *something* and sent it to transcribe(), matched or not, successful or not. Silent since
+      // this stage started points at the mic/VAD pipeline itself, not "the phrase wasn't
+      // understood" - worth telling apart, since the badge otherwise looks identical
+      // ("Listening...") whether the mic is live or not. ensureHandsFreeBadges() repaints this
+      // every ~2s regardless of a state change, so the hint appears without extra wiring.
       var stalled = !hf.sawActivity && hf.wakeStartedAt && (Date.now() - hf.wakeStartedAt > HF_STALL_MS);
       return 'Listening for “' + phrase + '”' + (stalled ? ' — no microphone activity detected yet' : '');
     }

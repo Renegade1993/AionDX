@@ -309,6 +309,30 @@ same call site (`startWakeStage`) and can likely surface it the same way (`hf.la
 text) rather than treating it as fatal like the real `onError` is. Live retest still pending to see
 the actual error message now that one will finally show up.
 
+### The UI wiring (`onTranscribeError`), and what it displaces
+
+`startWakeStage` passes `onTranscribeError` alongside `onCandidate`/`onError`: unlike the fatal
+`onError` (the listener could not start at all), it does not stop anything - the wake listener keeps
+running, same as Core Engineer's own design (one bad clip says nothing about the next one). It sets
+`hf.transcribeErrorMsg` and marks `hf.sawActivity` too, since a failed transcribe still proves the
+mic/VAD recorded and sent a real clip - that distinction mattered: without it, the stall hint
+(`hfStageLabel`, build .4) would have kept saying "no microphone activity detected" while every clip
+was in fact reaching ElevenLabs and failing there, which is backwards. The transcribe-error text now
+takes priority over the stall hint whenever both could apply, surfaced in the composer badge and the
+settings panel's status line alike: `Listening for "<phrase>" — transcription failed: <reason>`.
+
+`captureUtterance`'s side of the same fix (the "listening for your message" stage, not just "wake")
+needed no new UI wiring - it already rejects the whole call with the real error now instead of
+silently waiting out `maxMs`, and `startListenStage`'s existing catch-all retry (`console.log`, try
+again) already handles that correctly; a future pass could surface *that* error too, the same way,
+if a live retest shows it mattering there as well.
+
+Tests: `dev-smoke-test-handsfree.js` gained 3 (a forced `429` from the speech-to-text stub during
+the wake stage: the badge and the settings-panel status line both show "transcription failed:
+elevenlabs transcribe failed: http 429 quota exceeded" instead of the generic stall hint, and
+hands-free stays active afterward rather than tearing down) - now 26/26. `dev-smoke-test-handsfree-team.js`
+(12/12), `dev-smoke-test.js` (34/34) and `dev-smoke-test-real.js` (18/18) regression-checked clean.
+
 ## What it adds
 
 `aiondx-voice.js`: a small interface any text-to-speech / speech-to-text provider can implement,

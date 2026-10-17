@@ -112,6 +112,24 @@ async function pageTarget() {
       (await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent')).includes('running'));
     check('that status line is not hidden', await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").hidden') === false);
 
+    // ---- a failed transcribe() during the wake stage is surfaced, not swallowed (the actual bug) ----
+    // This is Core Engineer's fix (1bb6fe4, onTranscribeError) wired through: before it, a clip
+    // that failed to transcribe was dropped with no signal at all, indistinguishable from the mic
+    // never having heard anything - exactly the "wake phrase does nothing" report. No sttQueue
+    // push here: the stub's failure path never reads the queue, so this must not consume a slot a
+    // later real speak() call expects.
+    await js('window.__sttFailNext = 1');
+    await js('window.__hf.level = 1');
+    await sleep(120);
+    await js('window.__hf.level = 0');
+    check('a failed transcribe shows the real reason, not the generic stall hint',
+      await waitFor('(document.querySelector(".aiondx-voice-hf-text").textContent || "").includes("transcription failed")', 40),
+      await js('document.querySelector(".aiondx-voice-hf-text").textContent'));
+    check('the settings panel mirrors the same transcribe-error text',
+      await js('(document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent || "").includes("transcription failed")'));
+    check('hands-free keeps listening after one failed clip, it does not tear down',
+      await js('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"'));
+
     // ---- saying the wake phrase moves to "listening for your message" ----
     await speak('Hey AionDX');
     check('the wake phrase moves to the listening stage',

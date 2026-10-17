@@ -39,6 +39,7 @@
 
   window.__hf = { level: 0 };
   window.__sttQueue = [];
+  window.__sttFailNext = 0;   // number of upcoming speech-to-text calls to answer with an error instead
   window.__conv = { status: 'running' };
 
   function wavBlob(seconds) {
@@ -73,6 +74,10 @@
       return Promise.resolve(new Response(wavBlob(0.3), { status: 200, headers: { 'Content-Type': 'audio/wav' } }));
     }
     if (u === 'https://api.elevenlabs.io/v1/speech-to-text') {
+      if (window.__sttFailNext > 0) {
+        window.__sttFailNext--;
+        return Promise.resolve(new Response('quota exceeded', { status: 429 }));
+      }
       var text = window.__sttQueue.length ? window.__sttQueue.shift() : '';
       return Promise.resolve(new Response(JSON.stringify({ text: text }), { status: 200 }));
     }
