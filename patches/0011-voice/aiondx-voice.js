@@ -299,14 +299,21 @@
    *  straight (or the segment runs past maxSegmentMs regardless), stop the recording and hand the
    *  clip to transcribe(). onSegment(text) fires for every clip that comes back with text, however
    *  short; it is on the caller (the wake-phrase check, or captureUtterance's single resolve) to
-   *  decide what a result means. A clip that fails to transcribe (silence ElevenLabs could not read,
-   *  a network blip) is dropped silently - the loop just keeps listening, never throws out of tick(). */
+   *  decide what a result means. onSegmentError(err), if given, fires when transcribe() itself
+   *  rejects for a clip (not when stop() aborted it on purpose - that is expected, not a failure);
+   *  the loop keeps listening regardless, since one bad clip (or one ElevenLabs error) says nothing
+   *  about the next one. Until 2026-10-14 a failed clip was dropped with no signal at all - neither
+   *  onSegment nor any error - which is indistinguishable, from a caller with no way to inspect the
+   *  VAD's internals, from the mic never having heard anything (found live: a wake listener
+   *  configured with a real, working ElevenLabs key sat silent through real speech because every
+   *  recorded clip's transcribe() call was failing and nothing ever said so). */
   function runVad(config) {
     config = config || {};
     var levelSource = config.levelSource;
     var createRecorder = config.createRecorder;
     var transcribe = config.transcribe;
     var onSegment = config.onSegment;
+    var onSegmentError = typeof config.onSegmentError === 'function' ? config.onSegmentError : function () {};
     if (!levelSource || typeof levelSource.getLevel !== 'function') throw new Error('voice vad: levelSource is required');
     if (typeof createRecorder !== 'function') throw new Error('voice vad: createRecorder is required');
     if (typeof transcribe !== 'function') throw new Error('voice vad: transcribe is required');
@@ -337,8 +344,10 @@
         controller = null;
         if (stopped || text == null) return;
         onSegment(text);
-      }, function () {
-        controller = null; // a failed or aborted clip: say nothing, keep listening
+      }, function (err) {
+        controller = null;
+        if (stopped) return; // our own stop() aborted it on purpose - not a failure to report
+        onSegmentError(err);
       });
     }
 
@@ -400,12 +409,18 @@
    *  provider: runVad only sends a clip to transcribe() once the VAD has seen actual speech. A clip
    *  whose transcript contains opts.phrase (case-insensitive substring - deliberately simple, not a
    *  fuzzy matcher) calls opts.onWake(text); every other clip is dropped, optionally surfaced through
-   *  opts.onCandidate(text) for a "didn't catch that" debug affordance. Returns a function that stops
-   *  everything this call started (the VAD loop, and the mic/AudioContext if this call opened them -
-   *  never a mic a caller supplied itself); starting a new listener stops any previous one first, so
-   *  only one ever runs. opts.transcribe is required: typically a configured client's own transcribe,
-   *  e.g. window.__aionDxVoice.transcribe. opts.levelSource + opts.createRecorder are optional - give
-   *  both to reuse a mic stream the UI already owns, or neither to let this open the real mic itself. */
+   *  opts.onCandidate(text) for a "didn't catch that" debug affordance. opts.onTranscribeError(err),
+   *  if given, fires whenever a clip's transcribe() call itself fails (an ElevenLabs error, a
+   *  network blip) - distinct from opts.onError below, which only ever fires once, for a listener
+   *  that could not start at all (no microphone, no AudioContext). A caller that wires only
+   *  onCandidate can otherwise not tell "listening fine, nothing matched yet" apart from "every
+   *  clip is failing to transcribe," which looks identical to the user as the mic just not working.
+   *  Returns a function that stops everything this call started (the VAD loop, and the
+   *  mic/AudioContext if this call opened them - never a mic a caller supplied itself); starting a
+   *  new listener stops any previous one first, so only one ever runs. opts.transcribe is required:
+   *  typically a configured client's own transcribe, e.g. window.__aionDxVoice.transcribe.
+   *  opts.levelSource + opts.createRecorder are optional - give both to reuse a mic stream the UI
+   *  already owns, or neither to let this open the real mic itself. */
   function startWakeListener(opts) {
     opts = opts || {};
     var phrase = String(opts.phrase || '').trim().toLowerCase();
@@ -413,6 +428,7 @@
     if (typeof opts.transcribe !== 'function') throw new Error('voice wake listener: opts.transcribe is required');
     var onWake = typeof opts.onWake === 'function' ? opts.onWake : function () {};
     var onCandidate = typeof opts.onCandidate === 'function' ? opts.onCandidate : null;
+    var onTranscribeError = typeof opts.onTranscribeError === 'function' ? opts.onTranscribeError : function () {};
 
     if (activeWakeListener) activeWakeListener.stop();
 
@@ -446,6 +462,7 @@
           if (onCandidate) onCandidate(text);
           if (String(text || '').toLowerCase().indexOf(phrase) >= 0) onWake(text);
         },
+        onSegmentError: onTranscribeError,
       });
     }, function (err) {
       handle.stop();
@@ -466,8 +483,11 @@
    *  instead of a loop. opts.maxMs (default 15000) bounds the whole call, including opening the mic
    *  and waiting for the user to start talking; it rejects, never resolves with '', when nothing was
    *  said in time. opts.signal (a standard AbortSignal) cancels it early - stop-all wiring can pass
-   *  the same signal it uses elsewhere. Same opts as startWakeListener otherwise (transcribe
-   *  required; levelSource/createRecorder optional). */
+   *  the same signal it uses elsewhere. If the one segment this call records fails to transcribe
+   *  (an ElevenLabs error, a network blip), the whole call rejects with that error right away -
+   *  there is no "next segment" to retry, unlike the wake listener's onTranscribeError, which just
+   *  reports and keeps listening. Same opts as startWakeListener otherwise (transcribe required;
+   *  levelSource/createRecorder optional). */
   function captureUtterance(opts) {
     opts = opts || {};
     if (typeof opts.transcribe !== 'function') return Promise.reject(new Error('voice captureUtterance: opts.transcribe is required'));
@@ -511,6 +531,10 @@
           minSpeechMs: opts.minSpeechMs,
           maxSegmentMs: opts.maxSegmentMs,
           onSegment: function (text) { finish(resolve, text); },
+          // One-shot: unlike the wake listener, there is no "next segment" to keep trying, so a
+          // failed transcribe() rejects captureUtterance right away instead of silently waiting
+          // out maxMs for a segment that already happened and failed.
+          onSegmentError: function (err) { finish(reject, err); },
         });
       }, function (err) { finish(reject, err); });
     });

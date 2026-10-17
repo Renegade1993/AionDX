@@ -253,6 +253,62 @@ need to know which kind of page it is running on:
   22/22, now checking something. `dev-smoke-test.js` (34/34), `dev-smoke-test-real.js` (18/18),
   `test-voice.js` (46/46) and `test-wake.js` (22/22) regression-checked clean.
 
+## 2026-10-17: a failed transcribe() was never swallowed in silence, it was swallowed in the dark
+
+The live reports ("the wake phrase does nothing") traced back to `aiondx-voice.js` itself, found by
+the lead through live CDP debugging against the running staged app: the mic, `getUserMedia`,
+`createMicSource`'s level computation, and the real ElevenLabs key/endpoint all worked - a real RMS
+level crossed the VAD threshold while the user spoke, and a deliberately garbage blob sent through
+the real `transcribe()` got back a genuine `400 invalid_audio` from ElevenLabs (proof the wiring and
+the key are both fine, not an auth failure). What was never checked: whether a *real recorded clip*
+reaching that same `transcribe()` succeeds. `runVad`'s `finishSegment()` had, since build 2026-10-11.3:
+
+```js
+}, function () {
+  controller = null; // a failed or aborted clip: say nothing, keep listening
+});
+```
+
+Every rejection - an ElevenLabs error, a network blip, anything - was dropped with no signal of any
+kind: not `onSegment`, not `onCandidate`, not an exception, nothing. From outside `aiondx-voice.js`
+there was no way to tell "the mic never heard anything" apart from "it heard plenty, and every clip
+is failing to transcribe" - both looked exactly like silence. The UI's own stall diagnostic
+(`e47dfda`, `onCandidate`-based) could not catch this either: `onCandidate` only ever fires from
+`onSegment`, which a failed clip never reaches.
+
+**Fix:** `runVad` takes a new optional `onSegmentError(err)`, called from `finishSegment`'s rejection
+branch for a real failure (not for `stopped` - our own `stop()` aborting an in-flight call on purpose
+is not a failure to report). Wired through as two distinct callbacks, since they mean different
+things to a caller:
+- `startWakeListener({ ..., onTranscribeError })` - fires per failed clip; the listener keeps running
+  (one bad clip, or one ElevenLabs error, says nothing about the next one), the same way `onCandidate`
+  already does not stop the loop.
+- `captureUtterance({ ... })` - a failed clip now rejects the whole call immediately with that same
+  error, instead of silently waiting out `maxMs` for a segment that already happened and already
+  failed (a much slower, much less diagnosable way to fail).
+
+**On the "is it a format/duration problem" half of the ask:** checked against ElevenLabs' own current
+API docs rather than guessing - `audio/webm` is an explicitly accepted format for `/v1/speech-to-text`,
+the minimum audio length is 100 ms (this VAD's shortest possible clip, `minSpeechMs` worth of speech
+plus `silenceMs` of trailing silence, is already several times that by construction), and the
+endpoint/field names/`model_id: scribe_v1` this file already sends match the documented request shape
+exactly. Nothing here pointed at a format or duration bug specifically - the more useful next step is
+reading the *actual* error `onTranscribeError` surfaces on the next live retest, now that there is
+one to read, rather than continuing to guess blind.
+
+Tests: `node patches\0011-voice\test-wake.js`, 27/27 (5 new: a failed clip calls
+`onTranscribeError` with the real error and neither `onCandidate` nor `onWake`; the listener keeps
+running afterward and a later good clip still wakes it; `captureUtterance` rejects with the
+transcribe error itself, immediately, not after `maxMs`). `test-voice.js` unaffected, still 46/46.
+`tools\privacy-check.js --files patches\0011-voice\aiondx-voice.js patches\0011-voice\test-wake.js`
+clean.
+
+**Not yet done:** the UI side (`aiondx-voice-ui.js`'s `onError` handler) does not yet wire the new
+`onTranscribeError` - for the Voice UI Engineer, who already has `onCandidate`/`onError` wired at the
+same call site (`startWakeStage`) and can likely surface it the same way (`hf.lastError`, the badge
+text) rather than treating it as fatal like the real `onError` is. Live retest still pending to see
+the actual error message now that one will finally show up.
+
 ## What it adds
 
 `aiondx-voice.js`: a small interface any text-to-speech / speech-to-text provider can implement,

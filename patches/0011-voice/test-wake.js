@@ -213,6 +213,52 @@ async function speak(level, ms) { level.level = 1; await sleep(ms); level.level 
       check('the late transcribe answer changes nothing after settling', settledValue === 'rejected');
     }
 
+    // ---- a failed transcribe() is never swallowed silently (the live bug: every real clip was
+    // failing and nothing - not onCandidate, not onError - ever said so, which looked exactly like
+    // the mic not working at all) ----
+    {
+      const level = fakeLevelSource();
+      const calls = [];
+      const woken = [];
+      const candidates = [];
+      const errors = [];
+      AionDxVoice.startWakeListener(Object.assign({}, COMMON, {
+        phrase: 'hey aiondx', levelSource: level, createRecorder: fakeRecorderFactory(calls),
+        transcribe: queueTranscribe([
+          () => Promise.reject(new Error('elevenlabs transcribe failed: http 400 invalid_audio')),
+          'Hey AionDX, are you there',
+        ], []),
+        onWake: (t) => woken.push(t),
+        onCandidate: (t) => candidates.push(t),
+        onTranscribeError: (e) => errors.push(e),
+      }));
+
+      await speak(level, SPEAK_MS);     // segment 1: transcribe() rejects
+      await sleep(SETTLE_MS);
+      check('a failed clip calls onTranscribeError with the real error', errors.length === 1 && /invalid_audio/.test(errors[0].message));
+      check('a failed clip does not call onCandidate or onWake', candidates.length === 0 && woken.length === 0);
+
+      await speak(level, SPEAK_MS);     // segment 2: transcribe() succeeds and matches - the loop kept going
+      await sleep(SETTLE_MS);
+      check('the listener keeps listening after a failed clip: a later good clip still wakes it', woken.length === 1 && woken[0] === 'Hey AionDX, are you there');
+      check('two segments were recorded (the failure did not stop the VAD loop)', calls.length === 2);
+    }
+
+    // ---- captureUtterance: a failed transcribe() rejects the call itself, not a silent timeout ----
+    {
+      const level = fakeLevelSource();
+      const theError = new Error('elevenlabs transcribe failed: http 400 invalid_audio');
+      const p = AionDxVoice.captureUtterance(Object.assign({}, COMMON, {
+        levelSource: level, createRecorder: fakeRecorderFactory([]),
+        transcribe: queueTranscribe([() => Promise.reject(theError)], []),
+        maxMs: 5000, // much longer than this should ever take - proves the rejection is immediate, not a timeout
+      }));
+      await speak(level, SPEAK_MS);
+      let threw = null;
+      try { await p; } catch (e) { threw = e; }
+      check('captureUtterance rejects with the transcribe error itself, right away', threw === theError);
+    }
+
     // ---- input validation: clear errors, no network/mic access attempted ----
     {
       let threw = null;
