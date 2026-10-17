@@ -333,6 +333,43 @@ elevenlabs transcribe failed: http 429 quota exceeded" instead of the generic st
 hands-free stays active afterward rather than tearing down) - now 26/26. `dev-smoke-test-handsfree-team.js`
 (12/12), `dev-smoke-test.js` (34/34) and `dev-smoke-test-real.js` (18/18) regression-checked clean.
 
+### The other half: stale DOM references across a long wake/listen cycle
+
+A live retest afterward showed the symptom unchanged - the badge and the dot still never moved,
+not even the stall hint after 8+ real seconds. Checked from the render-loop side, not the audio
+side, per the lead's steer: `setInterval(render, 2000)` and `HF_STALL_MS` both proved correct over
+real unaccelerated time in an isolated check, which pointed at something specific to a live page,
+not a timing bug in general.
+
+Found it: `ensureHandsFree()` already re-searches the live DOM for the current composer on every
+render pass (`findHfTarget`), but on the "already running for this target" path it threw that
+fresh result away and kept whatever `hf.target` was set to when the cycle first began. Every stage
+after that - `startWakeStage`, `startListenStage`, `waitForReplyThenPlay`,
+`watchPlaybackThenListenAgain` - took `target` as a parameter closed over at that same moment and
+never revisited it. A real page re-rendering the composer (a team page especially, streaming
+output, a new message, anything) replaces those DOM nodes without the route ever changing, so
+`hf.key` stays the same and nothing above ever reran - but `target.ta`/`target.scope` now point at
+detached nodes. `sendComposerText(target.ta, ...)` against a detached textarea dispatches its
+`'input'` event to nothing; a click on a detached send button reaches no listener. Nothing throws;
+nothing errors; the call "succeeds" and does nothing - which is "the wake phrase does nothing,"
+exactly the report, independent of whether the badge itself is visible.
+
+Fixed both ends: `ensureHandsFree()` now updates `hf.target` (and repaints) when its fresh search
+finds different nodes for the same key, instead of discarding them; the four stage functions above
+all read `hf.target` at the point they actually touch the DOM instead of taking it as a parameter,
+so a long cycle always acts against whatever is live right now, not whatever was live when it
+started.
+
+Test: `dev-smoke-test-handsfree.js`'s harness gained `window.__replaceComposer()` (rebuilds the
+composer from a template captured before this script ever touched it - bare markup only, the way
+React replacing its own render output would not carry this script's injected nodes along) and a
+delegated send-button listener (so it survives the swap the same way React's own handler would).
+New checks: mid-"wake," the composer is replaced; the badge in the *new* composer stays visible and
+`data-state="wake"` (not stuck on the detached one); the wake phrase, the turn, and the send button
+all still work correctly afterward, against the fresh nodes - the existing listening/sending checks
+run unmodified post-replacement, since there is only one composer left in the DOM once the swap
+happens. 28/28.
+
 ## What it adds
 
 `aiondx-voice.js`: a small interface any text-to-speech / speech-to-text provider can implement,

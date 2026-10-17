@@ -117,6 +117,22 @@
       <span class="sendbox-send-tooltip-anchor"><button type="button" data-testid="sendbox-send-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8593;</button></span>
     </div>
   </div>
+  <script>
+    // Captured before aiondx-voice-ui.js's own script tags below even load, so this is the bare
+    // markup only - none of its own injected badges/buttons. __replaceComposer() rebuilds a fresh
+    // composer from this, the same way React replacing its own render output would: starting clean,
+    // not carrying this script's own prior nodes along for the ride (React owns none of those and
+    // would not preserve them through a real re-render of this subtree).
+    window.__composerTemplate = document.querySelector('.sendbox-panel').outerHTML;
+    window.__replaceComposer = function () {
+      var old = document.querySelector('.sendbox-panel');
+      var wrapper = document.createElement('div');
+      wrapper.innerHTML = window.__composerTemplate;
+      var fresh = wrapper.firstElementChild;
+      old.parentNode.replaceChild(fresh, old);
+      return fresh;
+    };
+  </script>
 
   <div id="messages"></div>
 
@@ -136,7 +152,11 @@
       createRecorder: window.__hfCreateRecorder,
       pollMs: 10, minSpeechMs: 30, silenceMs: 50, threshold: 0.5, maxSegmentMs: 4000
     });
-    document.querySelector('[data-testid="sendbox-send-btn"]').addEventListener('click', function () {
+    // Delegated, not attached to one specific button: survives __replaceComposer() swapping in a
+    // fresh node the same way a real send button would survive React re-rendering its own markup
+    // (React re-attaches its own handlers on every render; this stands in for that).
+    document.addEventListener('click', function (ev) {
+      if (!ev.target.closest || !ev.target.closest('[data-testid="sendbox-send-btn"]')) return;
       var ta = document.querySelector('[data-testid="sendbox-input"]');
       window.__sentMessages = window.__sentMessages || [];
       window.__sentMessages.push(ta.value);

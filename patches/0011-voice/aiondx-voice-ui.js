@@ -684,7 +684,19 @@
     saveSettings({ handsFree: false });
   }
 
-  function startWakeStage(target) {
+  // startWakeStage/startListenStage/waitForReplyThenPlay/watchPlaybackThenListenAgain all read
+  // hf.target fresh at the point they actually touch the DOM (a composer's textarea, its send
+  // button, its message rows), rather than taking it as a parameter closed over once when the
+  // stage started. They used to take `target` as an argument; a long wake/listen cycle easily
+  // outlives one render pass, and React can replace the composer's own DOM nodes (a busy page
+  // re-rendering) without hf.key ever changing, which ensureHandsFree() already re-detects and
+  // refreshes hf.target for - but a captured parameter from several stages back would still point
+  // at whatever was live when that stage first began. Concretely: sendComposerText(target.ta, ...)
+  // against a since-detached textarea dispatches its 'input' event to nothing, and the click on a
+  // detached send button reaches no listener - the call "succeeds" (nothing throws) and nothing
+  // happens, which is indistinguishable from the wake phrase doing nothing at all.
+
+  function startWakeStage() {
     var myGen = hf.gen;
     var m = hfModule();
     if (!m || typeof m.startWakeListener !== 'function') { teardownHandsFree(); return; }
@@ -697,7 +709,7 @@
     var opts = Object.assign({
       phrase: phrase,
       transcribe: hfTranscribe,
-      onWake: function () { if (myGen === hf.gen) startListenStage(target); },
+      onWake: function () { if (myGen === hf.gen) startListenStage(); },
       // Any candidate, matched or not, is proof the mic + VAD pipeline is actually alive - see
       // hfStageLabel's stall hint, which is otherwise the only way to tell "it's listening and
       // just hasn't heard the phrase" apart from "it isn't really listening at all."
@@ -726,7 +738,7 @@
     hf.wakeStop = m.startWakeListener(opts);
   }
 
-  function startListenStage(target) {
+  function startListenStage() {
     var myGen = hf.gen;
     if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }   // release the wake mic before opening a fresh one
     var m = hfModule();
@@ -740,14 +752,14 @@
       if (myGen !== hf.gen) return;
       if (saysStopHF(text)) { hf.lastError = ''; stopHandsFreeForGood(); return; }   // a deliberate stop, not a failure
       var clean = String(text || '').trim();
-      if (!clean) { startListenStage(target); return; }   // VAD cut a clip transcribe() read as empty: just listen again
-      sendComposerText(target.ta, clean);
-      waitForReplyThenPlay(target, myGen);
+      if (!clean) { startListenStage(); return; }   // VAD cut a clip transcribe() read as empty: just listen again
+      sendComposerText(hf.target.ta, clean);   // hf.target read now, not whatever was current when this stage started
+      waitForReplyThenPlay(myGen);
     }, function (e) {
       hf.abort = null;
       if (myGen !== hf.gen) return;
       console.log('[dx-voice] captureUtterance error', e);
-      startListenStage(target);   // a timeout with nothing said, or a hiccup: keep listening, the conversation stays live
+      startListenStage();   // a timeout with nothing said, or a hiccup: keep listening, the conversation stays live
     });
   }
 
@@ -775,23 +787,27 @@
       });
   }
 
-  /** Polls until the agent's turn finishes, then auto-plays the newest reply in target.scope - the
-   *  same play button a manual click would use, just triggered here instead of by the user. */
-  function waitForReplyThenPlay(target, myGen) {
+  /** Polls until the agent's turn finishes, then auto-plays the newest reply - the same play
+   *  button a manual click would use, just triggered here instead of by the user. Re-reads
+   *  hf.target on every poll tick (both for hfTurnFinished's id and for where to look for the
+   *  reply), not just once at the start - this can run for a while. */
+  function waitForReplyThenPlay(myGen) {
     setHfState('waiting-reply');
     function poll() {
       if (myGen !== hf.gen) return;
+      var target = hf.target;
       hfTurnFinished(target).then(function (done) {
         if (myGen !== hf.gen) return;
         if (!done) { hf.pollTimer = setTimeout(poll, 1000); return; }
-        var rows = Array.prototype.filter.call(target.scope.querySelectorAll('[id^="message-"][data-message-type="text"]'), isAgentRow);
+        var scope = hf.target ? hf.target.scope : target.scope;
+        var rows = Array.prototype.filter.call(scope.querySelectorAll('[id^="message-"][data-message-type="text"]'), isAgentRow);
         var row = rows[rows.length - 1];
         var wrap = row && row.querySelector('.aiondx-voice-play');
         var content = row && row.querySelector('[data-testid="message-text-content"]');
         if (!wrap || !content) { hf.pollTimer = setTimeout(poll, 500); return; }   // the reply's row exists but ensurePlayButtons() has not reached it yet this frame
         setHfState('speaking');
         startPlayback(wrap, content);
-        watchPlaybackThenListenAgain(wrap, target, myGen);
+        watchPlaybackThenListenAgain(wrap, myGen);
       });
     }
     poll();
@@ -799,14 +815,14 @@
 
   /** Not back to the wake phrase - the user's own framing of this as a continuous conversation, so
    *  every turn after the first starts straight at captureUtterance(). */
-  function watchPlaybackThenListenAgain(wrap, target, myGen) {
+  function watchPlaybackThenListenAgain(wrap, myGen) {
     var tick = setInterval(function () {
       if (myGen !== hf.gen) { clearInterval(tick); return; }
       var st = wrap.__st.state;
       if (st === 'idle' || st === 'error') {
         clearInterval(tick);
         if (myGen !== hf.gen) return;
-        startListenStage(target);
+        startListenStage();
       }
     }, 150);
   }
@@ -822,7 +838,18 @@
     var target = findHfTarget(r);
     if (!target) return;   // the composer is not rendered yet this frame; ensureHandsFree() runs again next render
     var key = target.kind + ':' + target.id;
-    if (hf.active && hf.key === key) return;
+    if (hf.active && hf.key === key) {
+      // Same target by id, but React can replace the composer's own DOM nodes (a team page in
+      // particular re-renders often) without the route ever changing - findHfTarget() above
+      // already re-searched the live DOM and found this frame's real nodes; keep them, not
+      // whatever was live when startWakeStage first captured hf.target. Skipping this update (an
+      // earlier version did) left hf.target.ta pointing at a node React could since have detached,
+      // which silently breaks every badge repaint and the send button sendComposerText() clicks -
+      // the listener itself keeps running underneath (it owns no DOM), so nothing here looked
+      // wrong from inside aiondx-voice.js, but the whole UI side goes stale and inert.
+      if (hf.target !== target) { hf.target = target; paintHandsFreeBadge(); }
+      return;
+    }
     if (hf.active) teardownHandsFree();
     var m = hfModule();
     if (!m || typeof m.startWakeListener !== 'function' || typeof m.captureUtterance !== 'function') return;
@@ -830,7 +857,7 @@
     hf.key = key;
     hf.target = target;   // which composer the badge belongs to - a team page has more than one on screen at once
     hf.lastError = '';   // a fresh start (the checkbox just turned on, or a target switch): any previous error is stale now
-    startWakeStage(target);
+    startWakeStage();
   }
 
   function buildHandsFreeBadge() {

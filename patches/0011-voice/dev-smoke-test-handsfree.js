@@ -130,6 +130,15 @@ async function pageTarget() {
     check('hands-free keeps listening after one failed clip, it does not tear down',
       await js('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"'));
 
+    // ---- React replacing the composer's own DOM (same route, fresh nodes) must not leave the
+    // UI stuck on stale references - the other half of the actual bug, alongside the swallowed
+    // transcribe error: a long wake/listen cycle easily outlives one render pass, and a captured
+    // reference from several stages back would silently stop reaching anything live. ----
+    const freshTa = await js(`(() => { window.__replaceComposer(); return !!document.querySelector('[data-testid="sendbox-input"]'); })()`);
+    check('a fresh composer is in the DOM after the simulated re-render', freshTa);
+    check('hands-free re-attaches to it: the badge in the new composer is visible and still "wake"',
+      await waitFor('(() => { const b = document.querySelector(".sendbox-actions .aiondx-voice-hf"); return !!b && !b.hidden && b.getAttribute("data-state") === "wake"; })()', 30));
+
     // ---- saying the wake phrase moves to "listening for your message" ----
     await speak('Hey AionDX');
     check('the wake phrase moves to the listening stage',
