@@ -964,7 +964,7 @@ Requests of October 20th (K's morning list). Everything below is in `aionui-dx.j
   while any agent in the team is working, and posts `POST /api/teams/{id}/agents/{slot}/replace` (AionCore patch core-0006), then reloads the team page.
 - Older messages, paced (`lag.chainPages`, default 3). AionUi loads older pages while the list is near the top, and a list that stays there (a member column that is not showing) chains page after
   page: opening a large team's page on October 20th sent 38 requests in one second for one member, and a 30,000-message chat would load all of it into the page. A chain of older-page requests for one
-  conversation with no scrolling from the user (no wheel, touch, key or press in the last 2.5 seconds) lets the first three through and holds the next unanswered until the user scrolls. Scrolling by
+  conversation with no scrolling from the user (no wheel, touch, scrolling key or press on a scrollbar in the last 2.5 seconds; a click on a tab or a button is not scrolling) lets the first three through and holds the next unanswered until the user scrolls. Scrolling by
   hand is unchanged.
 - Team members started from the page are recorded (`diagnose('team-attach', ...)`, with how long ago the user last pressed anything and where the call came from). On October 20th a member ran a turn
   at the moment a team page was opened, and nothing recorded what made the page ask for it. See `! LLM Files\2026-10-20_Heroes-member-started-on-team-open.md`.

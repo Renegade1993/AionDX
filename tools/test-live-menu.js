@@ -57,9 +57,10 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
     // A misspelled word in a text box
     await app.js(`(() => { const t = document.createElement('textarea'); t.id = 'tb'; t.setAttribute('spellcheck', 'true'); t.style.cssText = 'position:fixed;left:40px;top:320px;width:420px;height:60px;z-index:99999;font-size:18px'; document.body.appendChild(t); t.focus(); return 0; })()`);
     await app.send('Input.insertText', { text: 'helo wrold this is a tset' });
-    await sleep(2500);
     const tb = await centerOf('#tb');
-    const m4 = tb && await rightClickAt(tb.x + 14, tb.y);
+    // The checker starts on first use and marks words a moment later: look again for up to ten seconds.
+    let m4 = null;
+    for (let i = 0; i < 6; i++) { await sleep(1700); m4 = tb && await rightClickAt(tb.x + 14, tb.y); if (m4 && m4.misspelled) break; }
     check('the spell checker flags a misspelled word in a text box', m4 && /^helo$/i.test(m4.misspelled), JSON.stringify(m4));
     check('and offers suggestions, Add to dictionary, then Cut, Copy, Paste, Select all', m4 && m4.suggestions.length > 0 && m4.labels.includes('Add to dictionary') && m4.labels.includes('Paste') && m4.labels.includes('Select all'), JSON.stringify(m4));
   } catch (e) {

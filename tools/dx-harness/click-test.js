@@ -3258,6 +3258,12 @@ async function pageTarget() {
       await ask(5);
       await sleep(700);
       check(sc, 'while the user is scrolling, every page goes through', (await reached()) === 5, String(await reached()));
+      // A click on a tab or a button is not scrolling: the chain that follows it is still paced.
+      await sleep(11000);
+      await js(`document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true })); 0`);
+      await ask(6);
+      await sleep(700);
+      check(sc, 'a click or an ordinary key is not scrolling: the chain after it is still held at three', (await reached()) === 3, String(await reached()));
       await js(`window.__aionDx.setOption('lag.chainPages', 1); 0`);
       await sleep(11000);
       await ask(3);

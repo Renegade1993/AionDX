@@ -7931,10 +7931,19 @@
   var lastGestureAt = 0;
   var lastContext = null;     // { el, at }: the target of the newest right-click, so the main process can ask which picture it was
   function installLinkRouting() {
-    document.addEventListener('pointerdown', function () { lastGestureAt = Date.now(); lastScrollGestureAt = lastGestureAt; }, true);
+    // A press counts as scrolling only on a scrollbar (the press lands on the scroller itself, beyond its content width): a click on a tab or a button
+    // opens a page, and the older pages that page asks for are the chain being paced.
+    document.addEventListener('pointerdown', function (ev) {
+      lastGestureAt = Date.now();
+      var t = ev.target;
+      if (t && t.clientWidth && typeof ev.offsetX === 'number' && ev.offsetX >= t.clientWidth && t.scrollHeight > t.clientHeight) lastScrollGestureAt = lastGestureAt;
+    }, true);
     document.addEventListener('wheel', function () { lastScrollGestureAt = Date.now(); }, { capture: true, passive: true });
     document.addEventListener('touchmove', function () { lastScrollGestureAt = Date.now(); }, { capture: true, passive: true });
-    document.addEventListener('keydown', function () { lastGestureAt = Date.now(); lastScrollGestureAt = lastGestureAt; }, true);
+    document.addEventListener('keydown', function (ev) {
+      lastGestureAt = Date.now();
+      if (/^(PageUp|PageDown|Home|End|ArrowUp|ArrowDown)$/.test(ev.key || '')) lastScrollGestureAt = lastGestureAt;
+    }, true);
     document.addEventListener('contextmenu', function (ev) { lastContext = { el: ev.target, at: Date.now() }; }, true);
     document.addEventListener('click', function (ev) {
       if (disabled() || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.shiftKey || ev.metaKey) return;
@@ -7963,7 +7972,7 @@
   // (a member column that is not showing, rows of little height) loads the next page, and the next: on 2026-10-20 opening a large team's page
   // sent 38 page requests in one second for one member, and a chat of 30,000 messages would load all of them into the page. The cause of
   // the lag in the longest chats is that DOM. So when a conversation's older pages are asked for in a chain with no scrolling from you (no wheel,
-  // touch, key or press in the last 2.5 seconds), the first few (option lag.chainPages) go through and the next one waits, unanswered, until you
+  // touch, scrolling key or press on a scrollbar in the last 2.5 seconds: a click on a tab or a button is not scrolling), the first few (option lag.chainPages) go through and the next one waits, unanswered, until you
   // scroll. Nothing else changes: scrolling up by hand loads pages as before.
   var olderLoads = {};            // conversation id -> times of recent older-page requests
   var lastScrollGestureAt = 0;
