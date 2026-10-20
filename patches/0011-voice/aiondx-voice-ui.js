@@ -428,8 +428,46 @@
       });
     }, function (e) {
       console.log('[dx-voice] synthesize error', e);
+      // No provider or no key: read it with the voice the PC already has (free, offline), so the button does something on a fresh install.
+      if (canSpeakSystem() && /no provider configured|no API key|no voice module/i.test((e && e.message) || '')) {
+        try { systemSpeak(wrap, text); return; } catch (x) { console.log('[dx-voice] system voice failed', x); }
+      }
       setPlayState(wrap, 'error', (e && e.message) || 'synthesis failed');
     });
+  }
+
+  // The system voice (Windows' own, through the browser's speechSynthesis): no account, no key, nothing leaves the PC. A long reply is read in
+  // pieces of a sentence or two, because the engine can stop partway through one very long utterance.
+  function canSpeakSystem() {
+    var dx = window.__aionDx;
+    if (dx && typeof dx.option === 'function' && dx.option('voice.system') === false) return false;   // the option voice.system (patch 0001's list)
+    return typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance === 'function';
+  }
+  function speechPieces(text) {
+    var pieces = [], cur = '';
+    String(text).replace(/\s+/g, ' ').trim().split(/(?<=[.!?:;])\s+/).forEach(function (s) {
+      if (cur && (cur + ' ' + s).length > 240) { pieces.push(cur); cur = s; }
+      else cur = cur ? cur + ' ' + s : s;
+    });
+    if (cur) pieces.push(cur);
+    return pieces;
+  }
+  function systemSpeak(wrap, text) {
+    var pieces = speechPieces(text);
+    if (!pieces.length) throw new Error('nothing to read');
+    var cp = { wrap: wrap, url: null, audio: { pause: function () { try { window.speechSynthesis.cancel(); } catch (e) {} } } };
+    currentPlayback = cp;
+    try { window.speechSynthesis.cancel(); } catch (e) {}
+    pieces.forEach(function (piece, i) {
+      var u = new window.SpeechSynthesisUtterance(piece);
+      u.onend = function () { if (i === pieces.length - 1 && currentPlayback === cp) stopPlayback(); };
+      u.onerror = function (ev) {
+        if (ev && (ev.error === 'canceled' || ev.error === 'interrupted')) return;
+        if (currentPlayback === cp) { currentPlayback = null; setPlayState(wrap, 'error', 'the system voice could not read this'); }
+      };
+      window.speechSynthesis.speak(u);
+    });
+    setPlayState(wrap, 'playing');
   }
 
   function buildPlayButton(content) {
@@ -552,7 +590,7 @@
     el.innerHTML =
       '<div class="aiondx-voice-title">AionDX voice</div>' +
       '<div class="aiondx-voice-desc">Speak into the microphone button on the composer, and have an agent\u2019s reply read back with the speaker button on its message.</div>' +
-      '<div class="aiondx-voice-desc" data-testid="aiondx-voice-privacy">What you say, and each reply you play back, is sent to the provider you pick (ElevenLabs today), under your own account and key. Nothing is sent until you enter a key and press the microphone or a speaker button. The key is kept in AionDX\u2019s settings on this PC, as typed.</div>' +
+      '<div class="aiondx-voice-desc" data-testid="aiondx-voice-privacy">What you say, and each reply you play back, is sent to the provider you pick (ElevenLabs today), under your own account and key. Nothing is sent until you enter a key and press the microphone or a speaker button. The key is kept in AionDX\u2019s settings on this PC, as typed. With no key, the speaker button reads the reply with the voice Windows already has: nothing leaves this PC.</div>' +
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-provider">Provider</label>' +
         '<select id="aiondx-voice-provider" data-testid="aiondx-voice-provider"></select></div>' +
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-apikey">API key</label>' +

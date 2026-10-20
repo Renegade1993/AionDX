@@ -163,3 +163,10 @@ The patch was merged as it came (commit 0091a9b; its own tests pass: `test-voice
 - **What leaves the PC.** The settings panel now says that what is said, and each reply played back, goes to the chosen provider under the user's own account and key, that nothing is sent until a key is entered
   and a button pressed, and that the key is kept in AionDX's settings on this PC as typed. (The key sits in the same settings store the agents' own API can read; storing it with the operating system's
   protection instead is a possible next step.)
+
+## October 20th, 2026: the speaker button works with no key
+
+K: "clicking the agent message narration button does nothing for me". With no ElevenLabs key the provider refused before anything was spoken and the button showed only an error state with a label nobody
+reads. The speaker button now falls back to the voice Windows already has (the browser's `speechSynthesis`: free, offline, nothing leaves the PC) when there is no provider, no key or no voice module; the
+reply is read in pieces of a sentence or two (the engine can stop partway through one long utterance); Stop works. The option `voice.system` (patch 0001's list, default on) turns the fall-back off. The
+panel's privacy text says so. An ElevenLabs key still wins when there is one. Speech to text has no free fall-back (the browser's recogniser needs Google's service), so the microphone still needs a key.

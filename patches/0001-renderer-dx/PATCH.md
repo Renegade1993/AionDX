@@ -937,3 +937,36 @@ member's Stop already pauses the member through AionCore's pause route.)
 - `every(name, ms)` throttles `hideDriftNotices` (1 s), `reconcileSpinners` (0.5 s) and `diagnoseMissing` (4 s); a skipped run books one repaint for when its interval is up. `schedule()` repaints on the
   next frame as before unless the last render took over 8 ms, in which case it waits eight times as long (at most 0.75 s). `__aionDx.repaint()` runs everything at once. AionDX's share of the work at 3,000 rows
   fell from 2,455 ms to 424 ms in the headless measurement (`tools\dx-harness\quick-lag.js`); the browser's own layout of the list is unchanged.
+
+## October 20th, 2026: build `2026-10-20.1`, options, links, pictures, quotes, swaps, paced history
+
+Requests of October 20th (K's morning list). Everything below is in `aionui-dx.js`; tests are the click scenarios `options`, `links`, `draft-quote`, `agent-cache`, `older-pages` and `swap`
+(`node tools\dx-harness\click-test.js`, about 540 checks), plus `tools\dx-harness\probe-eval.js` for running a few lines of page code against the harness.
+
+- One list of options (`OPTIONS`). Every choice AionDX offers is an entry with an id, a group, a label, what it does, a default and limits: `links.external`, `spellcheck`, `draft.quote`, `voice.system`,
+  `stop.show`, `stop.force`, `lag.bigPage`, `lag.chainPages`, and entries of type `command` that point at the mechanisms with their own command (the Loop, usage, MCP, colours, cache clearing). Settings >
+  Appearance draws its rows from the list; the list is published to the settings store (`aiondx.options.schema`) once per build; the values live in `aiondx.options = { values, at, by }` and a newer record
+  from the store wins, so `aiondx config list|get|set|reset` (patch 0007) and any agent change them with no knowledge of the page. A value equal to its default is not stored; values are cleaned to the
+  option's type and limits.
+- Web links (`links.external`, default the system browser). A capture-phase click on an `http(s)` anchor sends the address to AionCore's `POST /api/shell/open-external` and stops AionUi's own handler,
+  which opens a tab in the Preview panel (`Markdown/index.tsx handleLinkClick`). Alt+click uses the other choice. Mail links and AionDX's own anchors are untouched.
+- Pictures know their file. AionUi loads a chat picture from its path as a data URL (`POST /api/fs/image-base64`), which leaves no path in the page. The answer of that call is remembered against the picture
+  (its length and pieces of its start, middle and end); `__aionDx.imagePathAt(x, y)` returns the path of the picture last right-clicked. The right-click menu in the main process (patch 0009,
+  `aiondx-menu.js`) asks for it to offer "Open image location".
+- Spelling. Message boxes get `spellcheck` set from the option; Electron's checker (patch 0009) underlines and suggests.
+- A reply quote stays with its draft (`draft.quote`). The quote chip over a message box is read from the page each second with the draft text and kept with it (localStorage and the store, record
+  `{ text, quote, at }`); a quote with no text is still a draft. Restoring it: the quote is state inside AionUi's send box (a `useState`, set by an event private to the bundle), so the setter is found
+  through React's fiber (the hook after a ref, holding null, before a hook holding 0: `replyQuote`, then `caretPosition`, in SendBox of AionUi 2.2.2). When that shape is not found the quote goes
+  into the draft as a block quote, which is what a sent reply carries anyway.
+- Clear cache on the agent entries. Settings > Agents: a "Clear cache" button on the entry of each Claude Code account and of Devin, opening the cache panel at that profile (read first, shown first,
+  outlined). The profile is matched from the entry's name: "Claude Code (Second)" is `claude:second`, plain "Claude Code" is `claude:main`, "Devin" is `devin`.
+- Swap the agent in a team slot, the lead's included. The agent control now shows on every team member, and its menu has "Swap this member for" with every enabled agent. It asks first, refuses
+  while any agent in the team is working, and posts `POST /api/teams/{id}/agents/{slot}/replace` (AionCore patch core-0006), then reloads the team page.
+- Older messages, paced (`lag.chainPages`, default 3). AionUi loads older pages while the list is near the top, and a list that stays there (a member column that is not showing) chains page after
+  page: opening a large team's page on October 20th sent 38 requests in one second for one member, and a 30,000-message chat would load all of it into the page. A chain of older-page requests for one
+  conversation with no scrolling from the user (no wheel, touch, key or press in the last 2.5 seconds) lets the first three through and holds the next unanswered until the user scrolls. Scrolling by
+  hand is unchanged.
+- Team members started from the page are recorded (`diagnose('team-attach', ...)`, with how long ago the user last pressed anything and where the call came from). On October 20th a member ran a turn
+  at the moment a team page was opened, and nothing recorded what made the page ask for it. See `! LLM Files\2026-10-20_Heroes-member-started-on-team-open.md`.
+- The ring-colour boxes are not written over while an edit waits for its commit (found by the new run: a render between a change and its commit reset the box).
+- Line endings: the file is LF, as in the repository.

@@ -130,35 +130,13 @@ function __aiondxIconFile(name) {
     child.on("exit", () => { clearTimeout(timer); refresh(); });
   } catch {}
 })();
-/** Right-click: Cut, Copy, Paste and Select all in a text box, and Copy on selected text. AionUi shows no menu
- *  there (a request of 2026-09-26). Electron
- *  asks for this menu only when the page did not handle the right-click itself, so AionUi's own right-click
- *  menus (the file tree, say) are untouched. */
+/** Right-click (a request of 2026-09-26, widened 2026-10-20): Cut, Copy, Paste and Select all in a text box, Copy on selected text, spelling
+ *  suggestions, and Copy link / Open link in browser / Copy image / Open image location. The work is aiondx-menu.js (patches/0009-identity); it
+ *  asks the page where a picture's file is. Electron asks for this menu only when the page did not handle the right-click itself, so AionUi's own
+ *  right-click menus (the file tree, say) are untouched. */
 (function __aiondxContextMenu() {
   try {
-    const electron = require$$0$2;
-    electron.app.on("web-contents-created", (_event, wc) => {
-      wc.on("context-menu", (_e, params) => {
-        try {
-          const f = params.editFlags || {};
-          let items = null;
-          if (params.isEditable) {
-            items = [
-              { role: "cut", label: "Cut", enabled: !!f.canCut },
-              { role: "copy", label: "Copy", enabled: !!f.canCopy },
-              { role: "paste", label: "Paste", enabled: !!f.canPaste },
-              { type: "separator" },
-              { role: "selectAll", label: "Select all", enabled: !!f.canSelectAll }
-            ];
-          } else if (params.selectionText && params.selectionText.trim()) {
-            items = [{ role: "copy", label: "Copy" }];
-          }
-          if (!items) return;
-          const win = electron.BrowserWindow.fromWebContents(wc);
-          electron.Menu.buildFromTemplate(items).popup(win ? { window: win } : {});
-        } catch {}
-      });
-    });
+    require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-menu.js")).install(require$$0$2);
   } catch {}
 })();
 /** The one-click setup (a request of 2026-09-26). The Welcome screen
@@ -657,4 +635,6 @@ fs.copyFileSync(path.join(__dirname, 'aiondx-cache.js'), path.join(ext, 'out', '
 notes.push('out/aiondx/aiondx-cache.js');
 fs.copyFileSync(path.join(__dirname, 'aiondx-restart.js'), path.join(ext, 'out', 'aiondx', 'aiondx-restart.js'));
 notes.push('out/aiondx/aiondx-restart.js');
+fs.copyFileSync(path.join(__dirname, 'aiondx-menu.js'), path.join(ext, 'out', 'aiondx', 'aiondx-menu.js'));
+notes.push('out/aiondx/aiondx-menu.js');
 for (const n of notes) console.log('0009: ' + n);

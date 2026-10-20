@@ -153,7 +153,9 @@
     var noStore = q.get('nostore') === '1';
     // ?seeddraft=<text>: the settings store already holds a saved draft for the solo chat, newer than any
     // local copy (a crash lost localStorage, say).
-    if (q.get('seeddraft')) store['aiondx.draft.conv.harness1'] = { text: q.get('seeddraft'), at: Date.now() };
+    if (q.get('seeddraft')) store['aiondx.draft.conv.harness1'] = { text: q.get('seeddraft'), quote: q.get('seedquote') || '', at: Date.now() };
+    // ?seedstore=<json>: more keys already in the settings store (an option the command line set, say).
+    if (q.get('seedstore')) { try { Object.assign(store, JSON.parse(q.get('seedstore'))); } catch (e) { /* not JSON */ } }
     // A machine that has already been through the Welcome screen, unless ?welcome=1.
     if (q.get('welcome') !== '1') store['aiondx.welcome'] = { mode: 'later', at: Date.now() - 86400000 };
     // ?noagy=1: Antigravity is not installed, so it is missing from the new-chat list.

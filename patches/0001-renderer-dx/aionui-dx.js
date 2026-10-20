@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-13.1';
+  var BUILD = '2026-10-20.1';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -665,6 +665,7 @@
     shared = next;
     showSignin(g.data['aiondx.agy.signin']);
     takeThemePrefs(g.data['aiondx.theme']);
+    takeOptions(g.data);
     takeAccounts(g.data);
     takeUsage(g.data);
     takeMcpLog(g.data);
@@ -676,6 +677,182 @@
     if (!sharedReady) { sharedReady = true; migrate(); }
     Object.keys(shared).forEach(function (k) { var t = targetOfKey(k); if (t) applyShared(t, shared[k]); });
     announce();
+  }
+
+  // ---------------------------------------------------------------- options: every choice AionDX offers, in one list that an agent can read
+
+  // A request of 2026-10-20: AionDX should be configurable by the agent of any user. Every choice a user can make is an entry in OPTIONS, with a plain
+  // label, what it does, its default and its limits. The Settings page draws its rows from the list, the list is published to the settings store
+  // (aiondx.options.schema), and `aiondx config list | get | set | reset` (the command line and the aiondx-loop MCP tool) read and change the values
+  // in the store (aiondx.options), so an agent needs no knowledge of this page. The page takes a newer value from the store within seconds. A value
+  // equal to the default is not stored. `via` entries are mechanisms with their own command; they are listed so an agent finds them.
+  var OPTIONS_KEY = 'aiondx.options', OPTIONS_SCHEMA_KEY = 'aiondx.options.schema';
+  var OPTIONS_LS = KEY_PREFIX + 'options';
+  var OPTIONS = [
+    { id: 'links.external', group: 'Links', type: 'choice', default: 'system', choices: [['system', 'The system browser'], ['tab', 'A tab inside AionDX']],
+      label: 'Open web links in', desc: 'Where a link in a chat opens. Alt+click uses the other one.' },
+    { id: 'spellcheck', group: 'Typing', type: 'bool', default: true,
+      label: 'Check spelling', desc: 'Underline misspelled words in message boxes; right-click one for suggestions.' },
+    { id: 'draft.quote', group: 'Typing', type: 'bool', default: true,
+      label: 'Keep a reply quote with its draft', desc: 'A message you are replying to stays quoted over the unsent draft, through a restart.' },
+    { id: 'voice.system', group: 'Voice', type: 'bool', default: true,
+      label: 'Read replies with the Windows voice when there is no key', desc: 'The speaker button on a reply uses the voice Windows already has (free, offline) until an ElevenLabs key is set.' },
+    { id: 'stop.show', group: 'Stop', type: 'number', min: 1, max: 120, unit: 'seconds', default: 3,
+      label: 'Show a Stop button after', desc: 'A chat that is working with no Stop button on screen gets AionDX’s own after this many seconds.' },
+    { id: 'stop.force', group: 'Stop', type: 'number', min: 3, max: 300, unit: 'seconds', default: 12,
+      label: 'Offer Force stop after', desc: 'A chat still working this long after Stop was pressed offers Force stop, which restarts the agent.' },
+    { id: 'lag.bigPage', group: 'Long chats', type: 'number', min: 100, max: 20000, unit: 'rows', default: 400,
+      label: 'A long chat starts at', desc: 'Above this many message rows, AionDX does less work per change of the page, so typing stays quick.' },
+    { id: 'lag.chainPages', group: 'Long chats', type: 'number', min: 1, max: 50, unit: 'pages', default: 3,
+      label: 'Older pages loaded without scrolling', desc: 'A chat loads its older messages 50 at a time as you scroll up. When a page asks for more by itself, with no scrolling from you, only this many are fetched; the rest wait until you scroll.' },
+    { id: 'via.loop', via: 'aiondx loop set --help', group: 'Other settings', type: 'command', label: 'The Loop', desc: 'Keeps an agent working: on or off, message, hold, compaction, per member.' },
+    { id: 'via.usage', via: 'aiondx usage --help', group: 'Other settings', type: 'command', label: 'Usage meter and alerts', desc: 'Your Claude account’s usage, and alerts at a percentage.' },
+    { id: 'via.mcp', via: 'aiondx mcp --help', group: 'Other settings', type: 'command', label: 'MCP servers', desc: 'Add, switch and call the MCP servers of a chat or of every chat.' },
+    { id: 'via.theme', via: 'Settings > Appearance', group: 'Other settings', type: 'command', label: 'Colours', desc: 'Accent, backdrop, chat bubbles and the context ring; the page owns them (aiondx.theme in the settings store).' },
+    { id: 'via.caches', via: 'Settings > Appearance > Agent caches', group: 'Other settings', type: 'command', label: 'Agent caches', desc: 'Clear what Claude Code, Devin and AionDX keep on this PC, by age.' }
+  ];
+  var optionValues = (function () { try { return (JSON.parse(localStorage.getItem(OPTIONS_LS)) || {}).values || {}; } catch (e) { return {}; } })();
+  var optionsAt = (function () { try { return Number((JSON.parse(localStorage.getItem(OPTIONS_LS)) || {}).at) || 0; } catch (e) { return 0; } })();
+  var optionsSchemaSent = null;
+  function optionDef(id) { for (var i = 0; i < OPTIONS.length; i++) if (OPTIONS[i].id === id) return OPTIONS[i]; return null; }
+  /** A value cleaned up to what the option allows, or undefined when it is not allowed at all. */
+  function cleanOption(def, v) {
+    if (!def || def.type === 'command') return undefined;
+    if (def.type === 'bool') {
+      if (v === true || v === false) return v;
+      var s = String(v).toLowerCase();
+      if (/^(1|true|yes|on)$/.test(s)) return true;
+      if (/^(0|false|no|off)$/.test(s)) return false;
+      return undefined;
+    }
+    if (def.type === 'number') {
+      if (v === '' || v === null || v === undefined) return undefined;
+      var n = Number(v);
+      if (!isFinite(n)) return undefined;
+      return Math.min(def.max, Math.max(def.min, Math.round(n)));
+    }
+    if (def.type === 'choice') {
+      var c = String(v).toLowerCase();
+      for (var i = 0; i < def.choices.length; i++) if (def.choices[i][0] === c) return c;
+      return undefined;
+    }
+    return String(v);
+  }
+  function opt(id) {
+    var def = optionDef(id);
+    if (!def) return undefined;
+    var v = Object.prototype.hasOwnProperty.call(optionValues, id) ? cleanOption(def, optionValues[id]) : undefined;
+    return v === undefined ? def.default : v;
+  }
+  function saveOptions(at) {
+    optionsAt = at;
+    try { localStorage.setItem(OPTIONS_LS, JSON.stringify({ values: optionValues, at: optionsAt })); } catch (e) {}
+  }
+  /** Set (or, with undefined, reset) one option from this window: kept here and written to the store. Returns the value now in force. */
+  function setOption(id, value) {
+    var def = optionDef(id);
+    if (!def || def.type === 'command') return undefined;
+    var v = value === undefined ? undefined : cleanOption(def, value);
+    if (value !== undefined && v === undefined) return undefined;
+    if (v === undefined || v === def.default) delete optionValues[id]; else optionValues[id] = v;
+    saveOptions(Date.now());
+    var rec = {}; rec[OPTIONS_KEY] = { values: optionValues, at: optionsAt, by: 'user' };
+    putPrefs(rec);
+    applyOptions();
+    refreshOptionsUi();
+    return opt(id);
+  }
+  /** A newer record from the store (the command line, an agent, another window) wins. */
+  function takeOptions(data) {
+    var rec = data && data[OPTIONS_KEY];
+    if (rec && typeof rec === 'object' && rec.values && typeof rec.values === 'object' && (Number(rec.at) || 0) > optionsAt) {
+      var next = {};
+      Object.keys(rec.values).forEach(function (k) { var d = optionDef(k); var v = d ? cleanOption(d, rec.values[k]) : undefined; if (v !== undefined && v !== d.default) next[k] = v; });
+      optionValues = next;
+      saveOptions(Number(rec.at));
+      applyOptions();
+      refreshOptionsUi();
+    }
+    publishOptionSchema(data);
+  }
+  /** The list itself goes to the store once per build, so `aiondx config` can describe every option without this page. */
+  function publishOptionSchema(data) {
+    var have = data && data[OPTIONS_SCHEMA_KEY];
+    if (optionsSchemaSent === BUILD || (have && have.build === BUILD)) { optionsSchemaSent = BUILD; return; }
+    optionsSchemaSent = BUILD;
+    var rec = {};
+    rec[OPTIONS_SCHEMA_KEY] = { build: BUILD, options: OPTIONS.map(function (d) {
+      var o = { id: d.id, group: d.group, type: d.type, label: d.label, desc: d.desc };
+      if (d.type !== 'command') o.default = d.default;
+      if (d.choices) o.choices = d.choices.map(function (c) { return c[0]; });
+      if (d.type === 'number') { o.min = d.min; o.max = d.max; o.unit = d.unit; }
+      if (d.via) o.via = d.via;
+      return o;
+    }) };
+    putPrefs(rec);
+  }
+  function applyOptions() {
+    try { applySpellcheck(true); } catch (e) {}
+  }
+  function stopShowMs() { return STOP_OVERRIDE ? STOP_OVERRIDE.show : opt('stop.show') * 1000; }
+  function stopForceMs() { return STOP_OVERRIDE ? STOP_OVERRIDE.force : opt('stop.force') * 1000; }
+
+  /** Spelling: Chromium underlines misspelled words in a text box when the box's spellcheck attribute allows it. Electron's checker does the work. */
+  var spellApplied = null;
+  function applySpellcheck(force) {
+    var on = opt('spellcheck') !== false;
+    if (!force && spellApplied === on && !every('spellcheck', 3000)) return;
+    spellApplied = on;
+    var boxes = document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]');
+    for (var i = 0; i < boxes.length; i++) {
+      var want = on ? 'true' : 'false';
+      if (boxes[i].getAttribute('spellcheck') !== want) boxes[i].setAttribute('spellcheck', want);
+    }
+  }
+
+  // The options on Settings > Appearance, drawn from the list.
+  var optionsEl = null;
+  function buildOptionsUi() {
+    var el = document.createElement('div');
+    el.className = 'aiondx-opts';
+    el.setAttribute('data-testid', 'aiondx-options');
+    var html = '<div class="aiondx-accent-title">AionDX options</div>' +
+      '<div class="aiondx-accent-desc">Every choice below can also be read and changed by an agent: <code>aiondx config list</code>.</div>';
+    var group = '';
+    OPTIONS.forEach(function (d) {
+      if (d.type === 'command') return;
+      if (d.group !== group) { group = d.group; html += '<div class="aiondx-opt-group">' + group + '</div>'; }
+      html += '<div class="aiondx-opt-row" data-opt="' + d.id + '"><label class="aiondx-opt-label" title="' + d.desc.replace(/"/g, '&quot;') + '">' + d.label + '</label><span class="aiondx-opt-input"></span><button type="button" class="aiondx-bg-reset aiondx-opt-reset" aria-label="Reset ' + d.label + '">Reset</button></div>';
+    });
+    el.innerHTML = html;
+    Array.prototype.forEach.call(el.querySelectorAll('.aiondx-opt-row'), function (row) {
+      var d = optionDef(row.getAttribute('data-opt'));
+      var host = row.querySelector('.aiondx-opt-input');
+      var input;
+      if (d.type === 'bool') { input = document.createElement('input'); input.type = 'checkbox'; }
+      else if (d.type === 'choice') {
+        input = document.createElement('select');
+        d.choices.forEach(function (c) { var o = document.createElement('option'); o.value = c[0]; o.textContent = c[1]; input.appendChild(o); });
+      } else { input = document.createElement('input'); input.type = 'number'; input.min = d.min; input.max = d.max; input.className = 'aiondx-opt-number'; }
+      input.setAttribute('data-testid', 'aiondx-opt-' + d.id);
+      input.addEventListener('change', function () { setOption(d.id, d.type === 'bool' ? input.checked : input.value); });
+      host.appendChild(input);
+      if (d.unit) { var u = document.createElement('span'); u.className = 'aiondx-opt-unit'; u.textContent = d.unit; host.appendChild(u); }
+      row.querySelector('.aiondx-opt-reset').addEventListener('click', function (ev) { ev.preventDefault(); setOption(d.id, undefined); });
+    });
+    return el;
+  }
+  function refreshOptionsUi() {
+    if (!optionsEl) return;
+    Array.prototype.forEach.call(optionsEl.querySelectorAll('.aiondx-opt-row'), function (row) {
+      var d = optionDef(row.getAttribute('data-opt'));
+      var input = row.querySelector('[data-testid^="aiondx-opt-"]');
+      var v = opt(d.id);
+      if (d.type === 'bool') { if (input.checked !== v) input.checked = v; }
+      else if (document.activeElement !== input && String(input.value) !== String(v)) input.value = String(v);
+      var reset = row.querySelector('.aiondx-opt-reset');
+      reset.style.visibility = Object.prototype.hasOwnProperty.call(optionValues, d.id) ? 'visible' : 'hidden';
+    });
   }
 
   /** A newer record from the store (an agent's Loop tool, or this app in another window) wins over
@@ -1151,7 +1328,7 @@
       '<div class="aiondx-accent-desc">Bring your agents, instructions and tools over from the other AI apps on this PC, with Antigravity or an agent of your choice.</div>' +
       '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-setup-open" data-testid="aiondx-setup-open">Open AionDX setup</button>' +
       (cacheBridge() ? '<div class="aiondx-accent-title aiondx-cache-title">Agent caches</div>' +
-        '<div class="aiondx-accent-desc">See what Claude Code, Devin and AionUi keep on this PC, and clear the caches, or the history older than a week, a month or more.</div>' +
+        '<div class="aiondx-accent-desc">See what Claude Code, Devin and AionDX keep on this PC, and clear the caches, or the history older than a week, a month or more.</div>' +
         '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-open" data-testid="aiondx-cache-open">Clear agent caches</button>' : '') +
       '<div class="aiondx-accent-title aiondx-ctx-title">Context ring</div>' +
       '<div class="aiondx-accent-desc">The ring beside the message box fills as the context window does, and changes colour as it goes. ' +
@@ -1225,6 +1402,9 @@
       ev.preventDefault();
       changeThemePrefs({ ctx: null });
     });
+    optionsEl = buildOptionsUi();
+    el.appendChild(optionsEl);
+    refreshOptionsUi();
     return el;
   }
   function refreshAccentPicker() {
@@ -1315,12 +1495,13 @@
       var timer = null;
       var commit = function () {
         timer = null;
+        Array.prototype.forEach.call(box.querySelectorAll('.aiondx-ctx-row'), function (r) { r.__dirty = 0; });
         var zones = Array.prototype.map.call(box.querySelectorAll('.aiondx-ctx-row'), function (r) {
           return { from: Number(r.querySelector('.aiondx-ctx-from').value) || 0, color: r.querySelector('.aiondx-ctx-color').value };
         });
         changeThemePrefs({ ctx: { zones: zones } });
       };
-      var later = function () { if (timer) clearTimeout(timer); timer = setTimeout(commit, 250); };
+      var later = function () { row.__dirty = Date.now(); if (timer) clearTimeout(timer); timer = setTimeout(commit, 250); };
       row.querySelector('.aiondx-ctx-color').addEventListener('input', later);
       row.querySelector('.aiondx-ctx-from').addEventListener('input', later);
       row.querySelector('.aiondx-ctx-from').addEventListener('change', commit);
@@ -1333,6 +1514,7 @@
     var saved = !!(themePrefs && themePrefs.ctx && themePrefs.ctx.zones);
     Array.prototype.forEach.call(pickerEl.querySelectorAll('.aiondx-ctx-row'), function (row, i) {
       var col = row.querySelector('.aiondx-ctx-color'), from = row.querySelector('.aiondx-ctx-from');
+      if (row.__dirty && Date.now() - row.__dirty < 2000) return;   // an edit waiting for its commit is not written over
       if (document.activeElement !== col && col.value !== zones[i].color) col.value = zones[i].color;
       if (document.activeElement !== from && from.value !== String(zones[i].from)) from.value = String(zones[i].from);
     });
@@ -2603,6 +2785,37 @@
   // cleared by age only). Each profile is scanned with the chosen age before anything is removed, and a Remove needs a second click.
   var cachePanel = { el: null, days: 7, profiles: null, token: 0 };
   var CACHE_AGES = [[0, 'Everything (caches only)'], [1, '1 day'], [7, '1 week'], [30, '1 month'], [90, '3 months'], [180, '6 months']];
+  /** The cache profile that goes with an agent's name on Settings > Agents: Claude Code (Second) is claude:second, plain Claude Code is claude:main. */
+  function cacheProfileHint(name) {
+    name = String(name || '');
+    if (/devin/i.test(name)) return 'devin';
+    if (!/claude/i.test(name)) return '';
+    var m = /\(([^()]+)\)\s*$/.exec(name);
+    var slug = (m ? m[1] : 'main').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return 'claude:' + (slug || 'main');
+  }
+  /** Settings > Agents: a Clear cache button on the entry of each Claude Code account and of Devin, opening the panel at that profile. */
+  function renderAgentCacheButtons() {
+    if (!cacheBridge()) return;
+    var rows = document.querySelectorAll('div[data-testid^="agent-row-"]');
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var tid = row.getAttribute('data-testid') || '';
+      if (/^agent-row-(status|test|edit|delete|remove|toggle|switch)-/.test(tid) || row.querySelector('.aiondx-agent-cache')) continue;
+      var nameEl = row.querySelector('.truncate');
+      var hint = nameEl ? cacheProfileHint(nameEl.textContent) : '';
+      var acts = row.lastElementChild;
+      if (!hint || !acts || acts === row.firstElementChild) continue;
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'arco-btn arco-btn-secondary arco-btn-size-small aiondx-agent-cache';
+      b.setAttribute('data-testid', 'aiondx-agent-cache-' + tid.slice('agent-row-'.length));
+      b.setAttribute('data-profile', hint);
+      b.textContent = 'Clear cache';
+      b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); openCaches(ev.currentTarget.getAttribute('data-profile')); });
+      acts.insertBefore(b, acts.firstChild);
+    }
+  }
   function cacheBridge() { return window.aiondxCache && typeof window.aiondxCache.scan === 'function' ? window.aiondxCache : null; }
   function sizeText(n) {
     n = Number(n) || 0;
@@ -2618,7 +2831,7 @@
     el.textContent = text || '';
     el.classList.toggle('aiondx-plugins-status--bad', !!bad);
   }
-  function openCaches() {
+  function openCaches(focusId) {
     if (!cachePanel.el) {
       cachePanel.el = document.createElement('div');
       cachePanel.el.className = 'aiondx-welcome-backdrop aiondx-cache-backdrop';
@@ -2628,7 +2841,7 @@
           '<button type="button" class="aiondx-plugins-close" aria-label="Close">×</button>' +
           '<h2 id="aiondx-cache-title" class="aiondx-welcome-title">Clear agent caches</h2>' +
           '<p class="aiondx-welcome-text">Caches rebuild themselves. History is what the agents kept from your work: Claude Code’s session transcripts, ' +
-            'file history and to-do lists, Devin’s logs and local edit history, and AionUi’s logs. History is cleared by age only, and a Claude chat whose ' +
+            'file history and to-do lists, Devin’s logs and local edit history, and AionDX’s logs. History is cleared by age only, and a Claude chat whose ' +
             'transcript is removed cannot be resumed. Sign-ins, settings, memory, skills and databases are never touched, and neither is a file used in the last ten minutes.</p>' +
           '<label class="aiondx-cache-age">Older than <select class="aiondx-cache-days" aria-label="Older than"></select></label>' +
           '<div class="aiondx-welcome-status aiondx-cache-status" aria-live="polite"></div>' +
@@ -2651,6 +2864,7 @@
     }
     cachePanel.el.hidden = false;
     cachePanel.profiles = null;
+    cachePanel.focus = focusId || '';
     paintCaches();
   }
   function closeCaches() { if (cachePanel.el) cachePanel.el.hidden = true; cachePanel.token++; }
@@ -2680,9 +2894,19 @@
       return row;
     });
     cacheStatus(cachePanel.profiles.length ? 'Reading each profile...' : 'No agent profiles were found on this PC.');
-    for (var i = 0; i < rows.length; i++) {
+    // The profile the panel was opened for (the Clear cache button on an agent's entry) is read first, shown first and outlined.
+    var order = [];
+    for (var o = 0; o < rows.length; o++) order.push(o);
+    for (var f = 0; f < rows.length && cachePanel.focus; f++) {
+      if (cachePanel.profiles[f].id !== cachePanel.focus) continue;
+      order.splice(order.indexOf(f), 1);
+      order.unshift(f);
+      rows[f].classList.add('aiondx-cache-row--focus');
+      list.insertBefore(rows[f], list.firstChild);
+    }
+    for (var oi = 0; oi < order.length; oi++) {
       if (stale()) return;
-      await scanCacheRow(rows[i], cachePanel.profiles[i], bridge, stale);
+      await scanCacheRow(rows[order[oi]], cachePanel.profiles[order[oi]], bridge, stale);
     }
     if (!stale()) cacheStatus(cachePanel.profiles.length ? 'Choose what to clear. Nothing is removed until you confirm.' : '');
   }
@@ -3254,7 +3478,7 @@
       if (!info) { if (usageEls[t.key]) liveUsage[t.key] = true; return; }   // chat info is being read: keep the meter on screen meanwhile
       // A team column offers only Claude-to-Claude switches; a solo chat always has new-chat picks. A Claude member that is
       // offered no switch (one Claude agent only, or the lists not read yet) still gets its usage bar, before the model picker.
-      if (!info.agentId || !agentList.at || (t.kind === 'team' && (info.backend !== 'claude' || claudeAgents().length < 2))) {
+      if (!info.agentId || !agentList.at) {
         if (info.backend === 'claude') { liveUsage[t.key] = true; placeUsage(t, t.anchor, convId); }
         return;
       }
@@ -3406,6 +3630,26 @@
         : 'A new chat starts fresh with the conversation so far; this chat stays as it is.';
     } else {
       note.textContent = 'The member restarts between turns and carries on with its memory of this chat, on the other account from its next turn.';
+      // A request of 2026-10-20: any agent type in any slot, the lead's included. AionCore's replace route (patch core-0006) keeps the slot, the name and the
+      // role, gives the slot a new conversation on the new agent, and stops the team's running agents; they start again on the next message.
+      var cache = teamCache[t.teamId];
+      var mine = cache && cache.assistants ? cache.assistants[t.slotId] : '';
+      var swaps = enabledAgents().filter(function (a) { return a.id !== mine && a.status !== 'offline' && a.status !== 'missing'; });
+      if (swaps.length) {
+        var more2 = m.querySelector('.aiondx-acct-more');
+        more2.innerHTML = '<div class="arco-dropdown-menu-group-title">Swap this ' + (isLeadRole(t.role) ? 'lead' : 'member') + ' for</div><div class="aiondx-acct-items" data-group="swap"></div>';
+        var box2 = more2.querySelector('[data-group="swap"]');
+        swaps.forEach(function (a) {
+          var it = menuItem(a.name, 'A new conversation on this agent, in the same slot', 'data-assistant', a.id);
+          it.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            confirmSwap(m, t, a);
+          });
+          box2.appendChild(it);
+        });
+        note.textContent += ' A swap puts another agent in this slot.';
+      }
     }
     placeAcctMenu(pill);
   }
@@ -3493,6 +3737,47 @@
     });
   }
 
+  /** The second step for swapping the agent in a team slot. */
+  function confirmSwap(m, t, a) {
+    m._confirming = true;
+    var box = m.querySelector('.arco-dropdown-menu');
+    box.innerHTML = '<div class="arco-dropdown-menu-group-title"></div><div class="aiondx-acct-confirm"><div class="aiondx-acct-warn"></div>' +
+      '<div class="aiondx-acct-btns"><button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-acct-cancel">Cancel</button>' +
+      '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-acct-move">Swap it</button></div></div>';
+    box.querySelector('.arco-dropdown-menu-group-title').textContent = 'Swap this ' + (isLeadRole(t.role) ? 'lead' : 'member') + ' for ' + a.name + '?';
+    box.querySelector('.aiondx-acct-warn').textContent = 'The slot, its name, its mailbox and its Loop stay. It gets a new conversation on ' + a.name + ', empty: the old conversation\u2019s history stays with the old agent, out of the team. ' +
+      'Every agent in this team stops now and starts again with the next message, so do it when none is working.';
+    placeAcctMenu(acctEls[t.key]);
+    box.querySelector('.aiondx-acct-cancel').addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); closeAcctMenu(); });
+    box.querySelector('.aiondx-acct-move').addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeAcctMenu();
+      swapAgent(t, a).catch(function (e) { console.log('[dx] swap error', e); notify(t, 'Not swapped: the request failed.', ''); });
+    });
+  }
+  async function teamBusyNow(teamId) {
+    var rs = await getJson('/api/teams/' + teamId + '/run-state');
+    var ws = (rs.data && rs.data.slot_work) || [];
+    for (var i = 0; i < ws.length; i++) {
+      var w = ws[i];
+      if (w && (w.state === 'running' || w.state === 'starting' || w.active_turn_id)) return w.slot_id || true;
+    }
+    return false;
+  }
+  async function swapAgent(t, a) {
+    var busy = await teamBusyNow(t.teamId);
+    if (busy) { notify(t, 'Not swapped: an agent in this team is working. Swap when none is.', ''); return; }
+    var r = await postJson('/api/teams/' + t.teamId + '/agents/' + encodeURIComponent(t.slotId) + '/replace', { assistant_id: a.id });
+    if (r && r.ok) {
+      notify(t, 'Swapped to ' + a.name + '. The team page reloads.', '');
+      setTimeout(function () { try { location.reload(); } catch (e) {} }, 900);
+    } else {
+      var why = '';
+      try { var j = r ? await r.json() : null; why = j && (j.message || j.error || j.msg) ? ': ' + String(j.message || j.error || j.msg).slice(0, 160) : ''; } catch (e) {}
+      notify(t, 'Not swapped (' + (r ? r.status : 'no answer') + ')' + why + '. This needs AionDX\u2019s own AionCore; run AionDX Apply Update.', '');
+    }
+  }
   /** The second step for a new chat with another agent. */
   function confirmHandoff(m, t, convId, info, a) {
     m._confirming = true;
@@ -4011,26 +4296,65 @@
     });
     draftStore = next;
   }
-  /** Save this box's text: at once to localStorage, and to the store once typing pauses (or now). */
+  /** What a draft is made of: its text and the reply quote above it, as one comparable string. */
+  function draftSig(d) { return d ? String(d.text || '') + '\u0000' + String(d.quote || '') : '\u0000'; }
+  /** The reply quote showing over a message box ("Reply" on selected text puts it there), as its text, or ''. AionUi keeps it in the box's own state, so
+   *  a restart or a move to another chat loses it; the draft keeps it (option draft.quote). */
+  function draftQuoteOf(box) {
+    try {
+      if (opt('draft.quote') === false) return '';
+      var panel = box.closest('.sendbox-panel');
+      var q = panel && panel.querySelector('.line-clamp-3.whitespace-pre-wrap');
+      return q ? String(q.textContent || '').trim() : '';
+    } catch (e) { return ''; }
+  }
+  /** Put a quote back over a box. The quote is state inside AionUi's send box (a useState; the event that sets it is private to the bundle), so the
+   *  setter is found through React's fiber: the hook after a ref, holding null, before a hook holding 0 (replyQuote, then caretPosition, in SendBox
+   *  of AionUi 2.2.2). When that shape is not found the quote goes into the draft as a block quote, which is what a sent reply carries anyway. */
+  function setReplyQuoteInBox(box, content) {
+    try {
+      var key = Object.keys(box).filter(function (k) { return k.indexOf('__reactFiber$') === 0; })[0];
+      var f = key ? box[key] : null;
+      for (var depth = 0; f && depth < 80; f = f.return, depth++) {
+        var hooks = [], h = f.memoizedState;
+        if (!h || typeof h !== 'object') continue;
+        while (h && hooks.length < 300) { hooks.push(h); h = h.next; }
+        for (var i = 1; i < hooks.length - 1; i++) {
+          var hk = hooks[i], prev = hooks[i - 1], next = hooks[i + 1];
+          if (hk.memoizedState === null && hk.queue && typeof hk.queue.dispatch === 'function' &&
+              prev.memoizedState && typeof prev.memoizedState === 'object' && Object.keys(prev.memoizedState).join() === 'current' && !prev.queue &&
+              next.memoizedState === 0 && next.queue) {
+            hk.queue.dispatch({ messageId: '', content: content, position: 'left' });
+            return true;
+          }
+        }
+      }
+    } catch (e) { /* fall through to the text */ }
+    return false;
+  }
+  /** Save this box's text and quote: at once to localStorage, and to the store once typing pauses (or now). */
   var draftUnloading = false;
-  function saveDraft(scope, text, now) {
+  function saveDraft(scope, text, now, quote) {
     text = String(text || '').slice(0, DRAFT_MAX_CHARS);
+    quote = quote ? String(quote).slice(0, 20000) : '';
+    var sig = text + '\u0000' + quote;
+    var keep = !!(text.trim() || quote);
     var cur = localDraft(scope);
-    if ((cur ? cur.text : '') !== text) {
+    if (draftSig(cur) !== sig) {
       try {
-        if (text.trim()) localStorage.setItem(DRAFT_LS + scope, JSON.stringify({ text: text, at: Date.now() }));
+        if (keep) localStorage.setItem(DRAFT_LS + scope, JSON.stringify({ text: text, quote: quote, at: Date.now() }));
         else localStorage.removeItem(DRAFT_LS + scope);
       } catch (e) { /* storage full: the store copy still goes */ }
     }
     var stored = draftStore[scope];
     var pending = draftTimers[scope];
-    if ((stored ? stored.text : '') === text) { if (pending) { clearTimeout(pending.timer); delete draftTimers[scope]; } return; }
-    if (pending && pending.text === text && !now) return;   // already on its way, once typing has paused
+    if (draftSig(stored) === sig) { if (pending) { clearTimeout(pending.timer); delete draftTimers[scope]; } return; }
+    if (pending && pending.sig === sig && !now) return;   // already on its way, once typing has paused
     var write = function () {
       delete draftTimers[scope];
       var body = {};
-      body[DRAFT_STORE + scope] = text.trim() ? { text: text, at: Date.now() } : null;
-      if (text.trim()) draftStore[scope] = body[DRAFT_STORE + scope]; else delete draftStore[scope];
+      body[DRAFT_STORE + scope] = keep ? { text: text, quote: quote, at: Date.now() } : null;
+      if (keep) draftStore[scope] = body[DRAFT_STORE + scope]; else delete draftStore[scope];
       if (sharedGone) return;
       fetch(apiUrl('/api/settings/client'), {
         method: 'PUT', credentials: 'include', keepalive: draftUnloading && JSON.stringify(body).length < 60000,
@@ -4038,7 +4362,7 @@
       }).catch(function () {});
     };
     if (pending) clearTimeout(pending.timer);
-    if (now) write(); else draftTimers[scope] = { text: text, timer: setTimeout(write, DRAFT_STORE_DELAY_MS) };
+    if (now) write(); else draftTimers[scope] = { text: text, sig: sig, timer: setTimeout(write, DRAFT_STORE_DELAY_MS) };
   }
   /** Every second: offer each empty box its saved draft once, then keep the saved copy equal to the box. */
   function syncDrafts(flushNow) {
@@ -4054,16 +4378,23 @@
         if (!first) { if (draftSeen) draftSeen.set(box, Date.now()); return; }
         if (Date.now() - first < 600) return;
         draftRestored[scope] = true;
+        var a = localDraft(scope), b = draftStore[scope];
+        var pick = a && b ? (Number(a.at) >= Number(b.at) ? a : b) : (a || b);
+        var fresh = pick && Date.now() - (Number(pick.at) || 0) < DRAFT_MAX_AGE_MS;
+        var quoted = fresh && pick.quote && opt('draft.quote') !== false && !draftQuoteOf(box);
+        if (quoted && !setReplyQuoteInBox(box, pick.quote)) {
+          // No React setter to be found: the quote goes in as a block quote ahead of the text, as a sent reply would carry it.
+          var asText = String(pick.quote).split('\n').map(function (l) { return '> ' + l; }).join('\n') + '\n\n';
+          if (!text) { setComposerValue(box, asText + (pick.text || '')); return; }
+        }
         if (!text) {
-          var a = localDraft(scope), b = draftStore[scope];
-          var pick = a && b ? (Number(a.at) >= Number(b.at) ? a : b) : (a || b);
-          if (pick && pick.text.trim() && Date.now() - (Number(pick.at) || 0) < DRAFT_MAX_AGE_MS) {
+          if (fresh && pick.text.trim()) {
             setComposerValue(box, pick.text);
             return;
           }
         }
       }
-      saveDraft(scope, text, flushNow);
+      saveDraft(scope, text, flushNow, draftQuoteOf(box));
     });
   }
   function watchDrafts() {
@@ -4073,7 +4404,7 @@
       var t = targetOf(el);
       if (!t) return;
       draftRestored[draftScope(t)] = true;   // you are typing: nothing to restore over it
-      saveDraft(draftScope(t), el.value || '', false);
+      saveDraft(draftScope(t), el.value || '', false, draftQuoteOf(el));
     }, true);
     var flush = function () { syncDrafts(true); };
     var closing = function () { draftUnloading = true; syncDrafts(true); };
@@ -5827,6 +6158,16 @@
     '.aiondx-rn-bolt:hover{background:rgba(var(--warning-6),.14);border-color:rgb(var(--warning-6))}',
     '.aiondx-rn-bolt[disabled]{opacity:.5;cursor:default}',
     '.aiondx-rn-bolt svg{width:13px;height:13px;display:block}',
+    '.aiondx-opts{margin-top:14px}',
+    '.aiondx-opt-group{margin:10px 0 4px;font-size:12px;opacity:.7;text-transform:uppercase;letter-spacing:.04em}',
+    '.aiondx-opt-row{display:flex;align-items:center;gap:10px;padding:4px 0}',
+    '.aiondx-opt-label{flex:1;min-width:0;font-size:13px}',
+    '.aiondx-opt-input{display:inline-flex;align-items:center;gap:6px}',
+    '.aiondx-opt-number{width:84px}',
+    '.aiondx-opt-unit{font-size:12px;opacity:.7}',
+    '.aiondx-agent-cache{flex-shrink:0}',
+    '.aiondx-acct-menu{max-height:70vh;overflow-y:auto}',
+    '.aiondx-cache-row--focus{outline:2px solid rgba(var(--aiondx-accent-rgb,45,212,191),.8);outline-offset:3px;border-radius:10px}',
     // Unsend, inside a Claude chat's "Unread" badge; an unsent message struck through.
     '[data-testid="message-status-badge"] .aiondx-unsend{margin-inline-start:8px;padding:0;border:none;background:none;',
     '  font:inherit;font-size:12px;color:rgb(var(--danger-6));cursor:pointer;user-select:none}',
@@ -6386,7 +6727,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -6756,7 +7097,7 @@
     var ls = document.querySelectorAll('[data-testid="message-list-content"]');
     var n = 0;
     for (var i = 0; i < ls.length; i++) n += ls[i].childElementCount;
-    bigVal = n > 400;
+    bigVal = n > opt('lag.bigPage');
     return bigVal;
   }
   var scheduled = false, lastRenderMs = 0, lastRenderAt = 0;
@@ -7140,7 +7481,7 @@
   // been working for 3 seconds with no Stop button of AionUi's gets one of AionDX's, which cancels with the turn id the server gives.
   // A chat still working 12 seconds after a Stop (AionUi's or this one) gets "Force stop": the agent process is ended and restarted, the
   // chat keeping its history (POST runtime/restart). Team members are not covered yet.
-  var STOP_SHOW_MS = 3000, STOP_FORCE_MS = 12000;
+  var STOP_OVERRIDE = null;   // tests: { show, force } in ms; otherwise the options stop.show and stop.force
   var stopEls = {};      // target key -> the fallback button
   var stopSeen = {};     // target key -> since when it has worked with no Stop of AionUi's on screen
   var stopSent = {};     // conversation id -> when a Stop was last sent
@@ -7154,8 +7495,8 @@
     var plain = t.kind === 'conv';
     if (plain && working && !native) { if (!stopSeen[t.key]) stopSeen[t.key] = now; } else delete stopSeen[t.key];
     if (!working) delete stopSent[t.key];
-    var force = working && !!stopSent[t.key] && now - stopSent[t.key] >= STOP_FORCE_MS;
-    var show = working && (force || (plain && !!stopSeen[t.key] && now - stopSeen[t.key] >= STOP_SHOW_MS));
+    var force = working && !!stopSent[t.key] && now - stopSent[t.key] >= stopForceMs();
+    var show = working && (force || (plain && !!stopSeen[t.key] && now - stopSeen[t.key] >= stopShowMs()));
     var el = stopEls[t.key];
     if (!show) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
     if (!el) {
@@ -7580,6 +7921,125 @@
     return t;
   }
 
+  // ---------------------------------------------------------------- links open in the system browser; pictures know their file
+
+  // A request of 2026-10-20: "url's should open in the system's browser of choice, and not a tab inside AionDX by default, but this should be
+  // configurable". AionUi's markdown links call preview.openBrowserTab for any http(s) address (Markdown/index.tsx handleLinkClick). A click
+  // in the capture phase gets there first: with the option links.external at "system" (the default) the address goes to the system's default
+  // browser through AionCore's open-external route (http and https only), and AionUi's own handler never runs. Alt+click does the other one.
+  // Anchors that are AionDX's own, and anything that is not a plain left click, are left alone.
+  var lastGestureAt = 0;
+  var lastContext = null;     // { el, at }: the target of the newest right-click, so the main process can ask which picture it was
+  function installLinkRouting() {
+    document.addEventListener('pointerdown', function () { lastGestureAt = Date.now(); lastScrollGestureAt = lastGestureAt; }, true);
+    document.addEventListener('wheel', function () { lastScrollGestureAt = Date.now(); }, { capture: true, passive: true });
+    document.addEventListener('touchmove', function () { lastScrollGestureAt = Date.now(); }, { capture: true, passive: true });
+    document.addEventListener('keydown', function () { lastGestureAt = Date.now(); lastScrollGestureAt = lastGestureAt; }, true);
+    document.addEventListener('contextmenu', function (ev) { lastContext = { el: ev.target, at: Date.now() }; }, true);
+    document.addEventListener('click', function (ev) {
+      if (disabled() || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.shiftKey || ev.metaKey) return;
+      var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+      if (!a || a.closest('[class*="aiondx"]')) return;
+      var href = a.href || '';
+      if (!/^https?:\/\//i.test(href)) return;
+      var inTab = opt('links.external') === 'tab';
+      if (ev.altKey) inTab = !inTab;
+      if (inTab) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+      openInBrowser(href);
+    }, true);
+  }
+  function openInBrowser(url) {
+    return postJson('/api/shell/open-external', { url: url }).then(function (r) {
+      if (!r.ok) toast('Could not open the link in your browser.', url);
+      return r.ok;
+    }, function () { toast('Could not open the link in your browser.', url); return false; });
+  }
+
+  // Older messages, paced. AionUi loads a chat's older messages when its list is scrolled near the top (MessageList.tsx handleMessageListScroll: a
+  // page of 50 when scrollTop is 160 or less, then it moves scrollTop by the height added). A list that stays near the top after a page arrives
+  // (a member column that is not showing, rows of little height) loads the next page, and the next: on 2026-10-20 opening a large team's page
+  // sent 38 page requests in one second for one member, and a chat of 30,000 messages would load all of them into the page. The cause of
+  // the lag in the longest chats is that DOM. So when a conversation's older pages are asked for in a chain with no scrolling from you (no wheel,
+  // touch, key or press in the last 2.5 seconds), the first few (option lag.chainPages) go through and the next one waits, unanswered, until you
+  // scroll. Nothing else changes: scrolling up by hand loads pages as before.
+  var olderLoads = {};            // conversation id -> times of recent older-page requests
+  var lastScrollGestureAt = 0;
+  var OLDER_RE = /\/api\/conversations\/([^/?#]+)\/messages\?[^#]*\bbefore=/;
+  function pacedOlderPage(convId, args) {
+    var now = Date.now();
+    var recent = (olderLoads[convId] || []).filter(function (t) { return now - t < 10000; });
+    olderLoads[convId] = recent;
+    var scrolling = function () { return Date.now() - lastScrollGestureAt < 2500; };
+    if (recent.length < opt('lag.chainPages') || scrolling()) { recent.push(now); return nativeFetch.apply(window, args); }
+    diagnose('older-pages-held', convId.slice(0, 8), { pages: recent.length });
+    return new Promise(function (resolve) {
+      var until = Date.now() + 10 * 60000;
+      var timer = setInterval(function () {
+        if (!scrolling() && Date.now() < until && !disabled()) return;
+        clearInterval(timer);
+        (olderLoads[convId] = olderLoads[convId] || []).push(Date.now());
+        resolve(nativeFetch.apply(window, args));
+      }, 400);
+    });
+  }
+
+  // Where a picture came from. AionUi loads a picture from its path as a data URL (POST /api/fs/image-base64), so the page has no path left. The
+  // answer of that call is remembered against the picture (its length, and pieces of its start, middle and end), and the right-click menu in the main
+  // process asks window.__aionDx.imagePathAt(x, y) for the path of the picture that was clicked ("Open image location").
+  var imagePaths = {}, imageKeys = [];
+  var IMAGE_RE = /\/api\/fs\/image-base64(?:[?#]|$)/;
+  function imageKey(src) {
+    src = String(src || '');
+    var m = src.length >> 1;
+    return src.length + ':' + src.slice(0, 48) + src.slice(m, m + 48) + src.slice(-48);
+  }
+  function rememberImage(dataUrl, path) {
+    var p = String(path || '');
+    if (!/^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(p)) return;
+    var k = imageKey(dataUrl);
+    if (!imagePaths[k]) { imageKeys.push(k); if (imageKeys.length > 400) delete imagePaths[imageKeys.shift()]; }
+    imagePaths[k] = p;
+  }
+  function tapImage(init) {
+    return function (r) {
+      try {
+        var p = null;
+        try { p = JSON.parse(init && init.body).path; } catch (e) { /* not our shape */ }
+        if (p && r && r.ok) r.clone().json().then(function (j) {
+          var d = j && j.data !== undefined ? j.data : j;
+          if (typeof d === 'string' && d.length > 20) rememberImage(d, p);
+        }, function () {});
+      } catch (e) { /* the answer goes on as it is */ }
+      return r;
+    };
+  }
+  function imagePathAt(x, y) {
+    var el = lastContext && Date.now() - lastContext.at < 3000 ? lastContext.el : document.elementFromPoint(x, y);
+    var img = el && el.tagName === 'IMG' ? el : (el && el.closest ? el.closest('img') : null);
+    if (!img && el && el.querySelector) img = el.querySelector('img');
+    if (!img) return '';
+    var src = img.currentSrc || img.src || '';
+    if (/^file:/i.test(src)) return decodeLinkPath(src);
+    return imagePaths[imageKey(src)] || '';
+  }
+
+  // Team members started from this page. A member should start when you message it or press its wake pill, and the page asks for it by POST
+  // /api/teams/{id}/agents/{slot}/attach. On 2026-10-20 a member ran a turn on its own when a team page was opened (a day-old unread message of
+  // yours was waiting in its mailbox); the page's request was the spark and nothing recorded what made it. Each such request is now written to the
+  // diagnosis record with how long ago you last pressed a key or the mouse, and where the call came from.
+  var ATTACH_RE = /\/api\/teams\/([^/?#]+)\/agents\/([^/?#]+)\/attach(?:[?#]|$)/;
+  function noteAttach(input, init) {
+    try {
+      var m = ATTACH_RE.exec(reqUrl(input));
+      if (!m || reqMethod(input, init) !== 'POST') return;
+      var stack = String(new Error().stack || '').split('\n').slice(2, 8).map(function (l) { return l.trim().slice(0, 110); });
+      diagnose('team-attach', m[2].slice(0, 8) + '@' + Date.now(), { slot: m[2].slice(0, 8), sinceGestureMs: lastGestureAt ? Date.now() - lastGestureAt : null, stack: stack });
+    } catch (e) { /* a note must never stop the call */ }
+  }
+
   // ---------------------------------------------------------------- opening a team does not wake it (P-011)
 
   // a request of 2026-09-24 Opening a
@@ -7775,6 +8235,9 @@
       try {
         if (!disabled()) {
           if ((id = callId(TEAM_SESSION_RE, input, init, ['POST']))) return holdTeamWake(id, args);
+          if (callId(IMAGE_RE, input, init, ['POST'])) return nativeFetch.apply(window, args).then(tapImage(init));
+          if ((id = callId(OLDER_RE, input, init, ['GET']))) return pacedOlderPage(id, args);
+          noteAttach(input, init);
           if ((id = callId(ENSURE_RE, input, init, ['POST']))) return holdStart(id, args);
           if (callId(/\/api\/conversations\/([^/?#]+)\/config-options(?:[/?#]|$)/, input, init, ['GET', 'PUT', 'POST'])) return nativeFetch.apply(window, args).then(tapModels);
           // Every agent's catalog (its model options, with the descriptions that carry the versions). The new-chat page,
@@ -7806,6 +8269,7 @@
     };
   }
   guardFetch();
+  installLinkRouting();
 
   // ---------------------------------------------------------------- team column scrolling
 
@@ -8026,9 +8490,18 @@
     setQueued: function (q) { rnQueued = q; renderRespondNow(); },
     openOutside: function (p, r, run) { return openOutside(p, r, run); },
     drafts: function () { return { store: draftStore, restored: draftRestored }; },
+    setReplyQuoteInBox: function (box, q) { return setReplyQuoteInBox(box, q); },
+    draftQuoteOf: function (box) { return draftQuoteOf(box); },
     syncDrafts: function () { syncDrafts(false); },
     setLive: function (key, st) { agentLive[key] = { state: st }; },
-    stopTimes: function (show, force) { STOP_SHOW_MS = show; STOP_FORCE_MS = force; },
+    stopTimes: function (show, force) { STOP_OVERRIDE = { show: show, force: force }; },
+    options: function () { return { values: optionValues, defs: OPTIONS.length }; },
+    option: function (id) { return opt(id); },
+    setOption: function (id, v) { return setOption(id, v); },
+    imagePathAt: function (x, y) { return imagePathAt(x, y); },
+    rememberImage: function (u, p) { return rememberImage(u, p); },
+    olderLoads: function () { return JSON.parse(JSON.stringify(olderLoads)); },
+    swapAgent: function (t, a) { return swapAgent(t, a); },
     shared: function () { return shared; },
     pullNow: function () { return pullShared(); },
     build: BUILD,

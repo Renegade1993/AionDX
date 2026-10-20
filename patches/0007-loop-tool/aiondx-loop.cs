@@ -198,6 +198,8 @@ namespace AionDx
         }
 
         const string Instructions =
+            "AionDX options (where links open, spelling, Stop timing, voice, long-chat limits) are read and changed with the command `aiondx config list`, `aiondx config set ID VALUE`; " +
+            "the user can ask you to change any of them, and the list says what each does. " +
             "AionDX Loop: the user's Loop button in AionUi, shared with you. While a Loop is on, AionUi sends " +
             "its continue message each time the agent stops with nothing queued. loop_status shows it; loop_set " +
             "switches it on or off, changes the continue message, sets how long it keeps a waiting agent's prompt " +
@@ -521,6 +523,8 @@ namespace AionDx
             "  aiondx github [status | repos | create NAME [--public]]   the user's GitHub, through git's own sign-in (aiondx github help)\n" +
             "  aiondx usage [--all]        your Claude account's 5-hour and weekly usage, resets, and whether a limit is reached\n" +
             "  aiondx usage alert --at 80  alert the team lead (or all, or you) the moment usage crosses 80% (see aiondx usage help)\n" +
+            "  aiondx member list|set|replace|assistants   (team lead) read and change what each member runs on: agent, model, effort, mode (aiondx member help)\n" +
+            "  aiondx config list|get|set|reset   every AionDX option and how to change it (aiondx config help): links, spelling, Stop timing, voice, long chats\n" +
             "  aiondx show PATH [--label TEXT]   show the user a picture, or link a file or folder, in chat: prints the exact Markdown to paste\n" +
             "  aiondx migrate detect|run|backup|verify ...   move from AionUi to AionDX: back up the chats, remove AionUi, check them (aiondx migrate help)\n" +
             "--on and --off switch the Loop; --until-stopped (only when the user asks for it) keeps it on until the user stops it, " +
@@ -1154,6 +1158,346 @@ namespace AionDx
             catch (Exception) { return ""; }
         }
 
+        // ---- aiondx config (a request of 2026-10-20): every option AionDX offers, readable and changeable by any agent. The page (patch 0001, OPTIONS)
+        // publishes the list to the settings store as aiondx.options.schema; the values live in aiondx.options = { values: { id: value }, at, by }. This
+        // command validates against the published list, so it never writes a value the page would ignore, and the open app takes a change within seconds.
+        const string ConfigHelp =
+            "Usage:\n" +
+            "  aiondx config list [--json]    every AionDX option: its value now, its default, its limits, and what it does\n" +
+            "  aiondx config get ID           one option's value\n" +
+            "  aiondx config set ID VALUE     change one: on|off for a switch, a number within the limits list shows, or one of the listed words\n" +
+            "  aiondx config reset ID|--all   put one option, or every option, back to its default\n" +
+            "The list comes from the app, which publishes it when it starts, so open AionDX once after an update. A change reaches the open app within a few seconds " +
+            "and shows in Settings > Appearance > AionDX options. Settings that have a command of their own (the Loop, usage alerts, MCP servers) " +
+            "are listed at the end of 'config list' with that command.";
+
+        static List<Dictionary<string, object>> ConfigSchema()
+        {
+            const string key = "aiondx.options.schema";
+            var rec = Sub(Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(key), null) as Dictionary<string, object>, key);
+            var arr = rec != null && rec.ContainsKey("options") ? rec["options"] as object[] : null;
+            if (arr == null) throw new ToolError("The option list is not in the settings store yet. Open AionDX (it publishes the list when it starts), then try again.");
+            var list = new List<Dictionary<string, object>>();
+            foreach (var x in arr) { var d = x as Dictionary<string, object>; if (d != null) list.Add(d); }
+            return list;
+        }
+
+        static Dictionary<string, object> ConfigValues(out long at)
+        {
+            const string key = "aiondx.options";
+            var rec = Sub(Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(key), null) as Dictionary<string, object>, key);
+            at = rec != null ? Long(rec, "at") : 0;
+            var vals = rec != null ? Sub(rec, "values") : null;
+            return vals ?? new Dictionary<string, object>();
+        }
+
+        static string ConfigShow(object v)
+        {
+            if (v is bool) return (bool)v ? "on" : "off";
+            return Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        static Dictionary<string, object> ConfigFind(List<Dictionary<string, object>> schema, string id)
+        {
+            foreach (var d in schema) if (string.Equals(Str(d, "id"), id, StringComparison.OrdinalIgnoreCase)) return d;
+            var ids = schema.Where(d => Str(d, "type") != "command").Select(d => Str(d, "id")).ToArray();
+            throw new ToolError("There is no option called " + id + ". The options are: " + string.Join(", ", ids) + ".");
+        }
+
+        static object ConfigParse(Dictionary<string, object> def, string raw)
+        {
+            string type = Str(def, "type");
+            string id = Str(def, "id");
+            string r = (raw ?? "").Trim();
+            if (type == "command") throw new ToolError(id + " is not a value: change it with " + (Str(def, "via") ?? "its own command") + ".");
+            if (type == "bool")
+            {
+                string w = r.ToLowerInvariant();
+                if (w == "on" || w == "true" || w == "yes" || w == "1") return true;
+                if (w == "off" || w == "false" || w == "no" || w == "0") return false;
+                throw new ToolError(id + " is a switch: use on or off.");
+            }
+            if (type == "number")
+            {
+                long n;
+                if (!long.TryParse(r, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out n)) throw new ToolError(id + " is a number of " + (Str(def, "unit") ?? "units") + ".");
+                long min = Long(def, "min"), max = Long(def, "max");
+                if (n < min || n > max) throw new ToolError(id + " must be between " + min + " and " + max + " " + (Str(def, "unit") ?? "") + ".");
+                return n;
+            }
+            if (type == "choice")
+            {
+                var ch = def.ContainsKey("choices") ? def["choices"] as object[] : null;
+                if (ch != null) foreach (var c in ch) if (string.Equals(Convert.ToString(c), r, StringComparison.OrdinalIgnoreCase)) return Convert.ToString(c);
+                throw new ToolError(id + " must be one of: " + (ch == null ? "" : string.Join(", ", ch.Select(c => Convert.ToString(c)).ToArray())) + ".");
+            }
+            return r;
+        }
+
+        static void ConfigWrite(Dictionary<string, object> values)
+        {
+            var rec = new Dictionary<string, object> { { "values", values }, { "at", NowMs() }, { "by", Ident != null ? "agent" : "user" } };
+            Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { "aiondx.options", rec } }));
+        }
+
+        // ---- aiondx member (a request of 2026-10-16, R-054, and 2026-10-20): the team lead reads and sets each member's agent, model, effort and mode, and
+        // swaps the agent in a slot. The routes are AionCore's own (PATCH .../model, PUT .../config-options/{id}) and core-0006's replace.
+        const string MemberHelp =
+            "Usage (team lead):\n" +
+            "  aiondx member list                                       every member: name, agent, model, effort, mode, and its slot id\n" +
+            "  aiondx member assistants                                 the agents a slot can be given: id, name, backend\n" +
+            "  aiondx member set --member NAME [--model ID] [--effort LEVEL] [--mode MODE]   change what a member runs on\n" +
+            "  aiondx member replace --member NAME --assistant ID [--name NAME] [--model ID]   put another agent in the member's slot\n" +
+            "NAME is the member's name, slot id or conversation id. Effort and mode are options of the running agent: a member that has not started shows none, " +
+            "and a set for it says so (message it, or wake it, then set). Model changes are saved with the roster and apply from the member's next turn. " +
+            "replace keeps the slot id, name and role (the mailbox and task owners still point at it), gives the slot a new conversation on the new agent, " +
+            "and stops the team's running agents: do it between turns, and expect every member to start again on the next message. " +
+            "The user sees each change and can change it back from the member's pickers.";
+
+        static string[] EffortIds = new[] { "reasoning_effort", "thought_level", "effort", "thinking_budget", "thinking" };
+
+        static Dictionary<string, object> MemberOptions(Target t)
+        {
+            try
+            {
+                var d = Api("GET", "/api/teams/" + Uri.EscapeDataString(t.TeamId) + "/conversations/" + Uri.EscapeDataString(t.ConvId) + "/config-options", null) as Dictionary<string, object>;
+                return d;
+            }
+            catch (ToolError) { return null; }
+        }
+
+        static Dictionary<string, object> FindOption(Dictionary<string, object> opts, params string[] ids)
+        {
+            var arr = opts != null && opts.ContainsKey("config_options") ? opts["config_options"] as object[] : null;
+            if (arr == null) return null;
+            foreach (var id in ids)
+                foreach (var x in arr) { var d = x as Dictionary<string, object>; if (d != null && string.Equals(Str(d, "id"), id, StringComparison.OrdinalIgnoreCase)) return d; }
+            return null;
+        }
+
+        static string OptionChoices(Dictionary<string, object> opt)
+        {
+            var list = opt != null && opt.ContainsKey("options") ? opt["options"] as object[] : null;
+            if (list == null) return "";
+            return string.Join(", ", list.Select(c => { var d = c as Dictionary<string, object>; return d == null ? "" : Str(d, "value"); }).Where(v => v.Length > 0).ToArray());
+        }
+
+        static Dictionary<string, object> TeamRow(string teamId)
+        {
+            return Api("GET", "/api/teams/" + Uri.EscapeDataString(teamId), null) as Dictionary<string, object>;
+        }
+
+        static int MemberCli(string[] args, StreamWriter o)
+        {
+            if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h")
+            {
+                o.WriteLine(MemberHelp);
+                return args.Length < 2 ? 2 : 0;
+            }
+            try
+            {
+                string sub = args[1].ToLowerInvariant();
+                if (sub == "assistants")
+                {
+                    var res = Api("GET", "/api/assistants", null);
+                    var arr = res as object[];
+                    if (arr == null) throw new ToolError("AionUi did not list its agents.");
+                    foreach (var x in arr)
+                    {
+                        var d = x as Dictionary<string, object>;
+                        if (d == null) continue;
+                        var ag = Sub(d, "agent");
+                        o.WriteLine(Str(d, "id") + "  " + (Str(d, "name") ?? "") + "  (" + (ag != null ? Str(ag, "type") : "") + (d.ContainsKey("enabled") && d["enabled"] is bool && !(bool)d["enabled"] ? ", off" : "") + ")");
+                    }
+                    return 0;
+                }
+                var ctx = LoadContext();
+                if (ctx.Self.Kind != "team") throw new ToolError("This is for teams, and this chat is not on one.");
+                if (ctx.Self.Role != "lead") throw new ToolError("Only the team lead can read and change the members.");
+                var team = TeamRow(ctx.Self.TeamId);
+                var rows = team != null && team.ContainsKey("assistants") ? team["assistants"] as object[] : (team != null && team.ContainsKey("agents") ? team["agents"] as object[] : null);
+                var bySlot = new Dictionary<string, Dictionary<string, object>>();
+                if (rows != null) foreach (var x in rows) { var d = x as Dictionary<string, object>; if (d != null) bySlot[Str(d, "slot_id") ?? ""] = d; }
+                if (sub == "list")
+                {
+                    foreach (var m in ctx.Members)
+                    {
+                        Dictionary<string, object> row;
+                        bySlot.TryGetValue(m.SlotId, out row);
+                        var opts = MemberOptions(m);
+                        var eff = FindOption(opts, EffortIds);
+                        var mode = FindOption(opts, "mode");
+                        string line = (m.Name ?? m.SlotId) + (m.Role == "lead" ? " (lead)" : "") + ": agent " + (row != null ? (Str(row, "assistant_name") ?? Str(row, "backend") ?? "?") : "?") + " [" + (row != null ? Str(row, "assistant_id") ?? "" : "") + "]" +
+                            ", model " + (row != null ? (Str(row, "model") ?? "default") : "?") +
+                            ", effort " + (eff != null ? Str(eff, "current_value") ?? "?" : "not available (agent not running)") +
+                            ", mode " + (mode != null ? Str(mode, "current_value") ?? "?" : "not available") + ", slot " + m.SlotId;
+                        o.WriteLine(line);
+                    }
+                    return 0;
+                }
+                if (sub == "set" || sub == "replace")
+                {
+                    string member = null, model = null, effort = null, mode = null, assistant = null, name = null;
+                    for (int i = 2; i < args.Length; i++)
+                    {
+                        string x = args[i], inline = null;
+                        int eq = x.IndexOf('=');
+                        if (x.StartsWith("--", StringComparison.Ordinal) && eq > 0) { inline = x.Substring(eq + 1); x = x.Substring(0, eq); }
+                        switch (x)
+                        {
+                            case "--member": member = inline ?? Next(args, ref i, x); break;
+                            case "--model": model = inline ?? Next(args, ref i, x); break;
+                            case "--effort": effort = inline ?? Next(args, ref i, x); break;
+                            case "--mode": mode = inline ?? Next(args, ref i, x); break;
+                            case "--assistant": assistant = inline ?? Next(args, ref i, x); break;
+                            case "--name": name = inline ?? Next(args, ref i, x); break;
+                            default: throw new ToolError("Unknown option " + args[i] + ".\n" + MemberHelp);
+                        }
+                    }
+                    if (string.IsNullOrWhiteSpace(member)) throw new ToolError("--member is required.\n" + MemberHelp);
+                    var t = Resolve(ctx, member, true)[0];
+                    string who = t.Name ?? t.SlotId;
+                    string tm = Uri.EscapeDataString(t.TeamId), sl = Uri.EscapeDataString(t.SlotId);
+                    var done = new List<string>();
+                    if (sub == "replace")
+                    {
+                        if (string.IsNullOrWhiteSpace(assistant)) throw new ToolError("--assistant is required: see aiondx member assistants.");
+                        if (effort != null || mode != null) throw new ToolError("replace takes --assistant, --name and --model; set effort and mode afterwards.");
+                        if (t.ConvId == ctx.Self.ConvId) throw new ToolError("That is you: replacing the lead ends this session and the user's chat with it. Ask the user to do it from the lead's agent menu.");
+                        var body = new Dictionary<string, object> { { "assistant_id", assistant.Trim() } };
+                        if (!string.IsNullOrWhiteSpace(name)) body["name"] = name.Trim();
+                        if (!string.IsNullOrWhiteSpace(model)) body["model"] = model.Trim();
+                        var r = Api("POST", "/api/teams/" + tm + "/agents/" + sl + "/replace", Json.Serialize(body)) as Dictionary<string, object>;
+                        o.WriteLine(who + " now runs " + (r != null ? (Str(r, "assistant_name") ?? Str(r, "backend") ?? assistant) : assistant) + " in the same slot (" + t.SlotId + "), with a new conversation" +
+                            (r != null && Str(r, "conversation_id") != null ? " " + Str(r, "conversation_id") : "") + ". The team's running agents were stopped; they start again on the next message. The user's page reloads the team.");
+                        Log((Ident != null ? "conv=" + Ident.ConvId + " " : "") + "cli member replace ok " + who + " -> " + assistant);
+                        return 0;
+                    }
+                    if (model == null && effort == null && mode == null) throw new ToolError("Give --model, --effort or --mode.\n" + MemberHelp);
+                    if (model != null)
+                    {
+                        Api("PATCH", "/api/teams/" + tm + "/agents/" + sl + "/model", Json.Serialize(new Dictionary<string, object> { { "model_id", model.Trim() } }));
+                        done.Add("model " + model.Trim());
+                    }
+                    if (effort != null || mode != null)
+                    {
+                        var opts = MemberOptions(t);
+                        if (opts == null) throw new ToolError((done.Count > 0 ? "Saved " + string.Join(", ", done.ToArray()) + ". " : "") + who + "'s agent is not running, so its effort and mode cannot be set yet: message it or wake it, then set them.");
+                        Action<string, Dictionary<string, object>, string> put = (label, opt, val) =>
+                        {
+                            if (opt == null) throw new ToolError(who + "'s agent has no " + label + " option.");
+                            string choices = OptionChoices(opt);
+                            bool known = choices.Length == 0 || choices.Split(new[] { ", " }, StringSplitOptions.None).Any(c => string.Equals(c, val, StringComparison.OrdinalIgnoreCase));
+                            if (!known) throw new ToolError(label + " for " + who + " must be one of: " + choices + ".");
+                            string exact = choices.Length == 0 ? val : choices.Split(new[] { ", " }, StringSplitOptions.None).First(c => string.Equals(c, val, StringComparison.OrdinalIgnoreCase));
+                            Api("PUT", "/api/teams/" + tm + "/conversations/" + Uri.EscapeDataString(t.ConvId) + "/config-options/" + Uri.EscapeDataString(Str(opt, "id")), Json.Serialize(new Dictionary<string, object> { { "value", exact } }));
+                            done.Add(label + " " + exact);
+                        };
+                        if (effort != null) put("effort", FindOption(opts, EffortIds), effort.Trim());
+                        if (mode != null) put("mode", FindOption(opts, "mode"), mode.Trim());
+                    }
+                    o.WriteLine(who + ": " + string.Join(", ", done.ToArray()) + ". The user sees it in " + who + "'s pickers.");
+                    Log((Ident != null ? "conv=" + Ident.ConvId + " " : "") + "cli member set ok " + who + " " + string.Join(" ", done.ToArray()));
+                    return 0;
+                }
+                throw new ToolError("Unknown command member " + args[1] + ".\n" + MemberHelp);
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+            catch (Exception e) { o.WriteLine("The member command failed: " + e.Message); return 1; }
+        }
+
+        static int ConfigCli(string[] args, StreamWriter o)
+        {
+            if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h")
+            {
+                o.WriteLine(ConfigHelp);
+                return args.Length < 2 ? 2 : 0;
+            }
+            try
+            {
+                var schema = ConfigSchema();
+                long at;
+                var values = ConfigValues(out at);
+                string sub = args[1].ToLowerInvariant();
+                if (sub == "list")
+                {
+                    bool json = args.Length > 2 && args[2] == "--json";
+                    if (args.Length > 2 && !json) throw new ToolError("Unknown option " + args[2] + ".\n" + ConfigHelp);
+                    if (json)
+                    {
+                        var outList = new List<object>();
+                        foreach (var d in schema)
+                        {
+                            var e = new Dictionary<string, object>(d);
+                            if (Str(d, "type") != "command") e["value"] = values.ContainsKey(Str(d, "id")) ? values[Str(d, "id")] : (d.ContainsKey("default") ? d["default"] : null);
+                            outList.Add(e);
+                        }
+                        o.WriteLine(Json.Serialize(new Dictionary<string, object> { { "options", outList } }));
+                        return 0;
+                    }
+                    var sb = new StringBuilder();
+                    sb.Append("AionDX options (value now; the default in brackets). Change one with: aiondx config set ID VALUE\n");
+                    string group = null;
+                    foreach (var d in schema.Where(x => Str(x, "type") != "command"))
+                    {
+                        if (Str(d, "group") != group) { group = Str(d, "group"); sb.Append('\n').Append(group).Append('\n'); }
+                        string id = Str(d, "id");
+                        object now = values.ContainsKey(id) ? values[id] : (d.ContainsKey("default") ? d["default"] : null);
+                        string type = Str(d, "type");
+                        string limits = type == "bool" ? "on or off" : type == "number" ? Long(d, "min") + " to " + Long(d, "max") + " " + (Str(d, "unit") ?? "") : type == "choice" && d.ContainsKey("choices") ? "one of: " + string.Join(", ", ((object[])d["choices"]).Select(c => Convert.ToString(c)).ToArray()) : "text";
+                        sb.Append("  ").Append(id).Append(" = ").Append(ConfigShow(now)).Append("  [").Append(ConfigShow(d.ContainsKey("default") ? d["default"] : null)).Append("]  ").Append(limits).Append('\n');
+                        sb.Append("      ").Append(Str(d, "label")).Append(". ").Append(Str(d, "desc")).Append('\n');
+                    }
+                    var cmds = schema.Where(x => Str(x, "type") == "command").ToList();
+                    if (cmds.Count > 0)
+                    {
+                        sb.Append("\nSettings with their own command or page:\n");
+                        foreach (var d in cmds) sb.Append("  ").Append(Str(d, "label")).Append(": ").Append(Str(d, "desc")).Append("  -> ").Append(Str(d, "via")).Append('\n');
+                    }
+                    o.WriteLine(sb.ToString().TrimEnd());
+                    Log("cli config list ok");
+                    return 0;
+                }
+                if (sub == "get")
+                {
+                    if (args.Length != 3) throw new ToolError("Usage: aiondx config get ID\n" + ConfigHelp);
+                    var d = ConfigFind(schema, args[2]);
+                    string id = Str(d, "id");
+                    if (Str(d, "type") == "command") { o.WriteLine(id + " is changed with: " + Str(d, "via")); return 0; }
+                    o.WriteLine(ConfigShow(values.ContainsKey(id) ? values[id] : (d.ContainsKey("default") ? d["default"] : null)));
+                    return 0;
+                }
+                if (sub == "set")
+                {
+                    if (args.Length != 4) throw new ToolError("Usage: aiondx config set ID VALUE\n" + ConfigHelp);
+                    var d = ConfigFind(schema, args[2]);
+                    string id = Str(d, "id");
+                    object v = ConfigParse(d, args[3]);
+                    object def = d.ContainsKey("default") ? d["default"] : null;
+                    var next = new Dictionary<string, object>(values);
+                    if (def != null && string.Equals(ConfigShow(v), ConfigShow(def), StringComparison.Ordinal)) next.Remove(id); else next[id] = v;
+                    ConfigWrite(next);
+                    o.WriteLine(id + " is now " + ConfigShow(v) + ". The open app takes it within a few seconds.");
+                    Log((Ident != null ? "conv=" + Ident.ConvId + " " : "") + "cli config set ok " + id + "=" + ConfigShow(v));
+                    return 0;
+                }
+                if (sub == "reset")
+                {
+                    if (args.Length != 3) throw new ToolError("Usage: aiondx config reset ID|--all\n" + ConfigHelp);
+                    var next = new Dictionary<string, object>(values);
+                    if (args[2] == "--all") next.Clear();
+                    else next.Remove(Str(ConfigFind(schema, args[2]), "id"));
+                    ConfigWrite(next);
+                    o.WriteLine((args[2] == "--all" ? "Every option" : args[2]) + " is back to the default. The open app takes it within a few seconds.");
+                    Log((Ident != null ? "conv=" + Ident.ConvId + " " : "") + "cli config reset ok " + args[2]);
+                    return 0;
+                }
+                throw new ToolError("Unknown command config " + args[1] + ".\n" + ConfigHelp);
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+            catch (Exception e) { o.WriteLine("The config command failed: " + e.Message); return 1; }
+        }
+
         static int UsageCli(string[] args, StreamWriter o)
         {
             if (args.Length > 1 && (args[1] == "help" || args[1] == "--help" || args[1] == "-h")) { o.WriteLine(UsageHelp); return 0; }
@@ -1584,6 +1928,8 @@ namespace AionDx
             if (args[0] == "github") return GitHubCli(args, o);
             if (args[0] == "show") return ShowCli(args, o);
             if (args[0] == "usage") return UsageCli(args, o);
+            if (args[0] == "config") return ConfigCli(args, o);
+            if (args[0] == "member") return MemberCli(args, o);
             if (args[0] == "migrate") return MigrateCli(args, o);
             if (args[0] == "stop")
             {

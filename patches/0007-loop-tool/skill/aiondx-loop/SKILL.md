@@ -189,6 +189,22 @@ AionDX window, so it works while AionDX is open. The user sees every alert, and 
 an alert the user made is not yours to change. When a team starts a long job, the lead should set one for itself at about
 80% and one for every member at about 90%.
 
+## Options: change how AionDX behaves
+
+Every choice a user can make in AionDX is a named option, and you can read and change them all.
+
+    aiondx config list            every option: value now, default, limits, what it does, and the other settings that have their own command
+    aiondx config get ID
+    aiondx config set ID VALUE    on|off for a switch, a number inside the limits, or one of the listed words
+    aiondx config reset ID        or --all
+
+Today's options: where web links open (the system browser or a tab in AionDX; Alt+click uses the other), spell checking in message boxes,
+whether a reply quote stays with its draft, reading replies with the Windows voice when no ElevenLabs key is set, when the Stop and Force stop
+buttons appear, and how many message rows make a chat "long" (above that AionDX does less work per change so typing stays quick).
+The open app takes a change within seconds and shows it in Settings > Appearance > AionDX options, so the user sees what you changed and can
+change it back. When the user asks for a behaviour AionDX has an option for, set the option; do not edit files. The list ends with settings
+that have a command of their own (the Loop, usage alerts, MCP servers, colours, cache clearing) and names that command.
+
 ## Pictures, files and folders in chat
 
 Two lines to remember: **a picture or a link is one command, `"{{AIONDX}}" show PATH`** (tool: `show_file`), which prints the

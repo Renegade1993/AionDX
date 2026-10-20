@@ -170,3 +170,14 @@ out of settings.json, the cache folders deleted). Test plugin changes only throu
   and an edit calls it from just before `const gotTheLock`. After a wait the helper also takes the lock itself, asking again for up to 8 seconds
   (`takeLock`): the previous process counts as gone when its exit code is set, a moment before Windows lets go of the lock file.
   `tools\test-live-restart.js` (the staged app closed from inside, started again on the same profile, 9 checks) reproduced the fault before the change.
+
+## October 20th, 2026: the right-click menu, links, pictures and spelling
+
+- `aiondx-menu.js` replaces the inline right-click block (cut, copy, paste, select all, copy on a selection) and extends it: a misspelled word in a text box gets up to five suggestions and "Add to
+  dictionary"; a link gets "Open link in browser" (http and https only) and "Copy link" ("Copy email address" for mailto); a picture gets "Copy image" (`webContents.copyImageAt`) and "Open image location"
+  (`shell.showItemInFolder` on the file path, which the page knows: patch 0001 `__aionDx.imagePathAt`, asked through `executeJavaScript` with a 400 ms limit; greyed with a reason when the picture has
+  no file). Electron asks the main process for a menu only when the page did not handle the right-click, so AionUi's own menus are untouched. `buildTemplate` is pure and tested without Electron
+  (`test-menu.js`, 29 checks).
+- Spell checking is Chromium's own checker through the session (`setSpellCheckerLanguages`: the PC's language where Chromium has it, then English), on by default; the option `spellcheck` (patch 0001)
+  switches the underlines per message box. Whether the checker finds its dictionaries offline on a PC with none cached is shown by the live test (`tools\test-live-menu.js`).
+- `AIONDX_MENU_TEST_FILE` (tests): the template's labels are written to that file and no menu is shown, so a test never puts a native menu on the screen.

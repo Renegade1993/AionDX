@@ -2135,7 +2135,7 @@ async function pageTarget() {
       await sleep(200);
       await humanClick('.aiondx-acct-menu [data-agent="cc33dd44"]');
       await humanClick('.aiondx-acct-menu .aiondx-acct-move');
-      await sleep(400);
+      for (let i = 0; i < 12 && ((await store())['aiondx.agent.conv.harness1'] || ((await ctl('')) || {}).label !== 'Main'); i++) { await js('window.__aionDx.repaint(); 0'); await sleep(250); }   // a hidden page paints late
       check(sc, 'moving back to its own agent removes the choice', !(await store())['aiondx.agent.conv.harness1'] && (await ctl('')).label === 'Main');
       // The first version's pick (an account name) still shows, and a new pick replaces it.
       await putStore('aiondx.accounts', { v: 1, accounts: [{ id: 'main', label: 'Main (Plan A)' }, { id: 'second', label: 'Second' }],
@@ -2197,7 +2197,7 @@ async function pageTarget() {
       await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
       await sleep(300);
       items = await menuItems();
-      check(sc, 'a member offers only the Claude agents', items.length === 2 && items.every((i) => i.group === 'here'), JSON.stringify(items));
+      check(sc, 'a member offers only the Claude agents to switch to in place (and, apart, the swap list)', items.filter((i) => i.group === 'here').length === 2 && items.every((i) => i.group === 'here' || i.group === 'swap'), JSON.stringify(items));
       await humanClick('.aiondx-acct-menu [data-agent="cc33dd44"]');
       await humanClick('.aiondx-acct-menu .aiondx-acct-move');
       await sleep(400);
@@ -3103,6 +3103,198 @@ async function pageTarget() {
       check(sc, 'and nudges it once the session is running', (await posts('/api/teams/team1/agents/slotB/messages')).length === 1);
     }
 
+    // ---- options, links, pictures, quotes in drafts, cache buttons on agent entries (2026-10-20, requests) ----
+    {
+      const sc = 'options';
+      await js("localStorage.removeItem('aionui.dx.options'); 0");
+      const addSection = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
+        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
+        sec.appendChild(grid); document.body.appendChild(sec); return 0; })()`);
+      await load('theme=light');
+      await addSection();
+      await sleep(700);
+      const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.external', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      const schema = ((await store())['aiondx.options.schema'] || {});
+      check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.external' && o.default === 'system' && o.choices.length === 2) &&
+        schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));
+      check(sc, 'links open in the system browser by default', (await js(`window.__aionDx.option('links.external')`)) === 'system');
+      await js(`(() => { const i = document.querySelector('[data-testid="aiondx-opt-spellcheck"]'); i.checked = false; i.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
+      await sleep(400);
+      const rec = (await store())['aiondx.options'] || {};
+      check(sc, 'changing one writes it to the store, and only it', rec.values && rec.values.spellcheck === false && Object.keys(rec.values).length === 1 && rec.by === 'user', JSON.stringify(rec));
+      check(sc, 'turning spelling off sets spellcheck="false" on the message box', (await js(`document.querySelector('[data-testid="sendbox-input"]').getAttribute('spellcheck')`)) === 'false');
+      await js(`document.querySelector('[data-opt="spellcheck"] .aiondx-opt-reset').click(); 0`);
+      await sleep(400);
+      check(sc, 'Reset puts the default back, and the store no longer holds it', (await js(`window.__aionDx.option('spellcheck')`)) === true && !(((await store())['aiondx.options'] || {}).values || {}).spellcheck &&
+        (await js(`document.querySelector('[data-testid="sendbox-input"]').getAttribute('spellcheck')`)) === 'true');
+      // The command line (or an agent) writes the store; the page takes it.
+      await js(`(() => { window.__stub.store['aiondx.options'] = { values: { 'links.external': 'tab', 'stop.show': 9999, 'nonsense': 1 }, at: Date.now() + 5000, by: 'agent' }; return window.__aionDx.pullNow(); })()`);
+      await sleep(400);
+      check(sc, 'a newer value from the store (an agent, the command line) is applied, clamped to its limits', (await js(`window.__aionDx.option('links.external')`)) === 'tab' && (await js(`window.__aionDx.option('stop.show')`)) === 120 &&
+        (await js(`document.querySelector('[data-testid="aiondx-opt-links.external"]').value`)) === 'tab');
+      check(sc, 'a value the list does not know is ignored', !('nonsense' in (await js(`window.__aionDx.options().values`))));
+    }
+    {
+      const sc = 'links';
+      await js("localStorage.removeItem('aionui.dx.options'); 0");
+      await load('theme=light');
+      await js(`(() => {
+        window.__stub.routes['POST /api/shell/open-external'] = { success: true };
+        window.__tab = 0;
+        document.addEventListener('click', () => { window.__tab++; });   // stands for AionUi's own handler (preview.openBrowserTab)
+        const a = document.createElement('a'); a.id = 'tl'; a.href = 'https://example.com/page?x=1'; a.target = '_blank'; a.textContent = 'a link in a reply';
+        a.style.cssText = 'position:absolute;left:30px;top:300px;z-index:5;background:#fff;color:#000;padding:4px';
+        document.body.appendChild(a);
+        const m = document.createElement('a'); m.id = 'ml'; m.href = 'mailto:x@example.com'; m.textContent = 'mail'; m.style.cssText = 'position:absolute;left:30px;top:340px;z-index:5;background:#fff;color:#000;padding:4px';
+        document.body.appendChild(m);
+        window.__calls.length = 0; return 0; })()`);
+      await humanClick('#tl');
+      await sleep(500);
+      const opened = await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').map(c => c.body)`);
+      check(sc, 'a click on a web link goes to the system browser (open-external)', opened.length === 1 && opened[0].url === 'https://example.com/page?x=1', JSON.stringify(opened));
+      check(sc, "and AionUi's own tab handler never hears it", (await js(`window.__tab`)) === 0);
+      await js(`(() => { document.getElementById('tl').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, altKey: true })); return 0; })()`);
+      await sleep(300);
+      check(sc, 'Alt+click uses the other choice: the tab handler runs, the system browser is not asked again', (await js(`window.__tab`)) === 1 && (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 1);
+      await js(`window.__aionDx.setOption('links.external', 'tab'); 0`);
+      await js(`(() => { document.getElementById('tl').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })); return 0; })()`);
+      await sleep(300);
+      check(sc, 'with the option on "tab", a plain click is left to AionUi', (await js(`window.__tab`)) === 2 && (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 1);
+      await js(`window.__aionDx.setOption('links.external', undefined); 0`);
+      await js(`(() => { document.getElementById('ml').addEventListener('click', e => e.preventDefault()); document.getElementById('ml').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })); return 0; })()`);
+      await sleep(200);
+      check(sc, 'a mailto link is not touched', (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 1);
+
+      // Pictures: the page keeps the file path each one was loaded from.
+      const DATA = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+      await js(`(() => { window.__stub.routes['POST /api/fs/image-base64'] = { success: true, data: ${JSON.stringify(DATA)} }; return 0; })()`);
+      await js(`(async () => { await fetch('http://127.0.0.1:1/api/fs/image-base64', { method: 'POST', body: JSON.stringify({ path: 'C:\\\\Users\\\\me\\\\pics\\\\one.png' }) });
+        const img = document.createElement('img'); img.id = 'pic'; img.src = ${JSON.stringify(DATA)}; img.style.cssText = 'position:absolute;left:200px;top:300px;width:40px;height:40px;z-index:5'; document.body.appendChild(img);
+        const other = document.createElement('img'); other.id = 'pic2'; other.src = ${JSON.stringify(DATA.replace('AAAAAAAAAAA', 'BBBBBBBBBBB') + 'zz')}; other.style.cssText = 'position:absolute;left:260px;top:300px;width:40px;height:40px;z-index:5'; document.body.appendChild(other);
+        return 0; })()`);
+      await sleep(400);
+      await js(`document.getElementById('pic').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); 0`);
+      check(sc, 'a picture loaded from a path knows that path when it is right-clicked', (await js(`window.__aionDx.imagePathAt(1, 1)`)) === 'C:\\Users\\me\\pics\\one.png', await js(`window.__aionDx.imagePathAt(1, 1)`));
+      await js(`document.getElementById('pic2').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); 0`);
+      check(sc, 'a picture with no known file answers nothing', (await js(`window.__aionDx.imagePathAt(1, 1)`)) === '');
+    }
+    {
+      const sc = 'draft-quote';
+      await js("localStorage.removeItem('aionui.dx.options'); 0");
+      await load('theme=light');
+      await js(`(() => { const panel = document.querySelector('.sendbox-panel'); const q = document.createElement('div'); q.className = 'flex items-start';
+        q.innerHTML = '<div class="flex-1 min-w-0 line-clamp-3 whitespace-pre-wrap break-all">the sentence being answered</div>'; panel.insertBefore(q, panel.firstChild); return 0; })()`);
+      check(sc, 'the reply quote over a message box is read from the page', (await js(`window.__aionDx.draftQuoteOf(document.querySelector('[data-testid="sendbox-input"]'))`)) === 'the sentence being answered');
+      await js(`(() => { const ta = document.querySelector('[data-testid="sendbox-input"]'); ta.focus(); ta.value = 'my answer'; ta.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await sleep(300);
+      const d = await js(`JSON.parse(localStorage.getItem('aionui.dx.draft.conv.harness1'))`);
+      check(sc, 'the draft keeps the quote with its text', d && d.text === 'my answer' && d.quote === 'the sentence being answered', JSON.stringify(d));
+      // A quote with no text at all is still a draft.
+      await js(`(() => { const ta = document.querySelector('[data-testid="sendbox-input"]'); ta.value = ''; ta.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await sleep(300);
+      const d2 = await js(`JSON.parse(localStorage.getItem('aionui.dx.draft.conv.harness1'))`);
+      check(sc, 'a quote with no text is kept as a draft too', d2 && d2.text === '' && d2.quote === 'the sentence being answered', JSON.stringify(d2));
+      // React's setter, found through the fiber (a stand-in chain with the same shape as SendBox's hooks).
+      const hit = await js(`(() => { const ta = document.querySelector('[data-testid="sendbox-input"]'); const got = [];
+        const hooks = [{ memoizedState: null, queue: { dispatch: () => {} } }, { memoizedState: { current: null }, queue: null }, { memoizedState: null, queue: { dispatch: (v) => got.push(v) } }, { memoizedState: 0, queue: { dispatch: () => {} } }];
+        hooks.forEach((h, i) => { h.next = hooks[i + 1] || null; });
+        ta['__reactFiber$test'] = { memoizedState: hooks[0], return: null };
+        const ok = window.__aionDx.setReplyQuoteInBox(ta, 'quoted again'); return { ok, got }; })()`);
+      check(sc, "the quote is put back through the send box's own state when its hooks are found", hit.ok === true && hit.got.length === 1 && hit.got[0].content === 'quoted again' && hit.got[0].position === 'left', JSON.stringify(hit));
+      // After a restart with no setter to be found, the quote returns as a block quote ahead of the text. The saved draft is in the settings store (a page that
+      // is being left saves its own box over a local copy, so the store is what a test can seed).
+      await load('theme=light&seeddraft=hello&seedquote=' + encodeURIComponent('line one\nline two'));
+      await sleep(1800);
+      const restored = await js(`document.querySelector('[data-testid="sendbox-input"]').value`);
+      check(sc, 'a saved quote comes back with the draft (as a block quote when React gives no setter)', restored === '> line one\n> line two\n\nhello', JSON.stringify(restored));
+      await load('theme=light&seeddraft=hello&seedquote=old&seedstore=' + encodeURIComponent(JSON.stringify({ 'aiondx.options': { values: { 'draft.quote': false }, at: Date.now() } })));
+      await sleep(1800);
+      const noq = await js(`document.querySelector('[data-testid="sendbox-input"]').value`);
+      check(sc, 'with the option draft.quote off the quote is not restored', noq === 'hello', JSON.stringify(noq));
+      await js(`window.__aionDx.setOption('draft.quote', undefined); localStorage.removeItem('aionui.dx.draft.conv.harness1'); 0`);
+    }
+    {
+      const sc = 'agent-cache';
+      await js("localStorage.removeItem('aionui.dx.options'); 0");
+      await load('theme=light');
+      await js(`(() => {
+        window.__cc = { calls: [] };
+        window.aiondxCache = {
+          profiles: () => Promise.resolve({ ok: true, profiles: [{ id: 'claude:main', kind: 'claude', label: 'Claude Code (main)', dir: 'a' }, { id: 'claude:second', kind: 'claude', label: 'Claude Code (second)', dir: 'b' }, { id: 'devin', kind: 'devin', label: 'Devin', dir: 'c' }] }),
+          scan: (id, days) => { window.__cc.calls.push(['scan', id]); return Promise.resolve({ ok: true, profile: { id }, days, groups: { cache: { count: 1, bytes: 10, targets: [], partial: false }, history: { count: 0, bytes: 0, targets: [], partial: false } } }); },
+          clear: () => Promise.resolve({ ok: true, deleted: 0, bytes: 0 })
+        };
+        const mk = (id, name, extra) => { const r = document.createElement('div'); r.setAttribute('data-testid', 'agent-row-' + id); r.className = 'group flex';
+          r.innerHTML = '<div class="flex"><span class="truncate text-14px">' + name + '</span></div><div class="ms-12px flex flex-shrink-0 items-center gap-8px"><button data-testid="agent-row-test-' + id + '">Test</button><button data-testid="agent-row-edit-' + id + '">Edit</button></div>';
+          r.style.cssText = 'position:absolute;left:20px;top:' + extra + 'px;z-index:5;background:#222;color:#fff'; document.body.appendChild(r); };
+        mk('c1', 'Claude Code (Second)', 300); mk('c2', 'Gemini CLI', 340); mk('c3', 'Devin', 380); mk('c4', 'Claude Code', 420);
+        return 0; })()`);
+      await js('window.__aionDx.repaint(); 0');
+      await sleep(500);
+      const btns = await js(`[...document.querySelectorAll('.aiondx-agent-cache')].map(b => b.getAttribute('data-profile'))`);
+      check(sc, 'Settings > Agents gives Claude Code accounts and Devin a Clear cache button, and no other agent', JSON.stringify(btns) === JSON.stringify(['claude:second', 'devin', 'claude:main']), JSON.stringify(btns));
+      check(sc, 'it sits in the entry beside Test and Edit, first', await js(`document.querySelector('[data-testid="agent-row-c1"]').lastElementChild.firstElementChild.className.includes('aiondx-agent-cache')`));
+      await humanClick('[data-testid="aiondx-agent-cache-c1"]');
+      await sleep(1000);
+      const pn = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-cache"]'); if (!p || p.hidden) return null; const rows = [...p.querySelectorAll('.aiondx-cache-row')];
+        return { first: rows[0].getAttribute('data-profile'), outlined: rows[0].classList.contains('aiondx-cache-row--focus'), n: rows.length }; })()`);
+      check(sc, "its button opens the panel at that account, first and outlined", pn && pn.first === 'claude:second' && pn.outlined && pn.n === 3, JSON.stringify(pn));
+      check(sc, 'and reads that profile first', (await js('window.__cc.calls[0]')).join() === 'scan,claude:second');
+    }
+
+    {
+      const sc = 'older-pages';
+      await load('theme=light');
+      const ask = (n) => js(`(() => { window.__calls.length = 0; window.__answered = 0; for (let i = 0; i < ${n}; i++) fetch('http://127.0.0.1:1/api/conversations/harness1/messages?limit=50&before=m' + i, { credentials: 'include' }).then(() => { window.__answered++; }); return 0; })()`);
+      const reached = () => js(`window.__calls.filter(c => /messages$/.test(c.path) && /before=/.test(c.url)).length`);
+      await ask(6);
+      await sleep(900);
+      check(sc, 'older pages asked for in a chain with no scrolling: the first three go through, the rest wait', (await reached()) === 3 && (await js('window.__answered')) === 3, (await reached()) + ' reached, ' + (await js('window.__answered')) + ' answered');
+      await js(`document.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true })); 0`);
+      await sleep(1000);
+      check(sc, 'a wheel turn from the user lets the waiting ones through', (await reached()) === 6 && (await js('window.__answered')) === 6, (await reached()) + ' reached, ' + (await js('window.__answered')) + ' answered');
+      await js(`document.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true })); 0`);
+      await ask(5);
+      await sleep(700);
+      check(sc, 'while the user is scrolling, every page goes through', (await reached()) === 5, String(await reached()));
+      await js(`window.__aionDx.setOption('lag.chainPages', 1); 0`);
+      await sleep(11000);
+      await ask(3);
+      await sleep(700);
+      check(sc, 'the number allowed is the option lag.chainPages', (await reached()) === 1, String(await reached()));
+      await js(`window.__aionDx.setOption('lag.chainPages', undefined); 0`);
+    }
+    {
+      const sc = 'swap';
+      await load('team=1&theme=light');
+      await sleep(1200);
+      await js('window.__aionDx.repaint(); 0');
+      await sleep(700);
+      await js('window.__aionDx.repaint(); 0');
+      await sleep(300);
+      const items = () => js(`[...document.querySelectorAll('.aiondx-acct-menu .arco-dropdown-menu-item')].map(i => ({ assistant: i.getAttribute('data-assistant'), agent: i.getAttribute('data-agent'), group: i.parentElement.getAttribute('data-group'), text: i.textContent }))`);
+      check(sc, 'every member column has the agent control, a Claude member with one Claude agent included', (await js(`document.querySelectorAll('[data-testid="aiondx-account"]').length`)) >= 2);
+      await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
+      await sleep(300);
+      const swaps = (await items()).filter((i) => i.group === 'swap');
+      check(sc, 'its menu offers to swap the member for any other enabled agent, in the same slot', swaps.length >= 2 && swaps.every((i) => i.assistant && /A new conversation on this agent/.test(i.text)), JSON.stringify(swaps));
+      check(sc, 'the title says who is being swapped', /Swap this member for/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)));
+      await js(`window.__stub.routes['POST /api/teams/team1/agents/slotB/replace'] = { success: true, data: { slot_id: 'slotB' } }; window.__calls.length = 0; 0`);
+      await js(`document.querySelector('.aiondx-acct-menu [data-assistant="${swaps[0].assistant}"]').click(); 0`);   // the menu can run past a short page: a real press would miss it
+      check(sc, 'a click asks first: what stays, what is new, and that the team stops', /Swap this member for/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)) && /Every agent in this team stops now/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)));
+      await js(`document.querySelector('.aiondx-acct-menu .aiondx-acct-move').click(); 0`);
+      await sleep(500);
+      check(sc, 'with an agent in the team working (the lead is), nothing is swapped and it says why', (await js(`window.__calls.filter(c => c.path.endsWith('/replace')).length`)) === 0 && (await toasts()).some((t) => /Not swapped: an agent in this team is working/.test(t)), JSON.stringify(await toasts()));
+      await js(`(() => { const w = window.__stub.routes['GET /api/teams/team1/run-state'].data.slot_work[0]; w.state = 'idle'; w.active_turn_id = null; return 0; })()`);
+      await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
+      await sleep(300);
+      await js(`document.querySelector('.aiondx-acct-menu [data-assistant="${swaps[0].assistant}"]').click(); 0`);
+      await js('window.__calls.length = 0; 0');
+      await js(`document.querySelector('.aiondx-acct-menu .aiondx-acct-move').click(); 0`);
+      const posted = await js(`window.__calls.filter(c => c.path.endsWith('/replace')).map(c => [c.method, c.path, c.body])`);
+      check(sc, 'with the team idle, the swap is posted to that slot with the chosen assistant', posted.length === 1 && posted[0][0] === 'POST' && posted[0][1] === '/api/teams/team1/agents/slotB/replace' && posted[0][2].assistant_id === swaps[0].assistant, JSON.stringify(posted));
+    }
     clearTimeout(deadline);
     let failed = 0;
     for (const r of results) {

@@ -401,3 +401,16 @@ launcher, router and usage tap in place.
 - **`aiondx doctor` checks the Claude launcher** and, without `--check`, runs the per-user setup to put it in place.
 - Also copied and removed with the rest: `claude-model-catalog.js` and `aiondx-model-refresh.js` (patch 0002).
 - Tests: `test-launcher.js` (5: a real chain of stand-in processes, an older router, AionDX's, none), Loop tool 192.
+
+## October 20th, 2026: `aiondx config` and `aiondx member`
+
+- `aiondx config list [--json] | get ID | set ID VALUE | reset ID|--all`. Every option AionDX offers, readable and changeable by any agent: the page (patch 0001, `OPTIONS`) publishes the list to the
+  settings store as `aiondx.options.schema`; this command validates against it (a switch takes on|off, a number its limits, a choice one of the listed words, spelled as listed) and writes
+  `aiondx.options = { values, at, by }`, which the open app takes within seconds. The list ends with the settings that have their own command and names it. A value equal to the default is removed from the store.
+  The MCP server's instructions and `skill\aiondx-loop\SKILL.md` point agents at it.
+- `aiondx member list | assistants | set | replace` (team lead; R-054, October 16th). `list` shows each member's agent, model, effort, mode and slot (effort and mode come from the running agent's
+  config options; a member that has not started shows none). `set --member NAME [--model ID] [--effort LEVEL] [--mode MODE]` uses AionCore's own routes, `PATCH /api/teams/{id}/agents/{slot}/model` and
+  `PUT /api/teams/{id}/conversations/{conv}/config-options/{option}` (effort is whichever of `reasoning_effort`, `thought_level`, `effort`, `thinking_budget`, `thinking` the agent has), and refuses an effort or
+  mode the agent does not list. `replace --member NAME --assistant ID [--name N] [--model ID]` uses core-0006's `POST .../replace` (any slot, the lead's included; the lead cannot replace itself from its own
+  session). `assistants` lists what a slot can be given.
+- Tests: `test-loop-tool.js` 219 (about 30 new for config and member, against a stand-in API).
