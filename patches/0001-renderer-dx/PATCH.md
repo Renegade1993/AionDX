@@ -938,7 +938,11 @@ member's Stop already pauses the member through AionCore's pause route.)
   next frame as before unless the last render took over 8 ms, in which case it waits eight times as long (at most 0.75 s). `__aionDx.repaint()` runs everything at once. AionDX's share of the work at 3,000 rows
   fell from 2,455 ms to 424 ms in the headless measurement (`tools\dx-harness\quick-lag.js`); the browser's own layout of the list is unchanged.
 
-## October 20th, 2026: build `2026-10-20.1`, options, links, pictures, quotes, swaps, paced history
+## October 20th, 2026: build `2026-10-20.2`, options, links, pictures, quotes, swaps, paced history
+
+Build `2026-10-20.2` (a request of October 20th, after a folder link opened a preview tab): file and folder links open outside AionDX by default (option `links.files`, `outside` or `preview`). The
+chip handler (`watchLocalLinks`) decides at the click. Before, a chip went outside only after the async folder check had marked it (up to 3 seconds after it appeared), and a file that could be previewed
+always opened the Preview panel. Alt+click uses the other choice; Shift+click shows the file in its folder; a folder always opens in Explorer.
 
 Requests of October 20th (K's morning list). Everything below is in `aionui-dx.js`; tests are the click scenarios `options`, `links`, `draft-quote`, `agent-cache`, `older-pages` and `swap`
 (`node tools\dx-harness\click-test.js`, about 540 checks), plus `tools\dx-harness\probe-eval.js` for running a few lines of page code against the harness.

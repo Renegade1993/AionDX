@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-20.1';
+  var BUILD = '2026-10-20.2';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -691,6 +691,8 @@
   var OPTIONS = [
     { id: 'links.external', group: 'Links', type: 'choice', default: 'system', choices: [['system', 'The system browser'], ['tab', 'A tab inside AionDX']],
       label: 'Open web links in', desc: 'Where a link in a chat opens. Alt+click uses the other one.' },
+    { id: 'links.files', group: 'Links', type: 'choice', default: 'outside', choices: [['outside', 'Outside AionDX (its own program, or Explorer for a folder)'], ['preview', 'A preview tab inside AionDX']],
+      label: 'Open file and folder links in', desc: 'Where a link to a file or folder on this PC opens. A folder always opens in Explorer. Alt+click uses the other one; Shift+click shows it in its folder.' },
     { id: 'spellcheck', group: 'Typing', type: 'bool', default: true,
       label: 'Check spelling', desc: 'Underline misspelled words in message boxes; right-click one for suggestions.' },
     { id: 'draft.quote', group: 'Typing', type: 'bool', default: true,
@@ -7873,7 +7875,9 @@
             pathInfo(path).then(function (inf) {
               if (inf.dir) chip.setAttribute('data-aiondx-dir', '1');
               if (noPreview(path, inf)) chip.setAttribute('data-aiondx-nopreview', '1');
-              chip.title = inf.dir ? 'Opens the folder in Explorer' : noPreview(path, inf) ? 'Shows the file in its folder (Explorer)' : 'Opens a preview; the arrow button opens it outside AionDX';
+              var toPreview = opt('links.files') === 'preview';
+              chip.title = inf.dir ? 'Opens the folder in Explorer' : !toPreview ? 'Opens the file outside AionDX (Alt+click: a preview; Shift+click: show it in its folder)' :
+                noPreview(path, inf) ? 'Shows the file in its folder (Explorer)' : 'Opens a preview; the arrow button opens it outside AionDX';
             });
           }
         })(chips[i]);
@@ -7907,7 +7911,12 @@
       }
       if (!label || !chip) return;
       var p = chip.getAttribute('data-local-file-path');
-      if (chip.getAttribute('data-aiondx-dir') !== '1' && chip.getAttribute('data-aiondx-nopreview') !== '1') return;
+      // A request of 2026-10-20: a link to a file or a folder opens outside AionDX unless the user chose otherwise (option links.files). The
+      // choice is made at the click: the folder check below finishes seconds after a chip appears, and a chip clicked before that opened a tab.
+      var viaPreview = opt('links.files') === 'preview';
+      if (ev.altKey) viaPreview = !viaPreview;
+      if (viaPreview && chip.getAttribute('data-aiondx-dir') !== '1' && chip.getAttribute('data-aiondx-nopreview') !== '1') return;
+      if (!absoluteLocalPath(p)) return;
       ev.preventDefault();
       ev.stopPropagation();
       if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();

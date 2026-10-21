@@ -1674,13 +1674,31 @@ async function pageTarget() {
       p = await posts('/api/shell/open-folder-with');
       check(sc, "clicking a folder chip opens the folder in Explorer, not AionUi's preview", p.length === 1 && p[0].body.folder_path === 'C:/Work/Project/build/' && p[0].body.tool === 'explorer' && (await js('window.__previewClicks')) === 0, JSON.stringify(p));
       await js('window.__calls.length = 0; 0');
-      await inShadow('span[data-local-file-path$="notes.md"][data-local-file-path^="C:"] .markdown-local-file-link', 'el.click()');
+      const notesLabel = 'span[data-local-file-path$="notes.md"][data-local-file-path^="C:"] .markdown-local-file-link';
+      const altClick = "el.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, altKey: true }))";
+      await js('window.__previewClicks = 0; 0');
+      await inShadow(notesLabel, 'el.click()');
       await sleep(300);
-      check(sc, "clicking a file chip still previews it in AionUi", (await posts('/api/shell/open-file')).length === 0 && (await js('window.__previewClicks')) === 1);
+      p = await posts('/api/shell/open-file');
+      check(sc, "clicking a file chip opens the file outside AionDX by default, and not in a preview tab", p.length === 1 && p[0].body.file_path === 'C:/Work/Project/notes.md' && (await js('window.__previewClicks')) === 0, JSON.stringify(p));
       await js('window.__calls.length = 0; 0');
+      await inShadow(notesLabel, altClick);
+      await sleep(300);
+      check(sc, 'Alt+click on a file chip uses the other choice: the preview', (await posts('/api/shell/open-file')).length === 0 && (await js('window.__previewClicks')) === 1);
+      // A chip that has just appeared, before the folder check has marked it, still goes to Explorer.
+      await js(`(() => { const root = document.getElementById('md1').shadowRoot; const s = document.createElement('span'); s.setAttribute('data-local-file-path', 'C:/Work/Project/fresh/'); s.innerHTML = '<button class="markdown-local-file-link" id="fresh">fresh folder</button>'; root.querySelector('p').appendChild(s); window.__previewClicks = 0; window.__calls.length = 0; return 0; })()`);
+      await inShadow('#fresh', 'el.click()');
+      await sleep(300);
+      p = await posts('/api/shell/open-folder-with');
+      check(sc, 'a folder chip clicked before the page has checked it still opens in Explorer, not a tab', p.length === 1 && p[0].body.folder_path === 'C:/Work/Project/fresh/' && (await js('window.__previewClicks')) === 0, JSON.stringify(p));
+      await js("window.__aionDx.setOption('links.files', 'preview'); window.__calls.length = 0; window.__previewClicks = 0; 0");
+      await inShadow(notesLabel, 'el.click()');
+      await sleep(300);
+      check(sc, "with the option set to preview, a file chip previews in AionDX", (await posts('/api/shell/open-file')).length === 0 && (await js('window.__previewClicks')) === 1);
+      await js("window.__aionDx.setOption('links.files', undefined); window.__calls.length = 0; 0");
       await js('window.__aionDx.decorateLinks()');
       await sleep(200);
-      check(sc, 'looking again adds no second button', (await js(`document.getElementById('md1').shadowRoot.querySelectorAll('.aiondx-ext').length`)) === 2);
+      check(sc, 'looking again adds no second button', (await js(`document.getElementById('md1').shadowRoot.querySelectorAll('.aiondx-ext').length`)) === 3);
     }
 
     // ---- Stop must stop (R-017, 2026-10-01): the draft box does not restart the agent after Stop ----
@@ -3114,7 +3132,7 @@ async function pageTarget() {
       await addSection();
       await sleep(700);
       const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
-      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.external', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.external', 'links.files', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
       check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.external' && o.default === 'system' && o.choices.length === 2) &&
         schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));
