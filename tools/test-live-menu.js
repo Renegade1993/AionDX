@@ -34,11 +34,14 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
     for (let i = 0; i < 60; i++) { if ((await app.js('!!window.__aionDx')) === true) break; await sleep(1000); }
     check('the page script is loaded', (await app.js('!!window.__aionDx && typeof window.__aionDx.imagePathAt')) === true || (await app.js('typeof (window.__aionDx || {}).imagePathAt')) === 'function');
 
+    await sleep(8000); // the page redraws itself once while it starts, which would remove the test's elements
     // A link
     await app.js(`(() => { const a = document.createElement('a'); a.id = 'tl'; a.href = 'https://example.com/page'; a.textContent = 'example link'; a.style.cssText = 'position:fixed;left:40px;top:120px;z-index:99999;background:#fff;color:#00f;padding:6px'; document.body.appendChild(a); return 0; })()`);
     await sleep(200);
     const link = await centerOf('#tl');
-    const m1 = link && await rightClickAt(link.x, link.y);
+    // The menu is registered a moment after the page script: look again for up to half a minute.
+    let m1 = null;
+    for (let i = 0; i < 12 && link && !(m1 && m1.labels.length); i++) { if (i) await sleep(1700); m1 = await rightClickAt(link.x, link.y); }
     check('right-clicking a web link offers Open link in browser and Copy link', m1 && JSON.stringify(m1.labels) === JSON.stringify(['Open link in browser', 'Copy link']), JSON.stringify(m1));
 
     // A picture whose file the page knows
@@ -46,7 +49,8 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
     await app.js(`(() => { window.__aionDx.rememberImage(${JSON.stringify(DATA)}, 'C:\\\\Users\\\\me\\\\pics\\\\one.png'); const i = document.createElement('img'); i.id = 'pic'; i.src = ${JSON.stringify(DATA)}; i.style.cssText = 'position:fixed;left:40px;top:200px;width:80px;height:80px;z-index:99999;image-rendering:pixelated'; document.body.appendChild(i); return 0; })()`);
     await sleep(300);
     const pic = await centerOf('#pic');
-    const m2 = pic && await rightClickAt(pic.x + 10, pic.y + 10);
+    let m2 = null;
+    for (let i = 0; i < 12 && pic && !(m2 && m2.labels.length); i++) { if (i) await sleep(1700); m2 = await rightClickAt(pic.x + 10, pic.y + 10); }
     check('right-clicking a picture offers Copy image and Open image location, with the file the page knows', m2 && JSON.stringify(m2.labels) === JSON.stringify(['Copy image', 'Open image location']) && /one\.png$/.test(m2.image), JSON.stringify(m2));
     await app.js(`(() => { const i = document.createElement('img'); i.id = 'pic2'; i.src = ${JSON.stringify(DATA + 'AAAA')}; i.style.cssText = 'position:fixed;left:140px;top:200px;width:80px;height:80px;z-index:99999'; document.body.appendChild(i); return 0; })()`);
     await sleep(300);
