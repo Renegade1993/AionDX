@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-20.2';
+  var BUILD = '2026-10-22.1';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -689,8 +689,6 @@
   var OPTIONS_KEY = 'aiondx.options', OPTIONS_SCHEMA_KEY = 'aiondx.options.schema';
   var OPTIONS_LS = KEY_PREFIX + 'options';
   var OPTIONS = [
-    { id: 'links.external', group: 'Links', type: 'choice', default: 'system', choices: [['system', 'The system browser'], ['tab', 'A tab inside AionDX']],
-      label: 'Open web links in', desc: 'Where a link in a chat opens. Alt+click uses the other one.' },
     { id: 'links.files', group: 'Links', type: 'choice', default: 'outside', choices: [['outside', 'Outside AionDX (its own program, or Explorer for a folder)'], ['preview', 'A preview tab inside AionDX']],
       label: 'Open file and folder links in', desc: 'Where a link to a file or folder on this PC opens. A folder always opens in Explorer. Alt+click uses the other one; Shift+click shows it in its folder.' },
     { id: 'spellcheck', group: 'Typing', type: 'bool', default: true,
@@ -1874,6 +1872,10 @@
       if (n.classList && (n.classList.contains('arco-dropdown') || n.classList.contains('arco-trigger-popup') ||
           n.classList.contains('arco-menu') || n.classList.contains('arco-modal'))) return;
       if (ours(n)) return;
+      // A link or a picture gets the main process's menu (Open link in browser, Copy link, Copy image). The colour menu used to take every
+      // right-click inside a reply and stop it there, so a link in a reply showed only the colours (2026-10-22).
+      if (n.tagName === 'A' && /^(?:https?|mailto):/i.test(n.href || '')) return;
+      if (n.tagName === 'IMG') return;
     }
     var items = colourItemsFor(path);
     if (!items.length) return;
@@ -7932,11 +7934,11 @@
 
   // ---------------------------------------------------------------- links open in the system browser; pictures know their file
 
-  // A request of 2026-10-20: "url's should open in the system's browser of choice, and not a tab inside AionDX by default, but this should be
-  // configurable". AionUi's markdown links call preview.openBrowserTab for any http(s) address (Markdown/index.tsx handleLinkClick). A click
-  // in the capture phase gets there first: with the option links.external at "system" (the default) the address goes to the system's default
-  // browser through AionCore's open-external route (http and https only), and AionUi's own handler never runs. Alt+click does the other one.
-  // Anchors that are AionDX's own, and anything that is not a plain left click, are left alone.
+  // A request of 2026-10-20: "url's should open in the system's browser of choice, and not a tab inside AionDX". On 2026-10-22 the option
+  // that put a link in a tab went with the built-in browser itself (patch 0012). AionUi's markdown links call
+  // preview.openBrowserTab for any http(s) address (Markdown/index.tsx handleLinkClick), which 0012 makes open the system browser too. A click in
+  // the capture phase gets there first: the address goes to the system's default browser through AionCore's open-external route (http and
+  // https only), and AionUi's own handler never runs. Anchors that are AionDX's own, and anything that is not a left click, are left alone.
   var lastGestureAt = 0;
   var lastContext = null;     // { el, at }: the target of the newest right-click, so the main process can ask which picture it was
   function installLinkRouting() {
@@ -7955,14 +7957,11 @@
     }, true);
     document.addEventListener('contextmenu', function (ev) { lastContext = { el: ev.target, at: Date.now() }; }, true);
     document.addEventListener('click', function (ev) {
-      if (disabled() || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.shiftKey || ev.metaKey) return;
+      if (disabled() || ev.defaultPrevented || ev.button !== 0) return;
       var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
       if (!a || a.closest('[class*="aiondx"]')) return;
       var href = a.href || '';
       if (!/^https?:\/\//i.test(href)) return;
-      var inTab = opt('links.external') === 'tab';
-      if (ev.altKey) inTab = !inTab;
-      if (inTab) return;
       ev.preventDefault();
       ev.stopPropagation();
       if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();

@@ -2446,6 +2446,14 @@ async function pageTarget() {
       await rightClick('#message-a1 [data-testid="message-text-content"]');
       menu = await js(`[...document.querySelectorAll('[data-testid="aiondx-colour-menu"] .arco-dropdown-menu-item')].map(i => i.textContent)`);
       check(sc, "right-clicking an agent's reply offers that agent's colour", JSON.stringify(menu) === JSON.stringify(["Colour of Claude Code (Main)'s replies..."]), JSON.stringify(menu));
+      // A link inside a reply gets the main process's menu (Open link in browser, Copy link): the colour menu stays out of its way (2026-10-22).
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      await js(`(() => { const a = document.createElement('a'); a.id = 'reply-link'; a.href = 'https://example.com/x'; a.textContent = 'a link in a reply';
+        document.querySelector('#message-a1 [data-testid="message-text-content"]').appendChild(a); return 0; })()`);
+      await rightClick('#reply-link');
+      check(sc, 'right-clicking a link in a reply shows no colour menu, so the link menu can open', !(await js('!!document.querySelector(\'[data-testid="aiondx-colour-menu"]\')')));
+      await js(`document.getElementById('reply-link').remove(); 0`);
+      await rightClick('#message-a1 [data-testid="message-text-content"]');
       await humanClick('[data-testid="aiondx-colour-menu"] [data-colour-key="agent:cc33dd44"]');
       const hash = await js('location.hash');
       await js(`(() => { const sec = document.createElement('section'); sec.id = 'fake-appearance'; const grid = document.createElement('div'); sec.appendChild(grid);
@@ -3132,11 +3140,11 @@ async function pageTarget() {
       await addSection();
       await sleep(700);
       const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
-      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.external', 'links.files', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
-      check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.external' && o.default === 'system' && o.choices.length === 2) &&
+      check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.files' && o.default === 'outside' && o.choices.length === 2) && !schema.options.some((o) => o.id === 'links.external') &&
         schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));
-      check(sc, 'links open in the system browser by default', (await js(`window.__aionDx.option('links.external')`)) === 'system');
+      check(sc, 'there is no option to open web links inside AionDX', (await js(`window.__aionDx.option('links.external')`)) === undefined);
       await js(`(() => { const i = document.querySelector('[data-testid="aiondx-opt-spellcheck"]'); i.checked = false; i.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
       await sleep(400);
       const rec = (await store())['aiondx.options'] || {};
@@ -3147,10 +3155,10 @@ async function pageTarget() {
       check(sc, 'Reset puts the default back, and the store no longer holds it', (await js(`window.__aionDx.option('spellcheck')`)) === true && !(((await store())['aiondx.options'] || {}).values || {}).spellcheck &&
         (await js(`document.querySelector('[data-testid="sendbox-input"]').getAttribute('spellcheck')`)) === 'true');
       // The command line (or an agent) writes the store; the page takes it.
-      await js(`(() => { window.__stub.store['aiondx.options'] = { values: { 'links.external': 'tab', 'stop.show': 9999, 'nonsense': 1 }, at: Date.now() + 5000, by: 'agent' }; return window.__aionDx.pullNow(); })()`);
+      await js(`(() => { window.__stub.store['aiondx.options'] = { values: { 'links.files': 'preview', 'stop.show': 9999, 'nonsense': 1 }, at: Date.now() + 5000, by: 'agent' }; return window.__aionDx.pullNow(); })()`);
       await sleep(400);
-      check(sc, 'a newer value from the store (an agent, the command line) is applied, clamped to its limits', (await js(`window.__aionDx.option('links.external')`)) === 'tab' && (await js(`window.__aionDx.option('stop.show')`)) === 120 &&
-        (await js(`document.querySelector('[data-testid="aiondx-opt-links.external"]').value`)) === 'tab');
+      check(sc, 'a newer value from the store (an agent, the command line) is applied, clamped to its limits', (await js(`window.__aionDx.option('links.files')`)) === 'preview' && (await js(`window.__aionDx.option('stop.show')`)) === 120 &&
+        (await js(`document.querySelector('[data-testid="aiondx-opt-links.files"]').value`)) === 'preview');
       check(sc, 'a value the list does not know is ignored', !('nonsense' in (await js(`window.__aionDx.options().values`))));
     }
     {
@@ -3174,15 +3182,13 @@ async function pageTarget() {
       check(sc, "and AionUi's own tab handler never hears it", (await js(`window.__tab`)) === 0);
       await js(`(() => { document.getElementById('tl').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, altKey: true })); return 0; })()`);
       await sleep(300);
-      check(sc, 'Alt+click uses the other choice: the tab handler runs, the system browser is not asked again', (await js(`window.__tab`)) === 1 && (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 1);
-      await js(`window.__aionDx.setOption('links.external', 'tab'); 0`);
-      await js(`(() => { document.getElementById('tl').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })); return 0; })()`);
+      check(sc, 'Alt+click goes to the system browser too: there is no tab to choose', (await js(`window.__tab`)) === 0 && (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 2);
+      await js(`(() => { document.getElementById('tl').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ctrlKey: true })); return 0; })()`);
       await sleep(300);
-      check(sc, 'with the option on "tab", a plain click is left to AionUi', (await js(`window.__tab`)) === 2 && (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 1);
-      await js(`window.__aionDx.setOption('links.external', undefined); 0`);
+      check(sc, 'Ctrl+click goes to the system browser too', (await js(`window.__tab`)) === 0 && (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 3);
       await js(`(() => { document.getElementById('ml').addEventListener('click', e => e.preventDefault()); document.getElementById('ml').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })); return 0; })()`);
       await sleep(200);
-      check(sc, 'a mailto link is not touched', (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 1);
+      check(sc, 'a mailto link is not touched', (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 3);
 
       // Pictures: the page keeps the file path each one was loaded from.
       const DATA = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';

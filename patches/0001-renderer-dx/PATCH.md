@@ -974,3 +974,8 @@ Requests of October 20th (K's morning list). Everything below is in `aionui-dx.j
   at the moment a team page was opened, and nothing recorded what made the page ask for it. See `! LLM Files\2026-10-20_Heroes-member-started-on-team-open.md`.
 - The ring-colour boxes are not written over while an edit waits for its commit (found by the new run: a render between a change and its commit reset the box).
 - Line endings: the file is LF, as in the repository.
+
+## October 22nd, 2026: build `2026-10-22.1`, web links always leave the app, the colour menu leaves links alone
+
+- The option `links.external` is removed. AionUi's built-in browser is gone (patch `0012-no-builtin-browser`), so a left click on a web link goes to the system browser whatever the modifier keys (Alt, Ctrl and Shift used to pick or skip the tab).
+- The colour menu (right-click in a reply) no longer handles a right-click whose path contains a web or mail link or a picture. It used to call `preventDefault` on every right-click inside a reply, which stops Electron's `context-menu` event, so a link in a reply showed only the colour item and none of Open link in browser, Copy link, Copy image (patch 0009, `aiondx-menu.js`).

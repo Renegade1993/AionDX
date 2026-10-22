@@ -110,7 +110,7 @@ if ($idx -notmatch 'aiondx-voice\.js') {
 Copy-Item "$root\patches\0011-voice\aiondx-voice.js" "$ext\out\renderer\aiondx-voice.js" -Force
 Copy-Item "$root\patches\0011-voice\aiondx-voice-ui.js" "$ext\out\renderer\aiondx-voice-ui.js" -Force
 Say "patch 0011: aiondx-voice.js, aiondx-voice-ui.js and their script tags"
-foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-identity')) {
+foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-identity', '0012-no-builtin-browser')) {
   Run $node @("$root\patches\$p\apply.js", $ext) "patch $p"
   Say "patch $p applied"
 }
