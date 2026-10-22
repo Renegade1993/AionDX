@@ -62,7 +62,7 @@ agent, version-pin chores), none touching anything an AionDX patch depends on.
 | B2 | Team runtime: queue, pause and resume, run-state, delivery-failure notices | harvest, watched | |
 | B3 | Conversation API and events: messages, status, `extra`, `turn.completed` | harvest, watched | |
 | B4 | Identity modes, auth, CSRF, runtime-token channel | harvest, watched | |
-| B5 | MCP injection into agent sessions | harvest, watched | |
+| B5 | MCP OAuth login and injection into agent sessions | harvest+patch | core-0007 |
 | B6 | Agent error classification | harvest, watched | |
 | B7 | Process Job objects | harvest, watched | |
 | B8 | Registry agents (new backends) | harvest, watched | |
