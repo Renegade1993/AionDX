@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-22.1';
+  var BUILD = '2026-10-24.1';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -7968,6 +7968,23 @@
       openInBrowser(href);
     }, true);
   }
+  // The anchor rail's history (patch 0013). AionUi's rail downloads a chat's whole history, page after page, to read the user turns out of it:
+  // 177 requests and 48 MB for a chat of 35,000 messages, on every open. AionCore patch core-0009 answers the same question in one request
+  // (GET /api/conversations/{id}/anchors: each turn's id and two 120-character previews). The rail's loader calls this with its own loader as the
+  // fall-back, which runs when AionCore is an older build or the request fails. The answer is shaped as the messages the rail's builder reads.
+  window.__aionDxAnchors = function (id, fallback) {
+    return getJson('/api/conversations/' + encodeURIComponent(id) + '/anchors').then(function (r) {
+      var items = r && r.data && Array.isArray(r.data.items) ? r.data.items : null;
+      if (!items) throw new Error('no anchors');
+      var out = [];
+      for (var i = 0; i < items.length; i++) {
+        var a = items[i];
+        out.push({ id: a.message_id, msg_id: a.msg_id, type: 'text', position: 'right', hidden: false, content: { content: a.question } });
+        if (a.answer) out.push({ id: a.message_id + ':reply', type: 'text', position: 'left', hidden: false, content: { content: a.answer } });
+      }
+      return out;
+    }).catch(function () { return fallback(id, { contentMode: 'compact' }); });
+  };
   function openInBrowser(url) {
     return postJson('/api/shell/open-external', { url: url }).then(function (r) {
       if (!r.ok) toast('Could not open the link in your browser.', url);

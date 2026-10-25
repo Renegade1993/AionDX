@@ -979,3 +979,7 @@ Requests of October 20th (K's morning list). Everything below is in `aionui-dx.j
 
 - The option `links.external` is removed. AionUi's built-in browser is gone (patch `0012-no-builtin-browser`), so a left click on a web link goes to the system browser whatever the modifier keys (Alt, Ctrl and Shift used to pick or skip the tab).
 - The colour menu (right-click in a reply) no longer handles a right-click whose path contains a web or mail link or a picture. It used to call `preventDefault` on every right-click inside a reply, which stops Electron's `context-menu` event, so a link in a reply showed only the colour item and none of Open link in browser, Copy link, Copy image (patch 0009, `aiondx-menu.js`).
+
+## October 24th, 2026: build `2026-10-24.1`, the rail's history in one request
+
+- `window.__aionDxAnchors(id, fallback)`: the anchor rail's loader (patch 0013, edit H1) calls it in place of AionUi's paged download of the whole history. It asks AionCore's `GET /api/conversations/{id}/anchors` (patch core-0009) and returns the turns shaped as the text messages the rail's own builder reads (a user message with the question, and a reply with the answer). If the request fails it calls the fallback, AionUi's own loader.

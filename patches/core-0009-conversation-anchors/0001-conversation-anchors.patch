@@ -1,0 +1,262 @@
+diff --git a/crates/aionui-conversation/src/routes.rs b/crates/aionui-conversation/src/routes.rs
+index 4c6daa8..8159f85 100644
+--- a/crates/aionui-conversation/src/routes.rs
++++ b/crates/aionui-conversation/src/routes.rs
+@@ -123,6 +123,7 @@ pub fn conversation_routes(state: ConversationRouterState) -> Router {
+         .route("/api/conversations/{id}/fork", post(fork))
+         .route("/api/conversations/{id}/associated", get(associated))
+         .route("/api/conversations/{id}/messages", get(list_msg).post(send_msg))
++        .route("/api/conversations/{id}/anchors", get(list_anchors))
+         // MUST precede the `{messageId}` wildcard below: registered after it,
+         // "latest" would be captured as a message id and 404.
+         .route("/api/conversations/{id}/messages/latest", get(latest_msg))
+@@ -265,6 +266,16 @@ async fn list_msg(
+     Ok(Json(ApiResponse::ok(result)))
+ }
+ 
++/// The anchor rail's ticks for the whole conversation, in one answer (see `ConversationService::list_anchors`).
++async fn list_anchors(
++    State(state): State<ConversationRouterState>,
++    Extension(user): Extension<CurrentUser>,
++    Path(id): Path<String>,
++) -> Result<Json<ApiResponse<crate::service::ConversationAnchorsResponse>>, ApiError> {
++    let result = state.service.list_anchors(&user.id, &id).await.map_err(ApiError::from)?;
++    Ok(Json(ApiResponse::ok(result)))
++}
++
+ #[derive(serde::Deserialize)]
+ struct MessagePathParams {
+     id: String,
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index 2f1bc18..34f8c4c 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -3147,6 +3147,228 @@ fn effective_message_limit(limit: Option<u32>) -> u32 {
+     }
+ }
+ 
++/// Longest question or reply preview an anchor carries (UTF-16 units, as the page counts them).
++const ANCHOR_PREVIEW_MAX_LEN: usize = 120;
++
++/// One tick of the chat's anchor rail: a user turn, with a short preview of the question and of the first reply.
++#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
++pub struct ConversationAnchor {
++    pub message_id: String,
++    pub msg_id: Option<String>,
++    pub question: String,
++    pub answer: String,
++}
++
++/// Body of `GET /api/conversations/:id/anchors`.
++#[derive(Debug, Clone, serde::Serialize)]
++pub struct ConversationAnchorsResponse {
++    pub items: Vec<ConversationAnchor>,
++}
++
++/// A visible text message reduced to what the rail needs.
++struct AnchorSource {
++    id: String,
++    msg_id: Option<String>,
++    from_user: bool,
++    preview: String,
++}
++
++/// The text of a message, whitespace collapsed and cut to the preview length. `None` for anything that is not a
++/// text message with words in it. Same rules as the page's `normalizeText` and `truncate`.
++fn anchor_preview(content: &str) -> Option<String> {
++    let value: serde_json::Value = serde_json::from_str(content).ok()?;
++    let text = value.get("content")?.as_str()?;
++    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
++    if normalized.is_empty() {
++        return None;
++    }
++    let total: usize = normalized.chars().map(char::len_utf16).sum();
++    if total <= ANCHOR_PREVIEW_MAX_LEN {
++        return Some(normalized);
++    }
++    let mut out = String::new();
++    let mut used = 0usize;
++    for ch in normalized.chars() {
++        let width = ch.len_utf16();
++        if used + width > ANCHOR_PREVIEW_MAX_LEN - 1 {
++            break;
++        }
++        out.push(ch);
++        used += width;
++    }
++    out.push('…');
++    Some(out)
++}
++
++/// Turns, oldest first: each user message starts one, and the first reply after it is its answer.
++fn fold_anchors(sources: impl IntoIterator<Item = AnchorSource>) -> Vec<ConversationAnchor> {
++    let mut anchors: Vec<ConversationAnchor> = Vec::new();
++    let mut current: Option<ConversationAnchor> = None;
++    for source in sources {
++        if source.from_user {
++            if let Some(done) = current.take() {
++                anchors.push(done);
++            }
++            current = Some(ConversationAnchor {
++                message_id: source.id,
++                msg_id: source.msg_id,
++                question: source.preview,
++                answer: String::new(),
++            });
++        } else if let Some(open) = current.as_mut()
++            && open.answer.is_empty()
++        {
++            open.answer = source.preview;
++        }
++    }
++    if let Some(done) = current {
++        anchors.push(done);
++    }
++    anchors
++}
++
++impl ConversationService {
++    /// The anchors of a conversation's whole history in one answer.
++    ///
++    /// The chat page's side rail needs one tick per user turn, however long the chat is. It used to get them by
++    /// downloading every message in pages of 200 (177 requests, 48 MB, for a chat of 35,000 messages) and
++    /// reading the turns out in the browser. This walks the same pages inside AionCore and returns only the
++    /// previews, a few hundred KB.
++    pub async fn list_anchors(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++    ) -> Result<ConversationAnchorsResponse, ConversationError> {
++        self.conversation_repo
++            .get(user_id, conversation_id)
++            .await?
++            .ok_or_else(|| ConversationError::NotFound {
++                id: conversation_id.to_owned(),
++            })?;
++
++        // Pages arrive newest first; each one is oldest first inside.
++        let mut pages: Vec<Vec<AnchorSource>> = Vec::new();
++        let mut direction = MessagePageDirection::InitialLatest;
++        loop {
++            let page = self
++                .conversation_repo
++                .list_messages_page(
++                    user_id,
++                    conversation_id,
++                    &MessagePageParams {
++                        limit: MAX_MESSAGE_PAGE_LIMIT,
++                        direction,
++                    },
++                )
++                .await?;
++            let oldest = page.items.first().map(MessagePageCursor::from);
++            let sources = page
++                .items
++                .iter()
++                .filter(|row| !row.hidden && row.r#type == "text")
++                .filter_map(|row| {
++                    let from_user = match row.position.as_deref() {
++                        Some("right") => true,
++                        Some("left") => false,
++                        _ => return None,
++                    };
++                    Some(AnchorSource {
++                        id: row.id.clone(),
++                        msg_id: row.msg_id.clone(),
++                        from_user,
++                        preview: anchor_preview(&row.content)?,
++                    })
++                })
++                .collect::<Vec<_>>();
++            pages.push(sources);
++            match (page.has_more_before, oldest) {
++                (true, Some(cursor)) => direction = MessagePageDirection::Before { cursor },
++                _ => break,
++            }
++        }
++
++        let items = fold_anchors(pages.into_iter().rev().flatten());
++        Ok(ConversationAnchorsResponse { items })
++    }
++}
++
++#[cfg(test)]
++mod anchor_tests {
++    use super::*;
++
++    fn source(id: &str, from_user: bool, text: &str) -> AnchorSource {
++        AnchorSource {
++            id: id.to_owned(),
++            msg_id: Some(format!("m-{id}")),
++            from_user,
++            preview: text.to_owned(),
++        }
++    }
++
++    #[test]
++    fn preview_collapses_whitespace_and_skips_empty_or_non_text() {
++        assert_eq!(
++            anchor_preview(r#"{"content":"  hello \n\n  there\tworld "}"#).as_deref(),
++            Some("hello there world")
++        );
++        assert_eq!(anchor_preview(r#"{"content":"  \n "}"#), None);
++        assert_eq!(anchor_preview(r#"{"content":42}"#), None);
++        assert_eq!(anchor_preview(r#"{"other":"x"}"#), None);
++        assert_eq!(anchor_preview("not json"), None);
++    }
++
++    #[test]
++    fn preview_is_cut_at_120_units_with_an_ellipsis() {
++        let long = "a".repeat(300);
++        let out = anchor_preview(&format!(r#"{{"content":"{long}"}}"#)).unwrap();
++        assert_eq!(out.chars().count(), 120);
++        assert!(out.ends_with('…'));
++        assert_eq!(&out[..119], "a".repeat(119));
++        let exact = "b".repeat(120);
++        assert_eq!(anchor_preview(&format!(r#"{{"content":"{exact}"}}"#)).unwrap(), exact);
++    }
++
++    #[test]
++    fn preview_counts_utf16_units_like_the_page() {
++        // 119 two-unit characters would be 238 units: the cut lands after 59 of them (118 units) and the ellipsis.
++        let wide = "😀".repeat(119);
++        let out = anchor_preview(&format!(r#"{{"content":"{wide}"}}"#)).unwrap();
++        assert_eq!(out.chars().filter(|c| *c == '😀').count(), 59);
++        assert!(out.ends_with('…'));
++    }
++
++    #[test]
++    fn each_user_message_starts_a_turn_and_the_first_reply_is_its_answer() {
++        let anchors = fold_anchors(vec![
++            source("a", false, "reply before any question"),
++            source("u1", true, "first question"),
++            source("r1", false, "first reply"),
++            source("r2", false, "second reply of the same turn"),
++            source("u2", true, "second question"),
++            source("u3", true, "third question, no reply yet"),
++        ]);
++        let got: Vec<(&str, &str, &str)> = anchors
++            .iter()
++            .map(|a| (a.message_id.as_str(), a.question.as_str(), a.answer.as_str()))
++            .collect();
++        assert_eq!(
++            got,
++            vec![
++                ("u1", "first question", "first reply"),
++                ("u2", "second question", ""),
++                ("u3", "third question, no reply yet", ""),
++            ]
++        );
++        assert_eq!(anchors[0].msg_id.as_deref(), Some("m-u1"));
++    }
++
++    #[test]
++    fn no_user_message_means_no_anchor() {
++        assert!(fold_anchors(vec![source("a", false, "only a reply")]).is_empty());
++        assert!(fold_anchors(Vec::new()).is_empty());
++    }
++}
++
+ fn message_locator_count(query: &ListMessagesQuery) -> usize {
+     usize::from(query.before.is_some())
+         + usize::from(query.after.is_some())

@@ -62,13 +62,15 @@ async function launch(opts) {
   const child = quiet ? spawn(quiet, [exe].concat(appArgs), { env, stdio: 'ignore', windowsHide: true, detached: false })
     : spawn(exe, appArgs, { env, stdio: 'ignore', windowsHide: true, detached: false });
   let closed = false;
+  let deadline = null;
   const close = async () => {
     if (closed) return;
     closed = true;
+    clearTimeout(deadline);        // a test that opens a second app must not be ended by the first one's deadline
     try { if (child.pid) spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 20000 }); } catch (e) { /* gone */ }
     try { if (hadKey && fs.existsSync(regBackup)) reg(['import', regBackup]); else if (!hadKey) reg(['delete', 'HKCU\\Software\\Classes\\aionui', '/f']); } catch (e) { /* best effort */ }
   };
-  const deadline = setTimeout(() => { console.log('live-app: deadline passed, killing the app'); close().then(() => process.exit(3)); }, opts.deadlineMs || 300000);
+  deadline = setTimeout(() => { console.log('live-app: deadline passed, killing the app'); close().then(() => process.exit(3)); }, opts.deadlineMs || 300000);
   if (deadline.unref) deadline.unref();
   child.on('error', () => { closed = true; });
 
