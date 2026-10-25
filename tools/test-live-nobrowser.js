@@ -8,6 +8,7 @@
  *   node tools/test-live-nobrowser.js [--stage DIR]
  */
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { launch, sleep } = require('./live-app');
@@ -58,5 +59,6 @@ async function settled(app, want, ms) {      // the start-up migration runs a fe
     check('the page offers no built-in browser (no item text, no option)', page && page.text === false && page.opts === undefined, JSON.stringify(page));
   } finally { await second.close(); }
   console.log('\n' + pass + '/' + (pass + fail) + ' passed');
+  try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) { /* in use */ }
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.log('ERROR', e && e.stack || e); process.exit(2); });

@@ -340,3 +340,7 @@ From two reports from another PC (a model-refresh package built there, and a tea
   `CLAUDE_CODE_OAUTH_TOKEN` from every command it runs and passes `ANTHROPIC_AUTH_TOKEN` through, so a tool call that listed its variables
   printed the token into the chat. The router now sets `CLAUDE_CODE_OAUTH_TOKEN` only and removes an inherited `ANTHROPIC_AUTH_TOKEN`. Not
   usable on Windows (`tools\probe-token-fd.js`): `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` and `CCR_OAUTH_TOKEN_FILE`.
+
+## October 24th, 2026: no scratch folders left in %TEMP%
+
+The model check at AionDX's start (`aiondx-model-refresh.js`, and the catalog it calls) made `%TEMP%\aiondx-refresh-*` and `aiondx-catalog-*` scratch folders and removed them with one `rmSync`, which failed while Claude Code still held its working folder; one folder stayed per start (more than 150 on the development PC). `removeScratch` in `claude-model-catalog.js` now tries for up to two seconds (8 tries, 250 ms apart), and each refresh run removes such folders older than an hour (`sweepScratch`). Tests: `test-model-refresh.js` 18/18, `test-model-catalog.js` 31/31, and neither leaves anything in `%TEMP%`.

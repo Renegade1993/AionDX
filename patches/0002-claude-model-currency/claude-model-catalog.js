@@ -193,11 +193,23 @@ async function refresh(opts) {
     if (!opts.dryRun) { try { writeAtomic(stampFile, JSON.stringify(Object.assign({}, stamp, { failedAt: Date.now(), failed: String(e.message).slice(0, 200) }), null, 2)); } catch (x) { /* folder unwritable */ } }
     throw e;
   } finally {
-    try { fs.rmSync(scratch, { recursive: true, force: true }); } catch (e) { /* in use */ }
+    removeScratch(scratch);
   }
 }
 
-module.exports = { refresh, buildList, familyOf, askClaude, STAMP };
+/** Removes a scratch folder. Claude Code can still hold its working folder for a moment after it answers, which made a single try fail
+ *  and leave the folder in %TEMP% on every run; so it tries again for up to two seconds (a short, bounded wait). */
+function removeScratch(dir) {
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let i = 0; i < 8; i++) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* in use */ }
+    if (!fs.existsSync(dir)) return true;
+    Atomics.wait(pause, 0, 0, 250);
+  }
+  return false;
+}
+
+module.exports = { refresh, buildList, familyOf, askClaude, removeScratch, STAMP };
 
 if (require.main === module) {
   const a = process.argv.slice(2);

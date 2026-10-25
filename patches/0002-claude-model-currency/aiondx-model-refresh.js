@@ -263,7 +263,7 @@ const claudeProvider = {
       try {
         const env = Object.assign({}, g.env, { CLAUDE_CONFIG_DIR: g.dir, CLAUDE_SECURESTORAGE_CONFIG_DIR: g.env.CLAUDE_SECURESTORAGE_CONFIG_DIR || g.dir });
         const work = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-refresh-'));
-        try { got = await catalog.askClaude(found.exe, env, work, ctx.exeArgs); } finally { try { fs.rmSync(work, { recursive: true, force: true }); } catch (e) { /* in use */ } }
+        try { got = await catalog.askClaude(found.exe, env, work, ctx.exeArgs); } finally { if (catalog.removeScratch) catalog.removeScratch(work); else { try { fs.rmSync(work, { recursive: true, force: true }); } catch (e) { /* in use */ } } }
       } catch (e) { log('claude: the list for ' + names + ' could not be read: ' + e.message); return; }
       if (!got.models.length) { log('claude: Claude Code listed no models for ' + names + ' (not signed in?); rows left alone'); return; }
       for (const row of g.rows) {
@@ -280,6 +280,21 @@ const PROVIDERS = [claudeProvider];
 
 function db(readOnly) { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(DB, { readOnly }); if (!readOnly) d.exec('PRAGMA busy_timeout = 10000'); return d; }
 
+/** The scratch folders earlier runs could not remove: Claude Code still had its working folder open when the run ended, so each start of
+ *  AionDX left an empty %TEMP%\aiondx-refresh-* behind (more than 150 by October 24th, 2026). Any older than an hour go now. */
+function sweepScratch() {
+  const tmp = os.tmpdir();
+  let n = 0;
+  try {
+    for (const e of fs.readdirSync(tmp, { withFileTypes: true })) {
+      if (!e.isDirectory() || !/^aiondx-(refresh|catalog)-(?!test-)/.test(e.name)) continue;
+      const p = path.join(tmp, e.name);
+      try { if (Date.now() - fs.statSync(p).mtimeMs > 3600000) { fs.rmSync(p, { recursive: true, force: true }); n++; } } catch (x) { /* in use */ }
+    }
+  } catch (e) { /* no temp folder */ }
+  if (n) log('removed ' + n + ' scratch folder(s) earlier runs left in ' + tmp);
+}
+
 async function main(opts) {
   opts = opts || {};
   if (!fs.existsSync(DB)) { log('no AionUi database at ' + DB + '; nothing to do'); return 0; }
@@ -288,6 +303,7 @@ async function main(opts) {
   const lock = readJson(LOCK);
   if (lock && lock.at && Date.now() - lock.at < DEADLINE_MS + 30000 && lock.pid !== process.pid) { log('another refresh is running (pid ' + lock.pid + ')'); return 0; }
   fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, at: Date.now() }));
+  sweepScratch();
   try {
     const d0 = db(true);
     let cols, rows;

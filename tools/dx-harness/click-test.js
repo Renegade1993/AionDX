@@ -2187,6 +2187,23 @@ async function pageTarget() {
       // Another kind of agent: a new chat in the same folder, this conversation in its message box.
       await humanClick('[data-testid="aiondx-account"]');
       await sleep(300);
+      // On a window too short for the menu either way (a laptop screen), it stays inside the window and scrolls (2026-10-24).
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      await send('Emulation.setDeviceMetricsOverride', { width: 1076, height: 300, deviceScaleFactor: 1, mobile: false });
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-account"]');
+      await sleep(300);
+      const fit = await js(`(() => { const m = document.querySelector('.aiondx-acct-menu'); if (!m) return null; const b = m.getBoundingClientRect();
+        return { top: Math.round(b.top), bottom: Math.round(b.bottom), h: innerHeight, scrolls: m.scrollHeight > m.clientHeight }; })()`);
+      check(sc, 'on a short window the agent menu stays inside it and scrolls', fit && fit.top >= 0 && fit.bottom <= fit.h && fit.scrolls, JSON.stringify(fit));
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      await send('Emulation.clearDeviceMetricsOverride');
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-account"]');
+      await sleep(300);
+      // the menu may scroll inside on this window: bring the item into view in it, as a person scrolls a menu
+      await js(`(() => { const e = document.querySelector('.aiondx-acct-menu [data-assistant="bare:codex"]'); if (e) e.scrollIntoView({ block: 'nearest' }); return 0; })()`);
+      await sleep(150);
       await humanClick('.aiondx-acct-menu [data-assistant="bare:codex"]');
       const conf2 = await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`);
       check(sc, 'continuing with another kind of agent asks first, and says this chat stays', /^Continue with Codex\?/.test(conf2) && /This chat stays as it is\./.test(conf2), conf2);

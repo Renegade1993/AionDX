@@ -983,3 +983,7 @@ Requests of October 20th (K's morning list). Everything below is in `aionui-dx.j
 ## October 24th, 2026: build `2026-10-24.1`, the rail's history in one request
 
 - `window.__aionDxAnchors(id, fallback)`: the anchor rail's loader (patch 0013, edit H1) calls it in place of AionUi's paged download of the whole history. It asks AionCore's `GET /api/conversations/{id}/anchors` (patch core-0009) and returns the turns shaped as the text messages the rail's own builder reads (a user message with the question, and a reply with the answer). If the request fails it calls the fallback, AionUi's own loader.
+
+## October 24th, 2026 (later): build `2026-10-24.2`, the agent menu fits a short window
+
+The agent control's menu (switch agent, continue in a new chat, swap a member) opened below the control or above it, and when it fitted neither way it simply ran off the bottom of the window: on a 514-pixel-tall page its last items were out of reach, and a click there closed it. `placeAcctMenu` now puts it on the side with more room, as tall as that room, scrolling inside. Found by the click suite after Edge's window lost height; the suite now checks the menu stays inside the window, and its clicks scroll an item into view first, as a person would.

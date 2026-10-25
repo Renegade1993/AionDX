@@ -124,5 +124,6 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     check('the test ran', false, e && e.stack || e);
   } finally { await app.close(); }
   console.log('\n' + pass + '/' + (pass + fail) + ' passed');
+  try { fs.rmSync(profile, { recursive: true, force: true }); fs.rmSync(path.join(os.tmpdir(), 'aiondx-anchors-seed.py'), { force: true }); } catch (e) { /* in use */ }
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.log('ERROR', e && e.stack || e); process.exit(2); });

@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-24.1';
+  var BUILD = '2026-10-24.2';
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -3552,11 +3552,20 @@
   function placeAcctMenu(pill) {
     if (!acctMenu || !pill) return;
     var r = pill.getBoundingClientRect();
+    acctMenu.style.maxHeight = '';
+    acctMenu.style.overflowY = '';
     var w = acctMenu.offsetWidth || 300;
     var h = acctMenu.offsetHeight || 0;
     acctMenu.style.left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8) + 'px';
-    var top = r.bottom + 6;
-    if (top + h > window.innerHeight - 8 && r.top - 6 - h >= 8) top = r.top - 6 - h;
+    // Below the control if it fits, else above; on a window too short for either (a laptop screen, a small window), on the side with
+    // more room, as tall as that room, scrolling inside: its lower items used to fall off the bottom of the window where no click reaches.
+    var below = window.innerHeight - 8 - (r.bottom + 6), above = r.top - 6 - 8;
+    var top;
+    if (h <= below) top = r.bottom + 6;
+    else if (h <= above) top = r.top - 6 - h;
+    else if (below >= above) { top = r.bottom + 6; acctMenu.style.maxHeight = Math.max(120, below) + 'px'; }
+    else { var room = Math.max(120, above); acctMenu.style.maxHeight = room + 'px'; top = r.top - 6 - room; }
+    if (acctMenu.style.maxHeight) acctMenu.style.overflowY = 'auto';
     acctMenu.style.top = Math.max(8, top) + 'px';
     acctMenu.style.bottom = 'auto';
   }
