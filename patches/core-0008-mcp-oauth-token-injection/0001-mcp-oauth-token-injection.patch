@@ -1,0 +1,225 @@
+diff --git a/crates/aionui-mcp/src/routes.rs b/crates/aionui-mcp/src/routes.rs
+index 671818a..47687a5 100644
+--- a/crates/aionui-mcp/src/routes.rs
++++ b/crates/aionui-mcp/src/routes.rs
+@@ -1,11 +1,14 @@
+ #![allow(clippy::disallowed_types)]
+ 
++use std::collections::HashMap;
++
+ use axum::Router;
+ use axum::extract::rejection::JsonRejection;
+ use axum::extract::{Extension, Json, Path, State};
+ use axum::http::StatusCode;
+ use axum::response::{IntoResponse, Response};
+ use axum::routing::{get, post};
++use tracing::warn;
+ 
+ use aionui_api_types::{
+     ApiResponse, BatchImportMcpServersRequest, CreateMcpServerRequest, DetectedMcpServerResponse, ErrorResponse,
+@@ -200,6 +203,7 @@ async fn test_connection(
+ ) -> Result<Response, ApiError> {
+     let Json(req) = body.map_err(ApiError::from)?;
+     let transport = McpServerTransport::from(req.transport);
++    let transport = apply_stored_oauth_token(&state.oauth_service, &user.id, transport).await;
+     let result = state
+         .connection_test_service
+         .test_connection_with_runtime_scope(
+@@ -240,6 +244,57 @@ async fn test_connection(
+         .into_response())
+ }
+ 
++/// Merge a stored OAuth bearer token into a URL-based transport's headers.
++///
++/// `McpOAuthService::login` persists an access token to the DB but nothing
++/// ever reads it back onto an outgoing request — every connection test (and
++/// every real agent session, see `aionui-ai-agent::mcp_resolve`) only sends
++/// the static headers saved on the server record. That left the OAuth flow
++/// cosmetic: "Login successful" would fire, then the immediate re-test the
++/// UI runs afterward would still get a 401 and flip the server back to
++/// "needs auth" — both states visible at once. This attaches the token so
++/// the test (and whatever it reports) reflects the server's real auth state.
++/// Does nothing if the server config already sets its own `Authorization`
++/// header, or if no token is stored for the URL.
++async fn apply_stored_oauth_token(
++    oauth_service: &McpOAuthService,
++    user_id: &str,
++    transport: McpServerTransport,
++) -> McpServerTransport {
++    match transport {
++        McpServerTransport::Http { url, headers } => {
++            let headers = merge_oauth_header(oauth_service, user_id, &url, headers).await;
++            McpServerTransport::Http { url, headers }
++        }
++        McpServerTransport::Sse { url, headers } => {
++            let headers = merge_oauth_header(oauth_service, user_id, &url, headers).await;
++            McpServerTransport::Sse { url, headers }
++        }
++        stdio @ McpServerTransport::Stdio { .. } => stdio,
++    }
++}
++
++async fn merge_oauth_header(
++    oauth_service: &McpOAuthService,
++    user_id: &str,
++    url: &str,
++    mut headers: HashMap<String, String>,
++) -> HashMap<String, String> {
++    if headers.keys().any(|k| k.eq_ignore_ascii_case("authorization")) {
++        return headers;
++    }
++
++    match oauth_service.get_token(user_id, url).await {
++        Ok(Some(token)) => {
++            headers.insert("Authorization".to_string(), format!("Bearer {token}"));
++        }
++        Ok(None) => {}
++        Err(e) => warn!(url, error = %e, "Failed to look up stored OAuth token for MCP server"),
++    }
++
++    headers
++}
++
+ fn connection_test_failure_status(code: McpConnectionTestErrorCode) -> StatusCode {
+     match code {
+         McpConnectionTestErrorCode::CommandNotFound
+@@ -395,3 +450,139 @@ mod error_mapping_tests {
+         assert!(matches!(err, ApiError::Internal(_)));
+     }
+ }
++
++#[cfg(test)]
++mod oauth_token_merge_tests {
++    use super::*;
++    use aionui_db::models::OAuthTokenRow;
++    use aionui_db::{DbError, UpsertOAuthTokenParams};
++
++    const TEST_USER_ID: &str = "user-1";
++    const TEST_URL: &str = "https://mcp.higgsfield.ai/mcp";
++
++    /// Reports a fixed stored token for `TEST_URL`, mirroring the shape of a
++    /// real `IOAuthTokenRepository::get_by_url` hit after a successful login.
++    struct StoredTokenRepo;
++
++    #[async_trait::async_trait]
++    impl aionui_db::IOAuthTokenRepository for StoredTokenRepo {
++        async fn get_by_url(&self, _user_id: &str, server_url: &str) -> Result<Option<OAuthTokenRow>, DbError> {
++            if server_url == TEST_URL {
++                Ok(Some(OAuthTokenRow {
++                    user_id: TEST_USER_ID.to_string(),
++                    server_url: TEST_URL.to_string(),
++                    access_token: "fresh_access_token".to_string(),
++                    refresh_token: None,
++                    token_type: "bearer".to_string(),
++                    expires_at: None,
++                    created_at: 0,
++                    updated_at: 0,
++                }))
++            } else {
++                Ok(None)
++            }
++        }
++
++        async fn upsert(&self, _params: UpsertOAuthTokenParams<'_>) -> Result<OAuthTokenRow, DbError> {
++            unimplemented!("not exercised by these tests")
++        }
++
++        async fn delete(&self, _user_id: &str, _server_url: &str) -> Result<(), DbError> {
++            unimplemented!("not exercised by these tests")
++        }
++
++        async fn list_authenticated_urls(&self, _user_id: &str) -> Result<Vec<String>, DbError> {
++            unimplemented!("not exercised by these tests")
++        }
++    }
++
++    fn oauth_service_with_stored_token() -> McpOAuthService {
++        McpOAuthService::new(std::sync::Arc::new(StoredTokenRepo), reqwest::Client::new())
++    }
++
++    #[tokio::test]
++    async fn http_transport_gets_stored_token_as_bearer_header() {
++        let svc = oauth_service_with_stored_token();
++        let transport = McpServerTransport::Http {
++            url: TEST_URL.to_string(),
++            headers: HashMap::new(),
++        };
++
++        let result = apply_stored_oauth_token(&svc, TEST_USER_ID, transport).await;
++
++        match result {
++            McpServerTransport::Http { headers, .. } => {
++                assert_eq!(headers.get("Authorization").map(String::as_str), Some("Bearer fresh_access_token"));
++            }
++            _ => panic!("expected Http"),
++        }
++    }
++
++    #[tokio::test]
++    async fn sse_transport_gets_stored_token_as_bearer_header() {
++        let svc = oauth_service_with_stored_token();
++        let transport = McpServerTransport::Sse {
++            url: TEST_URL.to_string(),
++            headers: HashMap::new(),
++        };
++
++        let result = apply_stored_oauth_token(&svc, TEST_USER_ID, transport).await;
++
++        match result {
++            McpServerTransport::Sse { headers, .. } => {
++                assert_eq!(headers.get("Authorization").map(String::as_str), Some("Bearer fresh_access_token"));
++            }
++            _ => panic!("expected Sse"),
++        }
++    }
++
++    #[tokio::test]
++    async fn no_stored_token_leaves_headers_untouched() {
++        let svc = oauth_service_with_stored_token();
++        let transport = McpServerTransport::Http {
++            url: "https://other.example.com/mcp".to_string(),
++            headers: HashMap::new(),
++        };
++
++        let result = apply_stored_oauth_token(&svc, TEST_USER_ID, transport).await;
++
++        match result {
++            McpServerTransport::Http { headers, .. } => assert!(headers.is_empty()),
++            _ => panic!("expected Http"),
++        }
++    }
++
++    #[tokio::test]
++    async fn existing_authorization_header_is_not_overwritten() {
++        let svc = oauth_service_with_stored_token();
++        let mut headers = HashMap::new();
++        headers.insert("Authorization".to_string(), "Bearer manually-configured".to_string());
++        let transport = McpServerTransport::Http {
++            url: TEST_URL.to_string(),
++            headers,
++        };
++
++        let result = apply_stored_oauth_token(&svc, TEST_USER_ID, transport).await;
++
++        match result {
++            McpServerTransport::Http { headers, .. } => {
++                assert_eq!(headers.get("Authorization").map(String::as_str), Some("Bearer manually-configured"));
++            }
++            _ => panic!("expected Http"),
++        }
++    }
++
++    #[tokio::test]
++    async fn stdio_transport_is_passed_through_unchanged() {
++        let svc = oauth_service_with_stored_token();
++        let transport = McpServerTransport::Stdio {
++            command: "npx".to_string(),
++            args: vec![],
++            env: HashMap::new(),
++        };
++
++        let result = apply_stored_oauth_token(&svc, TEST_USER_ID, transport.clone()).await;
++
++        assert_eq!(result, transport);
++    }
++}
