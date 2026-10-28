@@ -514,6 +514,22 @@
       }
     },
     {
+      "id": "F17",
+      "repo": "frontend",
+      "area": "MCP OAuth status in the renderer (useMcpOAuth.markLoginRequired)",
+      "decision": "harvest+patch",
+      "patches": [
+        "0012"
+      ],
+      "why": "2026-10-27, a follow-on to B5's backend fixes (core-0007/0008/0009): useMcpOAuth's markLoginRequired set needsLogin:true for a server but carried forward its previous isAuthenticated value instead of clearing it, so a server whose login is required could read as authenticated and needing login at once. McpServerHeader's status icon happens to check needsLogin first, so nothing was visibly wrong, but the two flags should never both be true. Patch 0012 forces isAuthenticated to false in markLoginRequired.",
+      "watch": {
+        "paths": [
+          "packages/desktop/src/renderer/hooks/mcp/useMcpOAuth.ts",
+          "packages/desktop/src/renderer/pages/settings/ToolsSettings/McpServerHeader.tsx"
+        ]
+      }
+    },
+    {
       "id": "B16",
       "repo": "backend",
       "area": "Stopping turns and queue order: conversation cancel, team interrupt and child-turn cancel, the work coordinator's lanes; assistants list and conversation create",

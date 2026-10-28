@@ -58,6 +58,7 @@ agent, version-pin chores), none touching anything an AionDX patch depends on.
 | F14 | Team page warmup on open (`POST /api/teams/{id}/session`) | strip while the team has no session | 0001 |
 | F15 | Chat and team column headers: the model picker, where the account pill sits (`acp-model-selector`, `data-role`) | harvest+patch | 0001 |
 | F16 | New-chat agent list, message box and rows, Opening guide (`/api/assistants`, `sendbox-panel`, `message-text-content`, `openingGuideSeen_v1`) | harvest+patch | 0001, 0009 |
+| F17 | MCP OAuth status in the renderer (`useMcpOAuth.markLoginRequired`) | harvest+patch | 0012 |
 | B1 | aioncore binary, as each app release bundles it | harvest | |
 | B2 | Team runtime: queue, pause and resume, run-state, delivery-failure notices | harvest, watched | |
 | B3 | Conversation API and events: messages, status, `extra`, `turn.completed` | harvest, watched | |
