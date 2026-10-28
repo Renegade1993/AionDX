@@ -1,0 +1,476 @@
+diff --git a/crates/aionui-mcp/src/oauth_service.rs b/crates/aionui-mcp/src/oauth_service.rs
+index d93207e..e75db84 100644
+--- a/crates/aionui-mcp/src/oauth_service.rs
++++ b/crates/aionui-mcp/src/oauth_service.rs
+@@ -208,6 +208,30 @@ impl McpOAuthService {
+         Ok(Some(row.access_token))
+     }
+ 
++    /// Merge a stored OAuth bearer token into `headers`, in place.
++    ///
++    /// No-op if `headers` already carries an `Authorization` key
++    /// (case-insensitive — an explicit server-configured header always wins),
++    /// if no token is stored for `url` (`Ok(None)`), or if the lookup itself
++    /// fails (logged at `warn`, treated as no-op so a transient DB issue
++    /// degrades to "unauthenticated" rather than failing the caller).
++    ///
++    /// Shared by every call site that attaches a stored token to an
++    /// outbound MCP request's headers (the connection-test route and the
++    /// real agent-session MCP resolver) so the merge rule lives in one place.
++    pub async fn merge_bearer_token(&self, user_id: &str, url: &str, headers: &mut HashMap<String, String>) {
++        if headers.keys().any(|k| k.eq_ignore_ascii_case("authorization")) {
++            return;
++        }
++        match self.get_token(user_id, url).await {
++            Ok(Some(token)) => {
++                headers.insert("Authorization".to_string(), format!("Bearer {token}"));
++            }
++            Ok(None) => {}
++            Err(e) => warn!(url, error = %e, "Failed to look up stored OAuth token for MCP server"),
++        }
++    }
++
+     // -----------------------------------------------------------------------
+     // Internal helpers
+     // -----------------------------------------------------------------------
+diff --git a/crates/aionui-mcp/src/routes.rs b/crates/aionui-mcp/src/routes.rs
+index 47687a5..878400e 100644
+--- a/crates/aionui-mcp/src/routes.rs
++++ b/crates/aionui-mcp/src/routes.rs
+@@ -8,7 +8,6 @@ use axum::extract::{Extension, Json, Path, State};
+ use axum::http::StatusCode;
+ use axum::response::{IntoResponse, Response};
+ use axum::routing::{get, post};
+-use tracing::warn;
+ 
+ use aionui_api_types::{
+     ApiResponse, BatchImportMcpServersRequest, CreateMcpServerRequest, DetectedMcpServerResponse, ErrorResponse,
+@@ -280,18 +279,7 @@ async fn merge_oauth_header(
+     url: &str,
+     mut headers: HashMap<String, String>,
+ ) -> HashMap<String, String> {
+-    if headers.keys().any(|k| k.eq_ignore_ascii_case("authorization")) {
+-        return headers;
+-    }
+-
+-    match oauth_service.get_token(user_id, url).await {
+-        Ok(Some(token)) => {
+-            headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+-        }
+-        Ok(None) => {}
+-        Err(e) => warn!(url, error = %e, "Failed to look up stored OAuth token for MCP server"),
+-    }
+-
++    oauth_service.merge_bearer_token(user_id, url, &mut headers).await;
+     headers
+ }
+ 
+diff --git a/crates/aionui-ai-agent/src/mcp_resolve.rs b/crates/aionui-ai-agent/src/mcp_resolve.rs
+index ffd7929..eec266e 100644
+--- a/crates/aionui-ai-agent/src/mcp_resolve.rs
++++ b/crates/aionui-ai-agent/src/mcp_resolve.rs
+@@ -17,6 +17,7 @@ use std::sync::Arc;
+ use aionui_api_types::{SessionMcpServer, SessionMcpTransport, TEAM_MCP_SERVER_NAME};
+ use aionui_db::IMcpServerRepository;
+ use aionui_db::models::McpServerRow;
++use aionui_mcp::McpOAuthService;
+ use aionui_realtime::EventBroadcaster;
+ use aionui_runtime::ensure_runtime_command;
+ use tracing::{info, warn};
+@@ -33,12 +34,19 @@ use tracing::{info, warn};
+ /// `transport_config` row is warn-logged and skipped, never fatal. `broadcaster`
+ /// is accepted for parity with the legacy reporter path (runtime-resolution status
+ /// reporting) and reserved for that use.
++///
++/// `oauth_service`: when `Some`, a stored OAuth bearer token is merged into a
++/// resolved Http/Sse/StreamableHttp server's headers (skipped if the server's own
++/// config already sets an `Authorization` header). `None` on paths that never
++/// need OAuth-aware injection (tests) ⇒ servers keep only their static headers,
++/// same as before this was added.
+ pub async fn resolve_session_mcp_servers(
+     repo: &dyn IMcpServerRepository,
+     user_id: &str,
+     selected_ids: Option<&[String]>,
+     conversation_id: &str,
+     _broadcaster: Arc<dyn EventBroadcaster>,
++    oauth_service: Option<&McpOAuthService>,
+ ) -> Vec<SessionMcpServer> {
+     let rows_result = match selected_ids {
+         Some(ids) => repo.list_by_ids_any(user_id, ids).await,
+@@ -64,7 +72,12 @@ pub async fn resolve_session_mcp_servers(
+             continue;
+         }
+         match row_to_session_mcp_server(&row).await {
+-            Ok(server) => servers.push(server),
++            Ok(mut server) => {
++                if let Some(oauth_service) = oauth_service {
++                    apply_oauth_token(oauth_service, user_id, &mut server.transport).await;
++                }
++                servers.push(server);
++            }
+             Err(err) => {
+                 warn!(
+                     conversation_id,
+@@ -171,6 +184,23 @@ pub async fn row_to_session_mcp_server(row: &McpServerRow) -> Result<SessionMcpS
+     })
+ }
+ 
++/// Merge a stored OAuth bearer token into a URL-based transport's headers,
++/// in place. `Stdio` is left untouched (OAuth tokens are meaningless for a
++/// local process). Delegates to `McpOAuthService::merge_bearer_token` so the
++/// merge rule (skip if an `Authorization` header is already set, no-op on a
++/// missing token or a failed lookup) lives in one place shared with the
++/// `/api/mcp/test-connection` route's own token injection.
++async fn apply_oauth_token(oauth_service: &McpOAuthService, user_id: &str, transport: &mut SessionMcpTransport) {
++    match transport {
++        SessionMcpTransport::Http { url, headers }
++        | SessionMcpTransport::Sse { url, headers }
++        | SessionMcpTransport::StreamableHttp { url, headers } => {
++            oauth_service.merge_bearer_token(user_id, url, headers).await;
++        }
++        SessionMcpTransport::Stdio { .. } => {}
++    }
++}
++
+ /// Parse a JSON headers object into a `HashMap` (string values only).
+ fn parse_headers(value: Option<&serde_json::Value>) -> std::collections::HashMap<String, String> {
+     value
+@@ -290,7 +320,7 @@ mod tests {
+             rows: vec![make_row("docs", true), make_row(TEAM_MCP_SERVER_NAME, true)],
+             fail: false,
+         };
+-        let servers = resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster()).await;
++        let servers = resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster(), None).await;
+         assert_eq!(servers.len(), 1);
+         assert_eq!(servers[0].name, "docs");
+     }
+@@ -321,8 +351,163 @@ mod tests {
+             ],
+             fail: false,
+         };
+-        let servers = resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster()).await;
++        let servers = resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster(), None).await;
+         assert_eq!(servers.len(), 1);
+         assert_eq!(servers[0].name, "docs");
+     }
++
++    const OAUTH_TEST_URL: &str = "http://127.0.0.1:9999/mcp";
++
++    /// Fixed-response `IOAuthTokenRepository`: returns a stored token for
++    /// `OAUTH_TEST_URL` only, mirroring `core-0008`'s `StoredTokenRepo` in
++    /// `aionui-mcp::routes`'s own test module.
++    struct StoredTokenRepo;
++
++    #[async_trait::async_trait]
++    impl aionui_db::IOAuthTokenRepository for StoredTokenRepo {
++        async fn get_by_url(
++            &self,
++            _user_id: &str,
++            server_url: &str,
++        ) -> Result<Option<aionui_db::models::OAuthTokenRow>, aionui_db::DbError> {
++            if server_url == OAUTH_TEST_URL {
++                Ok(Some(aionui_db::models::OAuthTokenRow {
++                    user_id: TEST_USER_ID.to_owned(),
++                    server_url: server_url.to_owned(),
++                    access_token: "stored-access-token".into(),
++                    refresh_token: None,
++                    token_type: "bearer".into(),
++                    expires_at: None,
++                    created_at: 0,
++                    updated_at: 0,
++                }))
++            } else {
++                Ok(None)
++            }
++        }
++        async fn upsert(
++            &self,
++            _params: aionui_db::UpsertOAuthTokenParams<'_>,
++        ) -> Result<aionui_db::models::OAuthTokenRow, aionui_db::DbError> {
++            unimplemented!("not needed")
++        }
++        async fn delete(&self, _user_id: &str, _server_url: &str) -> Result<(), aionui_db::DbError> {
++            unimplemented!("not needed")
++        }
++        async fn list_authenticated_urls(&self, _user_id: &str) -> Result<Vec<String>, aionui_db::DbError> {
++            unimplemented!("not needed")
++        }
++    }
++
++    fn oauth_service_with_stored_token() -> McpOAuthService {
++        McpOAuthService::new(std::sync::Arc::new(StoredTokenRepo), reqwest::Client::new())
++    }
++
++    fn make_sse_row(name: &str) -> McpServerRow {
++        McpServerRow {
++            transport_type: "sse".into(),
++            transport_config: format!(r#"{{"url":"{OAUTH_TEST_URL}"}}"#),
++            ..make_row(name, true)
++        }
++    }
++
++    #[tokio::test]
++    async fn resolve_applies_stored_oauth_token_to_http_transport() {
++        let repo = MockRepo {
++            rows: vec![make_row("docs", true)],
++            fail: false,
++        };
++        let oauth = oauth_service_with_stored_token();
++        let servers =
++            resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster(), Some(&oauth)).await;
++        assert_eq!(servers.len(), 1);
++        match &servers[0].transport {
++            SessionMcpTransport::StreamableHttp { headers, .. } => {
++                assert_eq!(headers.get("Authorization"), Some(&"Bearer stored-access-token".to_string()));
++            }
++            other => panic!("expected StreamableHttp transport, got {other:?}"),
++        }
++    }
++
++    #[tokio::test]
++    async fn resolve_applies_stored_oauth_token_to_sse_transport() {
++        let repo = MockRepo {
++            rows: vec![make_sse_row("docs")],
++            fail: false,
++        };
++        let oauth = oauth_service_with_stored_token();
++        let servers =
++            resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster(), Some(&oauth)).await;
++        assert_eq!(servers.len(), 1);
++        match &servers[0].transport {
++            SessionMcpTransport::Sse { headers, .. } => {
++                assert_eq!(headers.get("Authorization"), Some(&"Bearer stored-access-token".to_string()));
++            }
++            other => panic!("expected Sse transport, got {other:?}"),
++        }
++    }
++
++    #[tokio::test]
++    async fn resolve_no_stored_token_leaves_headers_untouched() {
++        let row = McpServerRow {
++            transport_config: r#"{"url":"http://no-token.example/mcp"}"#.into(),
++            ..make_row("docs", true)
++        };
++        let repo = MockRepo {
++            rows: vec![row],
++            fail: false,
++        };
++        let oauth = oauth_service_with_stored_token();
++        let servers =
++            resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster(), Some(&oauth)).await;
++        assert_eq!(servers.len(), 1);
++        match &servers[0].transport {
++            SessionMcpTransport::StreamableHttp { headers, .. } => assert!(headers.is_empty()),
++            other => panic!("expected StreamableHttp transport, got {other:?}"),
++        }
++    }
++
++    #[tokio::test]
++    async fn resolve_existing_authorization_header_is_not_overwritten() {
++        let row = McpServerRow {
++            transport_config: format!(r#"{{"url":"{OAUTH_TEST_URL}","headers":{{"Authorization":"Bearer manual"}}}}"#),
++            ..make_row("docs", true)
++        };
++        let repo = MockRepo {
++            rows: vec![row],
++            fail: false,
++        };
++        let oauth = oauth_service_with_stored_token();
++        let servers =
++            resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster(), Some(&oauth)).await;
++        assert_eq!(servers.len(), 1);
++        match &servers[0].transport {
++            SessionMcpTransport::StreamableHttp { headers, .. } => {
++                assert_eq!(headers.get("Authorization"), Some(&"Bearer manual".to_string()));
++            }
++            other => panic!("expected StreamableHttp transport, got {other:?}"),
++        }
++    }
++
++    #[tokio::test]
++    async fn resolve_stdio_transport_is_unaffected_by_oauth() {
++        // The stdio launch command must resolve on this OS (Windows CI has no
++        // `/bin/true`), so point it at the test binary itself — same fixture
++        // `factory/acp.rs`'s `stdio_config_for_existing_command` uses.
++        let command = std::env::current_exe().expect("current test executable").to_string_lossy().into_owned();
++        let row = McpServerRow {
++            transport_type: "stdio".into(),
++            transport_config: serde_json::json!({"command": command, "args": [], "env": {}}).to_string(),
++            ..make_row("local-tool", true)
++        };
++        let repo = MockRepo {
++            rows: vec![row],
++            fail: false,
++        };
++        let oauth = oauth_service_with_stored_token();
++        let servers =
++            resolve_session_mcp_servers(&repo, TEST_USER_ID, None, "conv-1", test_broadcaster(), Some(&oauth)).await;
++        assert_eq!(servers.len(), 1);
++        assert!(matches!(servers[0].transport, SessionMcpTransport::Stdio { .. }));
++    }
+ }
+diff --git a/crates/aionui-ai-agent/src/session_agent.rs b/crates/aionui-ai-agent/src/session_agent.rs
+index 9c62c54..159d6a2 100644
+--- a/crates/aionui-ai-agent/src/session_agent.rs
++++ b/crates/aionui-ai-agent/src/session_agent.rs
+@@ -35,6 +35,7 @@ use crate::types::{PromptMediaCaps, SendMessageData};
+ use aionui_api_types::{AcpBuildExtra, TEAM_MCP_SERVER_NAME};
+ use aionui_common::AgentType;
+ use aionui_db::{IAcpSessionRepository, IMcpServerRepository, SaveRuntimeStateParams};
++use aionui_mcp::McpOAuthService;
+ use aionui_realtime::EventBroadcaster;
+ 
+ const EVENT_CHANNEL_CAPACITY: usize = 512;
+@@ -1518,6 +1519,12 @@ pub struct SessionBuildInputs<'a> {
+     /// User-configured MCP server repository (feature ELECTRON-1JG). `None` on
+     /// paths that never inject MCP (tests) ⇒ no injection.
+     pub mcp_server_repo: Option<&'a Arc<dyn IMcpServerRepository>>,
++    /// OAuth token service, consulted by `mcp_resolve` to attach a stored
++    /// bearer token to a resolved Http/Sse/StreamableHttp server. `None` on
++    /// paths that never need OAuth-aware injection (tests) ⇒ servers keep
++    /// only their static configured headers, same as before this field
++    /// existed.
++    pub oauth_service: Option<&'a Arc<McpOAuthService>>,
+     /// The conversation runtime context env (`AIONUI_USER_ID` /
+     /// `AIONUI_CONVERSATION_ID` / `AIONUI_HELPER_BIN` / `AIONUI_BASE_URL` /
+     /// `AIONUI_RUNTIME_TOKEN`, filled by `apply_conversation_runtime_context`).
+@@ -1742,6 +1749,7 @@ pub async fn build_antigravity_instance(
+         session_snapshot,
+         backend_session_id,
+         mcp_server_repo,
++        oauth_service,
+         runtime_env,
+         broadcaster,
+         catalog_writeback,
+@@ -1765,6 +1773,7 @@ pub async fn build_antigravity_instance(
+                 config.mcp_server_ids.as_deref(),
+                 &conversation_id,
+                 broadcaster.clone(),
++                oauth_service.map(|o| o.as_ref()),
+             )
+             .await
+         }
+@@ -1870,6 +1879,7 @@ pub async fn build_session_instance(
+         session_snapshot,
+         backend_session_id,
+         mcp_server_repo,
++        oauth_service,
+         runtime_env,
+         broadcaster,
+         catalog_writeback,
+@@ -1897,6 +1907,7 @@ pub async fn build_session_instance(
+                 config.mcp_server_ids.as_deref(),
+                 &conversation_id,
+                 broadcaster.clone(),
++                oauth_service.map(|o| o.as_ref()),
+             )
+             .await
+         }
+@@ -5018,6 +5029,7 @@ mod build_mapping_tests {
+                 session_snapshot: None,
+                 backend_session_id: None,
+                 mcp_server_repo: Some(&repo),
++                oauth_service: None,
+                 runtime_env: &[],
+                 broadcaster,
+                 catalog_writeback: None,
+diff --git a/crates/aionui-ai-agent/src/factory/acp.rs b/crates/aionui-ai-agent/src/factory/acp.rs
+index 10023c9..08ff2fd 100644
+--- a/crates/aionui-ai-agent/src/factory/acp.rs
++++ b/crates/aionui-ai-agent/src/factory/acp.rs
+@@ -132,6 +132,7 @@ pub(super) async fn build(
+                 session_snapshot: build_context.session_snapshot.as_ref(),
+                 backend_session_id: build_context.session_id.clone(),
+                 mcp_server_repo: deps.mcp_server_repo.as_ref(),
++                oauth_service: deps.oauth_service.as_ref(),
+                 // The AIONUI_* conversation runtime context the legacy path
+                 // injects via apply_acp_launch_policy — forwarded into
+                 // SessionConfig.spawn_env so direct-CLI spawns get it too.
+diff --git a/crates/aionui-ai-agent/src/factory/mod.rs b/crates/aionui-ai-agent/src/factory/mod.rs
+index 03ad8fb..1c29556 100644
+--- a/crates/aionui-ai-agent/src/factory/mod.rs
++++ b/crates/aionui-ai-agent/src/factory/mod.rs
+@@ -10,6 +10,7 @@ use std::path::PathBuf;
+ use std::sync::Arc;
+ 
+ use aionui_db::{IMcpServerRepository, IProviderRepository};
++use aionui_mcp::McpOAuthService;
+ use aionui_realtime::EventBroadcaster;
+ use futures_util::FutureExt;
+ 
+@@ -41,6 +42,10 @@ pub struct AgentFactoryDeps {
+     /// inject enabled servers into `session/new` (ELECTRON-1JG fix).
+     /// `None` for tests/composition paths that do not need MCP injection.
+     pub mcp_server_repo: Option<Arc<dyn IMcpServerRepository>>,
++    /// OAuth token service, forwarded to `mcp_resolve` so a server's stored
++    /// token is attached to its headers at session-build time. `None` for
++    /// tests/composition paths that do not need OAuth-aware MCP injection.
++    pub oauth_service: Option<Arc<McpOAuthService>>,
+     /// Subprocess spawner for the clean-slate session model. claude/codex always
+     /// run through `SessionAgentTask` (direct-CLI) instead of the ACP manager, so
+     /// the spawner is unconditionally wired — there is no fallback to the ACP path.
+diff --git a/crates/aionui-ai-agent/src/factory/antigravity.rs b/crates/aionui-ai-agent/src/factory/antigravity.rs
+index 5e4b447..e3310e9 100644
+--- a/crates/aionui-ai-agent/src/factory/antigravity.rs
++++ b/crates/aionui-ai-agent/src/factory/antigravity.rs
+@@ -153,6 +153,7 @@ pub(super) async fn build(
+             session_snapshot: build_context.session_snapshot.as_ref(),
+             backend_session_id: build_context.session_id.clone(),
+             mcp_server_repo: deps.mcp_server_repo.as_ref(),
++            oauth_service: deps.oauth_service.as_ref(),
+             runtime_env: &runtime_env,
+             broadcaster: deps.broadcaster.clone(),
+             // Keyed by the resolved catalog row so discovered models/modes
+diff --git a/crates/aionui-app/src/services.rs b/crates/aionui-app/src/services.rs
+index 92abbd5..591d1ad 100644
+--- a/crates/aionui-app/src/services.rs
++++ b/crates/aionui-app/src/services.rs
+@@ -257,6 +257,16 @@ impl AppServices {
+         let mcp_server_repo: Arc<dyn IMcpServerRepository> =
+             Arc::new(SqliteMcpServerRepository::new(database.pool().clone()));
+ 
++        // OAuth token lookups for MCP server injection (core-0009): a
++        // separate instance from `build_mcp_state`'s own `McpOAuthService`
++        // (different `pending`-login map, same underlying token table via
++        // the shared pool) so the session-build path can attach a stored
++        // bearer token without a dependency from `aionui-mcp`'s router
++        // state back into the agent factory's composition.
++        let oauth_token_repo: Arc<dyn aionui_db::IOAuthTokenRepository> =
++            Arc::new(aionui_db::SqliteOAuthTokenRepository::new(database.pool().clone()));
++        let oauth_service = Arc::new(aionui_mcp::McpOAuthService::new(oauth_token_repo, reqwest::Client::new()));
++
+         let agent_metadata_repo: Arc<dyn IAgentMetadataRepository> =
+             Arc::new(SqliteAgentMetadataRepository::new(database.pool().clone()));
+         let agent_registry = AgentRegistry::new(agent_metadata_repo);
+@@ -369,6 +379,7 @@ impl AppServices {
+             broadcaster: event_bus.clone(),
+             backend_binary_path: backend_binary_path.clone(),
+             mcp_server_repo: Some(mcp_server_repo),
++            oauth_service: Some(oauth_service),
+             session_spawner,
+             // agy cannot prompt for tool permission in headless mode, so AionUi
+             // registers itself as its PreToolUse hook; the hook process calls
+diff --git a/crates/aionui-ai-agent/Cargo.toml b/crates/aionui-ai-agent/Cargo.toml
+index 94156f4..7529154 100644
+--- a/crates/aionui-ai-agent/Cargo.toml
++++ b/crates/aionui-ai-agent/Cargo.toml
+@@ -67,6 +67,7 @@ aionui-db.workspace = true
+ aionui-process.workspace = true
+ uuid.workspace = true
+ sqlx.workspace = true
++reqwest.workspace = true
+ 
+ # Integration tests under `tests/` need the `AgentInstance::Mock` variant.
+ # Unlike unit tests (which see `cfg(test)` on the library), integration
+diff --git a/crates/aionui-ai-agent/tests/factory_provider_integration.rs b/crates/aionui-ai-agent/tests/factory_provider_integration.rs
+index 106b2a7..86fe856 100644
+--- a/crates/aionui-ai-agent/tests/factory_provider_integration.rs
++++ b/crates/aionui-ai-agent/tests/factory_provider_integration.rs
+@@ -91,6 +91,7 @@ fn make_factory(
+         broadcaster: Arc::new(BroadcastEventBus::new(16)),
+         backend_binary_path: Arc::new(PathBuf::from("/tmp/aionrs-test/aioncore")),
+         mcp_server_repo: None,
++        oauth_service: None,
+         session_spawner,
+         // No hook bridge in this test: it exercises provider wiring, not the
+         // Antigravity permission path.
