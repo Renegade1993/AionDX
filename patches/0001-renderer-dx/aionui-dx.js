@@ -245,7 +245,8 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-24.2';
+  var BUILD = '2026-10-31.2';
+  var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
   var ENGINE_KEY = 'aiondx.engine';
@@ -2269,6 +2270,16 @@
     if (historyInterrupt && stopInHistory(t, s, msgs)) return;
     if (Date.now() - (s.lastFired || 0) < MIN_FIRE_GAP_MS) return;
     if (hasDraft(t)) { why(t, s, 'Holding: you have an unsent draft in this box.'); return; }
+    // Opening AionDX never starts an agent (2026-10-31): no nudge in the first minute, and a resume time that passed while
+    // AionDX was closed is dropped, not sent late.
+    if (Date.now() - PAGE_LOADED_AT < 60000) { why(t, s, 'Waiting: AionDX has only just opened.'); return; }
+    if (s.wakeAt && s.wakeAt < PAGE_LOADED_AT - 120000) {
+      var missedWake = s.wakeAt;
+      s.wakeAt = 0; s.wakeMsg = ''; s.wakeBy = ''; s.wakeSelf = false;
+      save(t, s);
+      why(t, s, 'The resume time (' + hhmm(missedWake) + ') passed while AionDX was closed, so nothing was sent.');
+      return;
+    }
     if (lastAny && Date.now() - lastAt < QUIET_MS) { why(t, s, 'Waiting for the chat to go quiet.'); return; }
 
     // Your own messages keep the loop on (until 2026-09-24 they switched it off, so no team
@@ -2758,7 +2769,7 @@
       // First, before AionUi's own handler cancels the turn: the draft box must not send its next message when it ends.
       holdDraftBox(b, t);
       if (t.kind === 'conv') stopBackstop(t.convId);
-      else stopSent[t.key] = Date.now();   // a member still working 12 s on gets Force stop
+      else { stopSent[t.key] = Date.now(); hardStop(t).catch(function () {}); }   // a member still working 12 s on gets Force stop; 2026-10-31: AionUi's own Stop for a member does nothing when no team run is active, so the conversation is cancelled and the member paused here too
       if (!state(t).on) return;
       setOn(t, false, 'you pressed Stop', true);
       notify(t, 'Loop off for {who}: you pressed Stop.', '');
@@ -7452,6 +7463,9 @@
     if (schedBusy[rec.id]) return;
     schedBusy[rec.id] = true;
     try {
+      // 2026-10-31: opening AionDX never starts an agent. A message that came due more than SCHED_LATE_MS ago (AionDX was closed,
+      // or the PC was asleep) is not sent; it waits in the menu as failed, and Try again sends it.
+      if (Date.now() - rec.due > SCHED_LATE_MS) { schedFail(rec, 'it was due at ' + hhmm(rec.due) + ' and AionDX was not running, so it was not sent'); return; }
       if (!(await schedClaim(rec))) return;
       var t = schedTarget(rec.scope);
       if (!t) { schedFail(rec, 'its chat is not known'); return; }
@@ -7493,7 +7507,7 @@
   // a turn change can send nothing. AionDX already asks every 3 seconds whether each chat is working (agentLive). A solo chat that has
   // been working for 3 seconds with no Stop button of AionUi's gets one of AionDX's, which cancels with the turn id the server gives.
   // A chat still working 12 seconds after a Stop (AionUi's or this one) gets "Force stop": the agent process is ended and restarted, the
-  // chat keeping its history (POST runtime/restart). Team members are not covered yet.
+  // chat keeping its history (POST runtime/restart). Team members are covered since 2026-10-31 (hardStop below).
   var STOP_OVERRIDE = null;   // tests: { show, force } in ms; otherwise the options stop.show and stop.force
   var stopEls = {};      // target key -> the fallback button
   var stopSeen = {};     // target key -> since when it has worked with no Stop of AionUi's on screen
@@ -7504,8 +7518,9 @@
     var a = agentLive[t.key];
     var working = !!a && a.state === 'working';
     var native = !!(t.actions && t.actions.querySelector('.sendbox-stop-button'));
-    // A team member gets only the Force stop: AionUi's Stop for a member pauses it, and the plain cancel is a solo chat's.
-    var plain = t.kind === 'conv';
+    // A team member gets the plain Stop too (2026-10-31): AionUi's own Stop for a member does nothing when no team run is active
+    // (a turn a scheduled task or a retry started), and it left the member's queue to start the next turn.
+    var plain = true;
     if (plain && working && !native) { if (!stopSeen[t.key]) stopSeen[t.key] = now; } else delete stopSeen[t.key];
     if (!working) delete stopSent[t.key];
     var force = working && !!stopSent[t.key] && now - stopSent[t.key] >= stopForceMs();
@@ -7545,13 +7560,30 @@
     }
     // As AionUi's own Stop: the Loop goes off and the draft box does not send its next message.
     if (stopEls[t.key]) holdDraftBox(stopEls[t.key], t);
+    var r = await hardStop(t);
+    toast(r.ok ? 'Stop sent.' : r.nothing ? 'Nothing is running in this chat.' : 'Stop could not be sent.', r.ok ? 'If it keeps working, Force stop appears.' : r.nothing ? '' : r.why);
+  }
+  /** A hard stop (2026-10-31): the Loop goes off; the conversation's turn is cancelled (AionCore then keeps scheduled tasks out of
+   *  that conversation until you write to it again); and a team member is paused, so what it had queued does not start the next
+   *  turn. Used by AionDX's Stop and, for team members, by every press of AionUi's own Stop button (a solo chat's own press has
+   *  stopBackstop). */
+  async function hardStop(t) {
     if (state(t).on) { setOn(t, false, 'you pressed Stop', true); notify(t, 'Loop off for {who}: you pressed Stop.', ''); }
+    var convId = t.convId;
+    if (!convId && t.kind === 'team') { var m = await memberConversation(t); convId = m && m.convId; }
+    if (!convId) return { ok: false, why: 'its conversation is not known' };
+    stopSent[t.key] = Date.now();
+    var pause = t.kind === 'team'
+      ? postJson('/api/teams/' + t.teamId + '/runs/stop/agents/' + encodeURIComponent(t.slotId) + '/pause', { reason: 'Stopped by the user.' }).catch(function () { return null; })
+      : Promise.resolve(null);
     var g = await getJson('/api/conversations/' + convId);
     var turn = g.data && g.data.runtime && convBusy(g.data) ? g.data.runtime.turn_id : null;
-    stopSent[t.key] = Date.now();
-    if (!turn) { toast('Nothing is running in this chat.'); return; }
-    var r = await postJson('/api/conversations/' + convId + '/cancel', { turn_id: turn });
-    toast(r && r.ok ? 'Stop sent.' : 'Stop could not be sent.', r && r.ok ? 'If it keeps working, Force stop appears.' : 'HTTP ' + (r && r.status));
+    var r = turn ? await postJson('/api/conversations/' + convId + '/cancel', { turn_id: turn }) : null;
+    var p = await pause;
+    if (r && r.ok) return { ok: true };
+    if (p && p.ok) return { ok: true };
+    if (!turn) return { ok: false, nothing: true };
+    return { ok: false, why: 'HTTP ' + (r && r.status) };
   }
 
   function renderSched() {
@@ -8514,6 +8546,7 @@
     decorateLinks: function () { return decorateLocalLinks(); },
     spinReset: function () { spinVerdict = {}; schedule(); },
     fireSched: function () { return fireScheduled(); },
+    schedState: function (id) { return schedStore[id] || null; },
     accountLimit: function (convId) { return accountLimit(convId); },
     unsend: function () { return { results: unsendResults, pending: unsendPending }; },
     runUnsend: function () { try { renderUnsend(); return 'ok'; } catch (e) { return String((e && e.stack) || e); } },

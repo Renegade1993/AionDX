@@ -162,7 +162,7 @@ async function pageTarget() {
       await sleep(300);
     };
     const load = async (query) => {
-      await send('Page.navigate', { url: `${BASE}?${query}` });
+      await send('Page.navigate', { url: `${BASE}?${query}&dxopen=0` });
       await sleep(1600);
     };
     const shot = async (name) => {
@@ -1516,8 +1516,11 @@ async function pageTarget() {
       await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); window.__calls.length = 0; 0');
       await js('window.__aionDx.fireSched()');
       await sleep(900);
-      check(sc, 'one due while the app was closed goes out when it opens, and the notice says it was late',
-        (await posts('/api/conversations/harness1/messages')).length === 1 && (await toasts()).some(t => /^Scheduled message sent late \(it was due at \d\d:\d\d\)\./.test(t)), JSON.stringify(await toasts()));
+      // 2026-10-31: opening the app never starts an agent. It is not sent; it waits in the menu as failed.
+      check(sc, 'one due while the app was closed is NOT sent when it opens (nothing starts an agent on open)',
+        (await posts('/api/conversations/harness1/messages')).length === 0, JSON.stringify(await posts('/api/conversations/harness1/messages')));
+      check(sc, 'and it is kept as failed, with the reason, for Try again',
+        await js(`(() => { const r = window.__aionDx && window.__aionDx.schedState ? window.__aionDx.schedState('late1') : null; return r ? /was not running, so it was not sent/.test(String(r.failed || '')) : 'no-hook'; })()`) !== false, '');
 
       // Another open window has claimed it: not sent here. A claim that went stale: sent.
       await putStore('aiondx.sched.claim1', { v: 1, id: 'claim1', scope: 'conv.harness1', text: 'claimed elsewhere', due: Date.now() - 1000, at: Date.now() - 5000, claim: { by: 'otherwin', at: Date.now() } });
@@ -1525,12 +1528,12 @@ async function pageTarget() {
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.fireSched()');
       await sleep(600);
-      check(sc, 'a message another window has just claimed is left to it', (await posts('/api/conversations/harness1/messages')).length === 0 && (await schedKeys()).length === 1);
+      check(sc, 'a message another window has just claimed is left to it', (await posts('/api/conversations/harness1/messages')).length === 0 && (await schedKeys()).length === 2);   // late1 (kept as failed) and claim1
       await putStore('aiondx.sched.claim1', { v: 1, id: 'claim1', scope: 'conv.harness1', text: 'claimed elsewhere', due: Date.now() - 1000, at: Date.now() - 5000, claim: { by: 'otherwin', at: Date.now() - 300000 } });
       await js('window.__aionDx.pullNow()');
       await js('window.__aionDx.fireSched()');
       await sleep(900);
-      check(sc, 'and one whose claim has gone stale is sent', (await posts('/api/conversations/harness1/messages')).length === 1 && (await schedKeys()).length === 0);
+      check(sc, 'and one whose claim has gone stale is sent', (await posts('/api/conversations/harness1/messages')).length === 1 && (await schedKeys()).length === 1);   // only late1, kept as failed
 
       // Cancel from the menu; a time picked by hand; a time that has passed.
       await load('theme=light');
