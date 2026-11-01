@@ -44,6 +44,7 @@ const STAGE = path.join(ROOT, 'stage');
 fs.mkdirSync(path.join(STAGE, 'resources', 'aiondx', 'bin'), { recursive: true });
 compile(path.join(REPO, 'patches', '0007-loop-tool', 'aiondx-loop.cs'), path.join(STAGE, 'resources', 'aiondx', 'bin', 'aiondx.exe'));
 fs.writeFileSync(path.join(STAGE, 'AionDX.exe'), 'stand-in');
+fs.copyFileSync(path.join(REPO, 'patches', '0016-data-move', 'aiondx-data-move.js'), path.join(STAGE, 'resources', 'aiondx', 'bin', 'aiondx-data-move.js'));   // the data folder move (4c)
 fs.writeFileSync(path.join(ROOT, 'fake.cs'), `
 using System; using System.IO;
 static class P { static int Main(string[] a) {
@@ -159,6 +160,66 @@ function install(label, ai, extra) {
   check('with AionUi gone and its chats left behind, the install succeeds and notes the chats', r.status === 0 && fs.existsSync(path.join(ROOT, 'dataonly', 'app', 'AionDX.exe')) && /AionUi: not found, but its chats database is in .* \(\d+ bytes\)/.test(r.runLog) && !/moving from AionUi/.test(r.runLog), r.runLog);
   check('and leaves the chats database exactly as it was, with no backup made', sha(path.join(ai.data, 'aionui', 'aionui-backend.db')) === before && !fs.existsSync(path.join(SANDBOX_DATA, 'migration')));
   spawnSync(path.join(ROOT, 'dataonly', 'app', 'unins000.exe'), ['/VERYSILENT', '/SUPPRESSMSGBOXES'], { windowsHide: true, timeout: 60000 });
+}
+
+// 4c. the data folder (2026-11-01): the installer runs aiondx-data-move.js (patches\0016-data-move) after the files are copied.
+// /DATAROOT, /DATAHOME, /DATALOCAL and /NODE point the step at made-up folders and at this machine's node.
+{
+  const { DatabaseSync } = require('node:sqlite');
+  const mangle = (p) => p.replace(/[^A-Za-z0-9]/g, '-');
+  const none = { dir: path.join(ROOT, 'absent'), data: path.join(ROOT, 'absent-data') };
+  const dmInstall = (label, m, env) => {
+    const log = path.join(ROOT, label + '.log');
+    const r = spawnSync(SETUP, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/DIR=' + path.join(ROOT, label, 'app'), '/LOG=' + log, '/AIONUIDIR=' + none.dir,
+      '/DATAROOT=' + m.roaming, '/DATAHOME=' + m.home, '/DATALOCAL=' + m.local, '/NODE=' + process.execPath], { encoding: 'utf8', windowsHide: true, env: Object.assign({}, process.env, env || {}), timeout: 240000 });
+    const logs = fs.existsSync(path.join(SANDBOX_DATA, 'logs')) ? fs.readdirSync(path.join(SANDBOX_DATA, 'logs')).filter((f) => /_install_v/.test(f)).sort() : [];
+    return { status: r.status, runLog: logs.length ? fs.readFileSync(path.join(SANDBOX_DATA, 'logs', logs[logs.length - 1]), 'utf8') : '' };
+  };
+  const makeData = (name) => {
+    const home = path.join(ROOT, name, 'home'), roaming = path.join(home, 'AppData', 'Roaming'), local = path.join(home, 'AppData', 'Local');
+    const OLD = path.join(roaming, 'AionUi'), inner = path.join(OLD, 'aionui');
+    fs.mkdirSync(local, { recursive: true });
+    const ws = path.join(inner, 'conversations', 'users', 'u1', 'chat-temp-c1');
+    fs.mkdirSync(ws, { recursive: true });
+    const dbFile = path.join(inner, 'aionui-backend.db');
+    const db = new DatabaseSync(dbFile);
+    db.exec('CREATE TABLE conversations (id TEXT PRIMARY KEY, extra TEXT); CREATE TABLE messages (id INTEGER PRIMARY KEY, content TEXT);');
+    db.prepare('INSERT INTO conversations VALUES (?,?)').run('c1', JSON.stringify({ workspace: ws }));
+    db.prepare('INSERT INTO messages (content) VALUES (?)').run('see ' + ws + '\\a.png');
+    db.close();
+    const hist = path.join(home, '.claude', 'projects', mangle(ws));
+    fs.mkdirSync(hist, { recursive: true });
+    fs.writeFileSync(path.join(hist, 's.jsonl'), '{}\n');
+    return { home, roaming, local, OLD, NEW: path.join(roaming, 'AionDX'), ws, hist, dbFile };
+  };
+  const dbRows = (f) => { const d = new DatabaseSync(f, { readOnly: true }); const o = JSON.stringify([d.prepare('SELECT * FROM conversations').all(), d.prepare('SELECT * FROM messages').all()]); d.close(); return o; };
+
+  let m = makeData('dm-ok');
+  const rowsBefore = dbRows(m.dbFile);
+  let r = dmInstall('dm-ok', m);
+  const movedDb = path.join(m.NEW, 'aionui', 'aionui-backend.db');
+  check('an install with an AionUi data folder moves it to AionDX and the install succeeds', r.status === 0 && fs.existsSync(path.join(ROOT, 'dm-ok', 'app', 'AionDX.exe')) && fs.existsSync(movedDb) && !fs.existsSync(m.OLD), r.status + ' ' + r.runLog);
+  const mdb = fs.existsSync(movedDb) ? new DatabaseSync(movedDb, { readOnly: true }) : null;
+  const mc = mdb ? mdb.prepare('SELECT extra FROM conversations').get().extra : '';
+  const mm = mdb ? mdb.prepare('SELECT content FROM messages').get().content : '';
+  const nRows = mdb ? [Number(mdb.prepare('SELECT COUNT(*) n FROM conversations').get().n), Number(mdb.prepare('SELECT COUNT(*) n FROM messages').get().n)] : [];
+  if (mdb) mdb.close();
+  check('the stored paths follow, the rows are the same, and the Claude history folder is renamed', JSON.parse(mc).workspace.startsWith(m.NEW) && mm.startsWith('see ' + m.NEW) && !/AionUi/.test(mc + mm) && nRows.join() === '1,1' && fs.existsSync(path.join(m.home, '.claude', 'projects', mangle(m.ws.replace('AionUi', 'AionDX')), 's.jsonl')) && !fs.existsSync(m.hist), mc + ' | ' + mm);
+  check('the run log says it was moved and verified, with where the backup is', /data folder: moved, verified; the backup of the chats database is in/.test(r.runLog) && /exit code 0/.test(r.runLog), r.runLog);
+  spawnSync(path.join(ROOT, 'dm-ok', 'app', 'unins000.exe'), ['/VERYSILENT', '/SUPPRESSMSGBOXES'], { windowsHide: true, timeout: 60000 });
+
+  m = makeData('dm-fail');
+  const failBefore = dbRows(m.dbFile);
+  r = dmInstall('dm-fail', m, { AIONDX_DATA_MOVE_FAIL_AFTER: 'db' });
+  check('when the move fails midway the install still succeeds and says nothing was moved', r.status === 0 && fs.existsSync(path.join(ROOT, 'dm-fail', 'app', 'AionDX.exe')) && /not moved \(exit code 7\)/.test(r.runLog), r.status + ' ' + r.runLog);
+  check('and the AionUi folder, the database rows, the paths and the history folder are exactly as they were', fs.existsSync(m.dbFile) && dbRows(m.dbFile) === failBefore && fs.existsSync(path.join(m.hist, 's.jsonl')) && !fs.existsSync(path.join(m.NEW, 'aionui')), r.runLog);
+  spawnSync(path.join(ROOT, 'dm-fail', 'app', 'unins000.exe'), ['/VERYSILENT', '/SUPPRESSMSGBOXES'], { windowsHide: true, timeout: 60000 });
+
+  m = makeData('dm-none');
+  fs.rmSync(m.OLD, { recursive: true, force: true });
+  r = dmInstall('dm-none', m);
+  check('with no earlier folder the step does nothing', r.status === 0 && /no earlier folder to move/.test(r.runLog) && !fs.existsSync(m.OLD), r.runLog);
+  spawnSync(path.join(ROOT, 'dm-none', 'app', 'unins000.exe'), ['/VERYSILENT', '/SUPPRESSMSGBOXES'], { windowsHide: true, timeout: 60000 });
 }
 
 // 5. the sandbox leaves nothing behind, and the real AionDX state was not touched.
