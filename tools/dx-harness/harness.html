@@ -4,7 +4,7 @@
 
   Loads AionUi's own shipped stylesheets (extracted from app.asar into vendor\) and rebuilds the
   composer's action row with the DOM and classes AcpSendBox renders, then loads the real
-  aionui-dx.js. Nothing is installed and the running AionUi is never touched.
+  aiondx-ui.js. Nothing is installed and the running AionUi is never touched.
 
   A stub backend replaces window.fetch before the patch loads. It serves the response shapes the
   patch relies on, each checked against AionCore v0.2.2 source, and records every call in
@@ -438,7 +438,7 @@
       }
     }
   </script>
-  <script src="../../patches/0001-renderer-dx/aionui-dx.js"></script>
+  <script src="../../patches/0001-renderer-dx/aiondx-ui.js"></script>
   <script>
     // The draft-queue button, as AionUi's own onClick (bubble phase): window.__draftAdds counts what it queued.
     document.addEventListener('click', function (ev) {

@@ -1,6 +1,6 @@
 'use strict';
 // test-live-unsend.js - Unsend of a team member's waiting message in the real app (the staged build, a throwaway profile), with the
-// edited aionui-dx.js served in place of the built one. A Worker is held mid-turn on a permission prompt (a tool call nobody approves),
+// edited aiondx-ui.js served in place of the built one. A Worker is held mid-turn on a permission prompt (a tool call nobody approves),
 // a second message to it waits as "Unread", and the Unsend button on that bubble is clicked. Uses the real Claude Code agent for one
 // short first turn, so it spends a little of the account's usage.
 const path = require('path');
@@ -13,7 +13,7 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
   const app = await launch({ port: 9562, deadlineMs: 290000 });
   try {
     for (let i = 0; i < 90; i++) { const st = await app.js('({ dx: !!window.__aionDx, port: window.__backendPort || null })'); if (st && st.dx && st.port) break; await sleep(1000); }
-    await app.overrideScript('aionui-dx.js', path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aionui-dx.js'));
+    await app.overrideScript('aiondx-ui.js', path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'));
     for (let i = 0; i < 90; i++) { await sleep(1000); const st = await app.js('({ dx: !!window.__aionDx, build: window.__aionDx && window.__aionDx.build, port: window.__backendPort || null })'); if (st && st.dx && st.build && st.port) break; }
     console.log('build', await app.js('window.__aionDx && window.__aionDx.build'));
     await app.js(`(() => { const s = document.createElement('style'); s.textContent = '.aiondx-welcome-backdrop{display:none !important}'; document.head.appendChild(s); return 0; })()`);

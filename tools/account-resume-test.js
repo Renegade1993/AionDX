@@ -41,7 +41,7 @@ const CODE = 'PINEAPPLE-' + Math.floor(1000 + Math.random() * 9000);
 
 function envFor(a) {
   const env = Object.assign({}, process.env);
-  delete env.AIONUI_CONVERSATION_ID;   // not an AionUi chat
+  delete env.AIONDX_CONVERSATION_ID;   // not an AionUi chat
   delete env.ANTHROPIC_API_KEY;
   env.HOME = a.home || path.dirname(path.dirname(process.env.APPDATA));
   env.USERPROFILE = env.HOME;

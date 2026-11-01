@@ -52,7 +52,7 @@ $root     = 'C:\AI Projects\AionDX'
 $tools    = Join-Path $root 'tools'
 $vend     = Join-Path $root 'vendor'
 $patched  = Join-Path $vend 'app.asar.patched'
-$patchJs  = Join-Path $root 'patches\0001-renderer-dx\aionui-dx.js'
+$patchJs  = Join-Path $root 'patches\0001-renderer-dx\aiondx-ui.js'
 # Every patch source the build reads. A change to any of them means a rebuild.
 $patchSources = @($patchJs, (Join-Path $root 'patches\0003-local-account\apply.js'), (Join-Path $root 'patches\0006-butler-to-antigravity\apply.js'), (Join-Path $root 'patches\0009-identity\apply.js'), (Join-Path $root 'patches\0009-identity\icon\png\aiondx-1024.png'), (Join-Path $tools 'do_patch.ps1'))
 $res      = 'C:\Program Files\AionUi\resources'
@@ -105,7 +105,7 @@ function Get-LiveMarkers {
     try { & $asarCmd extract-file $live 'out\renderer\index.html' 2>$null | Out-Null } finally { Pop-Location }
     $idx = Join-Path $tmp 'index.html'
     $html = if (Test-Path -LiteralPath $idx) { Get-Content -LiteralPath $idx -Raw } else { '' }
-    return @{ Loop = ($html -match 'aionui-dx\.js'); NoSignIn = ($html -match 'id="aiondx-0003"') }
+    return @{ Loop = ($html -match 'aiondx-ui\.js'); NoSignIn = ($html -match 'id="aiondx-0003"') }
   } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
   }

@@ -98,7 +98,7 @@ const server = http.createServer((req, res) => {
       res.end('{"type":"message","content":[]}');
       return;
     }
-    puts.push({ method: req.method, url: req.url, token: req.headers['x-aionui-runtime-token'], body: body ? JSON.parse(body) : null });
+    puts.push({ method: req.method, url: req.url, token: req.headers['x-aiondx-runtime-token'], body: body ? JSON.parse(body) : null });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end('{"success":true}');
   });
@@ -120,7 +120,7 @@ function run(extra) {
   });
   const logs = [];
   const done = startProxy(Object.assign({ exe: process.execPath, args: [FAKE], env: process.env, convId: 'c1', database: DB,
-    apiBase: 'http://127.0.0.1:' + server.address().port, apiHeaders: { 'x-aionui-runtime-token': 'tok' },
+    apiBase: 'http://127.0.0.1:' + server.address().port, apiHeaders: { 'x-aiondx-runtime-token': 'tok' },
     log: (m) => logs.push(m), pollMs: 200, input, output }, extra || {}));
   const json = () => lines.map((l) => { try { return JSON.parse(l.toString('utf8')); } catch { return { unparsable: true }; } });
   return { input, output, lines, json, logs, done };

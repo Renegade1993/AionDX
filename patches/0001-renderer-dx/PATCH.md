@@ -500,7 +500,7 @@ waiter installs it the moment AionUi fully closes). State in `vendor\install-sta
 ## Preview without installing
 
 `tools\dx-harness\harness.html` rebuilds the composer row from `AcpSendBox` markup, loads AionUi's
-shipped stylesheets out of `vendor\extracted\`, and runs the real `aionui-dx.js`. Query options
+shipped stylesheets out of `vendor\extracted\`, and runs the real `aiondx-ui.js`. Query options
 `?theme=dark`, `?on=1`, `?open=1`. Screenshot it headless:
 
 ```
@@ -944,7 +944,7 @@ Build `2026-10-20.2` (a request of October 20th, after a folder link opened a pr
 chip handler (`watchLocalLinks`) decides at the click. Before, a chip went outside only after the async folder check had marked it (up to 3 seconds after it appeared), and a file that could be previewed
 always opened the Preview panel. Alt+click uses the other choice; Shift+click shows the file in its folder; a folder always opens in Explorer.
 
-Requests of October 20th (K's morning list). Everything below is in `aionui-dx.js`; tests are the click scenarios `options`, `links`, `draft-quote`, `agent-cache`, `older-pages` and `swap`
+Requests of October 20th (K's morning list). Everything below is in `aiondx-ui.js`; tests are the click scenarios `options`, `links`, `draft-quote`, `agent-cache`, `older-pages` and `swap`
 (`node tools\dx-harness\click-test.js`, about 540 checks), plus `tools\dx-harness\probe-eval.js` for running a few lines of page code against the harness.
 
 - One list of options (`OPTIONS`). Every choice AionDX offers is an entry with an id, a group, a label, what it does, a default and limits: `links.external`, `spellcheck`, `draft.quote`, `voice.system`,

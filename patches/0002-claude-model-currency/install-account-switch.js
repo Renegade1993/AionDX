@@ -14,7 +14,7 @@
  *   node patches\0002-claude-model-currency\install-account-switch.js           install
  *   node patches\0002-claude-model-currency\install-account-switch.js --check   report only
  *
- * Step 3 needs AionUi running and the AIONUI_* variables of an agent shell (any Claude chat in
+ * Step 3 needs AionUi running and the AIONDX_* variables of an agent shell (any Claude chat in
  * AionUi has them). Never prints a token.
  */
 'use strict';
@@ -100,18 +100,18 @@ const rec = { v: 1, accounts, agents, defaultAccount: named[(cfg.accounts[cfg.de
 say('store record: ' + JSON.stringify(rec));
 if (check) process.exit(0);
 
-const base = (process.env.AIONUI_BASE_URL || '').replace(/\/+$/, '');
-if (!base || !process.env.AIONUI_RUNTIME_TOKEN) {
-  say('store: skipped (no AIONUI_* variables here; run this from an AionUi agent shell)');
+const base = (process.env.AIONDX_BASE_URL || '').replace(/\/+$/, '');
+if (!base || !process.env.AIONDX_RUNTIME_TOKEN) {
+  say('store: skipped (no AIONDX_* variables here; run this from an AionUi agent shell)');
   process.exit(0);
 }
 fetch(base + '/api/settings/client', {
   method: 'PUT',
   headers: {
     'Content-Type': 'application/json',
-    'x-aionui-runtime-token': process.env.AIONUI_RUNTIME_TOKEN,
-    'x-aionui-user-id': process.env.AIONUI_USER_ID || '',
-    'x-aionui-conversation-id': process.env.AIONUI_CONVERSATION_ID || '',
+    'x-aiondx-runtime-token': process.env.AIONDX_RUNTIME_TOKEN,
+    'x-aiondx-user-id': process.env.AIONDX_USER_ID || '',
+    'x-aiondx-conversation-id': process.env.AIONDX_CONVERSATION_ID || '',
   },
   body: JSON.stringify({ 'aiondx.accounts': rec }),
 }).then((r) => { say('store: ' + (r.ok ? 'written' : 'refused (' + r.status + ')')); process.exit(r.ok ? 0 : 1); },

@@ -11,7 +11,7 @@
  *   STDIO       stdin reaches the router and its stdout and stderr come back (stream-json runs
  *               over these pipes)
  *   EXIT CODE   the router's exit code is the shim's
- *   ENVIRONMENT the environment is inherited (AIONUI_CONVERSATION_ID is how the router routes)
+ *   ENVIRONMENT the environment is inherited (AIONDX_CONVERSATION_ID is how the router routes)
  * And, as the control, that cmd.exe really does cut the same arguments at the line break.
  */
 'use strict';
@@ -38,7 +38,7 @@ const fs = require('fs');
 let input = '';
 process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => {
-  fs.writeFileSync(process.env.SHIM_TEST_OUT, JSON.stringify({ argv: process.argv.slice(2), stdin: input, conv: process.env.AIONUI_CONVERSATION_ID }));
+  fs.writeFileSync(process.env.SHIM_TEST_OUT, JSON.stringify({ argv: process.argv.slice(2), stdin: input, conv: process.env.AIONDX_CONVERSATION_ID }));
   process.stdout.write('OUT:' + input);
   process.stderr.write('ERR');
   process.exit(7);
@@ -56,7 +56,7 @@ const ARGS = [
 
 function runShim() {
   return new Promise((resolve) => {
-    const child = spawn(exe, ARGS, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: Object.assign({}, process.env, { SHIM_TEST_OUT: out, AIONUI_CONVERSATION_ID: 'conv1234' }) });
+    const child = spawn(exe, ARGS, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: Object.assign({}, process.env, { SHIM_TEST_OUT: out, AIONDX_CONVERSATION_ID: 'conv1234' }) });
     let so = '', se = '';
     child.stdout.on('data', (d) => { so += d; });
     child.stderr.on('data', (d) => { se += d; });

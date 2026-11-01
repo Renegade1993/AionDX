@@ -289,7 +289,7 @@ function startUsage(opts, log) {
 // ---------------------------------------------------------------------------
 // a request of October 1st, and a team's developer agent "got switched off yolo mode without my having done so". AionCore starts Claude with
 // --permission-mode default and applies the chat's stored mode afterwards with a set_permission_mode request
-// (aionui-session claude.rs); when that step is missed the process stays on default while AionUi still shows YOLO,
+// (aiondx-session claude.rs); when that step is missed the process stays on default while AionUi still shows YOLO,
 // and even in bypassPermissions Claude asks (can_use_tool) for what its own safety checks flag, a dangerous rm for
 // one. Each of those stops the agent until the owner clicks. So a can_use_tool request on a chat whose STORED mode is
 // bypassPermissions is answered here, at once, with allow, and AionCore never sees it. The stored mode, read from the

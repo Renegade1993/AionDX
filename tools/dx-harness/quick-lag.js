@@ -1,4 +1,4 @@
-// quick-lag.js - how much main-thread time AionDX's own script (aionui-dx.js) takes as a chat's message list grows (headless Edge, no window).
+// quick-lag.js - how much main-thread time AionDX's own script (aiondx-ui.js) takes as a chat's message list grows (headless Edge, no window).
 // A synthetic list of N message rows (a tenth of them with a markdown shadow root and a file chip, as AionUi draws them) is put in the solo chat, then a
 // reply is streamed into it (a row added every 25 ms for 4 s) while the CPU profiler runs; the script's own functions are totalled. Throwaway.
 'use strict';
@@ -65,7 +65,7 @@ setTimeout(() => done(2), 280000);
       const name = n.callFrame.functionName || '(anonymous)';
       if (name === '(idle)') { idle += d; return; }
       total += d;
-      const mine = /aionui-dx/.test(n.callFrame.url);
+      const mine = /aiondx-ui/.test(n.callFrame.url);
       const key = (mine ? 'AionDX ' : '') + name + (mine ? ':' + n.callFrame.lineNumber : '');
       self.set(key, (self.get(key) || 0) + d);
     });
@@ -73,7 +73,7 @@ setTimeout(() => done(2), 280000);
     const callers = new Map(); const incl = new Map();
     prof.samples.forEach((id, i) => { const d = prof.timeDeltas[i] || 0; const n = byNode.get(id); const nm = n.callFrame.functionName;
       if (/^(getClientRects|querySelectorAll|querySelector)$/.test(nm)) { let p = parent.get(id), who = '(none)'; while (p) { const pn = byNode.get(p); if (pn.callFrame.functionName && pn.callFrame.functionName !== '(anonymous)') { who = pn.callFrame.functionName + ':' + pn.callFrame.lineNumber + ' ' + (pn.callFrame.url || '').split('/').pop(); break; } p = parent.get(p); } const k = nm + ' <- ' + who; callers.set(k, (callers.get(k) || 0) + d); }
-      const seen = new Set(); let q = id; while (q) { const qn = byNode.get(q); if (/aionui-dx/.test(qn.callFrame.url)) { const k = qn.callFrame.functionName + ':' + qn.callFrame.lineNumber; if (!seen.has(k)) { seen.add(k); incl.set(k, (incl.get(k) || 0) + d); } } q = parent.get(q); } });
+      const seen = new Set(); let q = id; while (q) { const qn = byNode.get(q); if (/aiondx-ui/.test(qn.callFrame.url)) { const k = qn.callFrame.functionName + ':' + qn.callFrame.lineNumber; if (!seen.has(k)) { seen.add(k); incl.set(k, (incl.get(k) || 0) + d); } } q = parent.get(q); } });
     console.log('natives by caller:', JSON.stringify([...callers.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => k + ' ' + (v / 1000).toFixed(0) + 'ms')));
     console.log('AionDX inclusive:', JSON.stringify([...incl.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => k + ' ' + (v / 1000).toFixed(0) + 'ms')));
     const mineTotal = [...self.entries()].filter(([k]) => k.startsWith('AionDX ')).reduce((a, [, v]) => a + v, 0);

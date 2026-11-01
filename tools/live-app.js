@@ -53,11 +53,11 @@ async function launch(opts) {
   if (hadKey) reg(['export', 'HKCU\\Software\\Classes\\aionui', regBackup, '/y']);
   if (!opts.keepProfile) fs.rmSync(profile, { recursive: true, force: true });
   fs.mkdirSync(profile, { recursive: true });
-  const env = Object.assign({}, process.env, { AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONUI_E2E_TEST: '1', AIONUI_E2E_USER_DATA_DIR: profile }, opts.env || {});
-  // The Claude Code session this runs in must not be mistaken for the app's own: no AionUi runtime variables go in.
-  Object.keys(env).forEach((k) => { if (/^AIONUI_(RUNTIME_TOKEN|BASE_URL|USER_ID|CONVERSATION_ID|CDP_)/.test(k)) delete env[k]; });
+  const env = Object.assign({}, process.env, { AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONDX_E2E_TEST: '1', AIONDX_E2E_USER_DATA_DIR: profile }, opts.env || {});
+  // The Claude Code session this runs in must not be mistaken for the app's own: no runtime variables of an AionDX (or an earlier AionUi) go in.
+  Object.keys(env).forEach((k) => { if (/^AION(DX|UI)_(RUNTIME_TOKEN|BASE_URL|USER_ID|CONVERSATION_ID|CDP_)/.test(k)) delete env[k]; });
   // On a desktop nobody sees (tools\hidden-run.cs), so a test never puts a window on the user's screen. AIONDX_VISIBLE_TESTS=1 shows it.
-  const appArgs = ['--user-data-dir=' + profile, '--remote-debugging-port=' + port].concat(opts.args || []);
+  const appArgs = (opts.noUserDataDir ? [] : ['--user-data-dir=' + profile]).concat(['--remote-debugging-port=' + port]).concat(opts.args || []);   // noUserDataDir: the data-folder test, where the app picks its own folder under the APPDATA given in opts.env
   const quiet = process.env.AIONDX_VISIBLE_TESTS !== '1' ? hiddenRun() : null;
   const child = quiet ? spawn(quiet, [exe].concat(appArgs), { env, stdio: 'ignore', windowsHide: true, detached: false })
     : spawn(exe, appArgs, { env, stdio: 'ignore', windowsHide: true, detached: false });
@@ -111,7 +111,7 @@ async function launch(opts) {
   };
   const type = (text) => send('Input.insertText', { text });
   // Serve a file in place of the app's own copy of a script (by the end of its URL), then reload the page: the real app, running the
-  // edited aionui-dx.js without a rebuild. Other requests go on untouched.
+  // edited page script without a rebuild. Other requests go on untouched.
   const overrides = [];
   const overrideScript = async (urlEnd, file) => {
     overrides.push({ urlEnd, file });

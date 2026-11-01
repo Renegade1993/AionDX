@@ -16,7 +16,7 @@ const fake = path.join(root, 'fake-claude.js');
 // The stand-in answers initialize with FAKE_MODELS, and records the config folder and token it was given.
 fs.writeFileSync(fake, `
 const fs = require('fs');
-fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ cfg: process.env.CLAUDE_CONFIG_DIR, tok: process.env.CLAUDE_CODE_OAUTH_TOKEN || null, aionui: process.env.AIONUI_CONVERSATION_ID || null }) + '\\n');
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ cfg: process.env.CLAUDE_CONFIG_DIR, tok: process.env.CLAUDE_CODE_OAUTH_TOKEN || null, aionui: process.env.AIONDX_CONVERSATION_ID || null }) + '\\n');
 let buf = '';
 process.stdin.on('data', (d) => { buf += d; if (buf.indexOf('\\n') < 0) return; const req = JSON.parse(buf.split('\\n')[0]);
   process.stdout.write(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: req.request_id, response: { claude_code_version: '9.9.9', models: JSON.parse(process.env.FAKE_MODELS) } } }) + '\\n'); });
@@ -54,7 +54,7 @@ const script = path.join(__dirname, 'aiondx-model-refresh.js');
 const shim = path.join(root, 'run.js');
 fs.writeFileSync(shim, `process.removeAllListeners('warning'); const m = require(${JSON.stringify(script)}); m.main({ exe: process.execPath, exeArgs: [${JSON.stringify(fake)}], noUpdate: true }).then((c) => process.exit(c), (e) => { console.error(e); process.exit(1); });`);
 const run = (extraArgs, extraEnv) => spawnSync(process.execPath, [shim, '--db', dbFile, '--config', cfgFile].concat(extraArgs || []),
-  { encoding: 'utf8', windowsHide: true, timeout: 120000, env: Object.assign({}, process.env, { AIONDX_REFRESH_LOG_DIR: path.join(root, 'logs'), FAKE_LOG: LOG, FAKE_MODELS: JSON.stringify(MODELS), AIONUI_CONVERSATION_ID: 'leaked', ANTHROPIC_AUTH_TOKEN: 'leaked' }, extraEnv || {}) });
+  { encoding: 'utf8', windowsHide: true, timeout: 120000, env: Object.assign({}, process.env, { AIONDX_REFRESH_LOG_DIR: path.join(root, 'logs'), FAKE_LOG: LOG, FAKE_MODELS: JSON.stringify(MODELS), AIONDX_CONVERSATION_ID: 'leaked', ANTHROPIC_AUTH_TOKEN: 'leaked' }, extraEnv || {}) });
 const rows = () => { const d = new DatabaseSync(dbFile, { readOnly: true }); try { return Object.fromEntries(d.prepare('SELECT * FROM agent_metadata').all().map((r) => [r.id, r])); } finally { d.close(); } };
 
 try {

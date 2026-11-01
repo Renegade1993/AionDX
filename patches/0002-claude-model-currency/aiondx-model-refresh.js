@@ -47,7 +47,15 @@ const DRY = args.includes('--dry-run');
 const FORCE = args.includes('--force');
 const APPDATA = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
 const LOCAL = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-const DB = val('--db') || path.join(APPDATA, 'AionUi', 'aionui', 'aionui-backend.db');
+/** The chats database: AionDX's own data folder, or an earlier AionUi folder that is still being used in place, under the file name
+ *  AionCore writes now or the one an earlier version wrote (AionDX, 2026-11-01). The first that exists; the current one's path if none does. */
+function findBackendDb(appData) {
+  const names = ['aiondx-backend.db', 'aionui-backend.db']; // legacy-name
+  const dirs = [path.join(appData, 'AionDX', 'aionui'), path.join(appData, 'AionUi', 'aionui')]; // legacy-name
+  for (const n of names) for (const d of dirs) { const f = path.join(d, n); try { if (require('fs').existsSync(f)) return f; } catch (e) { /* next */ } }
+  return path.join(dirs[0], names[0]);
+}
+const DB = val('--db') || findBackendDb(APPDATA);
 const LOG_DIR = process.env.AIONDX_REFRESH_LOG_DIR || path.join(LOCAL, 'AionDX', 'logs');
 const LOG = path.join(LOG_DIR, 'model-refresh.log');
 const LOCK = path.join(LOG_DIR, 'model-refresh.lock');
@@ -105,7 +113,7 @@ function routerConfig() {
 function envFor(row, cfg) {
   const env = Object.assign({}, process.env);
   for (const k of Object.keys(env)) {
-    if (/^AIONUI_/i.test(k) || /^(CLAUDE_CONFIG_DIR|CLAUDE_SECURESTORAGE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_API_KEY)$/i.test(k)) delete env[k];
+    if (/^AIONDX_/i.test(k) || /^(CLAUDE_CONFIG_DIR|CLAUDE_SECURESTORAGE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_API_KEY)$/i.test(k)) delete env[k];
   }
   const list = (s) => { const v = parse(s); return Array.isArray(v) ? v : []; };
   for (const e of list(row.env).concat(list(row.env_override))) if (e && typeof e.name === 'string' && typeof e.value === 'string') env[e.name] = e.value;

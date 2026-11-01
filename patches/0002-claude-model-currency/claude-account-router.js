@@ -7,7 +7,7 @@
  * AionUi routes `backend='claude'` conversations through its direct-CLI path, which spawns
  * plain `claude` from PATH using AionUi's own HOME and ignores the agent's configured
  * command. That is what silently billed both AionUi agents to the main account.
- * It does, however, inject AIONUI_CONVERSATION_ID into that process. This router reads it,
+ * It does, however, inject AIONDX_CONVERSATION_ID into that process. This router reads it,
  * looks up which agent owns the conversation, and sets HOME/USERPROFILE and the OAuth token
  * for that account before handing off.
  *
@@ -270,7 +270,15 @@ function carryTranscript(targetDir, dirs) {
 // hands a chat's process its own agent's. So a moved chat gets the chosen agent's environment in place of
 // its own agent's. A config file's named accounts (token files; the developer's machine) still win where they exist.
 
-const DEFAULT_DB = path.join(process.env.APPDATA || path.join(realProfileDir(), 'AppData', 'Roaming'), 'AionUi', 'aionui', 'aionui-backend.db');
+/** The chats database: AionDX's own data folder, or an earlier AionUi folder that is still being used in place, under the file name
+ *  AionCore writes now or the one an earlier version wrote (AionDX, 2026-11-01). The first that exists; the current one's path if none does. */
+function findBackendDb(appData) {
+  const names = ['aiondx-backend.db', 'aionui-backend.db']; // legacy-name
+  const dirs = [path.join(appData, 'AionDX', 'aionui'), path.join(appData, 'AionUi', 'aionui')]; // legacy-name
+  for (const n of names) for (const d of dirs) { const f = path.join(d, n); try { if (require('fs').existsSync(f)) return f; } catch (e) { /* next */ } }
+  return path.join(dirs[0], names[0]);
+}
+const DEFAULT_DB = findBackendDb(process.env.APPDATA || path.join(realProfileDir(), 'AppData', 'Roaming'));
 
 /** What the database says about this chat: its agent, its user, any per-chat choice, and every Claude
  *  agent's environment. Read-only; any failure leaves the fields empty. */
@@ -386,15 +394,15 @@ function proxyOff(env, convId, dbPath, usage, cfg) {
     handOff(env);
     return;
   }
-  const headers = process.env.AIONUI_RUNTIME_TOKEN ? {
-    'x-aionui-runtime-token': process.env.AIONUI_RUNTIME_TOKEN,
-    'x-aionui-user-id': process.env.AIONUI_USER_ID || '',
-    'x-aionui-conversation-id': convId,
+  const headers = process.env.AIONDX_RUNTIME_TOKEN ? {
+    'x-aiondx-runtime-token': process.env.AIONDX_RUNTIME_TOKEN,
+    'x-aiondx-user-id': process.env.AIONDX_USER_ID || '',
+    'x-aiondx-conversation-id': convId,
   } : null;
   proxy.startProxy({
     exe: RESOLVED.exe, args, env, convId, database: dbPath, usage,
     tap: !(cfg && cfg.usageTap === false), approve: !(cfg && cfg.autoApprove === false),   // each can be switched off in the config
-    apiBase: String(process.env.AIONUI_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers,
+    apiBase: String(process.env.AIONDX_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers,
     log: (m) => routerLog(`conv=${convId} ${m}`),
   }).then((code) => process.exit(code), () => process.exit(1));
 }
@@ -432,7 +440,7 @@ try {
 
   RESOLVED = resolveClaudeExe(cfg);
 
-  const convId = process.env.AIONUI_CONVERSATION_ID;
+  const convId = process.env.AIONDX_CONVERSATION_ID;
   if (!convId) handOff(null); // not an AionUi conversation: stock behaviour
 
   const dbPath = (cfg && cfg.database) || DEFAULT_DB;

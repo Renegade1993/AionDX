@@ -588,13 +588,13 @@ fs.writeFileSync(layoutFiles[0], layout);
 // The AionDX themes, for the renderer's first-run setup on a machine that has never had them.
 const { THEMES } = require('./themes');
 fs.writeFileSync(path.join(ext, 'out', 'renderer', 'aiondx-themes.js'),
-  '/* AionDX themes (patches/0009-identity/themes.js), read by aionui-dx.js at first run. */\nwindow.__aionDxThemes = ' + JSON.stringify(THEMES) + ';\n');
+  '/* AionDX themes (patches/0009-identity/themes.js), read by aiondx-ui.js at first run. */\nwindow.__aionDxThemes = ' + JSON.stringify(THEMES) + ';\n');
 notes.push('out/renderer/aiondx-themes.js');
 const indexFile = path.join(ext, 'out', 'renderer', 'index.html');
 let indexHtml = fs.readFileSync(indexFile, 'utf8');
 if (!indexHtml.includes('aiondx-themes.js')) {
-  const tag = '<script src="./aionui-dx.js" defer></script>';
-  if (!indexHtml.includes(tag)) { console.error('0009: index.html has no aionui-dx.js tag (patch 0001 first). Nothing more written.'); process.exit(1); }
+  const tag = '<script src="./aiondx-ui.js" defer></script>';
+  if (!indexHtml.includes(tag)) { console.error('0009: index.html has no aiondx-ui.js tag (patch 0001 first). Nothing more written.'); process.exit(1); }
   indexHtml = indexHtml.replace(tag, '<script src="./aiondx-themes.js" defer></script>\n    ' + tag);
   notes.push('index.html: aiondx-themes.js');
 } else notes.push('index.html: aiondx-themes.js already there');
@@ -607,7 +607,7 @@ for (const [from, to] of [['<title>AionUi</title>', '<title>AionDX</title>'],
 // AionDX's Welcome screen (patch 0001) is the first screen, so AionUi's own three-page Opening guide is
 // marked seen before the app reads the mark (the bundle shows the guide while
 // localStorage['onboarding.openingGuideSeen_v1'] !== 'true'). It has to run before the app's module
-// script, which is why it is an inline script and not part of the deferred aionui-dx.js.
+// script, which is why it is an inline script and not part of the deferred aiondx-ui.js.
 if (!indexHtml.includes('openingGuideSeen_v1')) {
   const mod = indexHtml.match(/<script type="module"[^>]*><\/script>/);
   if (!mod) { console.error('0009: index.html has no module script tag. Nothing more written.'); process.exit(1); }

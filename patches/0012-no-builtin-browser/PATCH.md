@@ -17,7 +17,7 @@ Applied by `apply.js` (run by `tools\build-release.ps1` with 0003, 0006 and 0009
 | `out/main/index.js` | `cdpStartupEnabled = false`: the bridge never starts, so nothing can drive a page inside the app. |
 | `out/main/chunks/runBackendMigrations-*.js` | The start-up step no longer lists `aionui-browser` among the servers it registers, and deletes the one an earlier start registered (`DELETE /api/mcp/servers/{id}`). |
 | `out/renderer/assets/*.js` | `openBrowserTab`, which every link, selection and button called, opens the address with `window.open`; the main window's handler sends `http` and `https` to `shell.openExternal` (the system browser). A blank tab does nothing. The two "Open in built-in browser" items, the "+" button and the workspace button's Browser entry are removed. Browser tabs saved by an earlier session are not restored. |
-| `patches/0001-renderer-dx/aionui-dx.js` (build 2026-10-22.1) | The option `links.external` is gone (there is nothing to choose). A left click on a web link, with or without Alt, Ctrl or Shift, goes to the system browser. The colour menu no longer takes a right-click on a link or a picture, so Open link in browser, Copy link and Copy image show. |
+| `patches/0001-renderer-dx/aiondx-ui.js` (build 2026-10-22.1) | The option `links.external` is gone (there is nothing to choose). A left click on a web link, with or without Alt, Ctrl or Shift, goes to the system browser. The colour menu no longer takes a right-click on a link or a picture, so Open link in browser, Copy link and Copy image show. |
 
 `chrome-devtools` (off by default, runs its own Chrome) is not AionUi's browser and is left as it was.
 

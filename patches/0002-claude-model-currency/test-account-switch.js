@@ -13,7 +13,7 @@
  *
  *   node patches\0002-claude-model-currency\test-account-switch.js
  *
- * Needs AionUi running and an agent shell's AIONUI_* variables. 120 s deadline.
+ * Needs AionUi running and an agent shell's AIONDX_* variables. 120 s deadline.
  */
 'use strict';
 const { spawnSync } = require('child_process');
@@ -49,9 +49,9 @@ function pickChat() {
 }
 const CHAT = pickChat();
 if (!CHAT) { console.log('needs a chat that is not a Claude chat: set ROUTER_TEST_CHAT to one (an Antigravity chat in AionUi will do)'); process.exit(2); }
-const base = (process.env.AIONUI_BASE_URL || '').replace(/\/+$/, '');
-const hdr = { 'Content-Type': 'application/json', 'x-aionui-runtime-token': process.env.AIONUI_RUNTIME_TOKEN || '',
-  'x-aionui-user-id': process.env.AIONUI_USER_ID || '', 'x-aionui-conversation-id': process.env.AIONUI_CONVERSATION_ID || '' };
+const base = (process.env.AIONDX_BASE_URL || '').replace(/\/+$/, '');
+const hdr = { 'Content-Type': 'application/json', 'x-aiondx-runtime-token': process.env.AIONDX_RUNTIME_TOKEN || '',
+  'x-aiondx-user-id': process.env.AIONDX_USER_ID || '', 'x-aiondx-conversation-id': process.env.AIONDX_CONVERSATION_ID || '' };
 const put = (body) => fetch(base + '/api/settings/client', { method: 'PUT', headers: hdr, body: JSON.stringify(body) }).then((r) => r.ok);
 
 let pass = 0, fail = 0;
@@ -67,20 +67,20 @@ const lastLog = () => { try { return fs.readFileSync(LOG, 'utf8').trim().split('
 (async () => {
   const cleanups = [];
   try {
-    let r = router(['--version'], { AIONUI_CONVERSATION_ID: null });
+    let r = router(['--version'], { AIONDX_CONVERSATION_ID: null });
     check('outside AionUi it passes straight through', r.status === 0 && /\d+\.\d+\.\d+/.test(r.stdout) && !fs.existsSync(LOG), r.stderr || r.stdout);
 
-    r = router(['--version'], { AIONUI_CONVERSATION_ID: CHAT });
+    r = router(['--version'], { AIONDX_CONVERSATION_ID: CHAT });
     check('a chat with no choice runs on its agent\'s account (or the default)', r.status === 0 && /conv=\w+ agent=\S+ -> /.test(lastLog()) && !/chosen=/.test(lastLog()), lastLog());
 
     const key = 'aiondx.account.conv.' + CHAT;
     cleanups.push(() => put({ [key]: null }));
     await put({ [key]: { account: ACC_B, at: Date.now(), by: 'test' } });
-    r = router(['--version'], { AIONUI_CONVERSATION_ID: CHAT });
+    r = router(['--version'], { AIONDX_CONVERSATION_ID: CHAT });
     check('a chat moved to the second account launches on it', r.status === 0 && new RegExp(' chosen=' + ACC_B + ' -> ' + ACC_B, 'i').test(lastLog()), lastLog());
 
     await put({ [key]: 'nosuchaccount' });
-    r = router(['--version'], { AIONUI_CONVERSATION_ID: CHAT });
+    r = router(['--version'], { AIONDX_CONVERSATION_ID: CHAT });
     check('an unknown name is ignored: the agent\'s own account', r.status === 0 && !/chosen=/.test(lastLog().split(' | ').pop()), lastLog());
 
     await put({ [key]: { account: ACC_A, at: Date.now() } });
@@ -98,15 +98,15 @@ const lastLog = () => { try { return fs.readFileSync(LOG, 'utf8').trim().split('
     fs.writeFileSync(path.join(src, 'memory', 'MEMORY.md'), '- test\n');
     cleanups.push(() => fs.rmSync(src, { recursive: true, force: true }));
     cleanups.push(() => fs.rmSync(path.join(personal, 'projects', slug), { recursive: true, force: true }));
-    r = router(['--resume', id, '--version'], { AIONUI_CONVERSATION_ID: CHAT }, cwd);
+    r = router(['--resume', id, '--version'], { AIONDX_CONVERSATION_ID: CHAT }, cwd);
     const dst = path.join(personal, 'projects', slug, id + '.jsonl');
     check('resuming on another account carries the newest transcript over', r.status === 0 && fs.existsSync(dst) &&
       fs.existsSync(path.join(personal, 'projects', slug, id, 'subagents', 'a.jsonl')) && /carried session/.test(lastLog()), lastLog());
     check("and the chat's memory folder, where it has none", fs.existsSync(path.join(personal, 'projects', slug, 'memory', 'MEMORY.md')));
     const before = fs.statSync(dst).mtimeMs;
-    r = router(['--resume', id, '--version'], { AIONUI_CONVERSATION_ID: CHAT }, cwd);
+    r = router(['--resume', id, '--version'], { AIONDX_CONVERSATION_ID: CHAT }, cwd);
     check('a copy that is already the newest is left alone', r.status === 0 && fs.statSync(dst).mtimeMs === before);
-    r = router(['--resume', 'not-a-session-id', '--version'], { AIONUI_CONVERSATION_ID: CHAT }, cwd);
+    r = router(['--resume', 'not-a-session-id', '--version'], { AIONDX_CONVERSATION_ID: CHAT }, cwd);
     check('a malformed session id copies nothing and still launches', r.status === 0);
 
     // ---- any agent, no accounts in the config (2026-09-26) ----
@@ -117,7 +117,7 @@ const lastLog = () => { try { return fs.readFileSync(LOG, 'utf8').trim().split('
     const envOf = (res) => { try { return JSON.parse(res.stdout.trim().split(/\r?\n/).pop()); } catch { return null; } };
     const probe = ['-e', 'console.log(JSON.stringify({ dir: process.env.CLAUDE_CONFIG_DIR || null, home: process.env.HOME || null, extra: process.env.AIONDX_TEST_EXTRA || null }))'];
     const genericRun = (extraEnv) => spawnSync(process.execPath, [path.join(generic, 'claude-account-router.js')].concat(probe),
-      { cwd: generic, env: Object.assign({}, process.env, { AIONUI_CONVERSATION_ID: CHAT }, extraEnv || {}), encoding: 'utf8', windowsHide: true, timeout: 60000 });
+      { cwd: generic, env: Object.assign({}, process.env, { AIONDX_CONVERSATION_ID: CHAT }, extraEnv || {}), encoding: 'utf8', windowsHide: true, timeout: 60000 });
     await put({ [key]: null });
     const akey = 'aiondx.agent.conv.' + CHAT;
     cleanups.push(() => put({ [akey]: null }));
@@ -160,7 +160,7 @@ const lastLog = () => { try { return fs.readFileSync(LOG, 'utf8').trim().split('
       fs.mkdirSync(dir, { recursive: true });
       const writeCfg = (extra) => fs.writeFileSync(path.join(cat, 'claude-account-router.config.json'), JSON.stringify(Object.assign({ claudeExe: process.execPath, streamProxy: false }, extra || {})));
       const run = () => spawnSync(process.execPath, [path.join(cat, 'claude-account-router.js'), '-e', '0'],
-        { cwd: cat, env: Object.assign({}, process.env, { AIONUI_CONVERSATION_ID: CHAT, CLAUDE_CONFIG_DIR: dir }), encoding: 'utf8', windowsHide: true, timeout: 60000 });
+        { cwd: cat, env: Object.assign({}, process.env, { AIONDX_CONVERSATION_ID: CHAT, CLAUDE_CONFIG_DIR: dir }), encoding: 'utf8', windowsHide: true, timeout: 60000 });
       const started = async () => { for (let i = 0; i < 40; i++) { if (fs.existsSync(marker)) { await new Promise((r) => setTimeout(r, 300)); return fs.readFileSync(marker, 'utf8').trim().split('\n').filter(Boolean).length; } await new Promise((r) => setTimeout(r, 150)); } return 0; };
       writeCfg();
       run();
@@ -195,7 +195,7 @@ const lastLog = () => { try { return fs.readFileSync(LOG, 'utf8').trim().split('
       await put({ ['aiondx.account.conv.' + CHAT]: { account: 'only', at: Date.now(), by: 'test' } });
       cleanups.push(() => put({ ['aiondx.account.conv.' + CHAT]: null }));
       const tr = spawnSync(process.execPath, [path.join(cat, 'claude-account-router.js'), '-e', 'console.log(JSON.stringify({ o: process.env.CLAUDE_CODE_OAUTH_TOKEN || null, a: process.env.ANTHROPIC_AUTH_TOKEN || null }))'],
-        { cwd: cat, env: Object.assign({}, process.env, { AIONUI_CONVERSATION_ID: CHAT, ANTHROPIC_AUTH_TOKEN: 'inherited' }), encoding: 'utf8', windowsHide: true, timeout: 60000 });
+        { cwd: cat, env: Object.assign({}, process.env, { AIONDX_CONVERSATION_ID: CHAT, ANTHROPIC_AUTH_TOKEN: 'inherited' }), encoding: 'utf8', windowsHide: true, timeout: 60000 });
       const te = envOf(tr);
       check("the account's token goes in CLAUDE_CODE_OAUTH_TOKEN only; ANTHROPIC_AUTH_TOKEN (visible to tools) is not set", te && te.o === 'tok-test-123' && te.a === null, tr.stdout + tr.stderr);
     }

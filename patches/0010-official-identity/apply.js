@@ -78,7 +78,7 @@ const rendererJs = listJs(ASSETS);
 const mainJs = listJs(path.join(ext, 'out', 'main')).concat(listJs(path.join(ext, 'out', 'preload')));
 // AionDX's own scripts, and the built-in MCP scripts, which the app runs from app.asar.unpacked (a copy in the asar is not what runs, and the
 // packer refuses to change one).
-const OWN = /aionui-dx\.js$|aiondx-themes\.js$|builtin-mcp-[\w-]+\.js$/;
+const OWN = /aiondx-ui\.js$|aiondx-themes\.js$|builtin-mcp-[\w-]+\.js$/;
 
 /** The one renderer chunk whose text contains every needle. */
 function chunk(label, ...needles) {

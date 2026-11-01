@@ -113,7 +113,7 @@ server = http.createServer((req, res) => {
     const entry = { method: req.method, path: url.pathname, query: url.search, headers: req.headers, body: raw ? JSON.parse(raw) : null };
     requests.push(entry);
     if (url.pathname.startsWith('/gh/')) return gitHub(req, res, url, entry);
-    if (req.headers['x-aionui-runtime-token'] !== TOKEN || req.headers['x-aionui-user-id'] !== 'u1' || !req.headers['x-aionui-conversation-id']) {
+    if (req.headers['x-aiondx-runtime-token'] !== TOKEN || req.headers['x-aiondx-user-id'] !== 'u1' || !req.headers['x-aiondx-conversation-id']) {
       return reply(res, 401, { success: false, message: 'Invalid runtime token' });
     }
     let m;
@@ -210,8 +210,8 @@ server = http.createServer((req, res) => {
 function startTool(convId, extraEnv) {
   const env = {
     SYSTEMROOT: process.env.SYSTEMROOT, AIONDX_LOOP_LOG_DIR: LOGDIR, AIONDX_MCP_FILE: MCPFILE,
-    AIONUI_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONUI_RUNTIME_TOKEN: TOKEN,
-    AIONUI_USER_ID: 'u1', AIONUI_CONVERSATION_ID: convId, ...(extraEnv || {}),
+    AIONDX_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONDX_RUNTIME_TOKEN: TOKEN,
+    AIONDX_USER_ID: 'u1', AIONDX_CONVERSATION_ID: convId, ...(extraEnv || {}),
   };
   const child = spawn(EXE, [], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   children.push(child);
@@ -298,7 +298,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let r = await solo.call('loop_status');
   check('status of a Loop never switched on', !r.isError && /^Loop for you \(chat "Solo chat"\): OFF \(never switched on\)/.test(r.text), r.text);
   check('status says when AionUi is not running the Loop', /has not reported in the last 5 minutes/.test(r.text) && /AionDX Apply Update/.test(r.text), r.text);
-  check('it authenticates with the runtime token headers', requests.every((q) => q.headers['x-aionui-runtime-token'] === TOKEN && q.headers['x-aionui-conversation-id'] === 'convS'));
+  check('it authenticates with the runtime token headers', requests.every((q) => q.headers['x-aiondx-runtime-token'] === TOKEN && q.headers['x-aiondx-conversation-id'] === 'convS'));
 
   r = await solo.call('loop_set', { on: true, note: 'long list ahead' });
   let rec = kv['aiondx.loop.conv.convS'];
@@ -524,7 +524,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // ---- no identity, a refused token, AionUi gone ----
   // The parent walk is switched off here: run inside an AionUi chat, it would reach that chat's real
   // agent and the real API (it did, read-only, the first time this suite ran).
-  const orphan = startTool('convS', { AIONUI_CONVERSATION_ID: '', AIONUI_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
+  const orphan = startTool('convS', { AIONDX_CONVERSATION_ID: '', AIONDX_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
   check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 13, tlOrphan.result && tlOrphan.result.tools.length);
@@ -533,7 +533,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // An agent that passes its MCP servers no environment: the tool finds its chat in the parent.
   // The stand-in parent carries the identity; the tool itself gets none.
-  const fakeId = { AIONUI_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONUI_RUNTIME_TOKEN: TOKEN, AIONUI_USER_ID: 'u1', AIONUI_CONVERSATION_ID: 'convW' };
+  const fakeId = { AIONDX_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONDX_RUNTIME_TOKEN: TOKEN, AIONDX_USER_ID: 'u1', AIONDX_CONVERSATION_ID: 'convW' };
   const viaParent = spawnSync(process.execPath, ['-e', `
     const r = require('child_process').spawnSync(${JSON.stringify(EXE)}, ['--identity'],
       { env: { SYSTEMROOT: process.env.SYSTEMROOT }, encoding: 'utf8', windowsHide: true });
@@ -542,7 +542,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try { vp = JSON.parse(viaParent.stdout); } catch { /* reported below */ }
   check('with no environment of its own it finds the chat in its parent process', vp.conversation_id === 'convW' && /^process node\.exe \d+$/.test(vp.source || '') && vp.has_token, viaParent.stdout);
 
-  const badTok = startTool('convS', { AIONUI_RUNTIME_TOKEN: 'tok-stale' });
+  const badTok = startTool('convS', { AIONDX_RUNTIME_TOKEN: 'tok-stale' });
   await badTok.rpc('initialize', { protocolVersion: '2025-06-18' });
   r = await badTok.call('loop_status');
   check('a refused token is reported plainly', r.isError && /AionUi's API answered 401 to GET \/api\/teams: Invalid runtime token/.test(r.text), r.text);
@@ -617,7 +617,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- the shell program (aiondx.exe), for chats whose MCP servers were fixed before the tool existed ----
   const cliEnv = (convId) => ({ SYSTEMROOT: process.env.SYSTEMROOT, AIONDX_LOOP_LOG_DIR: LOGDIR, AIONDX_MCP_FILE: MCPFILE,
-    AIONUI_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONUI_RUNTIME_TOKEN: TOKEN, AIONUI_USER_ID: 'u1', AIONUI_CONVERSATION_ID: convId });
+    AIONDX_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONDX_RUNTIME_TOKEN: TOKEN, AIONDX_USER_ID: 'u1', AIONDX_CONVERSATION_ID: convId });
   // Async on purpose: spawnSync would block this process, and with it the stand-in API the program calls.
   const run = (cmd, argv, env) => new Promise((resolve) => {
     const ch = spawn(cmd, argv, { env, windowsHide: true });
@@ -943,7 +943,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   fs.writeFileSync(path.join(showOut, 'Install Game (test build).exe'), 'MZ');
   fs.writeFileSync(path.join(showOut, 'notes.txt'), 'hi');
   const showRun = (args) => new Promise((resolve) => {
-    const c = spawn(CLI, args, { cwd: showWork, env: Object.assign({}, process.env, { AIONUI_CONVERSATION_ID: 'convS' }), windowsHide: true });
+    const c = spawn(CLI, args, { cwd: showWork, env: Object.assign({}, process.env, { AIONDX_CONVERSATION_ID: 'convS' }), windowsHide: true });
     children.push(c);
     let out = '';
     c.stdout.on('data', (d) => { out += d; });

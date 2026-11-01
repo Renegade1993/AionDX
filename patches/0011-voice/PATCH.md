@@ -1,6 +1,6 @@
 # 0011-voice: provider-agnostic voice (TTS/STT), ElevenLabs first
 
-**Target:** renderer only (two plain global scripts, like patch 0001's `aionui-dx.js`), plus one key
+**Target:** renderer only (two plain global scripts, like patch 0001's `aiondx-ui.js`), plus one key
 in AionUi's per-user settings store. **Status:** both halves done, wired into the build, and QA-verified
 against a real AionUi 2.2.2 base (2026-10-11):
 - `node patches\0011-voice\test-voice.js` - 46/46.
@@ -117,7 +117,7 @@ is - the key always comes from the settings record at call time).
 
 ## Installing, checking, removing
 
-Wired into the build the same way `aionui-dx.js` is: two more script tags in `index.html`
+Wired into the build the same way `aiondx-ui.js` is: two more script tags in `index.html`
 (`<script src="./aiondx-voice.js" defer></script>` then `<script src="./aiondx-voice-ui.js" defer></script>`,
 module before the UI that builds a client from it), a `Copy-Item` of each file to
 `out\renderer\`, both added to `tools\privacy-check.js`'s `--files` list, and `0011-voice` added to

@@ -1,5 +1,5 @@
 'use strict';
-// probe-undo13.js - the message box's own Ctrl+Z / Ctrl+Y in the real app, with the edited aionui-dx.js served in place of the built one.
+// probe-undo13.js - the message box's own Ctrl+Z / Ctrl+Y in the real app, with the edited aiondx-ui.js served in place of the built one.
 const path = require('path');
 const { launch, sleep } = require('./live-app');
 
@@ -10,7 +10,7 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
   const app = await launch({ port: 9557, deadlineMs: 280000 });
   try {
     for (let i = 0; i < 90; i++) { const st = await app.js('({ dx: !!window.__aionDx, port: window.__backendPort || null })'); if (st && st.dx && st.port) break; await sleep(1000); }
-    await app.overrideScript('aionui-dx.js', path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aionui-dx.js'));
+    await app.overrideScript('aiondx-ui.js', path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'));
     for (let i = 0; i < 90; i++) { await sleep(1000); const st = await app.js('({ dx: !!window.__aionDx, build: window.__aionDx && window.__aionDx.build, port: window.__backendPort || null })'); if (st && st.dx && st.port && st.build === '2026-10-02.1') break; }
     console.log('build', await app.js('window.__aionDx && window.__aionDx.build'));
     await app.js(`(() => { const s = document.createElement('style'); s.textContent = '.aiondx-welcome-backdrop{display:none !important}'; document.head.appendChild(s); return 0; })()`);

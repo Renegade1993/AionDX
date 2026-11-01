@@ -73,7 +73,7 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
   await sleep(2500);
   const seedFile = path.join(os.tmpdir(), 'aiondx-anchors-seed.py');
   fs.writeFileSync(seedFile, SEED);
-  const r = spawnSync('py', ['-I', seedFile, path.join(profile, 'aionui', 'aionui-backend.db')], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
+  const r = spawnSync('py', ['-I', seedFile, path.join(profile, 'aionui', 'aiondx-backend.db')], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
   check('(setup) the conversation was put in the profile', /seeded 4200/.test(r.stdout || ''), (r.stdout || '') + (r.stderr || ''));
 
   const app = await launch({ port: 9602, deadlineMs: 1200000, stage, profile, keepProfile: true });

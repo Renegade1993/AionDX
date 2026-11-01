@@ -3016,6 +3016,34 @@ async function pageTarget() {
       check(sc, 'the bolt cancels the running turn', JSON.stringify(cancels) === JSON.stringify([{ turn_id: 'turn_Z' }]), JSON.stringify(cancels));
       check(sc, 'and then sends the message, once', JSON.stringify(await posts3()) === JSON.stringify(['answer me now']), JSON.stringify(await posts3()));
       await js(`(() => { window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
+
+      // The context meter is always there; a snowflake says the provider's prompt cache has gone cold (2026-11-01).
+      await load('theme=light');
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime;
+        r.data.extra = Object.assign({}, r.data.extra, { backend: 'claude', last_token_usage: { total_tokens: 84000 }, last_context_limit: 200000 });
+        r.data.updated_at = Date.now() - 12 * 60000; window.__aionDx.resetCtx(); window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
+      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
+      // AionUi's own ring is on screen (the harness has one): AionDX draws none of its own and adds the snowflake to it.
+      check(sc, 'with AionUi\'s ring showing, AionDX draws no second one and puts the snowflake in AionUi\'s',
+        await js(`!document.querySelector('#solo [data-testid="aiondx-ctx"]') && !!document.querySelector('#solo .context-usage-indicator .aiondx-snow')`));
+      // AionUi's ring is gone (it holds no count): AionDX draws the meter.
+      await js(`(() => { const s = document.querySelector('#solo .context-usage-indicator:not(.aiondx-ctx)'); if (s) s.remove(); window.__aionDx.resetCtx(); return 0; })()`);
+      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
+      const ring = () => js(`(() => { const e = document.querySelector('#solo [data-testid="aiondx-ctx"]'); if (!e) return null; const c = e.querySelectorAll('circle')[1];
+        return { snow: !!e.querySelector('.aiondx-snow'), title: e.title, snowTitle: (e.querySelector('.aiondx-snow') || {}).title || '', off: c.getAttribute('stroke-dashoffset'), dash: c.getAttribute('stroke-dasharray') }; })()`);
+      let rg = await ring();
+      check(sc, 'a chat with no AionUi ring still shows the context meter', !!rg, JSON.stringify(rg));
+      check(sc, 'it is 42% full (84K of 200K)', rg && Math.abs(1 - Number(rg.off) / Number(rg.dash) - 0.42) < 0.01 && /42\.0% of the context window used \(84K of 200K\)/.test(rg.title), JSON.stringify(rg));
+      check(sc, 'a Claude chat idle for 12 minutes (cache lifetime 5) has the snowflake, with the reason', rg && rg.snow && /Cold: Anthropic keeps a prompt cache about 5 minutes/.test(rg.snowTitle), JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.updated_at = Date.now() - 60000; window.__aionDx.resetCtx(); return 0; })()`);
+      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
+      rg = await ring();
+      check(sc, 'a turn a minute ago: the meter stays, no snowflake', rg && !rg.snow, JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.updated_at = Date.now() - 20 * 60000; r.data.extra.backend = 'devin'; window.__aionDx.resetCtx(); return 0; })()`);
+      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
+      rg = await ring();
+      check(sc, 'a provider with no verified cache time is never shown cold', rg && !rg.snow, JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.backend = 'claude'; delete r.data.updated_at; return 0; })()`);
     }
 
     // ---- the Claude usage meter (2026-09-26) ----

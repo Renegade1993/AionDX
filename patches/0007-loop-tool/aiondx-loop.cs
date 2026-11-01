@@ -6,8 +6,8 @@
 // once as an ordinary MCP server row in AionUi (POST /api/mcp/servers), so every agent backend
 // gets it the way it gets any MCP server the user adds. Tools: loop_status and loop_set.
 //
-// WHICH CHAT IT SERVES. aioncore puts AIONUI_BASE_URL, AIONUI_RUNTIME_TOKEN, AIONUI_USER_ID and
-// AIONUI_CONVERSATION_ID into every agent process it starts, but gives an MCP server only its own
+// WHICH CHAT IT SERVES. aioncore puts AIONDX_BASE_URL, AIONDX_RUNTIME_TOKEN, AIONDX_USER_ID and
+// AIONDX_CONVERSATION_ID into every agent process it starts, but gives an MCP server only its own
 // row's environment, and agent CLIs differ in what they pass on to their MCP servers. So this
 // reads its own environment first, then walks up its parent processes and reads theirs (the PEB
 // environment block, the offsets a Python helper has used since September
@@ -21,7 +21,7 @@
 //   aiondx.loop.team.<teamId>.<slotId>
 //   aiondx.loopstatus.<same suffix>            what the Loop last decided, written by the renderer
 //   aiondx.engine                              {at, build}: the renderer is running the Loop
-// patches/0001-renderer-dx/aionui-dx.js runs the Loop from the same records and marks the button
+// patches/0001-renderer-dx/aiondx-ui.js runs the Loop from the same records and marks the button
 // when an agent changes it.
 //
 // TWO BUILDS OF THIS ONE FILE (the .NET Framework compiler every Windows 10 and 11 has):
@@ -98,10 +98,19 @@ namespace AionDx
 
     static class Program
     {
+        // The data folder in use (2026-11-01): AionDX's own, or an earlier AionUi folder that is still used in place, or AionDX's when neither exists.
+        static string DataFolder(string roaming)
+        {
+            string dx = Path.Combine(roaming, "AionDX"), old = Path.Combine(roaming, "AionUi"); // legacy-name
+            if (Directory.Exists(Path.Combine(dx, "aionui"))) return dx;
+            if (Directory.Exists(Path.Combine(old, "aionui"))) return old;
+            return dx;
+        }
+
         const string Version = "1.14.0";
-        const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aionui-dx.js HOLD_MIN)
-        const long HoldMax = 240;      // aionui-dx.js HOLD_MIN_MAX
-        const long ResumeWarmMaxMs = 50 * 60000;   // aionui-dx.js RESUME_WARM_MAX_MS
+        const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aiondx-ui.js HOLD_MIN)
+        const long HoldMax = 240;      // aiondx-ui.js HOLD_MIN_MAX
+        const long ResumeWarmMaxMs = 50 * 60000;   // aiondx-ui.js RESUME_WARM_MAX_MS
         const long LoopAskMaxMs = 30 * 60000;      // how long the user's "turn the loop off" lets an agent end an until-stopped Loop
         const string UntilStoppedBuild = "2026-09-26.6";   // the first Loop engine that knows "until the user stops it"
         const string EngineKey = "aiondx.engine";
@@ -1013,7 +1022,7 @@ namespace AionDx
         // check. An alert is a threshold on a window of the account a chat runs on, stored as
         //   aiondx.usagealert.team.<team id> / aiondx.usagealert.conv.<conversation id> = { rules: [{ window: "5h"|"week", at: 0.8,
         //     notify: "lead"|"all"|"self", message, by: "agent"|"user", who, slot, conv }], at, rev }
-        // The AionDX window (aionui-dx.js, checkUsageAlerts) compares every reading with the rules and, once per window, sends the
+        // The AionDX window (aiondx-ui.js, checkUsageAlerts) compares every reading with the rules and, once per window, sends the
         // message at once with the Respond-now route. The user's own rules (made in the usage meter's panel) are not for an agent to change.
 
         const string UsageAlertPrefix = "aiondx.usagealert.";
@@ -1863,7 +1872,7 @@ namespace AionDx
             try { cands.Add(Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location), "..", "skills", "aiondx-setup", "scripts")); } catch (Exception) { }
             string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), app = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             cands.Add(Path.Combine(local, "Programs", "AionDX", "resources", "aiondx", "skills", "aiondx-setup", "scripts"));
-            cands.Add(Path.Combine(app, "AionUi", "aionui", "builtin-skills", "auto-inject", "aiondx-setup", "scripts"));
+            cands.Add(Path.Combine(DataFolder(app), "aionui", "builtin-skills", "auto-inject", "aiondx-setup", "scripts"));
             foreach (var c in cands)
             {
                 try
@@ -2631,7 +2640,7 @@ namespace AionDx
             string logs = Path.Combine(dx, "logs");
             string manifestPath = Path.Combine(dx, "manifest.user.json");
             string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string skillsRoot = Path.Combine(roaming, "AionUi", "aionui", "builtin-skills");
+            string skillsRoot = Path.Combine(DataFolder(roaming), "aionui", "builtin-skills");
             string payload = FindPayload(args);
             Dictionary<string, object> release = null;
             try { if (payload != null) release = Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(Path.Combine(payload, "release.json"))); }
@@ -2896,7 +2905,7 @@ namespace AionDx
         // the running turn (session.rs enqueue_user_message). The runtime token signs this program in as the
         // user, so a lead's priority message goes through that route, marked as the lead's.
         const string PriorityTag = "[Priority message from {0}, the team lead, sent with AionDX ahead of your queued work] ";
-        const int QueueWarn = 20;   // aionui-dx.js QUEUE_WARN
+        const int QueueWarn = 20;   // aiondx-ui.js QUEUE_WARN
 
         static string PrioritySend(Dictionary<string, object> a)
         {
@@ -2978,14 +2987,14 @@ namespace AionDx
             "                                                       back up the chats and settings, remove AionUi, check they are intact\n" +
             "  aiondx migrate backup --to DIR [--data DIR]          copy the chats database, settings and custom assistants\n" +
             "  aiondx migrate verify --backup DIR [--data DIR]      compare the data folder with a backup\n" +
-            "The data folder is %APPDATA%\\AionUi (--data or AIONDX_AIONUI_DATA to point elsewhere). Exit codes for run: 0 moved, 2 AionUi not found, " +
+            "The data folder is %APPDATA%\\AionUi (--data or AIONDX_AIONDX_DATA to point elsewhere). Exit codes for run: 0 moved, 2 AionUi not found, " +
             "3 the administrator prompt was declined, 4 AionUi is running, 5 the backup failed (nothing was removed), 6 the removal failed, " +
             "7 the chats database changed during the removal (the backup, if one was taken, is named).";
 
         static string AionUiData(string given)
         {
             if (!string.IsNullOrEmpty(given)) return given;
-            string env = Environment.GetEnvironmentVariable("AIONDX_AIONUI_DATA");
+            string env = Environment.GetEnvironmentVariable("AIONDX_AIONDX_DATA");
             if (!string.IsNullOrEmpty(env)) return env;
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AionUi");
         }
@@ -5032,7 +5041,7 @@ namespace AionDx
             string app = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             return new[] {
                 Path.Combine(pf, "nodejs"),
-                Path.Combine(app, "AionUi", "aionui", "runtime", "node"),
+                Path.Combine(DataFolder(app), "aionui", "runtime", "node"),
                 Path.Combine(local, "Programs", "AionDX", "resources", "bundled-aioncore", "win32-x64", "managed-resources", "node"),
                 Path.Combine(pf, "AionUi", "resources", "bundled-aioncore", "win32-x64", "managed-resources", "node") };
         }
@@ -5225,7 +5234,7 @@ namespace AionDx
                 {
                     var k = Convert.ToString(e.Key, Inv);
                     // The agent's AionUi token and Claude sign-in stay with the agent: a server gets neither.
-                    if (k.StartsWith("AIONUI_", StringComparison.OrdinalIgnoreCase) || Withheld.Contains(k)) continue;
+                    if (k.StartsWith("AIONDX_", StringComparison.OrdinalIgnoreCase) || Withheld.Contains(k)) continue;
                     env[k] = Convert.ToString(e.Value, Inv);
                 }
                 foreach (var kv in def.Env) env[kv.Key] = kv.Value;
@@ -5724,9 +5733,9 @@ namespace AionDx
             req.Timeout = 10000;
             req.ReadWriteTimeout = 10000;
             req.Accept = "application/json";
-            req.Headers["x-aionui-runtime-token"] = id.Token;
-            req.Headers["x-aionui-user-id"] = id.UserId;
-            req.Headers["x-aionui-conversation-id"] = id.ConvId;
+            req.Headers["x-aiondx-runtime-token"] = id.Token;
+            req.Headers["x-aiondx-user-id"] = id.UserId;
+            req.Headers["x-aiondx-conversation-id"] = id.ConvId;
             try
             {
                 if (body != null)
@@ -5753,7 +5762,7 @@ namespace AionDx
 
         // ------------------------------------------------------------------ identity
 
-        static readonly string[] Needed = { "AIONUI_BASE_URL", "AIONUI_RUNTIME_TOKEN", "AIONUI_USER_ID", "AIONUI_CONVERSATION_ID" };
+        static readonly string[] Needed = { "AIONDX_BASE_URL", "AIONDX_RUNTIME_TOKEN", "AIONDX_USER_ID", "AIONDX_CONVERSATION_ID" };
 
         static Identity Id(bool force)
         {
@@ -5766,7 +5775,7 @@ namespace AionDx
                         (Environment.GetEnvironmentVariable("AIONDX_LOOP_NO_ANCESTORS") == "1" ? null : FromAncestors());
             if (found == null)
                 throw new ToolError("The Loop tool cannot tell which AionUi chat it belongs to: neither its own environment nor its " +
-                                    "parent processes carry AIONUI_CONVERSATION_ID. It works in chats that AionUi starts.");
+                                    "parent processes carry AIONDX_CONVERSATION_ID. It works in chats that AionUi starts.");
             Ident = found;
             return found;
         }
@@ -5776,8 +5785,8 @@ namespace AionDx
             string v;
             foreach (var k in Needed) if (!env.TryGetValue(k, out v) || string.IsNullOrEmpty(v)) return null;
             return new Identity {
-                BaseUrl = env["AIONUI_BASE_URL"], Token = env["AIONUI_RUNTIME_TOKEN"], UserId = env["AIONUI_USER_ID"],
-                ConvId = env["AIONUI_CONVERSATION_ID"], Source = source };
+                BaseUrl = env["AIONDX_BASE_URL"], Token = env["AIONDX_RUNTIME_TOKEN"], UserId = env["AIONDX_USER_ID"],
+                ConvId = env["AIONDX_CONVERSATION_ID"], Source = source };
         }
 
         static Identity FromAncestors()

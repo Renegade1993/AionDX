@@ -82,7 +82,7 @@ async function target() {
   // single-instance lock so it runs beside the installed AionUi, and leaves the tray and updater off; the
   // first-run path under test (sign-in, setup, Welcome, agents) is the same.
   app = spawn(EXE, [`--user-data-dir=${PROFILE}`, `--remote-debugging-port=${PORT}`], {
-    env: { ...process.env, AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONUI_E2E_TEST: '1', AIONUI_E2E_USER_DATA_DIR: PROFILE, AIONDX_SETUP_TEST_HOME: SETUP_HOME },
+    env: { ...process.env, AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONDX_E2E_TEST: '1', AIONDX_E2E_USER_DATA_DIR: PROFILE, AIONDX_SETUP_TEST_HOME: SETUP_HOME },
     stdio: 'ignore', windowsHide: true, detached: false });
   app.on('error', (e) => finish(2, 'could not start the app: ' + e.message));
 
@@ -158,7 +158,7 @@ async function target() {
     // A real Antigravity turn: the chat the Welcome screen's sign-in button makes, with its first message.
     const conv = await js(`(async () => {
       const base = 'http://127.0.0.1:' + window.__backendPort;
-      const csrf = window.__coreCsrfToken || (document.cookie.match(/aionui-csrf-token=([^;]+)/) || [])[1] || '';
+      const csrf = window.__coreCsrfToken || (document.cookie.match(/aiondx-csrf-token=([^;]+)/) || [])[1] || '';
       const h = { 'Content-Type': 'application/json', 'x-csrf-token': csrf };
       const list = (await (await fetch(base + '/api/assistants', { credentials: 'include' })).json()).data || [];
       const a = list.find(x => x.agent && (x.agent.type === 'antigravity' || x.agent.acp_backend === 'antigravity'));

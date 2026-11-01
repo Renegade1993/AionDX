@@ -1,5 +1,5 @@
 /* aiondx-voice-ui.js - injected into the AionUi renderer via a <script> tag, the same way
- * patches\0001-renderer-dx\aionui-dx.js is (out\renderer\index.html inside app.asar).
+ * patches\0001-renderer-dx\aiondx-ui.js is (out\renderer\index.html inside app.asar).
  * AionDX patch 0011-voice, UI half (mic button, playback control, settings panel).
  *
  * This file owns the UI only. Speech-to-text, text-to-speech and where the provider's settings
@@ -48,7 +48,7 @@
   // ---------------------------------------------------------------- the provider module
 
   // Same backend-address and CSRF logic as patch 0001's apiUrl()/csrf(), reimplemented here since
-  // aionui-dx.js's are private to its own closure: a same-origin path silently fails in the
+  // aiondx-ui.js's are private to its own closure: a same-origin path silently fails in the
   // desktop app (see patch 0001's "Bug that shipped" section), so the voice client needs the
   // absolute http://127.0.0.1:<port> address too.
   function csrf() {
@@ -142,7 +142,7 @@
 
   /** Set a React-controlled text box: the prototype's setter, then an input event React hears.
    *  Same technique as patch 0001's setComposerValue, reimplemented here since that one is private
-   *  to aionui-dx.js's own closure. */
+   *  to aiondx-ui.js's own closure. */
   function setComposerValue(ta, value) {
     var proto = ta.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     var desc = Object.getOwnPropertyDescriptor(proto, 'value');

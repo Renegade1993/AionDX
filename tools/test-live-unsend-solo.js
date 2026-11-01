@@ -1,6 +1,6 @@
 'use strict';
 // test-live-unsend-solo.js - Unsend and Edit of an Unread message in a SOLO Claude chat, in the real app (the staged build, a throwaway
-// profile), with the edited aionui-dx.js served in place of the built one. A real Claude turn is held in a running tool call (the chat
+// profile), with the edited aiondx-ui.js served in place of the built one. A real Claude turn is held in a running tool call (the chat
 // runs with its permissions auto-approved: a turn waiting on a permission card refuses a message sent into it), a second message waits as
 // "Unread", and the Unsend and Edit buttons beside the badge are pressed.
 //
@@ -18,7 +18,7 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
   const app = await launch({ port: 9563, deadlineMs: 290000 });
   try {
     for (let i = 0; i < 90; i++) { const st = await app.js('({ dx: !!window.__aionDx, port: window.__backendPort || null })'); if (st && st.dx && st.port) break; await sleep(1000); }
-    await app.overrideScript('aionui-dx.js', path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aionui-dx.js'));
+    await app.overrideScript('aiondx-ui.js', path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'));
     for (let i = 0; i < 90; i++) { await sleep(1000); const st = await app.js('({ dx: !!window.__aionDx, build: window.__aionDx && window.__aionDx.build, port: window.__backendPort || null })'); if (st && st.dx && st.build && st.port) break; }
     console.log('build', await app.js('window.__aionDx && window.__aionDx.build'));
     await app.js(`(() => { const s = document.createElement('style'); s.textContent = '.aiondx-welcome-backdrop{display:none !important}'; document.head.appendChild(s); return 0; })()`);

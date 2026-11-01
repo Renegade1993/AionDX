@@ -151,7 +151,7 @@ async function refresh(opts) {
     const work = path.join(scratch, 'work');
     fs.mkdirSync(work, { recursive: true });
     const env = Object.assign({}, opts.env || process.env);
-    delete env.AIONUI_CONVERSATION_ID; delete env.ANTHROPIC_API_KEY;
+    delete env.AIONDX_CONVERSATION_ID; delete env.ANTHROPIC_API_KEY;
     env.CLAUDE_CONFIG_DIR = cfgDir;
     env.CLAUDE_SECURESTORAGE_CONFIG_DIR = dir;
     let got;

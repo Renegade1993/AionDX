@@ -2,7 +2,7 @@
 /**
  * probe-router-live.js - one throwaway Haiku turn through the INSTALLED account router, the way AionCore launches
  * Claude (--print, stream-json both ways), to show that what is installed in %APPDATA%\npm works end to end:
- * Claude answers, the proxy's usage tap saw the call, and (with the AIONUI_* variables of an AionUi agent shell, and
+ * Claude answers, the proxy's usage tap saw the call, and (with the AIONDX_* variables of an AionUi agent shell, and
  * the Loop tool installed) `aiondx usage` then reports this chat's usage from it.
  *
  *   node tools\probe-router-live.js
@@ -46,7 +46,7 @@ function finish() {
   console.log((ok ? 'PASS' : 'FAIL') + ': Claude answered through the installed router: ' + JSON.stringify(answer.slice(0, 60)) + (result.is_error ? ' (error result)' : ''));
   if (ok) {
     const exe = path.join(process.env.LOCALAPPDATA || '', 'AionDX', 'bin', 'aiondx.exe');
-    if (fs.existsSync(exe) && process.env.AIONUI_BASE_URL) {
+    if (fs.existsSync(exe) && process.env.AIONDX_BASE_URL) {
       setTimeout(() => {
         const r = spawnSync(exe, ['usage'], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
         console.log('aiondx usage says:\n' + String(r.stdout || r.stderr).trim());

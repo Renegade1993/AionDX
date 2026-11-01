@@ -1,4 +1,4 @@
-/* aionui-dx.js - injected into the AionUi renderer via a <script> tag in
+/* aiondx-ui.js - injected into the AionUi renderer via a <script> tag in
  * out/renderer/index.html inside app.asar. AionDX patch 0001.
  *
  * LOOP: keeps a chat working after each turn. It works in two places:
@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-10-31.2';
+  var BUILD = '2026-11-01.2';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -6260,6 +6260,10 @@
     '.aiondx-stop{color:rgb(var(--danger-6))}',
     '.aiondx-stop-sq{display:block;width:12px;height:12px;margin:0 auto;border-radius:2px;background:currentColor}',
     '.aiondx-solo-bolt svg{width:14px;height:14px;display:block;margin:0 auto;color:rgb(var(--warning-6))}',
+    '.context-usage-indicator{position:relative}',
+    '.aiondx-ctx{cursor:pointer;display:flex;align-items:center;justify-content:center;width:32px;height:32px}',
+    '.aiondx-snow{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;color:#7dd3fc;pointer-events:auto}',
+    '.aiondx-snow svg{width:11px;height:11px;display:block}',
     '.aiondx-stop.aiondx-stop--force{border-color:rgb(var(--danger-6)) !important;background:rgba(var(--danger-6),.12)}',
     '.aiondx-sched-wrap{position:relative}',
     '.aiondx-sched-count{position:absolute;top:-3px;right:-3px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:rgb(var(--warning-6));',
@@ -7612,6 +7616,96 @@
     applyUserSent(t, text);
     toast('Interrupted, and your message was sent first.', '"' + quoteOf(text) + '"');
   }
+  // The context meter is always there, and a snowflake in it says the prompt cache has gone cold (2026-11-01).
+  // AionUi draws the ring only while its page holds a token count for the chat: after a restart, a switch of chats or a long
+  // idle the count is gone and the ring is too. AionDX reads the chat's last known count and window (extra.last_token_usage and
+  // last_context_limit, which AionCore keeps) and draws the ring itself whenever AionUi's is missing. A provider keeps a prompt
+  // cache for a limited time after its last use (research: Research/2026-11-01_provider-prompt-cache-lifetimes.md); once that
+  // has passed with the agent idle, the next turn pays to write the whole context again, and the ring carries a snowflake.
+  var CACHE_TTL_BY_PROVIDER = { claude: 5 * 60000, codex: 10 * 60000, gemini: 60 * 60000 };   // Anthropic default, the top of OpenAI's 5 to 10 minute window, Google's explicit-cache default
+  var CACHE_PROVIDER_NAME = { claude: 'Anthropic', codex: 'OpenAI', gemini: 'Google' };
+  var ICON_SNOW = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.2 7l15.6 10M19.8 7 4.2 17M9 3.8l3 2.4 3-2.4M9 20.2l3-2.4 3 2.4"/></svg>';
+  var ctxInfo = {}, ctxAsk = {}, ctxState = {}, ctxWorked = {}, ctxEls = {};
+  function ctxProvider(d) {
+    var e = (d && d.extra) || {};
+    var b = String(e.backend || e.acp_backend || (d && d.type) || '').toLowerCase();
+    if (/claude|anthropic/.test(b)) return 'claude';
+    if (/codex|openai|gpt/.test(b)) return 'codex';
+    if (/gemini|antigravity|agy/.test(b)) return 'gemini';
+    return '';
+  }
+  function ctxSaved(convId) { try { var v = JSON.parse(localStorage.getItem('aiondx.ctx.' + convId)); return v && typeof v === 'object' ? v : null; } catch (e) { return null; } }
+  function ctxRefresh(t) {
+    var k = t.key, st = (agentLive[k] || {}).state || '';
+    var changed = ctxState[k] !== st;
+    ctxState[k] = st;
+    if (st === 'working') ctxWorked[k] = Date.now();
+    if (!changed && ctxAsk[k] && Date.now() - ctxAsk[k] < 20000) return;
+    ctxAsk[k] = Date.now();
+    (async function () {
+      var convId = t.convId;
+      if (!convId && t.kind === 'team') { var m = await memberConversation(t); convId = m && m.convId; }
+      if (!convId) return;
+      var g = await getJson('/api/conversations/' + convId);
+      var d = g && g.data;
+      if (!d) { if (!ctxInfo[k]) { var sv = ctxSaved(convId); if (sv) { ctxInfo[k] = sv; renderSched(); } } return; }
+      var old = ctxInfo[k] || ctxSaved(convId) || {};
+      var e = d.extra || {};
+      var u = e.last_token_usage;
+      var used = u && Number(u.total_tokens) > 0 ? Number(u.total_tokens) : (old.used || 0);
+      var limit = Number(e.last_context_limit) > 0 ? Number(e.last_context_limit) : (old.limit || 0);
+      var info = { used: used, limit: limit, updatedAt: Number(d.updated_at) || old.updatedAt || 0, provider: ctxProvider(d) };
+      ctxInfo[k] = info;
+      try { localStorage.setItem('aiondx.ctx.' + convId, JSON.stringify(info)); } catch (er) {}
+      renderSched();
+    })().catch(function () {});
+  }
+  /** { since, name, minutes } when the prompt cache of this chat's provider has run out with the agent idle; null otherwise. */
+  function ctxCold(t, info) {
+    var ttl = CACHE_TTL_BY_PROVIDER[info.provider];
+    if (!ttl || (agentLive[t.key] || {}).state === 'working') return null;
+    var last = Math.max(info.updatedAt || 0, ctxWorked[t.key] || 0);
+    if (!last || Date.now() - last <= ttl) return null;
+    return { since: last + ttl, name: CACHE_PROVIDER_NAME[info.provider], minutes: Math.round(ttl / 60000) };
+  }
+  function ctxSnow(host, cold) {
+    var s = host.querySelector(':scope > .aiondx-snow');
+    if (!cold) { if (s) s.parentNode.removeChild(s); return; }
+    if (!s) { s = document.createElement('span'); s.className = 'aiondx-snow'; s.innerHTML = ICON_SNOW; host.appendChild(s); }
+    var tip = 'Cold: ' + cold.name + ' keeps a prompt cache about ' + cold.minutes + ' minutes after the last turn, and that ran out at ' + hhmm(cold.since) + '. The next message pays to write the whole context again.';
+    if (s.title !== tip) s.title = tip;
+  }
+  function paintCtx(t, wrap) {
+    ctxRefresh(t);
+    var info = ctxInfo[t.key];
+    var stock = t.actions && t.actions.querySelector('.context-usage-indicator:not(.aiondx-ctx)');
+    var el = ctxEls[t.key];
+    var cold = info ? ctxCold(t, info) : null;
+    if (stock) { if (el && el.parentNode) el.parentNode.removeChild(el); ctxSnow(stock, cold); return; }
+    var send = t.actions && t.actions.querySelector('.sendbox-send-tooltip-anchor');
+    if (!info || !send || !send.parentNode) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'context-usage-indicator aiondx-ctx';
+      el.setAttribute('data-testid', 'aiondx-ctx');
+      el.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" style="transform:rotate(-90deg)"><circle cx="10" cy="10" r="9" fill="none" stroke="var(--color-fill-3)" stroke-width="2"></circle>' +
+        '<circle cx="10" cy="10" r="9" fill="none" stroke="rgb(var(--primary-6))" stroke-width="2" stroke-linecap="round"></circle></svg>';
+      ctxEls[t.key] = el;
+    }
+    var circ = 2 * Math.PI * 9;
+    var pct = info.limit > 0 ? Math.max(0, Math.min(100, info.used / info.limit * 100)) : 0;
+    var arc = el.querySelectorAll('circle')[1];
+    var dash = String(circ), off = String(circ - pct / 100 * circ);
+    if (arc.getAttribute('stroke-dasharray') !== dash) arc.setAttribute('stroke-dasharray', dash);
+    if (arc.getAttribute('stroke-dashoffset') !== off) arc.setAttribute('stroke-dashoffset', off);
+    var disp = info.limit > 0 ? '' : 'none';
+    if (arc.style.display !== disp) arc.style.display = disp;
+    var tip = (info.limit > 0 ? pct.toFixed(1) + '% of the context window used (' + Math.round(info.used / 1000) + 'K of ' + Math.round(info.limit / 1000) + 'K)'
+      : info.used > 0 ? Math.round(info.used / 1000) + 'K tokens used; the window size is not known' : 'No context count yet for this chat');
+    if (el.title !== tip) el.title = tip;
+    if (el.parentNode !== send.parentNode || el.nextSibling !== send) send.parentNode.insertBefore(el, send);
+    ctxSnow(el, cold);
+  }
   /** A hard stop (2026-10-31): the Loop goes off; the conversation's turn is cancelled (AionCore then keeps scheduled tasks out of
    *  that conversation until you write to it again); and a team member is paused, so what it had queued does not start the next
    *  turn. Used by AionDX's Stop and, for team members, by every press of AionUi's own Stop button (a solo chat's own press has
@@ -7660,6 +7754,7 @@
       if (wrap.parentNode !== anchor.parentNode || wrap.nextSibling !== anchor) anchor.parentNode.insertBefore(wrap, anchor);
       paintStop(t, wrap);
       paintSoloBolt(t, wrap);
+      paintCtx(t, wrap);
       var btn = wrap.firstChild;
       var box = draftBox(t);
       var has = !!(box && String(box.value || '').trim());
@@ -7673,6 +7768,11 @@
       if (count.textContent !== label) count.textContent = label;
       var tip = 'Schedule send' + (n ? ': ' + n + ' waiting' : has ? ': send this message later' : ': type a message first');
       if (btn.getAttribute('aria-label') !== tip) { btn.setAttribute('aria-label', tip); btn.title = tip; }
+    });
+    Object.keys(ctxEls).forEach(function (k) {
+      if (live[k]) return;
+      if (ctxEls[k].parentNode) ctxEls[k].parentNode.removeChild(ctxEls[k]);
+      delete ctxEls[k];
     });
     Object.keys(soloBoltEls).forEach(function (k) {
       if (live[k]) return;
@@ -8667,6 +8767,7 @@
     spinReset: function () { spinVerdict = {}; schedule(); },
     fireSched: function () { return fireScheduled(); },
     schedState: function (id) { return schedStore[id] || null; },
+    resetCtx: function () { ctxInfo = {}; ctxAsk = {}; ctxState = {}; ctxWorked = {}; },
     accountLimit: function (convId) { return accountLimit(convId); },
     unsend: function () { return { results: unsendResults, pending: unsendPending }; },
     runUnsend: function () { try { renderUnsend(); return 'ok'; } catch (e) { return String((e && e.stack) || e); } },
