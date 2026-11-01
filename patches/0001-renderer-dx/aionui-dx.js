@@ -6259,6 +6259,7 @@
     '.aiondx-stop-wrap{display:inline-flex}',
     '.aiondx-stop{color:rgb(var(--danger-6))}',
     '.aiondx-stop-sq{display:block;width:12px;height:12px;margin:0 auto;border-radius:2px;background:currentColor}',
+    '.aiondx-solo-bolt svg{width:14px;height:14px;display:block;margin:0 auto;color:rgb(var(--warning-6))}',
     '.aiondx-stop.aiondx-stop--force{border-color:rgb(var(--danger-6)) !important;background:rgba(var(--danger-6),.12)}',
     '.aiondx-sched-wrap{position:relative}',
     '.aiondx-sched-count{position:absolute;top:-3px;right:-3px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:rgb(var(--warning-6));',
@@ -7563,6 +7564,54 @@
     var r = await hardStop(t);
     toast(r.ok ? 'Stop sent.' : r.nothing ? 'Nothing is running in this chat.' : 'Stop could not be sent.', r.ok ? 'If it keeps working, Force stop appears.' : r.nothing ? '' : r.why);
   }
+  // A bolt for a solo chat (2026-11-01). Team members have one (AionUi's Interrupt & send, and the bolt beside a waiting message); a solo
+  // chat had none, so a message you typed while its agent worked could only wait for the agent's next step. While a solo chat works
+  // and its box holds a message, the bolt ends the turn and sends the message first, so the agent answers it now.
+  var soloBoltEls = {};   // target key -> the bolt button
+  function paintSoloBolt(t, wrap) {
+    var a = agentLive[t.key];
+    var box = t.kind === 'conv' ? draftBox(t) : null;
+    var text = box ? String(box.value || '') : '';
+    var show = t.kind === 'conv' && !!a && a.state === 'working' && !!text.trim() && !/^\s*\//.test(text);
+    var el = soloBoltEls[t.key];
+    if (!show) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
+    if (!el) {
+      el = document.createElement('span');
+      el.className = 'aiondx-stop-wrap aiondx-solo-bolt-wrap';
+      el.innerHTML = '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-default arco-btn-shape-circle aiondx-solo-bolt" data-testid="aiondx-solo-bolt">' + ICON_BOLT + '</button>';
+      el.firstChild.title = 'Interrupt and send: ends what the agent is doing and sends this message first.';
+      el.firstChild.setAttribute('aria-label', el.firstChild.title);
+      el.firstChild.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); interruptAndSendSolo(el._t); });
+      soloBoltEls[t.key] = el;
+    }
+    el._t = t;
+    if (el.parentNode !== wrap.parentNode || el.nextSibling !== wrap) wrap.parentNode.insertBefore(el, wrap);
+  }
+  async function interruptAndSendSolo(t) {
+    var box = draftBox(t);
+    var text = box ? String(box.value || '') : '';
+    if (!text.trim()) return;
+    var convId = t.convId;
+    setComposerValue(box, '');
+    var back = function (why) { setComposerValue(box, text); toast(why, 'Your message is back in the box.'); };
+    var g = await getJson('/api/conversations/' + convId);
+    var turn = g.data && g.data.runtime && convBusy(g.data) ? g.data.runtime.turn_id : null;
+    if (turn) {
+      var c = await postJson('/api/conversations/' + convId + '/cancel', { turn_id: turn });
+      if (!c || !c.ok) { back('Could not interrupt the agent (HTTP ' + (c && c.status) + ').'); return; }
+      // The turn ends within a moment; the message goes as soon as the chat is free (10 seconds at most).
+      for (var i = 0; i < 20; i++) {
+        await new Promise(function (r) { setTimeout(r, 500); });
+        var s = await getJson('/api/conversations/' + convId);
+        if (!(s.data && convBusy(s.data))) break;
+      }
+    }
+    userSent(box, text);
+    var r = await postJson('/api/conversations/' + convId + '/messages', { content: text });
+    if (!r || !r.ok) { back('Could not send it (HTTP ' + (r && r.status) + ').'); return; }
+    applyUserSent(t, text);
+    toast('Interrupted, and your message was sent first.', '"' + quoteOf(text) + '"');
+  }
   /** A hard stop (2026-10-31): the Loop goes off; the conversation's turn is cancelled (AionCore then keeps scheduled tasks out of
    *  that conversation until you write to it again); and a team member is paused, so what it had queued does not start the next
    *  turn. Used by AionDX's Stop and, for team members, by every press of AionUi's own Stop button (a solo chat's own press has
@@ -7610,6 +7659,7 @@
       wrap._t = t;
       if (wrap.parentNode !== anchor.parentNode || wrap.nextSibling !== anchor) anchor.parentNode.insertBefore(wrap, anchor);
       paintStop(t, wrap);
+      paintSoloBolt(t, wrap);
       var btn = wrap.firstChild;
       var box = draftBox(t);
       var has = !!(box && String(box.value || '').trim());
@@ -7623,6 +7673,11 @@
       if (count.textContent !== label) count.textContent = label;
       var tip = 'Schedule send' + (n ? ': ' + n + ' waiting' : has ? ': send this message later' : ': type a message first');
       if (btn.getAttribute('aria-label') !== tip) { btn.setAttribute('aria-label', tip); btn.title = tip; }
+    });
+    Object.keys(soloBoltEls).forEach(function (k) {
+      if (live[k]) return;
+      if (soloBoltEls[k].parentNode) soloBoltEls[k].parentNode.removeChild(soloBoltEls[k]);
+      delete soloBoltEls[k];
     });
     Object.keys(stopEls).forEach(function (k) {
       if (live[k]) return;
@@ -8303,6 +8358,64 @@
       return typeof t === 'string' ? t : null;
     } catch (e) { return null; }
   }
+  // A message the backend did not accept is never lost (2026-11-01). While a confirmation (leave plan mode, a permission) was waiting,
+  // the backend refused a message with 409, and AionUi cleared the box and showed nothing: the text was in no transcript and no up-arrow
+  // history. Now a 409 on a chat's message holds the text and sends it as soon as the confirmation is answered (15 minutes at most);
+  // any other refusal puts the text back in the box, with the reason.
+  function unsentTarget(url) {
+    var all = targets();
+    var c = /\/api\/conversations\/([^/?#]+)\/messages/.exec(url);
+    if (c) { for (var i = 0; i < all.length; i++) if (all[i].kind === 'conv' && all[i].convId === c[1]) return all[i]; return null; }
+    var m = /\/api\/teams\/([^/?#]+)(?:\/agents\/([^/?#]+))?\/messages/.exec(url);
+    if (!m) return null;
+    for (var j = 0; j < all.length; j++) {
+      if (all[j].kind !== 'team' || all[j].teamId !== m[1]) continue;
+      if (m[2] ? all[j].slotId === decodeURIComponent(m[2]) : isLeadRole(all[j].role)) return all[j];
+    }
+    return null;
+  }
+  function restoreUnsent(url, text, why) {
+    var t = unsentTarget(url);
+    var box = t ? draftBox(t) : null;
+    if (box) {
+      var cur = String(box.value || '');
+      setComposerValue(box, cur.trim() ? text + '\n\n' + cur : text);
+      toast('Your message was not sent: ' + why + '. It is back in the box.', '"' + quoteOf(text) + '"');
+    } else {
+      toast('Your message was not sent: ' + why + '.', '"' + quoteOf(text) + '"');
+    }
+  }
+  function holdUnsent(input, init, text) {
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    var m = /\/api\/conversations\/([^/?#]+)\/messages/.exec(url);
+    var started = Date.now();
+    toast('A confirmation is waiting, so your message is held.', 'Answer it and the message goes in: "' + quoteOf(text) + '"');
+    function again() {
+      if (Date.now() - started > 15 * 60000) { restoreUnsent(url, text, 'the confirmation was not answered in 15 minutes'); return; }
+      setTimeout(function () {
+        nativeFetch.call(window, apiUrl('/api/conversations/' + m[1] + '/confirmations'), { credentials: 'include' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            var d = j && (j.data !== undefined ? j.data : j);
+            var list = Array.isArray(d) ? d : d && (d.items || d.confirmations);
+            if (Array.isArray(list) && list.length) return again();
+            return nativeFetch.call(window, input, init).then(function (r2) {
+              if (r2.ok) { toast('Your message went in.', '"' + quoteOf(text) + '"'); return; }
+              if (r2.status === 409) return again();
+              restoreUnsent(url, text, 'HTTP ' + r2.status);
+            });
+          }, function () { again(); });
+      }, 2000);
+    }
+    again();
+  }
+  function recoverSend(input, init, r) {
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    var text = sentText(init);
+    if (text === null || !text.trim() || isPluginCommand(text) || r.status === 401 || r.status === 403) return;
+    if (r.status === 409 && /\/api\/conversations\/[^/?#]+\/messages/.test(url)) { holdUnsent(input, init, text); return; }
+    restoreUnsent(url, text, 'HTTP ' + r.status);
+  }
   function guardFetch() {
     window.fetch = function (input, init) {
       var args = arguments;
@@ -8335,6 +8448,13 @@
             var sent = id;
             return nativeFetch.apply(window, args).then(function (r) {
               if (r.ok) releaseStarts(sent, 'a message was sent');
+              else { try { recoverSend(input, init, r); } catch (e) {} }
+              return r;
+            });
+          }
+          if (callId(ANY_SEND_RE, input, init, ['POST'])) {
+            return nativeFetch.apply(window, args).then(function (r) {
+              if (!r.ok) { try { recoverSend(input, init, r); } catch (e) { /* the real answer goes back as it is */ } }
               return r;
             });
           }

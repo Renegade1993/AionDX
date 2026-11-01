@@ -2966,6 +2966,58 @@ async function pageTarget() {
       await js(`(() => { document.querySelector('#solo .sendbox-stop-button').remove(); window.__aionDx.setLive('conv:harness1', 'idle'); window.__aionDx.stopTimes(3000, 12000); return 0; })()`);
     }
 
+    // ---- a message the backend refuses is held, not lost (2026-11-01) ----
+    {
+      const sc = 'unsent';
+      await load('theme=light');
+      const posts3 = () => js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/messages').map(c => c.body && c.body.content)`);
+      // The backend refuses it with 409 (a confirmation is waiting); the confirmation is still listed.
+      await js(`(() => { const r = window.__stub.routes;
+        r['POST /api/conversations/harness1/messages'] = { __status: 409, success: false, error: 'conversation is already running' };
+        r['GET /api/conversations/harness1/confirmations'] = { success: true, data: [{ id: 'c1' }] };
+        window.__calls.length = 0; document.querySelectorAll('.aiondx-toast').forEach(t => t.remove());
+        window.fetch('http://127.0.0.1:1/api/conversations/harness1/messages', { method: 'POST', body: JSON.stringify({ content: 'hold me please' }) }); return 0; })()`);
+      await sleep(500);
+      check(sc, 'a 409 on a chat\'s message says the message is held', (await toasts()).some(t => /^A confirmation is waiting, so your message is held\./.test(t)), JSON.stringify(await toasts()));
+      await sleep(2600);
+      check(sc, 'it is not sent again while the confirmation is still waiting', (await posts3()).length === 1, JSON.stringify(await posts3()));
+      // The confirmation is answered and the backend takes the message: it goes in.
+      await js(`(() => { const r = window.__stub.routes;
+        r['GET /api/conversations/harness1/confirmations'] = { success: true, data: [] };
+        r['POST /api/conversations/harness1/messages'] = { success: true, data: {} }; return 0; })()`);
+      await sleep(2800);
+      check(sc, 'once the confirmation is answered the held message is sent, once more', JSON.stringify(await posts3()) === JSON.stringify(['hold me please', 'hold me please']), JSON.stringify(await posts3()));
+      check(sc, 'and says it went in', (await toasts()).some(t => /^Your message went in\./.test(t)), JSON.stringify(await toasts()));
+      // Any other refusal puts the text back in the box.
+      await js(`(() => { const r = window.__stub.routes; r['POST /api/conversations/harness1/messages'] = { __status: 500, success: false };
+        document.querySelectorAll('.aiondx-toast').forEach(t => t.remove());
+        window.fetch('http://127.0.0.1:1/api/conversations/harness1/messages', { method: 'POST', body: JSON.stringify({ content: 'bring me back' }) }); return 0; })()`);
+      await sleep(600);
+      check(sc, 'a 500 puts the text back in the message box and says why',
+        (await js(`(() => { const t = document.querySelector('[data-testid="sendbox-input"]'); const a = t && (t.tagName === 'TEXTAREA' ? t : t.querySelector('textarea')); return a ? a.value : null; })()`)) === 'bring me back' && (await toasts()).some(t => /^Your message was not sent: HTTP 500\./.test(t)),
+        JSON.stringify(await toasts()));
+      await js(`(() => { const r = window.__stub.routes; r['POST /api/conversations/harness1/messages'] = { success: true, data: {} }; delete r['GET /api/conversations/harness1/confirmations']; return 0; })()`);
+
+      // A bolt for a solo chat: while it works and the box holds a message, the bolt ends the turn and sends the message first.
+      await load('theme=light');
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.runtime = { state: 'running', is_processing: true, turn_id: 'turn_Z' };
+        window.__aionDx.setLive('conv:harness1', 'working'); window.__calls.length = 0; return 0; })()`);
+      check(sc, 'a working solo chat with an empty box has no bolt', !(await js(`!!document.querySelector('#solo [data-testid="aiondx-solo-bolt"]')`)));
+      await humanClick('[data-testid="sendbox-input"]');
+      await send('Input.insertText', { text: 'answer me now' });
+      await sleep(900);
+      await js('window.__aionDx.repaint()');
+      check(sc, 'with a message typed it shows the bolt', await js(`!!document.querySelector('#solo [data-testid="aiondx-solo-bolt"]')`));
+      await humanClick('#solo [data-testid="aiondx-solo-bolt"]');
+      await sleep(300);
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime; return 0; })()`);
+      await sleep(1700);
+      const cancels = await js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/cancel').map(c => c.body)`);
+      check(sc, 'the bolt cancels the running turn', JSON.stringify(cancels) === JSON.stringify([{ turn_id: 'turn_Z' }]), JSON.stringify(cancels));
+      check(sc, 'and then sends the message, once', JSON.stringify(await posts3()) === JSON.stringify(['answer me now']), JSON.stringify(await posts3()));
+      await js(`(() => { window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
+    }
+
     // ---- the Claude usage meter (2026-09-26) ----
     {
       const sc = 'usage';

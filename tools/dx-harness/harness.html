@@ -296,7 +296,7 @@
       }
       var hit = routes[method + ' ' + path];
       return Promise.resolve(new Response(JSON.stringify(hit || { success: false }), {
-        status: hit ? 200 : 404, headers: { 'Content-Type': 'application/json' }
+        status: hit ? (hit.__status || 200) : 404, headers: { 'Content-Type': 'application/json' }
       }));
     };
   })();
