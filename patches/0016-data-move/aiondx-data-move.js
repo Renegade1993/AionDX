@@ -149,6 +149,9 @@ function undo(journal) {
   for (const s of journal.steps.slice().reverse()) {
     try {
       if (s.kind === 'file-rewrite') { if (exists(s.backup)) { fs.copyFileSync(s.backup, s.file); } }
+      else if (s.kind === 'agent-file') { if (exists(s.backup)) { fs.copyFileSync(s.backup, s.file); try { fs.utimesSync(s.file, new Date(), new Date(s.mtime)); } catch (e) { /* nicety */ } } }
+      else if (s.kind === 'agent-dir') { if (exists(s.to) && !exists(s.from)) fs.renameSync(s.to, s.from); }
+      else if (s.kind === 'agent-db') { if (exists(s.backup) && exists(s.db)) { for (const x of ['', '-wal', '-shm']) { try { fs.rmSync(s.db + x, { force: true }); } catch (e) { /* none */ } } fs.copyFileSync(s.backup, s.db); } }
       else if (s.kind === 'history-rename') { if (exists(s.to) && !exists(s.from)) fs.renameSync(s.to, s.from); }
       else if (s.kind === 'db-rewrite') {
         // the rewrite is one transaction; if it committed, the backup copy is the way back
@@ -228,6 +231,176 @@ function rewriteDatabase(dbFile) {
   return changed;
 }
 
+// ---------------------------------------------------------------- other agents' history (step 4b)
+// Agents keep their chat history their own way, and no list of forty-odd agents stays true. What they have in common is that the history holds
+// the working folder of the chat: in a file (JSON, JSONL, TOML, YAML, Markdown), in a SQLite database, or in the name of a folder (the path
+// with its punctuation turned into dashes, or a hash of it). So the agents' own data folders (the registry's agents by name, and the dot-folders of
+// the home folder) are searched for exactly that, and what is found is rewritten or renamed: with a backup of every file first, the file's
+// modification time kept (agents sort sessions by it), the result re-read and checked (JSON still parses, no old path left), and the step
+// undone as a whole if anything fails. It never fails the move itself: the chats are safe without it, and `agents` repeats just this step.
+const AGENT_SKIP_DIR = /^(node_modules|\.git|Cache|Code Cache|GPUCache|Crashpad|extensions|logs|log|Service Worker|CacheStorage|blob_storage|IndexedDB|Local Storage|Session Storage|Dictionaries|DawnGraphiteCache|DawnWebGPUCache|ShaderCache|GrShaderCache|\.cache|cache|npm-cache|_npx|WebStorage|Partitions|Shared Dictionary|sentry)$/i; // (Gemini keeps its per-folder history in tmp, so tmp is searched)
+const HOME_SKIP = /^\.(claude.*|git|ssh|gnupg|cache|npm|nvm|cargo|rustup|docker|vscode.*|kube|aws|azure|gradle|m2|nuget|dotnet|aiondx|aionui|config|local|bash.*|python.*|conda|ipython|matplotlib|android|node.*|yarn|pnpm|bun|lesshst|viminfo|gitconfig|npmrc|wslconfig)$/i; // legacy-name
+const TEXT_EXT = /\.(json|jsonl|toml|ya?ml|md|txt|ini|cfg|conf)$/i;
+const DB_EXT = /\.(db|sqlite|sqlite3)$/i;
+const GENERIC_TOKENS = new Set(['aion', 'cli', 'code', 'agent', 'acp', 'node', 'npx', 'bun', 'python', 'uv', 'sh', 'cmd', 'exe', 'the', 'ai', 'claude']);
+const AGENT_PER_ROOT_MS = Number(process.env.AIONDX_DATA_MOVE_ROOT_MS) || 60000;
+const AGENT_TOTAL_MS = Number(process.env.AIONDX_DATA_MOVE_AGENTS_MS) || 240000;
+const AGENT_MAX_FILE = 100 * 1048576;
+
+function sha(alg, s) { return require('crypto').createHash(alg).update(s).digest('hex'); }
+function swapPath(w) { return w.toLowerCase().startsWith(OLD.toLowerCase() + '\\') ? NEW + w.slice(OLD.length) : w; }
+function agentTokens(db) {
+  const out = new Set();
+  const add = (s) => {
+    s = String(s || '').toLowerCase().replace(/\.(exe|cmd|bat)$/, '');
+    for (const part of [s, s.replace(/(-acp|-cli|-code|-agent|-gateway)+$/, ''), ...s.split(/[^a-z0-9]+/)]) {
+      const t = part.replace(/[^a-z0-9]/g, '');
+      if (t.length >= 3 && !GENERIC_TOKENS.has(t)) out.add(t);
+    }
+  };
+  try { for (const r of db.prepare('SELECT backend, name, command FROM agent_metadata').all()) { add(r.backend); add(r.name); add(String(r.command || '').split(/[\\/]/).pop()); } } catch (e) { /* no table */ }
+  return out;
+}
+function agentRoots(tokens, claudeDirs) {
+  const roots = new Map();   // path -> { claude: bool }
+  const norm = (n) => n.toLowerCase().replace(/^\./, '').replace(/[^a-z0-9]/g, '');
+  const matches = (n) => { const x = norm(n); return [...tokens].some((t) => x === t || x.startsWith(t) || t.startsWith(x) && x.length >= 4); };
+  const listDir = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()); } catch (e) { return []; } };
+  for (const e of listDir(HOME)) if (e.name.startsWith('.') && !HOME_SKIP.test(e.name)) roots.set(path.join(HOME, e.name), {});
+  for (const base of [path.join(HOME, '.config'), path.join(HOME, '.local', 'share'), ROAMING, LOCAL]) {
+    for (const e of listDir(base)) if (!/^(AionUi|AionDX|Temp|Packages|Microsoft|npm|Programs)/i.test(e.name) && matches(e.name)) roots.set(path.join(base, e.name), {}); // legacy-name
+  }
+  for (const d of claudeDirs) roots.set(d, { claude: true });
+  return roots;
+}
+function nameMap(workspacesOld) {
+  const m = new Map();
+  const variants = [(s) => s.replace(/[^A-Za-z0-9]/g, '-'), (s) => s.replace(/[^A-Za-z0-9]/g, '-').toLowerCase(), (s) => sha('sha256', s), (s) => sha('sha256', s.toLowerCase()),
+    (s) => sha('sha256', s.replace(/\\/g, '/')), (s) => sha('md5', s), (s) => sha('sha1', s)];
+  for (const w of workspacesOld) { const w2 = swapPath(w); for (const f of variants) { const a = f(w), b = f(w2); if (a !== b && !m.has(a)) m.set(a, b); } }
+  return m;
+}
+function rewriteText(text) {
+  const pairs = swapPrefixes(OLD, NEW);
+  let u = text;
+  for (const [o, n] of pairs) u = u.split(o).join(n);
+  for (const [o, n] of pairs) u = u.replace(new RegExp(o.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), () => n);   // another letter case
+  return u;
+}
+function holdsOld(buf) {
+  const lower = buf.toString('latin1').toLowerCase();
+  return SPELLINGS(OLD).some((s) => lower.includes(s.toLowerCase()));
+}
+function validJson(ext, text) {
+  try {
+    if (/\.jsonl$/i.test(ext)) { for (const line of text.split(/\r?\n/)) if (line.trim()) JSON.parse(line); return true; }
+    JSON.parse(text); return true;
+  } catch (e) { return false; }
+}
+
+function relocateAgents(journal, ctx) {
+  const t0 = Date.now();
+  const stats = { roots: {}, files: 0, dbs: 0, dirs: 0, skipped: [] };
+  const map = nameMap(ctx.workspaces);
+  const agentDir = path.join(WORK, 'agents');
+  if (!ctx.dry) fs.mkdirSync(agentDir, { recursive: true });
+  let n = 0;
+  const uid = () => (n++) + '-' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);   // a name no earlier run used
+  const bump = (root, what) => { const r = path.relative(HOME, root) || root; stats.roots[r] = stats.roots[r] || {}; stats.roots[r][what] = (stats.roots[r][what] || 0) + 1; };
+
+  function doFile(p, root, ext) {
+    let st; try { st = fs.statSync(p); } catch (e) { return; }
+    if (st.size > AGENT_MAX_FILE) { if (/\.json/i.test(ext)) stats.skipped.push(p + ' (over 100 MB)'); return; }
+    let buf; try { buf = fs.readFileSync(p); } catch (e) { stats.skipped.push(p + ' (' + e.code + ')'); return; }
+    if (!holdsOld(buf)) return;
+    if (buf.length >= 2 && ((buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff))) { stats.skipped.push(p + ' (UTF-16)'); return; }
+    const text = buf.toString('utf8');
+    if (!Buffer.from(text, 'utf8').equals(buf)) { stats.skipped.push(p + ' (not UTF-8)'); return; }
+    const u = rewriteText(text);
+    if (u === text) return;
+    if (ctx.dry) { stats.files++; bump(root, 'files'); return; }
+    const wasJson = /\.jsonl?$/i.test(ext) && validJson(ext, text);
+    if (wasJson && !validJson(ext, u)) { stats.skipped.push(p + ' (would no longer parse)'); return; }
+    const bk = path.join(agentDir, uid() + '-' + path.basename(p) + '.before');
+    fs.writeFileSync(bk, buf);
+    const tmp = p + '.aiondx-tmp';
+    try {
+      fs.writeFileSync(tmp, u);
+      fs.renameSync(tmp, p);
+      try { fs.utimesSync(p, st.atime, st.mtime); } catch (e) { /* the time is a nicety */ }
+    } catch (e) { try { fs.rmSync(tmp, { force: true }); } catch (x) { /* none */ } stats.skipped.push(p + ' (' + e.code + ')'); return; }
+    journal.add({ kind: 'agent-file', file: p, backup: bk, mtime: st.mtimeMs });
+    // checked from the disk, not from memory
+    const again = fs.readFileSync(p);
+    if (holdsOld(again) || (wasJson && !validJson(ext, again.toString('utf8')))) throw new Error('an agent file did not come out right: ' + p);
+    stats.files++; bump(root, 'files');
+  }
+  function doDb(p, root) {
+    let st; try { st = fs.statSync(p); } catch (e) { return; }
+    if (st.size > 512 * 1048576 || st.size < 1024) return;
+    let head = Buffer.alloc(16); try { const fd = fs.openSync(p, 'r'); fs.readSync(fd, head, 0, 16, 0); fs.closeSync(fd); } catch (e) { return; }
+    if (head.toString('latin1') !== 'SQLite format 3\0') return;
+    let buf; try { buf = fs.readFileSync(p); } catch (e) { stats.skipped.push(p + ' (' + e.code + ')'); return; }
+    if (!holdsOld(buf)) { return; }
+    if (ctx.dry) { stats.dbs++; bump(root, 'databases'); return; }
+    let db;
+    try { db = openDb(p, true); const qc = db.prepare('PRAGMA quick_check').get(); if (Object.values(qc)[0] !== 'ok') throw new Error('integrity'); }
+    catch (e) { stats.skipped.push(p + ' (database: ' + e.message + ')'); try { db && db.close(); } catch (x) { /* closed */ } return; }
+    const counts = rowCounts(db);
+    const bk = path.join(agentDir, uid() + '-' + path.basename(p) + '.before');
+    try { db.exec("VACUUM INTO '" + bk.replace(/'/g, "''") + "'"); } catch (e) { db.close(); stats.skipped.push(p + ' (backup: ' + e.message + ')'); return; }
+    db.close();
+    try { rewriteDatabase(p); } catch (e) { stats.skipped.push(p + ' (rewrite: ' + e.message + ')'); return; }
+    journal.add({ kind: 'agent-db', db: p, backup: bk });
+    const v = openDb(p, true);
+    try {
+      if (Object.values(v.prepare('PRAGMA quick_check').get())[0] !== 'ok') throw new Error('an agent database fails its integrity check after the rewrite: ' + p);
+      if (JSON.stringify(rowCounts(v)) !== JSON.stringify(counts)) throw new Error('an agent database changed its row counts: ' + p);
+      if (Object.keys(countLeftover(v, OLD)).length) throw new Error('an agent database still holds the old path: ' + p);
+    } finally { v.close(); }
+    stats.dbs++; bump(root, 'databases');
+  }
+  function walk(dir, root, isClaude, depth, deadline) {
+    if (Date.now() > deadline || Date.now() - t0 > AGENT_TOTAL_MS) { stats.skipped.push(dir + ' (time budget)'); return; }
+    let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (AGENT_SKIP_DIR.test(e.name) || depth > 6) continue;
+        if (isClaude && depth === 0 && e.name === 'projects') continue;   // Claude's history folders have their own step
+        let target = p;
+        if (!isClaude && depth <= 5 && map.has(e.name)) {
+          const to = path.join(dir, map.get(e.name));
+          if (ctx.dry) { stats.dirs++; bump(root, 'folders renamed'); }
+          else if (!exists(to)) {
+            try { fs.renameSync(p, to); journal.add({ kind: 'agent-dir', from: p, to }); stats.dirs++; bump(root, 'folders renamed'); target = to; }
+            catch (x) { stats.skipped.push(p + ' (' + x.code + ')'); }
+          } else stats.skipped.push(p + ' (the new name already exists)');
+        }
+        walk(target, root, isClaude, depth + 1, deadline);
+      } else if (TEXT_EXT.test(e.name) && !/\.before$/.test(e.name)) doFile(p, root, path.extname(e.name));
+      else if (DB_EXT.test(e.name)) doDb(p, root);
+    }
+  }
+  const roots = agentRoots(ctx.tokens, ctx.claudeDirs);
+  for (const [root, info] of roots) {
+    if (Date.now() - t0 > AGENT_TOTAL_MS) { stats.skipped.push(root + ' (time budget)'); continue; }
+    walk(root, root, !!info.claude, 0, Date.now() + AGENT_PER_ROOT_MS);
+  }
+  log((ctx.dry ? 'plan, other agents: ' : 'other agents: ') + roots.size + ' data folders searched in ' + Math.round((Date.now() - t0) / 1000) + ' s; ' + stats.files + ' files, ' + stats.dbs + ' databases and ' + stats.dirs + ' folders rewritten or renamed' + (stats.skipped.length ? '; ' + stats.skipped.length + ' skipped' : ''));
+  for (const [r, s] of Object.entries(stats.roots)) log('   ' + r + ': ' + JSON.stringify(s));
+  for (const s of stats.skipped.slice(0, 12)) log('   skipped ' + s);
+  return stats;
+}
+
+function agentContext(dbFile, fromRoot) {
+  const db = openDb(dbFile, true);
+  try {
+    const ws = Object.values(pathsOfConversations(db, fromRoot)).map((w) => OLD + w.slice(fromRoot.length));   // the old names of the working folders
+    return { tokens: agentTokens(db), claudeDirs: claudeConfigDirs(db), workspaces: ws };
+  } finally { db.close(); }
+}
+
 function run(dry) {
   const { oldDb } = checks();
   log('earlier folder: ' + OLD + '; database ' + path.basename(oldDb) + ' (' + Math.round(fs.statSync(oldDb).size / 1048576) + ' MB)');
@@ -236,7 +409,11 @@ function run(dry) {
   log('rows: ' + totalRows + ' in ' + Object.keys(base.counts).length + ' tables; ' + Object.keys(base.convs).length + ' conversations with a working folder under the earlier folder (' + Object.values(base.exist).filter(Boolean).length + ' of them exist)');
   log('Claude history folders to rename: ' + base.hist.length + ' in ' + base.dirs.length + ' Claude folder(s)');
   log('rows holding the old path now: ' + JSON.stringify(base.left));
-  if (dry) { log('plan only: nothing was changed'); return 0; }
+  if (dry) {
+    try { const actx = agentContext(oldDb, OLD); actx.dry = true; relocateAgents({ add() {} }, actx); } catch (e) { log('plan, other agents: could not be searched (' + e.message + ')'); }
+    log('plan only: nothing was changed');
+    return 0;
+  }
 
   const need = fs.statSync(oldDb).size * 1.2;
   if (freeBytes(LOCAL) < need) throw Object.assign(new Refused('not enough free disk space for a backup of the chats database (' + Math.round(need / 1048576) + ' MB needed)'), { code: 5 });
@@ -288,6 +465,14 @@ function run(dry) {
     }
     log('renamed ' + renamed.length + ' Claude history folder(s)');
     inject('history');
+
+    // 4b. other agents' history (never fails the move: this step alone is undone if it goes wrong)
+    const agentStart = journal.steps.length;
+    try { relocateAgents(journal, agentContext(newDb, NEW)); inject('agents'); }
+    catch (e) {
+      log('other agents: NOT updated (' + e.message + '); that step is undone, the move stands. aiondx-data-move.cmd agents repeats it.');
+      const part = journal.steps.splice(agentStart); journal.save(); undo({ steps: part });
+    }
 
     // 5. small settings files in the moved folder that hold the path
     let rewrittenFiles = 0;
@@ -346,6 +531,16 @@ function run(dry) {
   }
 }
 
+function agentsOnly() {
+  if (!realDir(NEW) || !hasChats(NEW)) throw Object.assign(new Refused('there is no moved AionDX data folder with chats'), { code: 3 });
+  const db = dbIn(NEW);
+  fs.mkdirSync(WORK, { recursive: true });
+  const journal = new Journal(path.join(WORK, 'journal.json'));
+  journal.save();
+  try { relocateAgents(journal, agentContext(db, NEW)); journal.state = 'done'; journal.save(); return 0; }
+  catch (e) { log('FAILED: ' + e.message); undo(journal); journal.state = 'undone'; journal.save(); return 7; }
+}
+
 function rollbackLatest() {
   const root = path.join(LOCAL, 'AionDX', 'data-move');
   let stamps = []; try { stamps = fs.readdirSync(root).sort(); } catch (e) { /* none */ }
@@ -362,7 +557,8 @@ try {
   if (cmd === 'plan') code = run(true);
   else if (cmd === 'run') code = run(false);
   else if (cmd === 'rollback') code = rollbackLatest();
-  else { console.error('usage: aiondx-data-move.js plan|run|rollback [--roaming DIR] [--home DIR] [--local DIR]'); code = 2; }
+  else if (cmd === 'agents') code = agentsOnly();
+  else { console.error('usage: aiondx-data-move.js plan|run|agents|rollback [--roaming DIR] [--home DIR] [--local DIR]'); code = 2; }
   process.exit(code);
 } catch (e) {
   log((e instanceof Refused ? 'not moved: ' : 'ERROR: ') + e.message);
