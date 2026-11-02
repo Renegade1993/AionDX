@@ -455,6 +455,8 @@ begin
   if Param('AIONUIDIR') <> '' then Args := Args + ' --dir "' + Param('AIONUIDIR') + '" --no-elevate';
   if Param('AIONUIDATA') <> '' then Args := Args + ' --data "' + Param('AIONUIDATA') + '"';
   Say('moving from AionUi: ' + Helper + ' ' + Args);
+  WizardForm.StatusLabel.WordWrap := True;
+  WizardForm.StatusLabel.Height := WizardForm.ProgressGauge.Top - WizardForm.StatusLabel.Top - ScaleY(4);
   WizardForm.StatusLabel.Caption := 'Moving from AionUi: backing up your chats and removing AionUi...';
   WizardForm.FilenameLabel.Caption := '';
   if not Exec(Helper, Args, '', SW_HIDE, ewWaitUntilTerminated, Code) then
@@ -566,7 +568,14 @@ begin
   if (not FileExists(Node)) or (not FileExists(Tool)) then begin Say('data folder: the move tool is missing (' + Node + ' / ' + Tool + '); not moved'); Exit; end;
   Args := '--no-warnings "' + Tool + '" run --roaming "' + Root + '" --home "' + Home + '" --local "' + Loc + '"';
   Say('data folder: moving ' + Root + '\AionUi to ' + Root + '\AionDX (backup, rewrite of the stored paths, verification; details in ' + Loc + '\AionDX\data-move)');
-  if not WizardSilent then WizardForm.StatusLabel.Caption := 'Moving your chats to AionDX. This can take a few minutes; nothing is changed unless every check passes.';
+  if not WizardSilent then
+  begin
+    // one short line: the label does not wrap by default, so a long sentence ran off the right edge of the window
+    WizardForm.StatusLabel.WordWrap := True;
+    WizardForm.StatusLabel.Height := WizardForm.ProgressGauge.Top - WizardForm.StatusLabel.Top - ScaleY(4);
+    WizardForm.StatusLabel.Caption := 'Moving your chats to AionDX. This can take a few minutes.';
+    WizardForm.FilenameLabel.Caption := '';
+  end;
   if not Exec(Node, Args, '', SW_HIDE, ewWaitUntilTerminated, Rc) then
   begin
     Say('data folder: the move tool could not start; not moved');
