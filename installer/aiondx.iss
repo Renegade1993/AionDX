@@ -595,6 +595,28 @@ begin
     SuppressibleMsgBox('AionDX did not move your chats to its own folder (see ' + Loc + '\AionDX\data-move for why). Nothing was changed: AionDX will keep using your AionUi folder, and every chat is as it was. A program still working in one of your chat folders (an agent left running) is the usual reason: close it, then run aiondx-data-move.cmd run from ' + ExpandConstant('{app}\resources\aiondx\bin') + ' to finish the move.', mbInformation, MB_OK, IDOK);
   end;
 end;
+{ ---- the Claude launcher in %APPDATA%\npm (2026-11-02) ----
+  A PC that already had AionDX's launcher there (claude-account-router.js and its companions) kept the old copy across an update. From 0.26.0
+  AionCore names a chat to its agent as AIONDX_CONVERSATION_ID, which the old copy does not read: it passed every Claude agent through with
+  no per-chat account and no usage readings. resources\aiondx\bin\aiondx-refresh-launcher.js replaces the four files that differ (the old ones
+  are kept as .bak-<date>) and points the router's config at the moved chats database. A router that is not AionDX's is left alone. }
+procedure RefreshLauncher();
+var Root, Loc, Node, Tool: String; Rc: Integer;
+begin
+  Root := Param('DATAROOT');
+  if (Root = '') and (Param('AIONUIDATA') <> '') then begin Say('launcher: not refreshed (a test)'); Exit; end;
+  if Root = '' then Root := ExpandConstant('{userappdata}');
+  Loc := Param('DATALOCAL');
+  if Loc = '' then Loc := ExpandConstant('{localappdata}');
+  Node := Param('NODE');
+  if Node = '' then Node := ExpandConstant('{app}\resources\bundled-aioncore\win32-x64\managed-resources\node\node-v24.11.0-win-x64\node.exe');
+  Tool := ExpandConstant('{app}\resources\aiondx\bin\aiondx-refresh-launcher.js');
+  if (not FileExists(Node)) or (not FileExists(Tool)) then begin Say('launcher: the refresh tool is missing; not refreshed'); Exit; end;
+  if not Exec(Node, '--no-warnings "' + Tool + '" --roaming "' + Root + '" --local "' + Loc + '"', '', SW_HIDE, ewWaitUntilTerminated, Rc) then
+    Say('launcher: the refresh tool could not start')
+  else
+    Say('launcher: refresh finished with exit code ' + IntToStr(Rc) + ' (details in ' + Loc + '\AionDX\logs\launcher-refresh.log)');
+end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
@@ -603,6 +625,7 @@ begin
     WriteInstallManifest('installed', 'install');
     if MovingToAionDx() then RunMigration();
     MoveDataFolder();
+    RefreshLauncher();
   end;
   if CurStep = ssDone then
   begin

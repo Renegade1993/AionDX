@@ -394,15 +394,16 @@ function proxyOff(env, convId, dbPath, usage, cfg) {
     handOff(env);
     return;
   }
-  const headers = process.env.AIONDX_RUNTIME_TOKEN ? {
-    'x-aiondx-runtime-token': process.env.AIONDX_RUNTIME_TOKEN,
-    'x-aiondx-user-id': process.env.AIONDX_USER_ID || '',
+  const runtimeToken = process.env.AIONDX_RUNTIME_TOKEN || process.env.AIONUI_RUNTIME_TOKEN; // legacy-name
+  const headers = runtimeToken ? {
+    'x-aiondx-runtime-token': runtimeToken,
+    'x-aiondx-user-id': process.env.AIONDX_USER_ID || process.env.AIONUI_USER_ID || '', // legacy-name
     'x-aiondx-conversation-id': convId,
   } : null;
   proxy.startProxy({
     exe: RESOLVED.exe, args, env, convId, database: dbPath, usage,
     tap: !(cfg && cfg.usageTap === false), approve: !(cfg && cfg.autoApprove === false),   // each can be switched off in the config
-    apiBase: String(process.env.AIONDX_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers,
+    apiBase: String(process.env.AIONDX_BASE_URL || process.env.AIONUI_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers, // legacy-name
     log: (m) => routerLog(`conv=${convId} ${m}`),
   }).then((code) => process.exit(code), () => process.exit(1));
 }
@@ -440,10 +441,12 @@ try {
 
   RESOLVED = resolveClaudeExe(cfg);
 
-  const convId = process.env.AIONDX_CONVERSATION_ID;
-  if (!convId) handOff(null); // not an AionUi conversation: stock behaviour
+  // AIONDX_CONVERSATION_ID from AionCore 0.26.0; AIONUI_CONVERSATION_ID before (an agent started by an older core still routes)
+  const convId = process.env.AIONDX_CONVERSATION_ID || process.env.AIONUI_CONVERSATION_ID; // legacy-name
+  if (!convId) handOff(null); // not an AionDX conversation: stock behaviour
 
-  const dbPath = (cfg && cfg.database) || DEFAULT_DB;
+  // the config's database path, unless that file is gone (the data folder moved to AionDX's name): then the one found by name
+  const dbPath = (cfg && cfg.database && fs.existsSync(cfg.database)) ? cfg.database : DEFAULT_DB;
   const facts = readChat(dbPath, convId);
   const accounts = (cfg && cfg.accounts) || {};
   const agentId = facts.agentId;

@@ -45,6 +45,9 @@ fs.mkdirSync(path.join(STAGE, 'resources', 'aiondx', 'bin'), { recursive: true }
 compile(path.join(REPO, 'patches', '0007-loop-tool', 'aiondx-loop.cs'), path.join(STAGE, 'resources', 'aiondx', 'bin', 'aiondx.exe'));
 fs.writeFileSync(path.join(STAGE, 'AionDX.exe'), 'stand-in');
 fs.copyFileSync(path.join(REPO, 'patches', '0016-data-move', 'aiondx-data-move.js'), path.join(STAGE, 'resources', 'aiondx', 'bin', 'aiondx-data-move.js'));   // the data folder move (4c)
+for (const f of ['aiondx-refresh-launcher.js', 'claude-account-router.js', 'claude-stream-proxy.js', 'claude-model-catalog.js', 'aiondx-model-refresh.js']) {   // the launcher refresh (4c)
+  fs.copyFileSync(path.join(REPO, 'patches', '0002-claude-model-currency', f), path.join(STAGE, 'resources', 'aiondx', 'bin', f));
+}
 fs.writeFileSync(path.join(ROOT, 'fake.cs'), `
 using System; using System.IO;
 static class P { static int Main(string[] a) {
@@ -220,6 +223,20 @@ function install(label, ai, extra) {
   r = dmInstall('dm-none', m);
   check('with no earlier folder the step does nothing', r.status === 0 && /no earlier folder to move/.test(r.runLog) && !fs.existsSync(m.OLD), r.runLog);
   spawnSync(path.join(ROOT, 'dm-none', 'app', 'unins000.exe'), ['/VERYSILENT', '/SUPPRESSMSGBOXES'], { windowsHide: true, timeout: 60000 });
+
+  // the Claude launcher AionDX left in %APPDATA%\npm on an earlier version (2026-11-02): replaced by the shipped one, its config follows the moved database
+  m = makeData('dm-launcher');
+  const npmDir = path.join(m.roaming, 'npm');
+  fs.mkdirSync(npmDir, { recursive: true });
+  for (const f of ['claude-account-router.js', 'claude-stream-proxy.js', 'claude-model-catalog.js', 'aiondx-model-refresh.js']) fs.writeFileSync(path.join(npmDir, f), '// old copy of ' + f + '\nclaude-stream-proxy.js\nAIONUI_CONVERSATION_ID\n');
+  fs.writeFileSync(path.join(npmDir, 'claude-account-router.config.json'), JSON.stringify({ database: path.join(m.OLD, 'aionui', 'aionui-backend.db'), accounts: { a: { label: 'x' } } }));
+  r = dmInstall('dm-launcher', m);
+  const shippedRouter = path.join(ROOT, 'dm-launcher', 'app', 'resources', 'aiondx', 'bin', 'claude-account-router.js');
+  const liveRouter = fs.readFileSync(path.join(npmDir, 'claude-account-router.js'), 'utf8');
+  const liveCfg = JSON.parse(fs.readFileSync(path.join(npmDir, 'claude-account-router.config.json'), 'utf8'));
+  check('an earlier AionDX launcher in %APPDATA%\\npm is replaced by the shipped one and reads the new conversation variable', r.status === 0 && liveRouter === fs.readFileSync(shippedRouter, 'utf8') && /AIONDX_CONVERSATION_ID/.test(liveRouter), r.runLog);
+  check('its config names the moved chats database and keeps its accounts, and the old files are kept', liveCfg.database === path.join(m.NEW, 'aionui', 'aionui-backend.db') && liveCfg.accounts.a.label === 'x' && fs.readdirSync(npmDir).some((n) => /^claude-account-router\.js\.bak-/.test(n)), JSON.stringify(liveCfg));
+  spawnSync(path.join(ROOT, 'dm-launcher', 'app', 'unins000.exe'), ['/VERYSILENT', '/SUPPRESSMSGBOXES'], { windowsHide: true, timeout: 60000 });
 }
 
 // 5. the sandbox leaves nothing behind, and the real AionDX state was not touched.

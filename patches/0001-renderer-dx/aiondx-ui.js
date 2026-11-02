@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-01.2';
+  var BUILD = '2026-11-02.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -4014,9 +4014,38 @@
   }
   /** The account reading for a chat, whatever its age: the limit pause needs a reset time even from an old reading. */
   function usageRecord(convId) {
-    var c = usageConv[convId];
+    var c = usageConv[convId] || usageGuess(convId);
     var a = c && usageAcct[c.acct];
     return a && (a.five_hour || a.seven_day) ? a : null;
+  }
+  // A chat whose Claude has not started since the launcher began recording has no record of which account it runs on, so its meter was
+  // missing while a sibling's showed (2026-11-02: teams opened without starting their agents). Every chat of one agent runs on one
+  // account, so a chat without a record borrows the account of the newest chat that has one and uses the same agent.
+  var agentOf = {};      // conversation id -> its agent's id ('' when it has none), read from the conversation
+  var agentAsked = {};
+  function agentRead(convId) {
+    if (agentOf[convId] !== undefined || agentAsked[convId]) return;
+    agentAsked[convId] = true;
+    getJson('/api/conversations/' + convId).then(function (g) {
+      var e = g && g.data && g.data.extra;
+      if (g && g.data) agentOf[convId] = String((e && e.agent_id) || '');
+      else delete agentAsked[convId];
+      schedule();
+    }, function () { delete agentAsked[convId]; });
+  }
+  function usageGuess(convId) {
+    // the agent a chat runs on: the one picked for it in the account menu, else the one it was made with
+    var agentFor = function (cid) { return agentPrefs[cid] || agentOf[cid]; };
+    var aid = agentFor(convId);
+    if (aid === undefined) { agentRead(convId); return null; }
+    if (!aid) return null;
+    var best = null;
+    Object.keys(usageConv).forEach(function (cid) {
+      if (agentFor(cid) === undefined) { agentRead(cid); return; }
+      if (agentFor(cid) !== aid) return;
+      if (!best || (Number(usageConv[cid].at) || 0) > (Number(best.at) || 0)) best = usageConv[cid];
+    });
+    return best;
   }
   function usageOf(convId) {
     var a = usageRecord(convId);
@@ -7651,9 +7680,19 @@
       if (!d) { if (!ctxInfo[k]) { var sv = ctxSaved(convId); if (sv) { ctxInfo[k] = sv; renderSched(); } } return; }
       var old = ctxInfo[k] || ctxSaved(convId) || {};
       var e = d.extra || {};
+      if (agentOf[convId] === undefined) agentOf[convId] = String(e.agent_id || '');
       var u = e.last_token_usage;
       var used = u && Number(u.total_tokens) > 0 ? Number(u.total_tokens) : (old.used || 0);
       var limit = Number(e.last_context_limit) > 0 ? Number(e.last_context_limit) : (old.limit || 0);
+      // The count AionCore keeps for every chat that has run (acp_session runtime context_usage: { used, size }), served by
+      // /api/conversations/{id}/usage with or without a live agent. extra.last_token_usage is never written by AionCore 0.2.2, so on its own
+      // the ring stayed empty after a restart for every chat that had not spoken since (2026-11-02: teams opened without starting agents).
+      try {
+        var gu = await getJson('/api/conversations/' + convId + '/usage');
+        var cu = gu && gu.data;
+        if (cu && Number(cu.used) > 0) used = Number(cu.used);
+        if (cu && Number(cu.size) > 0) limit = Number(cu.size);
+      } catch (er) {}
       var info = { used: used, limit: limit, updatedAt: Number(d.updated_at) || old.updatedAt || 0, provider: ctxProvider(d) };
       ctxInfo[k] = info;
       try { localStorage.setItem('aiondx.ctx.' + convId, JSON.stringify(info)); } catch (er) {}

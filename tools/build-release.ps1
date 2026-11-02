@@ -208,6 +208,7 @@ Copy-Item "$root\patches\0002-claude-model-currency\claude-stream-proxy.js" $bin
 Copy-Item "$root\patches\0002-claude-model-currency\claude-model-catalog.js" $bin
 Copy-Item "$root\patches\0002-claude-model-currency\aiondx-model-refresh.js" $bin
 Copy-Item "$root\patches\0016-data-move\aiondx-data-move.js" $bin
+Copy-Item "$root\patches\0002-claude-model-currency\aiondx-refresh-launcher.js" $bin
 Set-Content -Path (Join-Path $bin "aiondx-data-move.cmd") -Encoding Ascii -Value @("@echo off", "rem Undo or repeat the move of AionUi's data folder (installer step): aiondx-data-move.cmd rollback | plan | run", "set NODE=%~dp0..\..\bundled-aioncore\win32-x64\managed-resources\node\node-v24.11.0-win-x64\node.exe", "if not exist ""%NODE%"" set NODE=node", """%NODE%"" ""%~dp0aiondx-data-move.js"" %*")
 Copy-Item "$root\patches\0009-identity\icon\aiondx.ico" "$payload\icons\aiondx.ico"
 Copy-Item "$root\patches\0007-loop-tool\skill\aiondx-loop" "$payload\skills\aiondx-loop" -Recurse
