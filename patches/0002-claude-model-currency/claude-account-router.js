@@ -367,7 +367,23 @@ function isStreamSession() {
  *  The token itself goes along only when the config asks for the old direct probe ("usageProbe": true), which called
  *  the API with it and is off (Anthropic's terms do not permit a Free, Pro or Max OAuth token in any tool but Claude
  *  Code). "usageMeter": false switches the meter off. */
+/** The plan's name for the meter, from the two plan fields Claude Code keeps in the config folder's .credentials.json (never the token):
+ *  subscriptionType "max" with rateLimitTier ending _20x is Ultra (Anthropic renamed Max 20x to Ultra on 2026-10-30, and Ultra has no 5-hour
+ *  window); "max" otherwise is Max (formerly Max 5x); pro, team and enterprise as they are. '' when it cannot be read. */
+function planOf(dir) {
+  try {
+    const o = JSON.parse(fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8')).claudeAiOauth || {};
+    const t = String(o.subscriptionType || '').toLowerCase(), tier = String(o.rateLimitTier || '').toLowerCase();
+    if (t === 'max') return /20x/.test(tier) ? 'Ultra' : 'Max';
+    return t ? t[0].toUpperCase() + t.slice(1) : '';
+  } catch { return ''; }
+}
 function usageFor(env, cfg, label) {
+  const u = usageFor0(env, cfg, label);
+  if (u && u.configDir) { const p = planOf(u.configDir); if (p) u.plan = p; }
+  return u;
+}
+function usageFor0(env, cfg, label) {
   if ((cfg && cfg.usageMeter === false) || process.env.AIONDX_NO_USAGE === '1') return null;
   const probe = !!(cfg && cfg.usageProbe === true);
   const hash = (s) => require('crypto').createHash('sha256').update(s).digest('hex').slice(0, 12);

@@ -4105,6 +4105,12 @@
     var m = Math.round(ms / 60000);
     return m < 2 ? 'just now' : m < 90 ? m + ' minutes ago' : Math.round(m / 60) + ' hours ago';
   }
+  /** ", <account label> (<plan>)": the plan read from the credentials replaces a plan written into the label by hand ("personal (Pro)"). */
+  function acctName(a) {
+    var label = String(a.label || ''), plan = String(a.plan || '');
+    if (plan) label = label.replace(/\s*\((?:Free|Pro|Max|Ultra)\)\s*$/i, '');
+    return (label ? ', ' + label : '') + (plan ? (label ? ' · ' : ', ') + plan : '');
+  }
   function placeUsage(t, beforeEl, convId) {
     var a = usageOf(convId);
     var el = usageEls[t.key];
@@ -4121,7 +4127,10 @@
     el._t = t;
     el.classList.toggle('aiondx-usage--compact', t.kind === 'team' && !t.single);
     if (el.parentNode !== beforeEl.parentNode || el.nextSibling !== beforeEl) beforeEl.parentNode.insertBefore(el, beforeEl);
+    // An account with no 5-hour window (Ultra, from 2026-10-30) has no 5-hour figure in its readings: the meter then shows the week alone.
+    var has5 = !!windowNow(a.five_hour);
     var five = windowNow(a.five_hour) || { u: 0 }, week = windowNow(a.seven_day) || { u: 0 };
+    if ((el.getAttribute('data-no5h') === '1') === has5) { if (has5) el.removeAttribute('data-no5h'); else el.setAttribute('data-no5h', '1'); }
     var stale = Date.now() - (Number(a.at) || 0) > USAGE_STALE_MS;
     if ((el.getAttribute('data-stale') === '1') !== stale) { if (stale) el.setAttribute('data-stale', '1'); else el.removeAttribute('data-stale'); }
     var bars = el.querySelectorAll('.aiondx-usage-bar i');
@@ -4130,10 +4139,10 @@
       bars[i].style.width = (u * 100).toFixed(1) + '%';
       bars[i].style.backgroundColor = usageColour(u);
     });
-    var text = '5h ' + pct(five.u) + ' \u00b7 wk ' + pct(week.u);
+    var text = (has5 ? '5h ' + pct(five.u) + ' \u00b7 ' : '') + 'wk ' + pct(week.u);
     var tx = el.querySelector('.aiondx-usage-text');
     if (tx.textContent !== text) tx.textContent = text;
-    var tip = 'Claude usage' + (a.label ? ', ' + a.label : '') + ': ' + [windowText('5-hour window', a.five_hour), windowText('week', a.seven_day)].filter(Boolean).join('; ') +
+    var tip = 'Claude usage' + acctName(a) + ': ' + [windowText('5-hour window', a.five_hour), windowText('week', a.seven_day)].filter(Boolean).join('; ') + (has5 ? '' : ' (this plan has no 5-hour limit)') +
       '. Read at ' + new Date(Number(a.at) || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) +
       (stale ? ' (' + ageText(Date.now() - (Number(a.at) || 0)) + '; it may be higher now)' : '') + '.';
     if (el.title !== tip) { el.title = tip; el.setAttribute('aria-label', tip); }
@@ -4157,7 +4166,7 @@
       var lines = [windowText('5-hour window', a.five_hour), windowText('Week', a.seven_day)].filter(Boolean);
       lines.forEach(function (x) { var li = document.createElement('li'); li.textContent = x; list.appendChild(li); });
       var age = Date.now() - (Number(a.at) || 0);
-      body.textContent = 'Claude usage' + (a.label ? ', ' + a.label : '') + ', read ' + ageText(age) + (age > USAGE_STALE_MS ? '; it may be higher now.' : '.');
+      body.textContent = 'Claude usage' + acctName(a) + ', read ' + ageText(age) + (age > USAGE_STALE_MS ? '; it may be higher now.' : '.');
     } else {
       body.style.display = info && info.backend === 'claude' ? '' : 'none';
       body.textContent = 'No usage reading yet. It appears after this chat\u2019s Claude makes its next request.';
@@ -6155,6 +6164,7 @@
     '.aiondx-usage-bar{display:block;height:3px;border-radius:2px;background:var(--color-fill-3);overflow:hidden}',
     '.aiondx-usage-bar i{display:block;height:100%;border-radius:2px;transition:width .4s}',
     '.aiondx-usage-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-usage[data-no5h="1"] .aiondx-usage-bar[data-w="5h"]{display:none}',   // a plan with no 5-hour window (Ultra): the week bar alone
     '.aiondx-usage[data-limit="reached"] .aiondx-usage-text{color:rgb(var(--danger-6))}',
     '.aiondx-usage[data-narrow="1"] .aiondx-usage-text{display:none}',
     '.aiondx-usage[data-stale="1"]{opacity:.55}',

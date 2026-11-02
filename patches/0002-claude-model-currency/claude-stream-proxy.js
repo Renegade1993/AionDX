@@ -233,7 +233,7 @@ function startUsage(opts, log) {
     if (sig === lastSig && now - lastPut < gapMs) return;
     lastSig = sig; lastPut = now; lastAt = now;
     const body = {};
-    body[accKey] = Object.assign({ label: u.label || '', at: now, http: info ? info.status : 0, via: 'tap' }, usage);
+    body[accKey] = Object.assign({ label: u.label || '', plan: u.plan || '', at: now, http: info ? info.status : 0, via: 'tap' }, usage);
     body[convKey] = { acct: u.key, at: now };
     api('PUT', '/api/settings/client', body).then((r) => { if (!r.ok) log('usage not saved: ' + r.status); }, (e) => log('usage not saved: ' + e.message));
     log(`usage: 5h ${usage.five_hour.u} week ${usage.seven_day.u} (${usage.status || '?'}), http ${info ? info.status : '?'}, from claude's own traffic`);

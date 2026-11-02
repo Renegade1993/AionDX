@@ -66,7 +66,7 @@ conv(solo, "CTX SOLO", {"backend": "claude", "agent_id": "ctx-agent", "workspace
 msgs(solo); session(solo, *usage[2])
 # the Claude account reading the launcher records (the usage meter), for the lead only: the other member and the solo chat have no record of
 # their own and run on the same agent
-acct = {"label": "test account", "at": now, "status": "allowed", "five_hour": {"u": 0.4, "reset": int(now / 1000) + 3600, "status": "allowed"}, "seven_day": {"u": 0.2, "reset": int(now / 1000) + 86400, "status": "allowed"}}
+acct = {"label": "test account (Pro)", "plan": "Ultra", "at": now, "status": "allowed", "five_hour": {"u": None, "reset": None, "status": None}, "seven_day": {"u": 0.2, "reset": int(now / 1000) + 86400, "status": "allowed"}}
 for key, val in (("aiondx.usage.acct.ctxacct", acct), ("aiondx.usage.conv." + convs[0], {"acct": "ctxacct", "at": now})):
     c.execute("insert or replace into client_preferences (user_id, key, value, updated_at) values (?,?,?,?)", (uid, key, json.dumps(val), now))
 c.commit()
@@ -89,7 +89,8 @@ const READ = (hash, want) => `new Promise((resolve) => {
       const arc = ind.querySelectorAll('circle')[1];
       const off = arc ? Number(arc.getAttribute('stroke-dashoffset')) : NaN;
       const circ = arc ? Number(arc.getAttribute('stroke-dasharray')) || 56.5487 : 56.5487;
-      out.push({ meter: !!b.querySelector('[data-testid="aiondx-usage"]'), title: ind.title || '', pct: isNaN(off) ? null : Math.round((1 - off / circ) * 100), ours: ind.classList.contains('aiondx-ctx'), slot: b.getAttribute && b.getAttribute('data-slot-id') });
+      const mt = b.querySelector('[data-testid="aiondx-usage"]');
+      out.push({ meter: !!mt, mtext: mt ? mt.textContent : '', mtip: mt ? mt.title : '', bar5: mt ? getComputedStyle(mt.querySelector('.aiondx-usage-bar[data-w="5h"]')).display : '', title: ind.title || '', pct: isNaN(off) ? null : Math.round((1 - off / circ) * 100), ours: ind.classList.contains('aiondx-ctx'), slot: b.getAttribute && b.getAttribute('data-slot-id') });
     }
     return out;
   };
@@ -128,6 +129,8 @@ const READ = (hash, want) => `new Promise((resolve) => {
       check('the first member reads 25% (50K of 200K)', a && Math.abs(a.pct - 25) <= 1, JSON.stringify(a));
       check('the second member reads 90% (900K of 1000K)', b && Math.abs(b.pct - 90) <= 1, JSON.stringify(b));
       check('both members show the account usage meter, though only the first has a record of its own', a && b && a.meter && b.meter, JSON.stringify({ first: a && a.meter, second: b && b.meter }));
+      check('an account with no 5-hour figure shows the week alone: no "5h" in the text, no 5-hour bar', a && b && a.mtext === 'wk 20%' && b.mtext === 'wk 20%' && a.bar5 === 'none', JSON.stringify({ a: a && [a.mtext, a.bar5], b: b && [b.mtext, b.bar5] }));
+      check('its tip names the plan read from the credentials in place of the label\'s own, and says there is no 5-hour limit', a && /test account · Ultra/.test(a.mtip) && !/\(Pro\)/.test(a.mtip) && /no 5-hour limit/.test(a.mtip), a && a.mtip);
     }
     const solo = await wait(app.js(READ('#/conversation/' + SOLO, 1)));
     check('a solo chat that has run draws its ring at 50% (100K of 200K)', Array.isArray(solo) && solo[0] && Math.abs(solo[0].pct - 50) <= 1, JSON.stringify(solo));
