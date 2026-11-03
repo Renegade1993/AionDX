@@ -167,6 +167,33 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     check("the row's three dots open the same menu", !!viaDots && viaDots.items.length === 6 && viaDots.items[5] === 'Group: Alpha', JSON.stringify(viaDots));
     await away();
 
+    // 2b. a grouped chat keeps what AionUi's own row shows: the unread dot, the icon states, and a click goes to AionUi's row
+    const dot = () => js(`(() => { const r = document.querySelector('[data-testid="aiondx-group-row-c-grpchat1"]'); return !!r && !!r.querySelector('span.rounded-full'); })()`);
+    p = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
+    check('(setup) no unread dot yet', (await dot()) === false);
+    await rclick(p);
+    await js(`(() => { const it = Array.from(document.querySelectorAll('.arco-dropdown-menu-item')).find((e) => e.textContent.trim() === 'Mark as unread'); it.click(); return 0; })()`);
+    await sleep(1200);
+    check('"Mark as unread" from the grouped row puts AionUi\'s blue unread dot on it', await dot());
+    p = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
+    await rclick(p);
+    const asRead = await shownMenu();
+    check('and its menu then offers "Mark as read", as AionUi\'s own does', !!asRead && asRead.items.indexOf('Mark as read') >= 0, JSON.stringify(asRead));
+    await js(`(() => { const it = Array.from(document.querySelectorAll('.arco-dropdown-menu-item')).find((e) => e.textContent.trim() === 'Mark as read'); it.click(); return 0; })()`);
+    await sleep(1200);
+    check('marking it read takes the dot off', (await dot()) === false);
+    // what AionUi draws in its row (a spinner, the waiting-for-you icon...) shows in the group's row as it changes
+    await js(`(() => { const ic = document.getElementById('c-grpchat1').firstElementChild; const b = document.createElement('span'); b.className = 'aiondx-test-state'; b.textContent = 'working'; ic.appendChild(b); return 0; })()`);
+    await sleep(1500);
+    check("a change in AionUi's own row (its icon states) is drawn in the group's row", await js(`!!document.querySelector('[data-testid="aiondx-group-row-c-grpchat1"] .aiondx-test-state')`));
+    await js(`(() => { const b = document.querySelector('#c-grpchat1 .aiondx-test-state'); if (b) b.remove(); return 0; })()`);
+    await sleep(1200);
+    check('and gone again when it goes', await js(`!document.querySelector('[data-testid="aiondx-group-row-c-grpchat1"] .aiondx-test-state')`));
+    // a click on the group's row is a click on AionUi's own row
+    await js(`(() => { window.__rowClicks = 0; const r = document.getElementById('c-grpchat1'); r.addEventListener('click', (e) => { window.__rowClicks++; e.stopPropagation(); }, true); return 0; })()`);
+    await lclick(await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]'));
+    check("a click on the group's row clicks AionUi's own row (its behaviour, not a copy of it)", (await js(`window.__rowClicks`)) === 1, await js(`window.__rowClicks`));
+
     // 3. a team: its three dots menu (Pin, Rename, Archive) with the group line, from a right-click
     //    (AionUi swaps a team's icon for a spinner while it has a run: that team must be found too)
     await js(`(() => { const i = document.querySelector('[data-testid="team-icon-grp-test-team"]'); i.setAttribute('data-testid', 'team-spinner-grp-test-team'); return 0; })()`);

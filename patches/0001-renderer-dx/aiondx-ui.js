@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-03.1';
+  var BUILD = '2026-11-03.2';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -6360,7 +6360,6 @@
     '[data-aiondx-grouped="1"]{display:none !important}',
     // while AionUi's menu is open for a hidden row, the row is back where the pointer is, out of sight
     '[data-aiondx-grouped="1"][data-aiondx-peek="hidden"]{position:fixed !important;left:var(--aiondx-px,0) !important;top:var(--aiondx-py,0) !important;width:220px !important;height:34px !important;visibility:hidden !important;pointer-events:none !important}',
-    '[data-aiondx-peek="hidden"] .arco-trigger{visibility:visible !important;pointer-events:auto !important}',   // the menu is drawn inside the row: it shows though the row does not
     '.chat-history__item[data-aiondx-grouped="1"][data-aiondx-peek="hidden"]{display:flex !important}',
     '.relative.group[data-aiondx-grouped="1"][data-aiondx-peek="hidden"]{display:block !important}',
     '[data-aiondx-peek] .absolute.end-8px,[data-aiondx-peek] [data-testid="sider-item-menu-trigger"]{display:flex !important}',
@@ -8170,6 +8169,21 @@
     var h = c.innerHTML || '';
     return h.length > 6000 ? '' : h;
   }
+  /** What a stock row shows, to be drawn again in the group: its inside as it is now (the working spinner, the waiting-for-you icon, the unread dot, the
+   *  pin, the fork badge: AionUi draws each of them from live state, in the row), without its menu button and without the ids that name AionUi's own row. */
+  function mirrorHtml(row) {
+    var c = row.cloneNode(true);
+    var all = c.querySelectorAll('[id],[data-testid],[draggable]');
+    for (var i = 0; i < all.length; i++) { all[i].removeAttribute('id'); all[i].removeAttribute('data-testid'); all[i].removeAttribute('draggable'); }
+    var btns = c.querySelectorAll('.sider-action-btn');
+    for (var j = 0; j < btns.length; j++) {
+      var holder = btns[j];
+      while (holder.parentNode && holder.parentNode !== c) holder = holder.parentNode;
+      if (holder.parentNode === c) c.removeChild(holder);
+    }
+    var h = c.innerHTML || '';
+    return h.length > 20000 ? '' : h;
+  }
   /** An icon kept from an earlier launch names the backend's port: point it at this one. */
   function freshIcon(html) { return String(html || '').replace(/src="http:\/\/127\.0\.0\.1:\d+(\/[^"]*)"/g, function (m, p) { return 'src="' + apiUrl(p) + '"'; }); }
   function sideIndex(scroll) {
@@ -8177,7 +8191,7 @@
     var rows = scroll.querySelectorAll('.chat-history__item[id^="c-"]');
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i], nm = r.querySelector('.chat-history__item-name');
-      idx['c:' + r.id.slice(2)] = { hide: r, drag: r, name: nm ? nm.textContent.trim() : '', icon: iconHtml(r.firstElementChild) };
+      idx['c:' + r.id.slice(2)] = { hide: r, drag: r, name: nm ? nm.textContent.trim() : '', icon: iconHtml(r.firstElementChild), html: mirrorHtml(r) };
     }
     // a team's icon, or its spinner while it has a run in progress
     var ti = scroll.querySelectorAll('[data-testid^="team-icon-"], [data-testid^="team-spinner-"]');
@@ -8185,7 +8199,7 @@
       var row = ti[j].closest('.h-34px');
       if (!row || !row.parentElement || row.closest('.aiondx-groups')) continue;
       var nameEl = row.children[1];
-      idx['t:' + String(ti[j].getAttribute('data-testid')).replace(/^team-(?:icon|spinner)-/, '')] = { hide: row.parentElement, drag: row, name: nameEl ? nameEl.textContent.trim() : '', icon: '' };
+      idx['t:' + String(ti[j].getAttribute('data-testid')).replace(/^team-(?:icon|spinner)-/, '')] = { hide: row.parentElement, drag: row, name: nameEl ? nameEl.textContent.trim() : '', icon: '', html: mirrorHtml(row) };
     }
     return idx;
   }
@@ -8234,7 +8248,7 @@
           info = { name: nm, icon: cc ? cc.icon : '' };
         }
         if (live) hide.push(live.hide);
-        rows.push({ key: k, name: info.name, icon: info.icon, active: k === activeKey });
+        rows.push({ key: k, name: info.name, icon: info.icon, active: k === activeKey, html: live ? live.html : '' });
       });
       sections.push({ id: g.id, name: g.name, collapsed: !!groupsState.collapsed[g.id], rows: rows });
     });
@@ -8252,6 +8266,8 @@
       groupsEl.addEventListener('click', onGroupsClick);
       groupsEl.addEventListener('contextmenu', onGroupsContext);
     }
+    // not while something is being dragged: rebuilding the rows would drop it from under the pointer (it is drawn again when the drag ends)
+    if (sig !== groupsSig && (dragKey || dragGroup) && groupsEl.parentNode === scroll) { injectGroupItem(); return; }
     if (sig !== groupsSig) {
       groupsSig = sig;
       groupsEl.textContent = '';
@@ -8286,11 +8302,16 @@
           el.setAttribute('data-gid', s.id);
           el.setAttribute('draggable', 'true');
           el.setAttribute('data-testid', 'aiondx-group-row-' + row.key.replace(':', '-'));
-          var ic = gEl('span', 'size-22px flex items-center justify-center shrink-0 relative');
-          // a team is always the team icon (AionUi swaps it for a spinner while a run is going); a chat has its agent's logo
-          ic.innerHTML = row.key.charAt(0) === 't' ? SVG_G_TEAM : (freshIcon(row.icon) || SVG_G_CHAT);
-          el.appendChild(ic);
-          el.appendChild(gEl('span', 'aiondx-gname text-14px font-[500] text-t-primary', row.name));
+          if (row.html) {
+            // AionUi's own row, as it is now: the same icon states, unread dot, pin and badges
+            el.innerHTML = row.html;
+          } else {
+            // its row is not on the page (the Teams list is collapsed): the icon and the name last seen
+            var ic = gEl('span', 'size-22px flex items-center justify-center shrink-0 relative');
+            ic.innerHTML = row.key.charAt(0) === 't' ? SVG_G_TEAM : (freshIcon(row.icon) || SVG_G_CHAT);
+            el.appendChild(ic);
+            el.appendChild(gEl('span', 'aiondx-gname text-14px font-[500] text-t-primary', row.name));
+          }
           var mo = gEl('span', 'aiondx-gmore aiondx-grow-more');
           mo.title = 'Menu';
           mo.innerHTML = SVG_G_MORE;
@@ -8328,7 +8349,11 @@
     if (row) {
       if (t.closest('.aiondx-grow-more')) { openItemFromRow(t.closest('.aiondx-grow-more'), ev, true); return; }
       var key = row.getAttribute('data-aiondx-key');
-      location.hash = (key.charAt(0) === 'c' ? '#/conversation/' : '#/team/') + key.slice(2);
+      // the click goes to AionUi's own row, so everything a click does there (opening it, marking it read) happens; its address when that row is not on the page
+      var sc = document.querySelector('[class*="_scrollArea_"]');
+      var live = sc ? sideIndex(sc)[key] : null;
+      if (live && live.drag) live.drag.click();
+      else location.hash = (key.charAt(0) === 'c' ? '#/conversation/' : '#/team/') + key.slice(2);
       return;
     }
     if (t.closest('.aiondx-gnew')) askGroupName('New group', '', 'Create', function (name) { createGroup(name); });
@@ -8405,6 +8430,8 @@
   // A hidden row (display none) has no place on the page, so AionUi opens its menu at the top left corner of the window. For the moment the
   // menu is open the row is shown again where the pointer is, out of sight (data-aiondx-peek).
   var peekTimer = 0, peekEl = null;
+  /** A menu AionUi shows again is a change of style, which the page's observer does not see: the group line is brought up to date on a timer. */
+  function afterMenuOpens() { [40, 150, 400].forEach(function (ms) { setTimeout(schedule, ms); }); }
   /** A menu put out of sight for the group chooser is shown again the next time AionUi opens it (its popup is kept and reused). */
   function restorePopups() {
     var hid = document.querySelectorAll('[data-aiondx-hid]');
@@ -8440,6 +8467,7 @@
     if (hidden) { el.style.setProperty('--aiondx-px', Math.max(0, Math.round(x - 170)) + 'px'); el.style.setProperty('--aiondx-py', Math.max(0, Math.round(y - 17)) + 'px'); }
     if (team) trg.click();
     else el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 }));
+    afterMenuOpens();
     // the row goes back to hiding once the menu has closed
     var t0 = Date.now(), seen = false;
     clearInterval(peekTimer);
@@ -8515,7 +8543,7 @@
       var t = ev.target;
       if (!t || !t.closest || t.closest('.aiondx-groups') || disabled()) return;
       var row = t.closest('.chat-history__item[id^="c-"]');
-      if (row) { restorePopups(); menuFor = { key: 'c:' + row.id.slice(2), at: Date.now() }; return; }
+      if (row) { restorePopups(); menuFor = { key: 'c:' + row.id.slice(2), at: Date.now() }; afterMenuOpens(); return; }
       // AionUi has no right-click menu for a team, only the three dots: right-click opens that menu
       var tr = teamRowOf(t);
       if (tr) { ev.preventDefault(); ev.stopPropagation(); openRowMenu('t:' + tr.id, ev.clientX, ev.clientY); }
@@ -8524,10 +8552,10 @@
       var t = ev.target;
       if (!t || !t.closest || t.closest('.aiondx-groups')) return;
       var b = t.closest('[data-testid^="conversation-row-menu-"]');
-      if (b) { restorePopups(); menuFor = { key: 'c:' + String(b.getAttribute('data-testid')).slice(22), at: Date.now() }; return; }
+      if (b) { restorePopups(); menuFor = { key: 'c:' + String(b.getAttribute('data-testid')).slice(22), at: Date.now() }; afterMenuOpens(); return; }
       var d = t.closest('[data-testid="sider-item-menu-trigger"]');
       var tr = d ? teamRowOf(d) : null;
-      if (tr && !d.closest('[data-aiondx-peek]')) { restorePopups(); menuFor = { key: 't:' + tr.id, at: Date.now() }; }
+      if (tr && !d.closest('[data-aiondx-peek]')) { restorePopups(); menuFor = { key: 't:' + tr.id, at: Date.now() }; afterMenuOpens(); }
     }, true);
     window.addEventListener('hashchange', onGroupHash);
     watchGroupDrag();
@@ -8574,7 +8602,7 @@
     if (line && groupsState.groups.length && groupsState.groups[0].id !== dragGroup) return { gid: groupsState.groups[0].id, after: false, el: line };
     return null;
   }
-  function endDrag() { dragKey = null; dragGroup = null; clearDropMarks(); document.body.classList.remove('aiondx-dragging'); }
+  function endDrag() { dragKey = null; dragGroup = null; clearDropMarks(); document.body.classList.remove('aiondx-dragging'); schedule(); }
   /** Where a drag over t would land: { kind, gid, ref, after, el } or null when t is not a place to drop. */
   function dropTarget(t, y) {
     if (!dragKey || !t || !t.closest) return null;
