@@ -669,6 +669,7 @@
     takeOptions(g.data);
     takeAccounts(g.data);
     takeUsage(g.data);
+    takeGroups(g.data);
     takeMcpLog(g.data);
     takeUnsend(g.data);
     takeDrafts(g.data);
@@ -6355,6 +6356,44 @@
     '  border:1px solid var(--color-border-2);background:var(--color-bg-popup);box-shadow:0 8px 24px rgba(0,0,0,.28)}',
     '.aiondx-colour-menu .arco-dropdown-menu-item{padding:0 12px;line-height:32px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}',
     '.aiondx-colour-menu .arco-dropdown-menu-item:hover{background:var(--color-fill-2)}',
+    // groups in the sidebar
+    '[data-aiondx-grouped="1"]{display:none !important}',
+    '.aiondx-groups{padding-bottom:12px}',
+    '.aiondx-ghead{position:relative}',
+    '.aiondx-gchev{display:inline-flex;align-items:center;margin-inline-end:4px;color:var(--color-text-3);transition:transform .15s}',
+    '.aiondx-gchev--open{transform:rotate(90deg)}',
+    '.aiondx-gtitle{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.aiondx-ghead:hover .aiondx-gtitle{color:var(--color-text-1)}',
+    '.aiondx-gcount{margin-inline-start:6px;font-size:12px;color:var(--color-text-4)}',
+    '.aiondx-gmore{display:none;align-items:center;justify-content:center;width:20px;height:20px;border-radius:4px;color:var(--color-text-3);flex:none;margin-inline-start:auto}',
+    '.aiondx-gmore:hover{background:var(--color-fill-4);color:var(--color-text-1)}',
+    '.aiondx-ghead:hover .aiondx-gmore,.aiondx-grow:hover .aiondx-gmore{display:inline-flex}',
+    '.aiondx-ghead:hover .aiondx-gcount{display:none}',
+    '.aiondx-gname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.aiondx-gempty{padding:4px 12px 4px 34px;font-size:12px;color:var(--color-text-4)}',
+    '.aiondx-gnew{font-size:14px;font-weight:500;color:var(--color-text-3)}',
+    '.aiondx-gnew:hover{color:var(--color-text-2)}',
+    '.aiondx-gmenu{position:fixed;z-index:10070;min-width:200px;max-width:360px;padding:4px 0;border-radius:8px;',
+    '  border:1px solid var(--color-border-2);background:var(--color-bg-popup);box-shadow:0 8px 24px rgba(0,0,0,.28)}',
+    '.aiondx-gmenu-item{display:flex;align-items:center;gap:6px;padding:0 12px;line-height:32px;font-size:13px;white-space:nowrap;cursor:pointer}',
+    '.aiondx-gmenu-item:hover{background:var(--color-fill-2)}',
+    '.aiondx-gmenu-item--muted{color:var(--color-text-3)}',
+    '.aiondx-gmenu-check{display:inline-block;width:14px;flex:none;color:var(--aiondx-accent,#2dd4bf)}',
+    '.aiondx-gmenu-label{overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-gmenu-sep{height:1px;margin:4px 0;background:var(--color-border-2)}',
+    '.aiondx-gdlg{position:fixed;inset:0;z-index:10080;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}',
+    '.aiondx-gdlg-card{width:340px;max-width:calc(100vw - 32px);padding:18px 18px 14px;border-radius:12px;border:1px solid var(--color-border-2);',
+    '  background:var(--color-bg-popup);color:var(--color-text-1);box-shadow:0 12px 40px rgba(0,0,0,.4)}',
+    '.aiondx-gdlg-title{font-size:15px;font-weight:600;margin-bottom:12px}',
+    '.aiondx-gdlg-input{width:100%;box-sizing:border-box;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--color-border-3);background:var(--color-fill-2);color:var(--color-text-1);font-size:14px;outline:none}',
+    '.aiondx-gdlg-input:focus{border-color:var(--aiondx-accent,#2dd4bf)}',
+    '.aiondx-gdlg-err{min-height:18px;margin-top:6px;font-size:12px;color:rgb(var(--danger-6))}',
+    '.aiondx-gdlg-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}',
+    '.aiondx-gdlg-btns button{height:30px;padding:0 14px;border-radius:8px;border:1px solid var(--color-border-3);background:transparent;color:var(--color-text-1);font-size:13px;cursor:pointer}',
+    '.aiondx-gdlg-btns .aiondx-gdlg-ok{background:var(--aiondx-accent,#2dd4bf);border-color:transparent;color:#04201c;font-weight:600}',
+    '.aiondx-gguid-btn{display:inline-flex !important;align-items:center;gap:6px;margin-inline-start:12px}',
+    '.aiondx-gguid-ic,.aiondx-gguid-chev{display:inline-flex;align-items:center}',
+    '.aiondx-gguid-chev{transform:rotate(90deg);opacity:.7}',
     '.aiondx-mcp-switch{margin-left:4px;flex:none}',
     '@keyframes aiondx-spin{to{transform:rotate(360deg)}}',
     '@media (prefers-reduced-motion:no-preference){.aiondx-loop--busy .aiondx-loop-icon svg{animation:aiondx-spin 1.6s linear infinite}}',
@@ -6795,7 +6834,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -7185,6 +7224,8 @@
 
   function ours(node) {
     if (!node) return false;
+    if (node.nodeType === 1 && node.closest && node.closest('.aiondx-groups, .aiondx-gmenu, .aiondx-gdlg, .aiondx-gguid-btn')) return true;
+    if (node.nodeType === 1 && node.classList && node.classList.contains('aiondx-gitem')) return true;
     if (menu && (node === menu || menu.contains(node))) return true;
     if (tip && (node === tip || tip.contains(node))) return true;
     if (toastBox && (node === toastBox || toastBox.contains(node))) return true;
@@ -7991,6 +8032,497 @@
     placeSchedMenu(wrap);
   }
 
+  // ---------------------------------------------------------------- groups in the sidebar (2026-11-02)
+
+  // a request of 2026-11-02. Right-click a chat or a team and put it in a group; a group is a named heading in the sidebar under the teams and
+  // conversations, with its chats and teams beneath it; the last line is "New Group +". A chat that is not in a group stays where AionUi puts it.
+  // On the new-chat page a Group menu (None by default) puts the chat about to be made in a group. Groups live in the page (a pref in AionCore's
+  // settings store, aiondx.groups, and localStorage), not in AionCore: AionUi's own Projects belong to folders and have a file explorer behind them.
+  //
+  //   aiondx.groups = { v: 1, at, groups: [{ id, name }], items: { "c:<conversation id>" | "t:<team id>": <group id> }, collapsed: { <group id>: true } }
+  //
+  // A grouped chat's row in AionUi's list is hidden (data-aiondx-grouped), not moved: React owns those rows. AionDX's row for it takes the icon
+  // and name from the hidden one (the team icon for a team, the agent's logo for a chat), or from what it saw last when that row is not on the page
+  // (the Teams list collapsed), checked against the backend so an archived or deleted chat leaves the group. Its right-click menu is AionUi's own
+  // for a chat (More actions) plus the group choices.
+  var GROUPS_PREF = 'aiondx.groups';
+  var groupsState = { v: 1, at: 0, groups: [], items: {}, collapsed: {} };
+  var groupCache = {};         // item key -> { name, icon }: what a grouped item looked like when its sidebar row was last on the page
+  var groupInfo = {};          // item key -> { at, gone, name }: the backend's word on an item whose row is not on the page
+  var groupInfoAsk = {};
+  var groupsSig = '', groupsEl = null, guidBtn = null, gMenu = null, gDlg = null;
+  var guidGroup = null;        // the group picked on the new-chat page for the chat about to be made: { id, at }
+  var menuFor = null;          // { key, at }: the sidebar chat whose menu AionUi has just opened
+  var SVG_G_TEAM = '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M19 20C22.866 20 26 16.866 26 13C26 9.134 22.866 6 19 6C15.134 6 12 9.134 12 13C12 16.866 15.134 20 19 20Z" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 40.8V42H34V40.8C34 36.32 34 34.08 33.13 32.37C32.36 30.86 31.14 29.64 29.63 28.87C27.92 28 25.68 28 21.2 28H16.8C12.32 28 10.08 28 8.37 28.87C6.86 29.64 5.64 30.86 4.87 32.37C4 34.08 4 36.32 4 40.8Z" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M32.6 7C34.64 8.22 36 10.45 36 13C36 15.55 34.64 17.78 32.6 19M44 42V40.8C44 36.32 44 34.08 43.13 32.37C42.36 30.86 41.14 29.64 39.63 28.87" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var SVG_G_CHAT = '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M6 10H42V34H26L16 42V34H6V10Z" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var SVG_G_FOLDER = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M5 10H19L24 16H43V40H5V10Z" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var SVG_G_CHEV = '<svg width="12" height="12" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M19 12L31 24L19 36" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var SVG_G_MORE = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="12" r="3" fill="currentColor"/><circle cx="24" cy="24" r="3" fill="currentColor"/><circle cx="24" cy="35" r="3" fill="currentColor"/></svg>';
+
+  function normGroups(j) {
+    var s = { v: 1, at: Number(j && j.at) || 0, groups: [], items: {}, collapsed: {} };
+    var ids = {};
+    if (j && Array.isArray(j.groups)) j.groups.forEach(function (g) {
+      if (g && g.id && g.name && !ids[String(g.id)]) { ids[String(g.id)] = 1; s.groups.push({ id: String(g.id), name: String(g.name).slice(0, 80) }); }
+    });
+    if (j && j.items && typeof j.items === 'object') Object.keys(j.items).forEach(function (k) { if (/^[ct]:./.test(k) && ids[j.items[k]]) s.items[k] = String(j.items[k]); });
+    if (j && j.collapsed && typeof j.collapsed === 'object') Object.keys(j.collapsed).forEach(function (k) { if (ids[k] && j.collapsed[k]) s.collapsed[k] = true; });
+    return s;
+  }
+  function loadGroups() {
+    try { var j = JSON.parse(localStorage.getItem(KEY_PREFIX + 'groups')); if (j && typeof j === 'object') groupsState = normGroups(j); } catch (e) {}
+    try { var c = JSON.parse(localStorage.getItem(KEY_PREFIX + 'groups.cache')); if (c && typeof c === 'object') groupCache = c; } catch (e) {}
+  }
+  /** The shared copy (another window, or an agent's change) wins when it is newer than this page's own. */
+  function takeGroups(data) {
+    var v = data && data[GROUPS_PREF];
+    if (!v || typeof v !== 'object' || (Number(v.at) || 0) <= groupsState.at) return;
+    groupsState = normGroups(v);
+    try { localStorage.setItem(KEY_PREFIX + 'groups', JSON.stringify(groupsState)); } catch (e) {}
+    schedule();
+  }
+  function saveGroups() {
+    groupsState.at = Date.now();
+    try { localStorage.setItem(KEY_PREFIX + 'groups', JSON.stringify(groupsState)); } catch (e) {}
+    var b = {};
+    b[GROUPS_PREF] = groupsState;
+    putPrefs(b);
+    schedule();
+  }
+  function groupById(id) { for (var i = 0; i < groupsState.groups.length; i++) if (groupsState.groups[i].id === id) return groupsState.groups[i]; return null; }
+  function groupByName(name) {
+    var n = String(name).trim().toLowerCase();
+    for (var i = 0; i < groupsState.groups.length; i++) if (groupsState.groups[i].name.toLowerCase() === n) return groupsState.groups[i];
+    return null;
+  }
+  /** A new group; the group of that name when there already is one. */
+  function createGroup(name) {
+    name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!name) return null;
+    var have = groupByName(name);
+    if (have) return have.id;
+    var id = 'g' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+    groupsState.groups.push({ id: id, name: name });
+    saveGroups();
+    return id;
+  }
+  function renameGroup(id, name) {
+    var g = groupById(id);
+    name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!g || !name) return;
+    g.name = name;
+    saveGroups();
+  }
+  function deleteGroup(id) {
+    groupsState.groups = groupsState.groups.filter(function (g) { return g.id !== id; });
+    Object.keys(groupsState.items).forEach(function (k) { if (groupsState.items[k] === id) delete groupsState.items[k]; });
+    delete groupsState.collapsed[id];
+    saveGroups();
+  }
+  /** Put an item in a group, or (gid null) back in AionUi's own lists. It goes to the end of the group's list. */
+  function assignGroup(key, gid) {
+    delete groupsState.items[key];
+    if (gid && groupById(gid)) groupsState.items[key] = gid;
+    saveGroups();
+  }
+  function toggleGroup(id) {
+    if (groupsState.collapsed[id]) delete groupsState.collapsed[id]; else groupsState.collapsed[id] = true;
+    saveGroups();
+  }
+
+  // ---- what the sidebar shows now
+  function iconHtml(el) {
+    if (!el) return '';
+    var c = el.cloneNode(true);
+    var all = c.querySelectorAll ? c.querySelectorAll('[id],[data-testid]') : [];
+    for (var i = 0; i < all.length; i++) { all[i].removeAttribute('id'); all[i].removeAttribute('data-testid'); }
+    c.removeAttribute('id'); c.removeAttribute('data-testid');
+    var h = c.innerHTML || '';
+    return h.length > 6000 ? '' : h;
+  }
+  /** An icon kept from an earlier launch names the backend's port: point it at this one. */
+  function freshIcon(html) { return String(html || '').replace(/src="http:\/\/127\.0\.0\.1:\d+(\/[^"]*)"/g, function (m, p) { return 'src="' + apiUrl(p) + '"'; }); }
+  function sideIndex(scroll) {
+    var idx = {};
+    var rows = scroll.querySelectorAll('.chat-history__item[id^="c-"]');
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], nm = r.querySelector('.chat-history__item-name');
+      idx['c:' + r.id.slice(2)] = { hide: r, name: nm ? nm.textContent.trim() : '', icon: iconHtml(r.firstElementChild) };
+    }
+    var ti = scroll.querySelectorAll('[data-testid^="team-icon-"]');
+    for (var j = 0; j < ti.length; j++) {
+      var row = ti[j].closest('.h-34px');
+      if (!row || !row.parentElement) continue;
+      var nameEl = row.children[1];
+      idx['t:' + String(ti[j].getAttribute('data-testid')).slice(10)] = { hide: row.parentElement, name: nameEl ? nameEl.textContent.trim() : '', icon: iconHtml(row.firstElementChild) };
+    }
+    return idx;
+  }
+  function askGroupInfo(k) {
+    var c = groupInfo[k];
+    if ((c && Date.now() - c.at < 180000) || groupInfoAsk[k]) return;
+    groupInfoAsk[k] = true;
+    getJson((k.charAt(0) === 'c' ? '/api/conversations/' : '/api/teams/') + encodeURIComponent(k.slice(2))).then(function (g) {
+      var d = g && g.data;
+      if (g && g.err === 404) groupInfo[k] = { at: Date.now(), gone: true, name: '' };
+      else if (d) groupInfo[k] = { at: Date.now(), gone: !!d.archived_at, name: String(d.name || '') };
+      else groupInfo[k] = { at: Date.now() - 150000, gone: false, name: '' };   // a failed read is tried again in 30 s and does not remove anything
+    }).catch(function () { groupInfo[k] = { at: Date.now() - 150000, gone: false, name: '' }; }).then(function () { delete groupInfoAsk[k]; schedule(); });
+  }
+  function removeGroupsUi() {
+    if (groupsEl && groupsEl.parentNode) groupsEl.parentNode.removeChild(groupsEl);
+    groupsSig = '';
+    var hidden = document.querySelectorAll('[data-aiondx-grouped]');
+    for (var i = 0; i < hidden.length; i++) hidden[i].removeAttribute('data-aiondx-grouped');
+  }
+  function gEl(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+
+  function renderGroups() {
+    var scroll = document.querySelector('[class*="_scrollArea_"]');
+    if (disabled() || !scroll || !scroll.querySelector('[data-testid="team-section-toggle"]')) { removeGroupsUi(); return; }
+    var idx = sideIndex(scroll);
+    var narrow = scroll.clientWidth > 0 && scroll.clientWidth < 140;
+    var r = route();
+    var activeKey = r ? (r.kind === 'conv' ? 'c:' : 't:') + r.id : '';
+    var sections = [], hide = [], cacheMoved = false;
+    groupsState.groups.forEach(function (g) {
+      var rows = [];
+      Object.keys(groupsState.items).forEach(function (k) {
+        if (groupsState.items[k] !== g.id) return;
+        var live = idx[k], info = null;
+        if (live && live.name) {
+          info = { name: live.name, icon: live.icon };
+          var old = groupCache[k];
+          if (!old || old.name !== live.name || old.icon !== live.icon) { groupCache[k] = { name: live.name, icon: live.icon }; cacheMoved = true; }
+        } else {
+          askGroupInfo(k);
+          var gi = groupInfo[k], cc = groupCache[k];
+          if (gi && gi.gone) return;
+          var nm = (gi && gi.name) || (cc && cc.name) || '';
+          if (!nm) return;
+          info = { name: nm, icon: cc ? cc.icon : '' };
+        }
+        if (live) hide.push(live.hide);
+        rows.push({ key: k, name: info.name, icon: info.icon, active: k === activeKey });
+      });
+      sections.push({ id: g.id, name: g.name, collapsed: !!groupsState.collapsed[g.id], rows: rows });
+    });
+    // AionUi's own rows of the grouped items stay out of its lists
+    var marked = scroll.querySelectorAll('[data-aiondx-grouped]');
+    for (var m = 0; m < marked.length; m++) if (hide.indexOf(marked[m]) < 0) marked[m].removeAttribute('data-aiondx-grouped');
+    for (var h = 0; h < hide.length; h++) if (hide[h].getAttribute('data-aiondx-grouped') !== '1') hide[h].setAttribute('data-aiondx-grouped', '1');
+    if (cacheMoved) { try { localStorage.setItem(KEY_PREFIX + 'groups.cache', JSON.stringify(groupCache)); } catch (e) {} }
+    var sig = JSON.stringify([narrow, sections]);
+    if (!groupsEl) {
+      groupsEl = gEl('div', 'aiondx-groups');
+      groupsEl.setAttribute('data-testid', 'aiondx-groups');
+      groupsEl.addEventListener('click', onGroupsClick);
+      groupsEl.addEventListener('contextmenu', onGroupsContext);
+    }
+    if (sig !== groupsSig) {
+      groupsSig = sig;
+      groupsEl.textContent = '';
+      groupsEl.style.display = narrow ? 'none' : '';
+      sections.forEach(function (s) {
+        var head = gEl('div', 'aiondx-ghead group/label sider-section-label flex items-center px-12px h-28px select-none mt-8px cursor-pointer');
+        head.setAttribute('data-gid', s.id);
+        head.setAttribute('data-testid', 'aiondx-group-head-' + s.id);
+        var chev = gEl('span', 'aiondx-gchev' + (s.collapsed ? '' : ' aiondx-gchev--open'));
+        chev.innerHTML = SVG_G_CHEV;
+        head.appendChild(chev);
+        head.appendChild(gEl('span', 'aiondx-gtitle text-14px text-t-tertiary sider-section-title font-[500] leading-none', s.name));
+        head.appendChild(gEl('span', 'aiondx-gcount', s.rows.length ? String(s.rows.length) : ''));
+        var more = gEl('span', 'aiondx-gmore aiondx-ghead-more');
+        more.title = 'Rename or delete this group';
+        more.innerHTML = SVG_G_MORE;
+        head.appendChild(more);
+        groupsEl.appendChild(head);
+        if (s.collapsed) return;
+        if (!s.rows.length) groupsEl.appendChild(gEl('div', 'aiondx-gempty', 'Empty. Right-click a chat or a team to add it.'));
+        s.rows.forEach(function (row) {
+          var el = gEl('div', 'aiondx-grow h-34px rd-8px flex items-center gap-8px ps-10px pe-8px cursor-pointer relative overflow-hidden shrink-0 group min-w-0 transition-colors hover:bg-fill-3' + (row.active ? ' !bg-fill-3' : ''));
+          el.setAttribute('data-aiondx-key', row.key);
+          el.setAttribute('data-testid', 'aiondx-group-row-' + row.key.replace(':', '-'));
+          var ic = gEl('span', 'size-22px flex items-center justify-center shrink-0 relative');
+          ic.innerHTML = freshIcon(row.icon) || (row.key.charAt(0) === 't' ? SVG_G_TEAM : SVG_G_CHAT);
+          el.appendChild(ic);
+          el.appendChild(gEl('span', 'aiondx-gname text-14px font-[500] text-t-primary', row.name));
+          var mo = gEl('span', 'aiondx-gmore aiondx-grow-more');
+          mo.title = 'Group, and more actions';
+          mo.innerHTML = SVG_G_MORE;
+          el.appendChild(mo);
+          groupsEl.appendChild(el);
+        });
+      });
+      var add = gEl('div', 'aiondx-gnew h-34px rd-8px flex items-center gap-8px ps-12px pe-8px cursor-pointer select-none mt-8px hover:bg-fill-3', 'New Group +');
+      add.setAttribute('data-testid', 'aiondx-group-new');
+      groupsEl.appendChild(add);
+    }
+    if (groupsEl.parentNode !== scroll || scroll.lastElementChild !== groupsEl) scroll.appendChild(groupsEl);
+    injectGroupItem();
+  }
+
+  // ---- clicks on AionDX's own rows
+  function openItemFromRow(el, ev, atButton) {
+    var rect = el.getBoundingClientRect();
+    var x = atButton ? rect.right - 8 : ev.clientX, y = atButton ? rect.bottom : ev.clientY;
+    openItemMenu(el.getAttribute('data-aiondx-key'), x, y, true);
+  }
+  function onGroupsClick(ev) {
+    var t = ev.target && ev.target.closest ? ev.target : null;
+    if (!t) return;
+    var head = t.closest('.aiondx-ghead');
+    if (head) {
+      if (t.closest('.aiondx-ghead-more')) { var rr = t.closest('.aiondx-ghead-more').getBoundingClientRect(); openGroupMenu(head.getAttribute('data-gid'), rr.right, rr.bottom); return; }
+      toggleGroup(head.getAttribute('data-gid'));
+      return;
+    }
+    var row = t.closest('.aiondx-grow');
+    if (row) {
+      if (t.closest('.aiondx-grow-more')) { openItemFromRow(t.closest('.aiondx-grow-more'), ev, true); return; }
+      var key = row.getAttribute('data-aiondx-key');
+      location.hash = (key.charAt(0) === 'c' ? '#/conversation/' : '#/team/') + key.slice(2);
+      return;
+    }
+    if (t.closest('.aiondx-gnew')) askGroupName('New group', '', 'Create', function (name) { createGroup(name); });
+  }
+  function onGroupsContext(ev) {
+    var t = ev.target && ev.target.closest ? ev.target : null;
+    if (!t) return;
+    var head = t.closest('.aiondx-ghead');
+    if (head) { ev.preventDefault(); ev.stopPropagation(); openGroupMenu(head.getAttribute('data-gid'), ev.clientX, ev.clientY); return; }
+    var row = t.closest('.aiondx-grow');
+    if (row) { ev.preventDefault(); ev.stopPropagation(); openItemMenu(row.getAttribute('data-aiondx-key'), ev.clientX, ev.clientY, true); }
+  }
+
+  // ---- menus
+  function closeGMenu() {
+    if (!gMenu) return;
+    if (gMenu.parentNode) gMenu.parentNode.removeChild(gMenu);
+    gMenu = null;
+    document.removeEventListener('mousedown', gMenuOutside, true);
+    document.removeEventListener('keydown', gMenuKey, true);
+    window.removeEventListener('blur', closeGMenu);
+  }
+  function gMenuOutside(ev) { if (gMenu && !gMenu.contains(ev.target)) closeGMenu(); }
+  function gMenuKey(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closeGMenu(); } }
+  /** items: [{ label, check, muted, sep, run }] */
+  function openGMenu(x, y, items) {
+    closeGMenu();
+    gMenu = gEl('div', 'aiondx-gmenu arco-dropdown-menu');
+    gMenu.setAttribute('role', 'menu');
+    gMenu.setAttribute('data-testid', 'aiondx-group-menu');
+    items.forEach(function (it) {
+      if (it.sep) { gMenu.appendChild(gEl('div', 'aiondx-gmenu-sep')); return; }
+      var el = gEl('div', 'arco-dropdown-menu-item aiondx-gmenu-item' + (it.muted ? ' aiondx-gmenu-item--muted' : ''));
+      el.setAttribute('role', 'menuitem');
+      el.appendChild(gEl('span', 'aiondx-gmenu-check', it.check ? '✓' : ''));
+      el.appendChild(gEl('span', 'aiondx-gmenu-label', it.label));
+      el.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        closeGMenu();
+        if (it.run) it.run();
+      });
+      gMenu.appendChild(el);
+    });
+    document.body.appendChild(gMenu);
+    var w = gMenu.offsetWidth || 220, h = gMenu.offsetHeight || 80;
+    gMenu.style.left = Math.max(4, Math.min(x, window.innerWidth - w - 4)) + 'px';
+    gMenu.style.top = Math.max(4, Math.min(y, window.innerHeight - h - 4)) + 'px';
+    setTimeout(function () {
+      document.addEventListener('mousedown', gMenuOutside, true);
+      document.addEventListener('keydown', gMenuKey, true);
+      window.addEventListener('blur', closeGMenu);
+    }, 0);
+  }
+  /** The group choices for a chat or a team (key "c:<id>" or "t:<id>"); inGroup adds More actions for a chat. */
+  function openItemMenu(key, x, y, more) {
+    var cur = groupsState.items[key] || '';
+    var items = groupsState.groups.map(function (g) { return { label: g.name, check: g.id === cur, run: function () { assignGroup(key, g.id); } }; });
+    if (items.length) items.push({ sep: true });
+    items.push({ label: 'New Group +', run: function () { askGroupName('New group', '', 'Create', function (name) { var id = createGroup(name); if (id) assignGroup(key, id); }); } });
+    if (cur) items.push({ label: 'Remove from group', run: function () { assignGroup(key, null); } });
+    if (more && key.charAt(0) === 'c') {
+      var scroll = document.querySelector('[class*="_scrollArea_"]');
+      var live = scroll ? sideIndex(scroll)[key] : null;
+      if (live) { items.push({ sep: true }); items.push({ label: 'More actions…', run: function () {
+        menuFor = { key: key, at: Date.now() };
+        live.hide.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 }));
+      } }); }
+    }
+    openGMenu(x, y, items);
+  }
+  function openGroupMenu(gid, x, y) {
+    var g = groupById(gid);
+    if (!g) return;
+    openGMenu(x, y, [
+      { label: 'Rename group…', run: function () { askGroupName('Rename group', g.name, 'Rename', function (name) { renameGroup(gid, name); }, gid); } },
+      { label: 'Delete group (its chats go back to the lists)', run: function () { deleteGroup(gid); } }
+    ]);
+  }
+
+  // ---- AionUi's own chat menu gets a group line
+  function injectGroupItem() {
+    if (!menuFor || Date.now() - menuFor.at > 5000) return;
+    var menus = document.querySelectorAll('.arco-dropdown-menu-inner');
+    for (var i = 0; i < menus.length; i++) {
+      var m = menus[i];
+      if (m.getAttribute('data-aiondx-gadded') || m.closest('.aiondx-gmenu')) continue;
+      var txt = m.textContent || '';
+      if (!/Rename/.test(txt) || !/Archive|Pin/.test(txt)) continue;
+      m.setAttribute('data-aiondx-gadded', '1');
+      var key = menuFor.key, cur = groupsState.items[key] ? groupById(groupsState.items[key]) : null;
+      var it = gEl('div', 'arco-dropdown-menu-item aiondx-gitem');
+      it.setAttribute('role', 'menuitem');
+      it.setAttribute('tabindex', '0');
+      it.setAttribute('data-testid', 'aiondx-group-menu-item');
+      var line = gEl('div', 'flex items-center gap-8px');
+      var ic = gEl('span', 'i-icon');
+      ic.innerHTML = SVG_G_FOLDER;
+      line.appendChild(ic);
+      line.appendChild(gEl('span', '', cur ? 'Group: ' + cur.name : 'Add to group'));
+      it.appendChild(line);
+      it.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var rect = it.getBoundingClientRect();
+        // AionUi's menu is put out of sight now; it closes itself on the next press outside it, which the chooser's first click is
+        var pop = m.closest('.arco-trigger') || m.parentElement;
+        if (pop && pop.style) { pop.style.visibility = 'hidden'; pop.style.pointerEvents = 'none'; }
+        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        openItemMenu(key, rect.right + 4, rect.top, false);
+      });
+      m.appendChild(it);
+    }
+  }
+  function teamRowOf(node) {
+    var row = node.closest ? node.closest('.h-34px') : null;
+    var ic = row && row.querySelector('[data-testid^="team-icon-"]');
+    if (!ic || !row.closest('[class*="_scrollArea_"]') || row.closest('.aiondx-groups')) return null;
+    return { id: String(ic.getAttribute('data-testid')).slice(10) };
+  }
+  function watchSidebarMenus() {
+    document.addEventListener('contextmenu', function (ev) {
+      var t = ev.target;
+      if (!t || !t.closest || t.closest('.aiondx-groups') || disabled()) return;
+      var row = t.closest('.chat-history__item[id^="c-"]');
+      if (row) { menuFor = { key: 'c:' + row.id.slice(2), at: Date.now() }; return; }
+      var tr = teamRowOf(t);
+      if (tr) { ev.preventDefault(); ev.stopPropagation(); openItemMenu('t:' + tr.id, ev.clientX, ev.clientY, false); }
+    }, true);
+    document.addEventListener('click', function (ev) {
+      var t = ev.target;
+      var b = t && t.closest ? t.closest('[data-testid^="conversation-row-menu-"]') : null;
+      if (b) menuFor = { key: 'c:' + String(b.getAttribute('data-testid')).slice(22), at: Date.now() };
+    }, true);
+    window.addEventListener('hashchange', onGroupHash);
+  }
+
+  // ---- the dialog for a group's name
+  function closeGroupDialog() {
+    if (gDlg && gDlg.parentNode) gDlg.parentNode.removeChild(gDlg);
+    gDlg = null;
+  }
+  function askGroupName(title, initial, okLabel, done, selfId) {
+    closeGroupDialog();
+    gDlg = gEl('div', 'aiondx-gdlg');
+    gDlg.setAttribute('data-testid', 'aiondx-group-dialog');
+    var card = gEl('div', 'aiondx-gdlg-card');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.appendChild(gEl('div', 'aiondx-gdlg-title', title));
+    var input = gEl('input', 'aiondx-gdlg-input');
+    input.type = 'text';
+    input.maxLength = 60;
+    input.spellcheck = false;
+    input.placeholder = 'Group name';
+    input.value = initial || '';
+    input.setAttribute('data-testid', 'aiondx-group-name');
+    card.appendChild(input);
+    var err = gEl('div', 'aiondx-gdlg-err');
+    card.appendChild(err);
+    var btns = gEl('div', 'aiondx-gdlg-btns');
+    var cancel = gEl('button', 'aiondx-gdlg-cancel', 'Cancel');
+    cancel.type = 'button';
+    var ok = gEl('button', 'aiondx-gdlg-ok', okLabel || 'OK');
+    ok.type = 'button';
+    ok.setAttribute('data-testid', 'aiondx-group-ok');
+    btns.appendChild(cancel);
+    btns.appendChild(ok);
+    card.appendChild(btns);
+    gDlg.appendChild(card);
+    var submit = function () {
+      var name = input.value.replace(/\s+/g, ' ').trim();
+      if (!name) { err.textContent = 'Type a name for the group.'; return; }
+      var same = groupByName(name);
+      if (same && same.id !== selfId && selfId) { err.textContent = 'There is already a group called ' + same.name + '.'; return; }
+      closeGroupDialog();
+      done(name);
+    };
+    ok.addEventListener('click', submit);
+    cancel.addEventListener('click', closeGroupDialog);
+    gDlg.addEventListener('mousedown', function (ev) { if (ev.target === gDlg) closeGroupDialog(); });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeGroupDialog(); }
+    });
+    document.body.appendChild(gDlg);
+    input.focus();
+    input.select();
+  }
+
+  // ---- the new-chat page: a Group menu beside "Work in a project", None by default
+  function guidLabel() { var g = guidGroup && groupById(guidGroup.id); return 'Group: ' + (g ? g.name : 'None'); }
+  function renderGuidGroup() {
+    var onGuid = /^#\/guid(?:[/?]|$)/.test(location.hash);
+    var foot = onGuid && !disabled() ? document.querySelector('[class*="_workspaceFootnote_"]') : null;
+    if (!foot) { if (guidBtn && guidBtn.parentNode) guidBtn.parentNode.removeChild(guidBtn); return; }
+    if (guidGroup && !groupById(guidGroup.id)) guidGroup = null;
+    if (!guidBtn) {
+      var proj = foot.querySelector('button');
+      guidBtn = gEl('button', (proj ? proj.className + ' ' : '') + 'aiondx-gguid-btn');
+      guidBtn.type = 'button';
+      guidBtn.setAttribute('data-testid', 'aiondx-guid-group');
+      guidBtn.innerHTML = '<span class="aiondx-gguid-ic">' + SVG_G_FOLDER + '</span><span class="aiondx-gguid-text"></span><span class="aiondx-gguid-chev">' + SVG_G_CHEV + '</span>';
+      guidBtn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var rect = guidBtn.getBoundingClientRect();
+        var items = [{ label: 'None', check: !guidGroup, run: function () { guidGroup = null; schedule(); } }];
+        groupsState.groups.forEach(function (g) { items.push({ label: g.name, check: !!guidGroup && guidGroup.id === g.id, run: function () { guidGroup = { id: g.id, at: Date.now() }; schedule(); } }); });
+        items.push({ sep: true });
+        items.push({ label: 'New Group +', run: function () { askGroupName('New group', '', 'Create', function (name) { var id = createGroup(name); if (id) { guidGroup = { id: id, at: Date.now() }; schedule(); } }); } });
+        openGMenu(rect.left, rect.bottom + 4, items);
+      });
+    }
+    var tx = guidBtn.querySelector('.aiondx-gguid-text');
+    var label = guidLabel();
+    if (tx.textContent !== label) tx.textContent = label;
+    if (guidBtn.parentNode !== foot) foot.appendChild(guidBtn);
+  }
+  /** A chat made from the new-chat page lands in the group picked there. */
+  function onGroupHash(ev) {
+    var oldH = ev && ev.oldURL ? String(ev.oldURL).split('#')[1] || '' : '';
+    var newH = location.hash.replace(/^#/, '');
+    var wasGuid = /^\/guid(?:[/?]|$)/.test(oldH), isGuid = /^\/guid(?:[/?]|$)/.test(newH);
+    if (isGuid && !wasGuid) guidGroup = null;
+    var m = /^\/conversation\/([^/?#]+)/.exec(newH);
+    if (!m || !wasGuid || !guidGroup || !groupById(guidGroup.id)) return;
+    var gid = guidGroup.id, id = m[1];
+    guidGroup = null;
+    // only a chat that has just been made: a click on an older one must not join the group
+    getJson('/api/conversations/' + encodeURIComponent(id)).then(function (g) {
+      var d = g && g.data;
+      var made = Number(d && d.created_at) || 0;
+      if (!d || !(Date.now() - made < 180000)) return;
+      assignGroup('c:' + id, gid);
+      var grp = groupById(gid);
+      if (grp) toast('Added to the group ' + grp.name + '.', '');
+    }).catch(function () {});
+  }
+
   // ---------------------------------------------------------------- the sidebar's team spinner (R-007, 2026-10-01)
 
   // a request of 2026-10-01. AionUi spins a team's sidebar icon while the team has an active run (useSiderTeamRunning: accepted, running or
@@ -8761,6 +9293,8 @@
     watchUndo();
     watchPermissionHover();
     watchAcctHover();
+    loadGroups();
+    watchSidebarMenus();
     watchLocalLinks();
     watchPictures();
     window.addEventListener('resize', schedule);
