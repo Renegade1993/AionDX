@@ -17,8 +17,9 @@
  *     is not renamed (tools\check-core-contract.js checks the built app against the AionCore it ships with);
  *   - lines marked `legacy-name`: code that reads something an earlier version wrote;
  *   - SQL migrations (their checksum is stored in every database, so one character changed refuses to start);
- *   - enum variants spelled exactly `Aionui` (serde writes them as the stored value above); variants that only start with it
- *     (`AionuiStreamBroken`, whose wire code is AIONUI_STREAM_BROKEN) are renamed, and the page's error catalog is renamed with them.
+ *   - enum variants spelled exactly `Aionui` (serde writes them as the stored value above), and the five error variants that start
+ *     with it (`AionuiStreamBroken` and the rest, whose wire codes AIONUI_STREAM_BROKEN etc. the page's error catalog looks up):
+ *     an earlier version renamed them in both, which a stock AionCore does not match;
  * core mode: the AionCore checkout (crates, Cargo files, assets); it also renames crate folders and files whose name has aionui in it.
  * asar mode: an extracted app.asar (main, preload, renderer, locales).
  */
@@ -67,6 +68,13 @@ function brand(text, rel) {
   // the directories the app hands AionCore at start-up, by environment variable: the same contract (renamed in the app alone,
   // AionCore reported no cache or log folder at all)
   mask(/AIONUI_(?:CACHE|WORK|LOG)_DIR(?![A-Z0-9_])/g, 'core-env');
+  // the error codes AionCore sends and the page looks up in its error catalog, and (core mode) the enum variants serde derives them from:
+  // renamed in the app alone, these errors missed their catalog entry and showed the generic "The agent could not reply"
+  mask(/AIONUI_(?:CONVERSATION_BUSY|STREAM_BROKEN|STATE_INCONSISTENT|PERMISSION_ERROR|INTERNAL_ERROR)(?![A-Z0-9_])/g, 'core-error-code');
+  mask(/\bAionui(?:ConversationBusy|StreamBroken|StateInconsistent|PermissionError|InternalError)\b/g, 'core-error-code');
+  // an exact aionui as an unquoted object key (minified bundles): the same stored value as the quoted "aionui" above - the error catalog's
+  // ownership label and colour for errors AionCore marks as the app's own
+  mask(/(?<=[{,])aionui(?=:)/g, 'exact-aionui');
   // lines that stay whole (core: plain lines; asar bundles are minified, so only the line markers matter)
   if (mode === 'core') {
     text = text.split(/\r?\n/).map((line) => {

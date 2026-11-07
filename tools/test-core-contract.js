@@ -34,6 +34,13 @@ const SAMPLE = [
   '  };',
   '}',
   'const other = process.env.AIONUI_LOG_DIR_OVERRIDE;',
+  // the error catalog, in both forms a bundle carries it (quoted JSON and a minified object literal), and its colour map
+  '"ownership":{"aionui":"App","user_agent":"Agent"},"codes":{"AIONUI_STREAM_BROKEN":{"title":"Response stream was interrupted"},"AIONUI_CONVERSATION_BUSY":{"title":"Busy"}}',
+  'ownership:{aionui:"应用",user_agent:"Agent"},codes:{AIONUI_STATE_INCONSISTENT:{title:"x"},AIONUI_PERMISSION_ERROR:{title:"x"},AIONUI_INTERNAL_ERROR:{title:"x"}}',
+  'Rr={aionui:"red",user_agent:"orange"}',
+  // the core source: the variant serde derives the wire code from, and one that only starts like it
+  'pub enum AgentErrorCode { AionuiStreamBroken, AionuiConversationBusyRetry }',
+  'const link = "aionui://open";',
 ].join('\n');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-core-contract-'));
@@ -52,6 +59,12 @@ try {
     ok(`${mode}: the folder variables AionCore is started with keep their names`,
       out.includes('AIONUI_CACHE_DIR: dirs.cacheDir') && out.includes('AIONUI_WORK_DIR: dirs.workDir') && out.includes('AIONUI_LOG_DIR: dirs.logDir'), out);
     ok(`${mode}: a longer variable that only starts with one is still renamed`, out.includes('AIONDX_LOG_DIR_OVERRIDE'));
+    ok(`${mode}: the five error codes AionCore sends keep their names, quoted and unquoted`,
+      ['AIONUI_STREAM_BROKEN', 'AIONUI_CONVERSATION_BUSY', 'AIONUI_STATE_INCONSISTENT', 'AIONUI_PERMISSION_ERROR', 'AIONUI_INTERNAL_ERROR'].every((c) => out.includes(c)) && !/AIONDX_(STREAM|CONVERSATION|STATE|PERMISSION|INTERNAL)/.test(out), out);
+    ok(`${mode}: the enum variant the wire code comes from keeps its name`, out.includes('AionuiStreamBroken,'));
+    ok(`${mode}: a variant that only starts like one is still renamed`, out.includes('AiondxConversationBusyRetry'));
+    ok(`${mode}: the ownership key stays aionui in the minified catalog and its colour map`, out.includes('ownership:{aionui:"应用"') && out.includes('Rr={aionui:"red"'));
+    ok(`${mode}: an aionui: that is not an object key (a link scheme) is still renamed`, out.includes('"aiondx://open"'));
   }
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -75,6 +88,19 @@ ok('a missing constant is reported, not passed', check('const CORE_CSRF_COOKIE =
 const envOnly = check(main('aionui-session', 'aionui-csrf-token', 'AIONDX'), stockCore);
 ok('a renamed app\'s folder variables and the stock AionCore are caught, all three', envOnly.problems.length === 3 && envOnly.problems.every((p) => /does not read/.test(p)), envOnly.problems.join(' | '));
 ok('the variables are read from buildSpawnEnv, not the ones it strips', JSON.stringify(check(main('aionui-session', 'aionui-csrf-token'), stockCore).found.env) === '["AIONUI_CACHE_DIR","AIONUI_WORK_DIR","AIONUI_LOG_DIR"]');
+// The error catalog (the other direction: codes AionCore sends, looked up by the page).
+const catalog = (p, owner) => `{"ownership":{"${owner || 'aionui'}":"App","user_agent":"Agent"},"codes":{"${p}_STREAM_BROKEN":{"title":"t"},"USER_AGENT_DISCONNECTED":{"title":"t"},"OLD_CODE_NO_CORE_SENDS":{"title":"t"}}}`;
+const coreWithCodes = Buffer.concat([stockCore, Buffer.from('AIONUI_CONVERSATION_BUSYAIONUI_STREAM_BROKENAIONUI_STATE_INCONSISTENTUSER_AGENT_DISCONNECTED')]);
+const good = check(main('aionui-session', 'aionui-csrf-token'), coreWithCodes, [catalog('AIONUI')]);
+ok('a catalog with the stock codes and the stock AionCore agree', good.problems.length === 0, good.problems.join(' | '));
+ok('only brand-prefixed codes are held to it (a code no AionCore sends any more is not the rename\'s business)', JSON.stringify(good.found.codes) === '["AIONUI_STREAM_BROKEN"]');
+const renamedCodes = check(main('aionui-session', 'aionui-csrf-token'), coreWithCodes, [catalog('AIONDX')]);
+ok('a catalog renamed to AIONDX_* is caught, naming what AionCore sends', renamedCodes.problems.length === 1 && /has AIONDX_STREAM_BROKEN.*sends AIONUI_STREAM_BROKEN/.test(renamedCodes.problems[0]), renamedCodes.problems.join(' | '));
+ok('codes in the main process count too, not only the page', check(main('aionui-session', 'aionui-csrf-token') + catalog('AIONDX'), coreWithCodes, []).problems.length === 1);
+const mixedOwners = check(main('aionui-session', 'aionui-csrf-token'), coreWithCodes, [catalog('AIONUI'), 'ownership:{aiondx:"应用",user_agent:"Agent"}']);
+ok('ownership labels renamed in some languages only are caught', mixedOwners.problems.length === 1 && /ownership/.test(mixedOwners.problems[0]), mixedOwners.problems.join(' | '));
+ok('ownership labels the same in every language pass', check(main('aionui-session', 'aionui-csrf-token'), coreWithCodes, [catalog('AIONUI'), 'ownership:{aionui:"应用",user_agent:"Agent"}']).problems.length === 0);
+
 ok('a main process with no buildSpawnEnv is reported, not passed', check('const CORE_SESSION_COOKIE = "aionui-session";\nconst CORE_CSRF_COOKIE = "aionui-csrf-token";\n', stockCore).problems.some((p) => /buildSpawnEnv/.test(p)));
 
 const failed = results.filter((r) => !r.ok);
