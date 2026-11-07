@@ -164,6 +164,9 @@ if ($AionDxCore) {
   Say 'AionCore: an AionDX build is in vendor\aioncore, left out (pass -AionDxCore to ship it)'
 }
 if (-not $coreRec) { Say 'AionCore: the stock binary' }
+# The app and the AionCore it ships with must agree on the session and CSRF cookie names, or no session is ever made and
+# every write is refused with no error at start-up (0.26.0's rename pass shipped exactly that).
+Run $node @("$root\tools\check-core-contract.js", $ext, (Join-Path $stageCoreDir 'aioncore.exe')) 'core contract'
 # Node.js for a PC without it (2026-09-26, a tester's install: AionUi's browser tool runs npx by name, and that PC had
 # no Node on PATH). AionUi 2.2.2's own installer already puts Node's Windows build where AionCore's managed runtime
 # takes it (managed-resources\node\<dir>, MANAGED_NODE_VERSION in aionui-runtime managed.rs), but not on PATH. Here the
