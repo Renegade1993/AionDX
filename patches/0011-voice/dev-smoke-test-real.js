@@ -126,17 +126,17 @@ async function pageTarget() {
     check('the real module\'s transcript landed in the composer', taValue === 'real-module transcript', taValue);
     check('the real module called ElevenLabs\' speech-to-text endpoint',
       await js('window.__fetchCalls.some(c => c.url === "https://api.elevenlabs.io/v1/speech-to-text" && c.method === "POST")'));
-    check('the mic\'s transcribe() was told the app\'s language', (await js('JSON.stringify(window.__transcribeOpts.pop())')) === '{"language":"en"}', await js('JSON.stringify(window.__transcribeOpts)'));
+    check('the mic\'s transcribe() was told the app\'s language', (await js('JSON.stringify(window.__transcribeOpts.pop())')) === '{"languageCode":"en"}', await js('JSON.stringify(window.__transcribeOpts)'));
     await js(`(() => { const s = document.querySelector('#aiondx-voice-language'); s.value = 'ja'; s.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
-    check('choosing a language saves it', await waitFor('window.__aionDxVoice.getSettings().then((s) => s.language === "ja")', 30));
+    check('choosing a language saves it', await waitFor('window.__aionDxVoice.getSettings().then((s) => s.languageCode === "ja")', 30));
     await humanClick('.aiondx-voice-mic-btn');
     await waitFor('document.querySelector(".aiondx-voice-mic-btn").dataset.state === "recording"');
     await sleep(300);
     await humanClick('.aiondx-voice-mic-btn');
     await waitFor('document.querySelector(".aiondx-voice-mic-btn").dataset.state === "idle"', 60);
-    check('and the next transcribe() is told that language instead', (await js('JSON.stringify(window.__transcribeOpts.pop())')) === '{"language":"ja"}', await js('JSON.stringify(window.__transcribeOpts)'));
+    check('and the next transcribe() is told that language instead', (await js('JSON.stringify(window.__transcribeOpts.pop())')) === '{"languageCode":"ja"}', await js('JSON.stringify(window.__transcribeOpts)'));
     await js(`(() => { const s = document.querySelector('#aiondx-voice-language'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
-    await waitFor('window.__aionDxVoice.getSettings().then((s) => !s.language)', 30);
+    await waitFor('window.__aionDxVoice.getSettings().then((s) => !s.languageCode)', 30);
     await js(`document.querySelector('[data-testid="sendbox-input"]').value = ''; 0`);
 
     // ---- playback: real synthesize() through the stubbed text-to-speech endpoint ----

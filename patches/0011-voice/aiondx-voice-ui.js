@@ -393,7 +393,7 @@
         stopMicStream(st);
         if (!blob.size) { setMicState(wrap, 'idle'); activeMic = null; return; }
         setMicState(wrap, 'transcribing');
-        var p = call('transcribe', blob, { language: speechLanguage() });
+        var p = call('transcribe', blob, { languageCode: speechLanguage() });
         (p || Promise.reject(new Error('no voice module'))).then(function (text) {
           activeMic = null;
           insertTranscript(ta, text);
@@ -661,7 +661,7 @@
       ev.stopPropagation();
       var st = wrap.__st;
       if (st.state === 'playing' || st.state === 'loading') stopPlayback();
-      else if (st.state === 'idle' || st.state === 'error') startPlayback(wrap, content);
+      else if (st.state === 'idle' || st.state === 'error') { startPlayback(wrap, content); speakWhileHandsFree(wrap); }
     });
     wrap.appendChild(btn);
     paintPlay(wrap);
@@ -803,7 +803,7 @@
   // key: a string identifying what hf is currently running for ('conv:<id>' or 'team:<id>'), so
   // ensureHandsFree() can tell "already running for this exact target, leave it alone" apart from
   // "switched to a different one, restart" without caring about conv vs team itself.
-  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '', sawActivity: false, wakeStartedAt: 0, transcribeErrorMsg: '', transcribeErrorAt: 0, heardText: '', heardAt: 0 };
+  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '', sawActivity: false, wakeStartedAt: 0, transcribeErrorMsg: '', transcribeErrorAt: 0, heardText: '', heardAt: 0, heardReason: '', stageStartedAt: 0, bargeStop: null, capturing: false, interrupted: false };
   // Test-only: {levelSource, createRecorder} to hand startWakeListener/captureUtterance a fake mic
   // instead of the real one, the same injection test-wake.js uses for aiondx-voice.js itself. Set
   // through window.__aionDxVoiceUI.setHfTestSource, never touched in production.
@@ -811,7 +811,7 @@
 
   function hfModule() { return window.AionDxVoice || null; }
   // Speech language: a short sound left to auto-detection came back in another language (a user's test: "え？", then "[打鼓声]",
-  // from English speech). The settings record's `language` is an ISO 639-1 code, or empty for "the same as the app"; every
+  // from English speech). The settings record's `languageCode` (aiondx-voice.js reads the same field) is an ISO 639-1 code, or empty for "the same as the app"; every
   // transcribe() call gets a concrete code either way.
   var SPEECH_LANGUAGES = [['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'],
     ['nl', 'Dutch'], ['pl', 'Polish'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['tr', 'Turkish'], ['ar', 'Arabic'], ['hi', 'Hindi'],
@@ -824,19 +824,51 @@
     return /^[a-z]{2}$/.test(code) ? code : 'en';
   }
   function speechLanguage() {
-    var chosen = (settingsCache.data || {}).language;
+    var chosen = (settingsCache.data || {}).languageCode;
     return chosen && /^[a-z]{2}$/.test(chosen) ? chosen : appLanguage();
   }
   function languageName(code) {
     for (var i = 0; i < SPEECH_LANGUAGES.length; i++) if (SPEECH_LANGUAGES[i][0] === code) return SPEECH_LANGUAGES[i][1];
     return code;
   }
-  function hfTranscribe(blob, opts) { return call('transcribe', blob, Object.assign({ language: speechLanguage() }, opts || {})); }
+  function hfTranscribe(blob, opts) { return call('transcribe', blob, Object.assign({ languageCode: speechLanguage() }, opts || {})); }
   function saysStopHF(text) {
     var t = String(text || '').toLowerCase();
     return HF_STOP_PHRASES.some(function (p) { return t.indexOf(p) >= 0; });
   }
   function setHfState(state) { hf.state = state; paintHandsFreeBadge(); paintStopAllButtons(); paintHandsFreeNote(); }
+
+  // Why aiondx-voice.js's cleanTranscript dropped a clip, in words (a user's test sent "[打鼓声]", a drum sound, and "it and").
+  function droppedReason(code) {
+    if (code === 'sound-tag') return 'not speech';
+    if (code === 'empty') return 'nothing said';
+    if (code === 'wrong-language') return 'not ' + languageName(speechLanguage());
+    if (code === 'too-short') return 'too short';
+    if (code === 'fragment') return 'cut off';
+    return String(code);
+  }
+  /** Every clip the wake listener, the message capture or the barge-in listener transcribed: shown as "Heard: …" in the badge's
+   *  tooltip and the settings status line, with the reason when it was not used, so a phrase that is never accepted, or a sound
+   *  that is ignored, shows what happened instead of looking like nothing did. */
+  function noteHeard(myGen, text, info) {
+    if (myGen !== hf.gen) return;
+    hf.sawActivity = true;
+    var t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+    if (t) {
+      hf.heardText = t.length > 80 ? t.slice(0, 79) + '…' : t;
+      hf.heardAt = Date.now();
+      hf.heardReason = info && info.dropped ? droppedReason(info.dropped) : '';
+    }
+    hf.transcribeErrorMsg = '';   // a clip that transcribed: an earlier failure is no longer the state to show
+    paintHandsFreeBadge(); paintHandsFreeNote();
+  }
+  function startStage(state) {
+    hf.stageStartedAt = Date.now();
+    hf.heardText = '';
+    hf.heardAt = 0;
+    hf.heardReason = '';
+    setHfState(state);
+  }
 
   /** A solo conversation's lone composer (r.kind === 'conv'), or a team page's lead column
    *  specifically (r.kind === 'team') - a user talking hands-free "to the lead agent" is on this
@@ -878,6 +910,9 @@
     if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }
     if (hf.abort) { try { hf.abort.abort(); } catch (e) {} hf.abort = null; }
     if (hf.pollTimer) { clearTimeout(hf.pollTimer); hf.pollTimer = null; }
+    stopBargeIn();   // a capture in progress too: stop-all ends everything
+    hf.capturing = false;
+    hf.interrupted = false;
     var m = hfModule();
     if (m && typeof m.stopWakeListener === 'function') { try { m.stopWakeListener(); } catch (e) {} }
     hf.active = false;
@@ -915,13 +950,13 @@
     hf.wakeStartedAt = Date.now();
     hf.transcribeErrorMsg = '';
     hf.transcribeErrorAt = 0;
-    hf.heardText = '';
-    hf.heardAt = 0;
-    setHfState('wake');
+    hf.interrupted = false;
+    startStage('wake');
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
     var opts = Object.assign({
       phrase: phrase,
       transcribe: hfTranscribe,
+      languageCode: speechLanguage(),   // for the module's junk filter too (a clip not in this language is dropped, not woken on)
       // "Hey AionDX, what's the weather" in one breath: the request is in the wake clip itself, and is sent from it instead of
       // being lost (a lone word after the phrase, "uh", is not a request: then it listens for the message as before).
       onWake: function (text) {
@@ -940,14 +975,7 @@
       // just hasn't heard the phrase" apart from "it isn't really listening at all."
       // The text is what the wake listener heard (matched or not): shown as "Heard: …" in the badge's tooltip and the settings
       // status line, so a phrase that is never accepted shows how it was heard instead of looking like nothing happened.
-      onCandidate: function (text) {
-        if (myGen !== hf.gen) return;
-        hf.sawActivity = true;
-        var t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
-        if (t) { hf.heardText = t.length > 80 ? t.slice(0, 79) + '…' : t; hf.heardAt = Date.now(); }
-        hf.transcribeErrorMsg = '';   // a clip that transcribed: an earlier failure is no longer the state to show
-        paintHandsFreeBadge(); paintHandsFreeNote();
-      },
+      onCandidate: function (text, info) { noteHeard(myGen, text, info); },
       // A failed transcribe() still proves the mic/VAD recorded and sent a real clip - that is
       // "activity" too, and a sharper signal than the stall hint: this is the exact bug a user
       // report traced to "every clip was failing to transcribe, with nothing ever saying so."
@@ -990,24 +1018,38 @@
     return raw;
   }
 
+  /** A message the user said (the listen stage's capture, or the capture after a barge-in): a stop phrase ends hands-free; "stop"
+   *  or "wait" said over a reply, nothing, or only the wake phrase is not sent and it listens again; anything else is sent, with
+   *  the wake phrase said at its start taken off ("Hey AionDX, …"), and the reply is waited for. */
+  function sendSpoken(myGen, text) {
+    if (saysStopHF(text)) { hf.lastError = ''; stopHandsFreeForGood(); return; }   // a deliberate stop, not a failure
+    var m = hfModule();
+    if (m && typeof m.isStopCommand === 'function' && m.isStopCommand(String(text || ''))) { startListenStage(); return; }
+    var clean = stripWakePhrase(text);
+    if (!clean) { startListenStage(); return; }
+    sendComposerText(hf.target.ta, clean);   // hf.target read now, not whatever was current when this stage started
+    waitForReplyThenPlay(myGen);
+  }
+
   function startListenStage() {
     var myGen = hf.gen;
     if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }   // release the wake mic before opening a fresh one
     var m = hfModule();
     if (!m || typeof m.captureUtterance !== 'function') { teardownHandsFree(); return; }
-    setHfState('listening');
+    hf.interrupted = false;
+    startStage('listening');
     var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     hf.abort = controller;
-    var opts = Object.assign({ transcribe: hfTranscribe, signal: controller ? controller.signal : undefined }, hfInjectedOpts);
+    var opts = Object.assign({
+      transcribe: hfTranscribe,
+      languageCode: speechLanguage(),
+      onCandidate: function (text, info) { noteHeard(myGen, text, info); },   // a dropped clip ("[drum sound]") shows why, and listening goes on
+      signal: controller ? controller.signal : undefined
+    }, hfInjectedOpts);
     m.captureUtterance(opts).then(function (text) {
       hf.abort = null;
       if (myGen !== hf.gen) return;
-      if (saysStopHF(text)) { hf.lastError = ''; stopHandsFreeForGood(); return; }   // a deliberate stop, not a failure
-      // The wake phrase said again at the start ("Hey AionDX, …") is not part of the message; a message that was only the phrase is not sent.
-      var clean = stripWakePhrase(text);
-      if (!clean) { startListenStage(); return; }   // nothing (left) to send: just listen again
-      sendComposerText(hf.target.ta, clean);   // hf.target read now, not whatever was current when this stage started
-      waitForReplyThenPlay(myGen);
+      sendSpoken(myGen, text);
     }, function (e) {
       hf.abort = null;
       if (myGen !== hf.gen) return;
@@ -1067,17 +1109,71 @@
   }
 
   /** Not back to the wake phrase - the user's own framing of this as a continuous conversation, so
-   *  every turn after the first starts straight at captureUtterance(). */
-  function watchPlaybackThenListenAgain(wrap, myGen) {
+   *  every turn after the first starts straight at captureUtterance(). While the reply plays, the
+   *  user can talk over it (startBargeIn); then that path takes over and this one stands down.
+   *  `after` replaces the listen stage (a manual speaker playback returns to the stage it paused). */
+  function watchPlaybackThenListenAgain(wrap, myGen, after) {
+    startBargeIn(myGen);
     var tick = setInterval(function () {
-      if (myGen !== hf.gen) { clearInterval(tick); return; }
+      if (myGen !== hf.gen || hf.capturing) { clearInterval(tick); return; }   // stopped, or interrupted: the barge-in path goes on
       var st = wrap.__st.state;
       if (st === 'idle' || st === 'error') {
         clearInterval(tick);
         if (myGen !== hf.gen) return;
-        startListenStage();
+        stopBargeIn();   // its microphone is released before the next stage opens one
+        (after || startListenStage)();
       }
     }, 150);
+  }
+
+  /** Interrupting a reply by talking over it (aiondx-voice.js startBargeInListener: speech on top of the reply's own sound, not
+   *  the reply leaking into the microphone). On a barge-in the reply stops at once, through the same stopPlayback() as the stop
+   *  button, and what the user says is captured as their next message - no wake phrase. */
+  function stopBargeIn() {
+    if (hf.bargeStop) { try { hf.bargeStop(); } catch (e) {} hf.bargeStop = null; }
+  }
+  function startBargeIn(myGen) {
+    var m = hfModule();
+    if (!m || typeof m.startBargeInListener !== 'function') return;
+    stopBargeIn();
+    hf.capturing = false;
+    hf.bargeStop = m.startBargeInListener(Object.assign({
+      transcribe: hfTranscribe,
+      languageCode: speechLanguage(),
+      onCandidate: function (text, info) { noteHeard(myGen, text, info); },
+      onError: function (e) { console.log('[dx-voice] barge-in listener error (the reply plays on, uninterruptible)', e); },
+      onBargeIn: function (ev) {
+        if (myGen !== hf.gen || !hf.active) { try { ev.cancel(); } catch (e) {} return; }
+        hf.capturing = true;   // first: the playback watcher must not start a listen stage when stopPlayback() idles the button
+        hf.interrupted = true;
+        stopPlayback();
+        startStage('listening');
+        ev.capture().then(function (text) {
+          hf.capturing = false;
+          hf.bargeStop = null;
+          if (myGen !== hf.gen) return;
+          sendSpoken(myGen, text);
+        }, function (e) {
+          hf.capturing = false;
+          hf.bargeStop = null;
+          if (myGen !== hf.gen) return;
+          console.log('[dx-voice] barge-in capture error', e);
+          startListenStage();
+        });
+      }
+    }, hfInjectedOpts));
+  }
+
+  /** The speaker button pressed while hands-free waits for the wake phrase or a message: the wake/listen stage pauses (one
+   *  microphone user at a time), the reply can be talked over like an auto-played one, and the paused stage resumes after. */
+  function speakWhileHandsFree(wrap) {
+    if (!hf.active || (hf.state !== 'wake' && hf.state !== 'listening')) return;
+    var back = hf.state === 'listening' ? startListenStage : startWakeStage;
+    hf.gen++;   // the paused stage's own callbacks (a capture aborted below) must not restart anything
+    if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }
+    if (hf.abort) { try { hf.abort.abort(); } catch (e) {} hf.abort = null; }
+    setHfState('speaking');
+    watchPlaybackThenListenAgain(wrap, hf.gen, back);
   }
 
   /** The entry point from render(): starts, restarts (on a conversation/team switch) or tears down
@@ -1125,7 +1221,8 @@
   var HF_STALL_MS = 8000;   // long enough to not false-positive on a quiet room, short enough to be useful
   /** What the wake listener last heard in this wake stage, for the tooltip and status line (not the badge itself: it is narrow). */
   function hfHeardLine() {
-    return hf.state === 'wake' && hf.heardText && hf.heardAt >= hf.wakeStartedAt ? 'Heard: “' + hf.heardText + '”' : '';
+    if ((hf.state !== 'wake' && hf.state !== 'listening') || !hf.heardText || hf.heardAt < hf.stageStartedAt) return '';
+    return 'Heard: “' + hf.heardText + '”' + (hf.heardReason ? ' (ignored: ' + hf.heardReason + ')' : '');
   }
   function hfStageLabel() {
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
@@ -1150,7 +1247,7 @@
       var stalled = !hf.sawActivity && hf.wakeStartedAt && (Date.now() - hf.wakeStartedAt > HF_STALL_MS);
       return 'Listening for “' + phrase + '”' + (stalled ? ' — no microphone activity detected yet' : '');
     }
-    return hf.state === 'listening' ? 'Listening for your message…'
+    return hf.state === 'listening' ? (hf.interrupted ? 'Listening (interrupted)…' : 'Listening for your message…')
       : hf.state === 'waiting-reply' ? 'Waiting for the reply…'
       : hf.state === 'speaking' ? 'Reading the reply aloud…'
       : '';
@@ -1355,7 +1452,7 @@
     });
     voiceSel.addEventListener('change', function () { saveSettings({ voiceId: voiceSel.value }); });
     var languageSel = el.querySelector('#aiondx-voice-language');
-    languageSel.addEventListener('change', function () { saveSettings({ language: languageSel.value }); });   // '' = the same as the app
+    languageSel.addEventListener('change', function () { saveSettings({ languageCode: languageSel.value }); });   // '' = the same as the app
     handsFreeBox.addEventListener('change', function () {
       if (!handsFreeBox.checked) hf.lastError = '';   // the user's own deliberate off: any earlier error is no longer the reason
       saveSettings({ handsFree: handsFreeBox.checked });
@@ -1459,8 +1556,8 @@
       if (wakeInput.value !== wantWake) wakeInput.value = wantWake;
     }
     var langItems = [{ id: '', name: 'Same as the app (' + languageName(appLanguage()) + ')' }].concat(SPEECH_LANGUAGES.map(function (l) { return { id: l[0], name: l[1] }; }));
-    fillSelect(languageSel, langItems, settings.language || '', null);
-    if (!settings.language && languageSel.value !== '') languageSel.value = '';
+    fillSelect(languageSel, langItems, settings.languageCode || '', null);
+    if (!settings.languageCode && languageSel.value !== '') languageSel.value = '';
     paintHandsFreeNote();
 
     // Providers: cached 30 s, since listProviders() is likely a plain in-memory list, not a network call.

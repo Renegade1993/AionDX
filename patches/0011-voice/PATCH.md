@@ -708,3 +708,29 @@ Tests: `dev-smoke-test-real.js` 32 (a long reply: a short first request; stop-al
 requested or played in the 3.5 s after; played to the end, every piece in order, "playing" until the last);
 `dev-smoke-test-handsfree.js` 48 (a long auto-played reply: still "speaking" after the first piece, listening only once every piece
 has been read). Against the previous UI those checks fail. `tools\test-live-session.js` 18 on staged 0.26.8.
+
+## November 7th, 2026 (evening): talk over a reply; the wake phrase taken off; a speech language; why a clip was ignored
+
+From the user's test of 0.26.8 (the test agent's report): they want to talk over a reply to stop it and say something new; the
+report also had "Hey, Aeon DX" left in a message, short sounds transcribed in Japanese and Chinese from English speech, a drum
+sound ("[打鼓声]") and a fragment ("it and") sent as messages. UI side, with Voice Core Engineer's barge-in listener, language lock
+and junk filter in `aiondx-voice.js`:
+
+- **Barge-in.** While hands-free reads a reply (`watchPlaybackThenListenAgain`), `startBargeInListener` runs; on a barge-in the
+  reply stops at once through the same `stopPlayback()` as the stop button, the badge reads "Listening (interrupted)…", and what
+  the user says is captured (`event.capture()`) and sent as their next message - no wake phrase. "Stop" or "wait" said over it, or
+  nothing, is not sent: it listens again. The speaker button pressed while hands-free waits (wake or listening) pauses that stage,
+  reads with barge-in, and resumes it after. Stop-all and teardown stop the barge-in listener and any capture in progress.
+- **The wake phrase taken off a message's start** (`stripWakePhrase`, matched the way `matchWakePhrase` hears it: "Hey, Aeon DX.
+  Run the tests" sends "Run the tests"); a message that was only the phrase is not sent. A request said in the same breath as the
+  wake phrase ("Hey AionDX, read me the news") is sent from the wake clip instead of being lost.
+- **Speech language** in the panel: "Same as the app (English)" by default, or a chosen language, saved as `languageCode` (the
+  field `aiondx-voice.js` reads); every `transcribe()`, wake, capture and barge-in call gets the concrete code.
+- **Why a clip was ignored**: `onCandidate(text, { dropped })` from all three listeners shows as `Heard: "[打鼓声]" (ignored: not
+  speech)`, "too short", "cut off", "not English", in the badge's tooltip and the settings status line, at the wake and the
+  listening stage.
+
+Tests: `dev-smoke-test-handsfree.js` 67 (barge-in stops the reply within a second and sends what was said; the reply's own sound
+leaking into the mic does not trigger it; manual speaker barge-in; stop-all during a reply leaves nothing listening; wake phrase
+stripped, phrase-only not sent, one-breath request sent; a sound label and a fragment not sent, with their reasons);
+`dev-smoke-test-real.js` 36 (the language default, its code on the mic's transcribe(), a chosen language saved and used).

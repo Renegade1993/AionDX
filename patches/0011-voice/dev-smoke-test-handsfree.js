@@ -220,6 +220,73 @@ async function pageTarget() {
     check('a message that is only the wake phrase is not sent', (await js('window.__sentMessages.length')) === sentBeforeBare, JSON.stringify(await js('window.__sentMessages.slice(-2)')));
     check('it keeps listening for the message instead', await js('window.__aionDxVoiceUI.hfState().state === "listening"'));
 
+    // ---- junk is not sent, and the heard line says why (a user's test sent "[打鼓声]", a drum sound, and "it and") ----
+    const tipAndStatus = 'document.querySelector(".sendbox-actions .aiondx-voice-hf").title + " | " + document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent';
+    const sentBeforeJunk = await js('window.__sentMessages.length');
+    await speak('[打鼓声]');
+    check('a sound label is not sent, and is shown as ignored: not speech',
+      await waitFor('/Heard: “\\[打鼓声\\]” \\(ignored: not speech\\)/.test(document.querySelector(".sendbox-actions .aiondx-voice-hf").title) && /ignored: not speech/.test(document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent)', 40),
+      await js(tipAndStatus));
+    await speak('it and');
+    check('a cut-off fragment is not sent, and is shown as ignored: cut off',
+      await waitFor('/Heard: “it and” \\(ignored: cut off\\)/.test(document.querySelector(".sendbox-actions .aiondx-voice-hf").title)', 40), await js(tipAndStatus));
+    check('neither reached the chat, and it is still listening for the message',
+      (await js('window.__sentMessages.length')) === sentBeforeJunk && (await js('window.__aionDxVoiceUI.hfState().state')) === 'listening', JSON.stringify(await js('window.__sentMessages.slice(-2)')));
+
+    // ---- talking over a reply interrupts it (barge-in); the reply leaking into the microphone does not ----
+    await js(`window.__conv.status = 'running'`);
+    await speak('Give me the long version');
+    await waitFor('window.__aionDxVoiceUI.hfState().state === "waiting-reply"', 40);
+    const longReply2 = Array.from({ length: 14 }, (_, i) => `This is part ${i + 1} of a long answer that the user is going to talk over.`).join(' ');
+    await js(`window.__agentReply(${JSON.stringify(longReply2)})`);
+    await js(`window.__conv.status = 'running'`);
+    await js(`window.__conv.status = 'finished'`);
+    const bargeRow = await js(`'#' + document.getElementById('messages').lastElementChild.id`);
+    await waitFor(`window.__aionDxVoiceUI.hfState().state === "speaking" && document.querySelector('${bargeRow} .aiondx-voice-play-btn').dataset.state === "playing"`, 60);
+    await js(`window.__conv.status = 'running'`);   // the interrupting message's reply is held until the test releases it
+    // The reply's own sound in the microphone: steady, well below speech on top of it.
+    await js('window.__hf.level = 0.2');
+    await sleep(1200);
+    check('the reply leaking into the microphone alone does not interrupt it',
+      (await js('window.__aionDxVoiceUI.hfState().state')) === 'speaking' && (await js(`document.querySelector('${bargeRow} .aiondx-voice-play-btn').dataset.state`)) === 'playing');
+    // The user talks over it.
+    await js(`window.__sttQueue.push('tell me about tomorrow instead')`);
+    await js('window.__hf.level = 1');
+    let sawInterrupted = false, stoppedAt = -1;
+    const bargeStart = Date.now();
+    for (let i = 0; i < 40; i++) {
+      if (!sawInterrupted && /Listening \(interrupted\)/.test(await js('document.querySelector(".sendbox-actions .aiondx-voice-hf-text").textContent'))) sawInterrupted = true;
+      if (stoppedAt < 0 && (await js(`document.querySelector('${bargeRow} .aiondx-voice-play-btn').dataset.state`)) !== 'playing') stoppedAt = Date.now() - bargeStart;
+      if (sawInterrupted && stoppedAt >= 0) break;
+      await sleep(25);
+    }
+    await sleep(300);
+    await js('window.__hf.level = 0');
+    check('talking over the reply stops it at once', stoppedAt >= 0 && stoppedAt < 1000 && !(await js('window.__aionDxVoiceUI.playing()')), `stopped after ${stoppedAt} ms`);
+    check('the badge says it is listening because it was interrupted', sawInterrupted);
+    check('what the user said over it is sent as their next message, no wake phrase needed',
+      await waitFor('(window.__sentMessages || []).includes("tell me about tomorrow instead")', 40), JSON.stringify(await js('window.__sentMessages.slice(-2)')));
+    check('and hands-free waits for the reply to that', await waitFor('window.__aionDxVoiceUI.hfState().state === "waiting-reply"', 20));
+    check('no later piece of the interrupted reply plays', !(await js('window.__aionDxVoiceUI.playing()')) && (await js(`document.querySelector('${bargeRow} .aiondx-voice-play-btn').dataset.state`)) === 'idle');
+    await js(`window.__agentReply('Tomorrow is sunny.')`);
+    await js(`window.__conv.status = 'finished'`);
+    await waitFor('window.__aionDxVoiceUI.hfState().state === "listening"', 60);
+
+    // ---- with hands-free on, a reply played from its own speaker button can be talked over too ----
+    await js(`window.__conv.status = 'running'`);
+    await humanClick(`${bargeRow} .aiondx-voice-play-btn`);
+    check('the speaker button pauses hands-free\'s listening while it reads', await waitFor(`window.__aionDxVoiceUI.hfState().state === "speaking" && document.querySelector('${bargeRow} .aiondx-voice-play-btn').dataset.state === "playing"`, 60));
+    await js(`window.__sttQueue.push('one more question please')`);
+    await js('window.__hf.level = 1');
+    await sleep(400);
+    await js('window.__hf.level = 0');
+    check('talking over it stops it and sends what was said',
+      await waitFor('(window.__sentMessages || []).includes("one more question please")', 40) && !(await js('window.__aionDxVoiceUI.playing()')), JSON.stringify(await js('window.__sentMessages.slice(-2)')));
+    await waitFor('window.__aionDxVoiceUI.hfState().state === "waiting-reply"', 20);
+    await js(`window.__agentReply('Ask away.')`);
+    await js(`window.__conv.status = 'finished'`);
+    await waitFor('window.__aionDxVoiceUI.hfState().state === "listening"', 60);
+
     // ---- a spoken stop phrase tears the whole thing down ----
     await speak('okay please stop listening now');
     check('a spoken stop phrase ends hands-free mode entirely',
@@ -246,6 +313,25 @@ async function pageTarget() {
     await humanClick('#aiondx-voice-handsfree');
     check('unchecking the setting tears hands-free down',
       await waitFor('window.__aionDxVoiceUI.hfState().active === false', 40));
+
+    // ---- stop-all while a reply plays and the barge-in listener runs: everything ends, and talking afterwards sends nothing ----
+    await humanClick('#aiondx-voice-handsfree');
+    await waitFor('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"', 40);
+    const stopRow = await js(`'#' + [...document.querySelectorAll('#messages > [id^="message-"]')].find((r) => r.textContent.length > 600).id`);
+    await humanClick(`${stopRow} .aiondx-voice-play-btn`);
+    await waitFor(`window.__aionDxVoiceUI.hfState().state === "speaking" && document.querySelector('${stopRow} .aiondx-voice-play-btn').dataset.state === "playing"`, 60);
+    await humanClick('.aiondx-voice-stopall-btn');
+    check('stop-all during a reply ends playback and hands-free together',
+      await waitFor(`window.__aionDxVoiceUI.hfState().active === false && !window.__aionDxVoiceUI.playing() && document.querySelector('${stopRow} .aiondx-voice-play-btn').dataset.state === "idle"`, 20));
+    const sentBeforeAfterStop = await js('window.__sentMessages.length');
+    await js(`window.__sttQueue.push('this should never be sent')`);
+    await js('window.__hf.level = 1');
+    await sleep(400);
+    await js('window.__hf.level = 0');
+    await sleep(1000);
+    check('and the barge-in listener is gone with it: talking afterwards sends nothing',
+      (await js('window.__sentMessages.length')) === sentBeforeAfterStop && !(await js('window.__aionDxVoiceUI.playing()')));
+    await js(`window.__sttQueue.length = 0`);
 
     // ---- a real failure to start must say so, not silently revert (the reported bug) ----
     // Breaking createRecorder makes aiondx-voice.js's own opts validation reject immediately
