@@ -517,10 +517,70 @@
     if (btn.hasAttribute('title')) btn.removeAttribute('title');
   }
 
+  /** A provider failure, or nothing to start with: with no key saved (no provider, no key, no voice module) the reply is read with
+   *  the voice the PC already has (free, offline), so the button does something on a fresh install. Never with a key saved: then the
+   *  user chose their provider, and its failure is shown, not covered by another voice. */
+  function playbackFailed(wrap, text, e) {
+    console.log('[dx-voice] synthesize error', e);
+    var hasKey = !!(settingsCache.data || {}).apiKey;
+    if (!hasKey && canSpeakSystem() && /no provider configured|no API key|no voice module/i.test((e && e.message) || '')) {
+      try { systemSpeak(wrap, text); return; } catch (x) { console.log('[dx-voice] system voice failed', x); }
+    }
+    setPlayState(wrap, 'error', (e && e.message) || 'synthesis failed');
+  }
+
+  /** synthesize()'s answer as a Blob, which playChunked plays: a Blob, { blob }, an ArrayBuffer, or a URL (a stand-in client's). */
+  function toAudioBlob(result) {
+    var blob = audioBlobFrom(result);
+    if (blob) return blob;
+    var url = audioUrlFrom(result);
+    if (url) return fetch(url).then(function (r) { return r.blob(); });
+    throw new Error('unexpected synthesize() result');
+  }
+
   function startPlayback(wrap, content) {
     stopPlayback();
     var text = spokenText(messageText(content));
     if (!text) { setPlayState(wrap, 'error', 'nothing to read'); return; }
+    var m = window.AionDxVoice;
+    if (!m || typeof m.playChunked !== 'function' || !voice()) { startWholePlayback(wrap, text); return; }
+    ++playGen;
+    loadingWrap = wrap;
+    setPlayState(wrap, 'loading');
+    // Piece by piece (aiondx-voice.js playChunked): the first sound comes after one short piece is synthesized, not the whole reply,
+    // and the next piece is fetched while the current one plays. Its pause() stands in for an Audio element's, so stopPlayback() and
+    // stop-all stop it unchanged: the request in flight is aborted and no further piece plays. The button stays "playing" across
+    // pieces and goes idle only after the last one - hands-free waits for exactly that before it listens again.
+    var voiceId = (settingsCache.data || {}).voiceId;
+    var started = false;
+    var cp = { wrap: wrap, url: null, audio: null };
+    cp.audio = m.playChunked({
+      text: text,
+      synthesize: function (piece, o) {
+        var p = call('synthesize', piece, voiceId, o);
+        return (p || Promise.reject(new Error('no voice module'))).then(toAudioBlob);
+      },
+      onStart: function () {
+        started = true;
+        if (currentPlayback !== cp) return;
+        if (loadingWrap === wrap) loadingWrap = null;
+        setPlayState(wrap, 'playing');
+      },
+      onEnd: function () { if (currentPlayback === cp) stopPlayback(); },
+      onError: function (e) {
+        if (currentPlayback !== cp) return;
+        currentPlayback = null;
+        if (loadingWrap === wrap) loadingWrap = null;
+        // Once a piece has played, a later failure is shown as an error; the fall-back would start the reply over.
+        if (started) { console.log('[dx-voice] playback failed partway', e); setPlayState(wrap, 'error', (e && e.message) || 'playback failed'); }
+        else playbackFailed(wrap, text, e);
+      }
+    });
+    currentPlayback = cp;
+  }
+
+  /** The whole reply in one synthesize() call: only where the voice module offers no playChunked (a stand-in client). */
+  function startWholePlayback(wrap, text) {
     var myGen = ++playGen;
     loadingWrap = wrap;
     setPlayState(wrap, 'loading');
@@ -548,14 +608,7 @@
     }, function (e) {
       if (myGen !== playGen) return;   // superseded; do not paint a stale error over whatever is current now
       loadingWrap = null;
-      console.log('[dx-voice] synthesize error', e);
-      // No provider or no key: read it with the voice the PC already has (free, offline), so the button does something on a fresh install.
-      // Never with a key saved: then the user chose their provider, and its failure is shown, not covered by another voice.
-      var hasKey = !!(settingsCache.data || {}).apiKey;
-      if (!hasKey && canSpeakSystem() && /no provider configured|no API key|no voice module/i.test((e && e.message) || '')) {
-        try { systemSpeak(wrap, text); return; } catch (x) { console.log('[dx-voice] system voice failed', x); }
-      }
-      setPlayState(wrap, 'error', (e && e.message) || 'synthesis failed');
+      playbackFailed(wrap, text, e);
     });
   }
 

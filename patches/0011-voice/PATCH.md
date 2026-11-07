@@ -692,3 +692,19 @@ while playing, and a late `ended` after a stop; a failed later piece, a blocked 
 sending every piece to the stored voice on Flash v2.5). `dev-smoke-test-real.js` 24, `dev-smoke-test-handsfree.js` 45 and
 `dev-smoke-test-handsfree-team.js` 12 still pass with the new module (the solo hands-free harness hit its 60 s deadline once
 under load, then passed twice).
+
+## November 7th, 2026 (later still): the speaker reads a reply in pieces (UI side of playChunked)
+
+`startPlayback()` - the speaker button and hands-free auto-play alike - now plays through `AionDxVoice.playChunked()` (Voice Core
+Engineer's 2936cdd): the first sound comes after one short piece is synthesized instead of the whole reply, and the next piece is
+fetched while the current one plays. Its `pause()` stands in for an Audio element's, so `stopPlayback()`, the speaker's second
+click and stop-all stop it unchanged: the request in flight is aborted and no later piece is requested or played. The button stays
+"playing" across pieces and goes idle only after the last one, which is what hands-free waits for before it listens again. The
+fall-back is unchanged and shared (`playbackFailed`): the Windows voice only when no key is saved and nothing has played yet; a
+failure after a piece has played shows as an error. Where the module offers no `playChunked` (the stand-in client of
+`dev-harness.html`), the whole reply is synthesized in one call as before.
+
+Tests: `dev-smoke-test-real.js` 32 (a long reply: a short first request; stop-all and the second click stop it with no later piece
+requested or played in the 3.5 s after; played to the end, every piece in order, "playing" until the last);
+`dev-smoke-test-handsfree.js` 48 (a long auto-played reply: still "speaking" after the first piece, listening only once every piece
+has been read). Against the previous UI those checks fail. `tools\test-live-session.js` 18 on staged 0.26.8.

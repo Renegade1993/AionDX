@@ -119,6 +119,19 @@ const PUT = (body) => `(async () => { const r = await fetch('http://127.0.0.1:' 
     const said = await app.js('(window.__said || [])[0]');
     check('the speaker sends what a reply shows, not its stylesheet, code, Copy label or hidden text',
       said === 'Here is the fix. a snippet of js code. Ran 2 tools That is all.', JSON.stringify(said));
+
+    // A long reply is read in pieces (playChunked, 0.26.8): the first request is one short piece, so the first sound comes sooner.
+    const longText = Array.from({ length: 14 }, (_, i) => `Sentence number ${i + 1} of a long reply, here to make it long.`).join(' ');
+    await app.js(`(() => { const row = document.createElement('div'); row.id = 'message-livetest2'; row.setAttribute('data-message-type', 'text'); row.setAttribute('data-message-position', 'left');
+      row.style.cssText = 'position:fixed;left:20px;top:260px;width:600px;z-index:99999';
+      row.innerHTML = '<div data-testid="message-text-content"></div>'; row.firstChild.textContent = ${JSON.stringify(longText)};
+      document.body.appendChild(row); window.__said = []; return 0; })()`);
+    for (let i = 0; i < 30 && !(await app.js(`!!document.querySelector('#message-livetest2 .aiondx-voice-play-btn')`)); i++) await sleep(500);
+    await app.js(`document.querySelector('#message-livetest2 .aiondx-voice-play-btn').click(); 0`);
+    for (let i = 0; i < 20 && !((await app.js('(window.__said || []).length')) > 0); i++) await sleep(250);
+    const firstPiece = await app.js('(window.__said || [])[0]');
+    check('a long reply\'s first request is one short piece, not the whole reply', typeof firstPiece === 'string' && firstPiece.length <= 160 && longText.startsWith(firstPiece),
+      JSON.stringify(firstPiece) + ` (reply ${longText.length} chars)`);
   } catch (e) {
     check('the test ran to the end', false, e && e.stack || e);
   } finally {

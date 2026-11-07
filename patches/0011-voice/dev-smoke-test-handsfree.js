@@ -70,6 +70,7 @@ async function pageTarget() {
     const centerOf = (sel) => js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null;
       const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
     const humanClick = async (sel) => {
+      await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (e) e.scrollIntoView({ block: "center" }); return 0; })()`);   // a long reply can push the target below the fold
       const p = await centerOf(sel);
       if (!p) throw new Error(`nothing to click at ${sel}`);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
@@ -176,14 +177,30 @@ async function pageTarget() {
       await waitFor('window.__aionDxVoiceUI.hfState().state === "waiting-reply"', 20));
 
     // ---- once the turn finishes, the newest reply auto-plays - no click ----
-    await js(`window.__agentReply('It is sunny today.')`);
+    // Long enough to be read in several pieces (playChunked): hands-free must listen again only after the LAST one.
+    const longReply = Array.from({ length: 14 }, (_, i) => `It is sunny today, part ${i + 1}, and the forecast says it will stay that way.`).join(' ');
+    await js('window.__ttsTexts = []');
+    await js(`window.__agentReply(${JSON.stringify(longReply)})`);
     await js(`window.__conv.status = 'finished'`);
     check('the reply auto-plays once the turn finishes',
       await waitFor('["loading", "playing"].includes((document.querySelector("#message-a1 .aiondx-voice-play-btn") || {}).dataset && document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state)', 40));
 
     // ---- after playback, it goes straight back to listening, NOT the wake phrase ----
-    check('after the reply finishes playing, hands-free listens again directly (no wake phrase needed)',
-      await waitFor('window.__aionDxVoiceUI.hfState().state === "listening"', 40));
+    // Watch the stage while the pieces play: still "speaking" after the first piece has played, "listening" only once all have.
+    let stillSpeakingAfterFirst = false, piecesWhenListening = -1;
+    for (let i = 0; i < 150; i++) {
+      const st = await js('window.__aionDxVoiceUI.hfState().state');
+      const n = await js('(window.__ttsTexts || []).length');
+      if (st === 'speaking' && n >= 2) stillSpeakingAfterFirst = true;
+      if (st === 'listening') { piecesWhenListening = n; break; }
+      await sleep(100);
+    }
+    const spokenPieces = await js('window.__ttsTexts || []');
+    check('the long reply was read in several pieces that make up the whole reply', spokenPieces.length >= 3 && spokenPieces.join(' ') === longReply, spokenPieces.length + ' pieces');
+    check('hands-free was still "speaking" after the first piece had played', stillSpeakingAfterFirst);
+    check('after the reply finishes playing, hands-free listens again directly (no wake phrase needed)', piecesWhenListening !== -1);
+    check('and only after the last piece: every piece had been read by then', piecesWhenListening === spokenPieces.length && spokenPieces.length >= 3 &&
+      (await js('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state')) === 'idle', `${piecesWhenListening} of ${spokenPieces.length}`);
     check('it did not go back through the wake stage to get there',
       await js('window.__aionDxVoiceUI.hfState().state !== "wake"'));
 

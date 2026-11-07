@@ -143,6 +143,51 @@ async function pageTarget() {
     await humanClick('.aiondx-voice-stopall-btn');
     check('clicking it stops a real in-flight playback', await waitFor('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "idle"', 20));
 
+    // ---- a long reply plays in pieces (aiondx-voice.js playChunked), and stopping it stops every later piece ----
+    // Click what is on screen: the long reply sits below the fold, and the composer's stop-all scrolls out when it is brought up.
+    const clickInView = async (sel) => { await js(`document.querySelector(${JSON.stringify(sel)}).scrollIntoView({ block: 'center' }); 0`); await sleep(150); await humanClick(sel); };
+    const longText = Array.from({ length: 14 }, (_, i) => `Sentence number ${i + 1} of the long reply, which is here to make it long.`).join(' ');
+    await js(`(() => { const row = document.createElement('div'); row.id = 'message-long'; row.setAttribute('data-message-type', 'text'); row.setAttribute('data-message-position', 'left');
+      row.innerHTML = '<div data-testid="message-text-content"></div>'; row.firstChild.textContent = ${JSON.stringify(longText)};
+      document.querySelector('#message-a1').after(row); return 0; })()`);
+    await waitFor('!!document.querySelector("#message-long .aiondx-voice-play-btn")', 40);
+    const tts = 'window.__fetchCalls.filter((c) => c.url.indexOf("https://api.elevenlabs.io/v1/text-to-speech/") === 0)';
+    const ttsBefore = await js(`${tts}.length`);
+    await clickInView('#message-long .aiondx-voice-play-btn');
+    check('a long reply starts playing', await waitFor('document.querySelector("#message-long .aiondx-voice-play-btn").dataset.state === "playing"', 60));
+    const firstPiece = await js(`${tts}[${ttsBefore}] && ${tts}[${ttsBefore}].text`);
+    check('its first request is a short first piece, not the whole reply', !!firstPiece && firstPiece.length <= 160 && longText.startsWith(firstPiece), JSON.stringify(firstPiece));
+    await clickInView('.aiondx-voice-stopall-btn');
+    check('stop-all stops it at once', await waitFor('document.querySelector("#message-long .aiondx-voice-play-btn").dataset.state === "idle" && !window.__aionDxVoiceUI.playing()', 20));
+    const ttsAtStop = await js(`${tts}.length`);
+    await sleep(3500);   // longer than one 1.5 s stub clip: a piece still queued would have started by now
+    check('and no later piece is requested or played after the stop', (await js(`${tts}.length`)) === ttsAtStop && (await js('!window.__aionDxVoiceUI.playing()')) && (await js('document.querySelector("#message-long .aiondx-voice-play-btn").dataset.state')) === 'idle',
+      `requests at stop ${ttsAtStop}, now ${await js(`${tts}.length`)}`);
+    // The speaker's own second click, the same.
+    await clickInView('#message-long .aiondx-voice-play-btn');
+    await waitFor('document.querySelector("#message-long .aiondx-voice-play-btn").dataset.state === "playing"', 60);
+    await clickInView('#message-long .aiondx-voice-play-btn');
+    check('the speaker\'s second click stops it at once', await waitFor('document.querySelector("#message-long .aiondx-voice-play-btn").dataset.state === "idle" && !window.__aionDxVoiceUI.playing()', 20));
+    const ttsAtClick = await js(`${tts}.length`);
+    await sleep(3500);
+    check('and nothing more is requested or played after it', (await js(`${tts}.length`)) === ttsAtClick && (await js('!window.__aionDxVoiceUI.playing()')),
+      `requests at stop ${ttsAtClick}, now ${await js(`${tts}.length`)}`);
+    // Played to the end: every piece in turn, the button "playing" throughout, idle only after the last.
+    const ttsBeforeFull = await js(`${tts}.length`);
+    await clickInView('#message-long .aiondx-voice-play-btn');
+    await waitFor('document.querySelector("#message-long .aiondx-voice-play-btn").dataset.state === "playing"', 60);
+    let sawIdleEarly = false;
+    for (let i = 0; i < 200; i++) {
+      const st = await js('document.querySelector("#message-long .aiondx-voice-play-btn").dataset.state');
+      const n = (await js(`${tts}.length`)) - ttsBeforeFull;
+      if (st !== 'playing') { if (n < 3) sawIdleEarly = true; break; }
+      await sleep(100);
+    }
+    const fullTexts = await js(`${tts}.slice(${ttsBeforeFull}).map((c) => c.text)`);
+    check('played to the end, it requested every piece in order, and the pieces make up the reply',
+      fullTexts.length >= 3 && fullTexts.join(' ') === longText, `${fullTexts.length} pieces`);
+    check('the button stayed "playing" until the last piece, then went idle', !sawIdleEarly && (await js('document.querySelector("#message-long .aiondx-voice-play-btn").dataset.state')) === 'idle');
+
     // ---- a record an earlier build left with a key and no provider (what the user had) is mended on the next load ----
     await js(`window.__aionDxVoice.setSettings({ provider: null })`);
     const broken = await js('window.__aionDxVoice.synthesize("x").then(() => "ok", (e) => e.message)');

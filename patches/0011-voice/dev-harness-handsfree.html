@@ -72,6 +72,8 @@
     }
     if (u.indexOf('https://api.elevenlabs.io/v1/text-to-speech/') === 0) {
       window.__ttsKeys = (window.__ttsKeys || []).concat([((opts.headers || {})['xi-api-key']) || null]);
+      var said = null; try { said = JSON.parse(opts.body).text; } catch (e) { said = null; }
+      window.__ttsTexts = (window.__ttsTexts || []).concat([said]);
       if (window.__ttsFailNext > 0) { window.__ttsFailNext--; return Promise.resolve(new Response('invalid api key', { status: 401 })); }
       return Promise.resolve(new Response(wavBlob(0.3), { status: 200, headers: { 'Content-Type': 'audio/wav' } }));
     }
