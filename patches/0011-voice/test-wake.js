@@ -264,7 +264,7 @@ async function speak(level, ms) { level.level = 1; await sleep(ms); level.level 
     {
       const P = 'Hey AionDX';
       const heard = ['Hey, AonDX', 'Hey AMD X', 'Hey Android X', 'Hey, Aion DX', 'hey aiondx', 'Hey AionDX, what time is it?',
-        'Okay so hey, Aion DX, can you check the build', 'Hey eon DX', 'Hey Ion DX.', 'Hey, AI on DX.', 'Hey Aeon decks', 'Hay AionDX', 'Hey Aion D.X.'];
+        'Okay so hey, Aion DX, can you check the build', 'Hey eon DX', 'Hey Ion DX.', 'Hey, AI on DX.', 'Hey Aeon decks', 'Hay AionDX', 'Hey Aion D.X.', 'Hey, Aeon DX', 'Hey Aeon DX, are you there'];
       const missed = heard.filter((t) => !AionDxVoice.matchWakePhrase(t, P).matched);
       check('every transcription variant of the wake phrase matches', missed.length === 0, missed.join(' | '));
 
@@ -306,6 +306,74 @@ async function speak(level, ms) { level.level = 1; await sleep(ms); level.level 
       check('onCandidate gets the heard text and whether it matched', candidates.length === 2 &&
         candidates[0][0] === 'hey android' && candidates[0][1].matched === false &&
         candidates[1][0] === 'Hey AMD X' && candidates[1][1].matched === true && candidates[1][1].distance === 3);
+    }
+
+    // ---- cleanTranscript: what the test report says was sent (2026-11-07) ----
+    {
+      const T = (t, o) => AionDxVoice.cleanTranscript(t, Object.assign({ languageCode: 'en' }, o || {}));
+      check('a Japanese "eh?" with English locked is dropped as wrong-language', T('え？').reason === 'wrong-language');
+      check('a lone sound tag ("[drumming]" in Chinese) is dropped as sound-tag', T('[打鼓声]').reason === 'sound-tag');
+      check('"(music)", "[laughter]", "*coughs*" and a full-width tag are sound tags', ['(music)', '[laughter]', '*coughs*', '（笑）'].every((t) => T(t).reason === 'sound-tag'));
+      check('"it and" is dropped as a fragment', T('it and').reason === 'fragment');
+      check('empty or punctuation-only is dropped as empty', T('   ').reason === 'empty' && T('...').reason === 'empty');
+      check('a single letter is too short; minChars and minWords are parameters', T('k').reason === 'too-short' && T('yes', { minWords: 2 }).reason === 'too-short' && T('ok', { minChars: 3 }).reason === 'too-short');
+      check('short whole requests are kept ("yes", "OK", "turn it on", "Why and?")', ['yes', 'OK', 'turn it on', 'Why and?'].every((t) => T(t).keep));
+      check('a tag inside a real sentence is removed and the rest kept', T('[laughter] okay, send it').keep && T('[laughter] okay, send it').text === 'okay, send it');
+      check("the report's long instruction is kept as said", T('Make a MD file for my main dev team that shows everything').text === 'Make a MD file for my main dev team that shows everything');
+      check('without a locked language a Japanese clip is not judged by script', AionDxVoice.cleanTranscript('はい').keep === true && T('はい').reason === 'wrong-language');
+      check('isStopCommand: "Stop.", "wait a second", "Okay, hold on.", "no, stop"', ['Stop.', 'wait a second', 'Okay, hold on.', 'no, stop', 'Hang on!'].every(AionDxVoice.isStopCommand));
+      check('isStopCommand: not "stop the build" or "wait for the tests"', !AionDxVoice.isStopCommand('stop the build') && !AionDxVoice.isStopCommand('wait for the tests'));
+    }
+
+    // ---- captureUtterance skips junk and keeps listening; the language goes to transcribe ----
+    {
+      const level = fakeLevelSource();
+      const log = [];
+      const candidates = [];
+      const p = AionDxVoice.captureUtterance(Object.assign({}, COMMON, {
+        levelSource: level, createRecorder: fakeRecorderFactory([]),
+        transcribe: queueTranscribe(['[打鼓声]', 'it and', 'Please rerun the build.'], log),
+        onCandidate: (t, meta) => candidates.push([t, meta.dropped]),
+        languageCode: 'en', maxMs: 3000,
+      }));
+      for (let i = 0; i < 3; i++) { await speak(level, SPEAK_MS); await sleep(SETTLE_MS); }
+      const text = await p;
+      check('captureUtterance resolves with the first clip worth sending', text === 'Please rerun the build.');
+      check('the junk clips before it were reported with why they were dropped', JSON.stringify(candidates.map((c) => c[1])) === JSON.stringify(['sound-tag', 'fragment', null]));
+      check('every transcribe call carried the locked language', log.length === 3 && log.every((l) => l.opts && l.opts.languageCode === 'en'));
+    }
+
+    // ---- the wake listener reports dropped clips too, and they never wake it ----
+    {
+      const level = fakeLevelSource();
+      const woken = [];
+      const metas = [];
+      const stop = AionDxVoice.startWakeListener(Object.assign({}, COMMON, {
+        phrase: 'Hey AionDX', levelSource: level, createRecorder: fakeRecorderFactory([]),
+        transcribe: queueTranscribe(['(music)', 'Hey, Aeon DX']), languageCode: 'en',
+        onWake: (t) => woken.push(t), onCandidate: (t, meta) => metas.push(meta),
+      }));
+      await speak(level, SPEAK_MS); await sleep(SETTLE_MS);
+      await speak(level, SPEAK_MS); await sleep(SETTLE_MS);
+      stop();
+      check('a sound tag reaches onCandidate with dropped "sound-tag" and does not wake', metas[0] && metas[0].dropped === 'sound-tag' && metas[0].matched === false);
+      check('"Hey, Aeon DX" (the spelling in the report) wakes it', woken.length === 1 && metas[1].dropped === null && metas[1].matched === true);
+    }
+
+    // ---- recording starts with the first loud frame; a sound too short to count is thrown away ----
+    {
+      const level = fakeLevelSource();
+      const calls = [];
+      const log = [];
+      const stop = AionDxVoice.startWakeListener(Object.assign({}, COMMON, {
+        phrase: 'Hey AionDX', levelSource: level, createRecorder: fakeRecorderFactory(calls),
+        transcribe: queueTranscribe(['whatever'], log),
+      }));
+      await sleep(20);
+      level.level = 1; await sleep(15); level.level = 0;   // a click, well under minSpeechMs (40)
+      await sleep(SETTLE_MS);
+      check('a sound shorter than minSpeechMs starts a recording that is stopped and never transcribed', calls.length === 1 && calls[0].started && calls[0].stopped && log.length === 0);
+      stop();
     }
 
     // ---- input validation: clear errors, no network/mic access attempted ----

@@ -110,13 +110,23 @@
     );
   }
 
+  /** The language to transcribe in when the settings name none: the UI's own language ("en-US" ->
+   *  "en"), else English. */
+  function defaultLanguageCode() {
+    var tag = (typeof navigator !== 'undefined' && (navigator.language || (navigator.languages && navigator.languages[0]))) || '';
+    var m = /^([a-z]{2,3})(?![a-z])/i.exec(String(tag));
+    return m ? m[1].toLowerCase() : 'en';
+  }
+
   /** opts: { apiKey, voiceId? (default voice when a call does not name one), modelId? (default TTS
-   *  model), fetch? (for tests) }. */
+   *  model), languageCode? (speech to text: ISO-639-1 or -3, 'auto' to let ElevenLabs detect it;
+   *  default the UI's language), fetch? (for tests) }. */
   function createElevenLabsProvider(opts) {
     opts = opts || {};
     var apiKey = opts.apiKey || '';
     var defaultVoiceId = opts.voiceId || ELEVEN_DEFAULT_VOICE_ID;
     var defaultModelId = opts.modelId || ELEVEN_DEFAULT_TTS_MODEL;
+    var defaultLanguage = opts.languageCode || defaultLanguageCode();
     var fetchImpl = opts.fetch || fetch;
 
     function authHeaders(extra) {
@@ -149,12 +159,19 @@
         });
       },
 
+      /** transcribeOpts: { signal?, languageCode? }. The language is always sent (unless it is
+       *  'auto'): left to detect, ElevenLabs heard a short "eh?" as Japanese and a tap as Chinese
+       *  (test report, 2026-11-07). Sound tags ("[laughter]", "[drumming]") are switched off, since
+       *  a message made of one is never what the user said. */
       transcribe: function (audio, transcribeOpts) {
         if (!apiKey) return Promise.reject(new Error('elevenlabs: no API key configured'));
         if (!audio) return Promise.reject(new Error('elevenlabs: no audio to transcribe'));
+        var lang = (transcribeOpts && transcribeOpts.languageCode) || defaultLanguage;
         var form = new FormData();
         form.append('model_id', 'scribe_v1');
         form.append('file', audio, 'audio');
+        if (lang && lang !== 'auto') form.append('language_code', String(lang));
+        form.append('tag_audio_events', 'false');
         return fetchImpl(ELEVEN_BASE + '/v1/speech-to-text', {
           method: 'POST',
           headers: authHeaders(),
@@ -212,7 +229,7 @@
     var cached = null; // { config, provider }
 
     function sameConfig(a, b) {
-      return !!a && !!b && a.provider === b.provider && a.apiKey === b.apiKey && a.voiceId === b.voiceId && a.modelId === b.modelId;
+      return !!a && !!b && a.provider === b.provider && a.apiKey === b.apiKey && a.voiceId === b.voiceId && a.modelId === b.modelId && a.languageCode === b.languageCode;
     }
 
     function currentProvider() {
@@ -258,7 +275,16 @@
     if (!AudioContextCtor) return Promise.reject(new Error('voice: no AudioContext available'));
     if (!MediaRecorderCtor) return Promise.reject(new Error('voice: no MediaRecorder available'));
 
-    return Promise.resolve(getUserMedia({ audio: true })).then(function (stream) {
+    // Echo cancellation keeps a reply read aloud out of the microphone, which barge-in depends on.
+    // Asked for explicitly and read back: getSettings() says what the device actually applied.
+    var constraints = opts.audioConstraints || { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    return Promise.resolve(getUserMedia({ audio: constraints })).then(function (stream) {
+      var applied = { echoCancellation: null, noiseSuppression: null, autoGainControl: null };
+      try {
+        var track = stream.getAudioTracks ? stream.getAudioTracks()[0] : null;
+        var got = (track && track.getSettings && track.getSettings()) || {};
+        Object.keys(applied).forEach(function (k) { if (typeof got[k] === 'boolean') applied[k] = got[k]; });
+      } catch (e) { /* settings unknown: left null */ }
       var ctx = new AudioContextCtor();
       var source = ctx.createMediaStreamSource(stream);
       var analyser = ctx.createAnalyser();
@@ -293,7 +319,7 @@
         try { ctx.close(); } catch (e) { /* already closed */ }
       }
 
-      return { levelSource: { getLevel: getLevel }, createRecorder: createRecorder, close: close };
+      return { levelSource: { getLevel: getLevel }, createRecorder: createRecorder, close: close, settings: applied };
     });
   }
 
@@ -305,9 +331,9 @@
     if (opts.levelSource || opts.createRecorder) {
       if (!opts.levelSource || typeof opts.levelSource.getLevel !== 'function') return Promise.reject(new Error('voice: opts.levelSource.getLevel is required when opts.createRecorder is given'));
       if (typeof opts.createRecorder !== 'function') return Promise.reject(new Error('voice: opts.createRecorder is required when opts.levelSource is given'));
-      return Promise.resolve({ levelSource: opts.levelSource, createRecorder: opts.createRecorder, close: null, owned: false });
+      return Promise.resolve({ levelSource: opts.levelSource, createRecorder: opts.createRecorder, close: null, owned: false, settings: opts.micSettings || null });
     }
-    return createMicSource(opts).then(function (s) { return { levelSource: s.levelSource, createRecorder: s.createRecorder, close: s.close, owned: true }; });
+    return createMicSource(opts).then(function (s) { return { levelSource: s.levelSource, createRecorder: s.createRecorder, close: s.close, owned: true, settings: s.settings }; });
   }
 
   /** The shared state machine behind both startWakeListener and captureUtterance: poll
@@ -356,7 +382,7 @@
       var signal = controller ? controller.signal : undefined;
       Promise.resolve(recorderToStop.stop()).then(function (blob) {
         if (stopped) return null;
-        return transcribe(blob, { signal: signal });
+        return transcribe(blob, config.languageCode ? { signal: signal, languageCode: config.languageCode } : { signal: signal });
       }).then(function (text) {
         controller = null;
         if (stopped || text == null) return;
@@ -375,18 +401,24 @@
       var speaking = level >= threshold;
       var now = Date.now();
       if (!recording) {
+        // The recording starts with the first loud frame and is thrown away if the sound does not
+        // last minSpeechMs: until 2026-11-07 it started only after minSpeechMs, so every clip lost
+        // its first syllable or two (the test report's fragment "it and" is the kind of result).
         if (speaking) {
-          if (!speakingSince) speakingSince = now;
+          if (!speakingSince) {
+            speakingSince = now;
+            try { activeRecorder = createRecorder(); activeRecorder.start(); } catch (e) { activeRecorder = null; speakingSince = 0; return; }
+          }
           if (now - speakingSince >= minSpeechMs) {
-            var rec;
-            try { rec = createRecorder(); rec.start(); } catch (e) { speakingSince = 0; return; }
-            activeRecorder = rec;
             recording = true;
-            segmentStartedAt = now;
+            segmentStartedAt = speakingSince;
             silenceSince = 0;
           }
-        } else {
+        } else if (speakingSince) {
           speakingSince = 0;
+          var tooShort = activeRecorder;
+          activeRecorder = null;
+          if (tooShort) { try { Promise.resolve(tooShort.stop()).catch(function () {}); } catch (e) { /* discarded anyway */ } }
         }
         return;
       }
@@ -412,7 +444,8 @@
         stopped = true;
         clearInterval(timer);
         if (controller) { try { controller.abort(); } catch (e) { /* best effort */ } }
-        if (recording && activeRecorder) { try { activeRecorder.stop(); } catch (e) { /* best effort */ } }
+        if (activeRecorder) { try { Promise.resolve(activeRecorder.stop()).catch(function () {}); } catch (e) { /* best effort */ } }
+        activeRecorder = null;
         recording = false;
       },
     };
@@ -480,6 +513,57 @@
     return { matched: best <= maxEdits, distance: best, maxEdits: maxEdits };
   }
 
+  // ---------------------------------------------------------------- which transcripts are worth sending
+
+  // A sound tag in brackets, parentheses or asterisks, ASCII or full-width: "[laughter]", "(music)",
+  // a Chinese "[drumming]" from the test report, "*coughs*".
+  var SOUND_TAG = /\[[^\]]*\]|\([^)]*\)|\uFF08[^\uFF09]*\uFF09|\u3010[^\u3011]*\u3011|\*[^*\s][^*]*\*/g;
+  // Words a sentence cannot end on, so a clip of three words or fewer ending on one was cut off or
+  // overheard ("it and", from the test report). "on", "in", "it" and the like are left out on purpose:
+  // "turn it on", "check it in", "do it" are whole requests.
+  var DANGLING = ['and', 'or', 'but', 'nor', 'the', 'a', 'an', 'of', 'because', 'than'];
+  // Languages written in Latin script: when one of these is locked, a clip with no Latin letter in
+  // it was not said in that language (the report's Japanese "eh?").
+  var LATIN_LANGS = ['en', 'eng', 'fr', 'fra', 'de', 'deu', 'es', 'spa', 'it', 'ita', 'pt', 'por', 'nl', 'nld', 'sv', 'swe',
+    'da', 'dan', 'no', 'nor', 'nb', 'fi', 'fin', 'pl', 'pol', 'cs', 'ces', 'sk', 'slk', 'ro', 'ron', 'hu', 'hun', 'tr', 'tur',
+    'id', 'ind', 'ms', 'msa', 'vi', 'vie', 'hr', 'hrv', 'sl', 'slv', 'et', 'est', 'lv', 'lav', 'lt', 'lit', 'ca', 'cat', 'tl', 'fil'];
+
+  /** Decides whether a transcript is something the user said, before anything is sent anywhere.
+   *  opts: { minWords (default 1), minChars (letters and digits, default 2), languageCode }.
+   *  Returns { keep, text, reason }: text has its sound tags removed and spaces tidied; reason, when
+   *  keep is false, is one of 'empty', 'sound-tag' (nothing but tags), 'wrong-language' (no Latin
+   *  letter while a Latin-script language is locked), 'too-short', 'fragment'. */
+  function cleanTranscript(text, opts) {
+    opts = opts || {};
+    var minWords = opts.minWords != null ? opts.minWords : 1;
+    var minChars = opts.minChars != null ? opts.minChars : 2;
+    var raw = String(text == null ? '' : text).trim();
+    var hadTags = raw.replace(SOUND_TAG, '') !== raw;
+    var kept = raw.replace(SOUND_TAG, ' ').replace(/\s+/g, ' ').trim();
+    var words = kept.split(' ').filter(function (w) { return /[\p{L}\p{N}]/u.test(w); });
+    var letters = kept.replace(/[^\p{L}\p{N}]/gu, '');
+    var result = function (keep, reason) { return { keep: keep, text: keep ? kept : '', reason: reason || null }; };
+    if (!words.length) return result(false, hadTags ? 'sound-tag' : 'empty');
+    var lang = String(opts.languageCode || '').toLowerCase();
+    if (LATIN_LANGS.indexOf(lang) >= 0 && !/[A-Za-z\u00C0-\u024F]/.test(kept)) return result(false, 'wrong-language');
+    if (words.length < minWords || letters.length < minChars) return result(false, 'too-short');
+    var last = words[words.length - 1].toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+    if (words.length <= 3 && DANGLING.indexOf(last) >= 0 && !/[?!]$/.test(kept)) return result(false, 'fragment');
+    return result(true);
+  }
+
+  var STOP_WORDS = ['stop', 'wait', 'hold on', 'hang on', 'pause', 'stop talking', 'be quiet', 'quiet', 'enough', 'thats enough', 'shush', 'shh'];
+
+  /** Whether a whole transcript is just a request to stop or wait ("Stop.", "wait a second",
+   *  "okay, hold on"), as opposed to something to send. Barge-in uses it: a reply interrupted with
+   *  "stop" should stop, not send the agent the word "stop". */
+  function isStopCommand(text) {
+    var t = normalizeSpoken(text)
+      .replace(/^(?:(?:ok|hey|oh|no|please|uh|um)\s+)+/, '')
+      .replace(/(?:\s+(?:please|now|a (?:second|sec|minute|moment)|for a (?:second|sec|minute|moment)|there|it))+$/, '');
+    return STOP_WORDS.indexOf(t) >= 0;
+  }
+
   // ---------------------------------------------------------------- wake phrase + utterance capture
 
   var activeWakeListener = null; // the one wake listener this module runs at a time
@@ -488,7 +572,9 @@
    *  provider: runVad only sends a clip to transcribe() once the VAD has seen actual speech. A clip
    *  whose transcript matches opts.phrase (matchWakePhrase: tolerant of how a transcriber spells a
    *  made-up name; opts.tolerance tunes it) calls opts.onWake(text); every clip, matched or not, is
-   *  first passed to opts.onCandidate(text, { matched, distance }) so the UI can show what was heard. opts.onTranscribeError(err),
+   *  first passed to opts.onCandidate(text, { matched, distance, dropped }) so the UI can show what was
+   *  heard (dropped: why cleanTranscript would not send it, or null; a dropped clip never wakes).
+   *  opts.languageCode, when given, goes to every transcribe() call and to the filter. opts.onTranscribeError(err),
    *  if given, fires whenever a clip's transcribe() call itself fails (an ElevenLabs error, a
    *  network blip) - distinct from opts.onError below, which only ever fires once, for a listener
    *  that could not start at all (no microphone, no AudioContext). A caller that wires only
@@ -537,10 +623,12 @@
         silenceMs: opts.silenceMs,
         minSpeechMs: opts.minSpeechMs,
         maxSegmentMs: opts.maxSegmentMs,
+        languageCode: opts.languageCode,
         onSegment: function (text) {
-          var m = matchWakePhrase(text, phrase, { tolerance: opts.tolerance });
-          if (onCandidate) onCandidate(text, { matched: m.matched, distance: m.distance });
-          if (m.matched) onWake(text);
+          var c = cleanTranscript(text, { languageCode: opts.languageCode });
+          var m = c.keep ? matchWakePhrase(c.text, phrase, { tolerance: opts.tolerance }) : { matched: false, distance: Infinity };
+          if (onCandidate) onCandidate(text, { matched: m.matched, distance: m.distance, dropped: c.keep ? null : c.reason });
+          if (m.matched) onWake(c.text);
         },
         onSegmentError: onTranscribeError,
       });
@@ -566,8 +654,11 @@
    *  the same signal it uses elsewhere. If the one segment this call records fails to transcribe
    *  (an ElevenLabs error, a network blip), the whole call rejects with that error right away -
    *  there is no "next segment" to retry, unlike the wake listener's onTranscribeError, which just
-   *  reports and keeps listening. Same opts as startWakeListener otherwise (transcribe required;
-   *  levelSource/createRecorder optional). */
+   *  reports and keeps listening. A clip cleanTranscript would not send (opts.minWords, opts.minChars,
+   *  opts.languageCode) does not end the call: it goes to opts.onCandidate(text, { dropped: reason })
+   *  and listening goes on; a kept one is reported with dropped: null and resolves, sound tags
+   *  removed. Same opts as startWakeListener otherwise (transcribe required; levelSource/
+   *  createRecorder optional). */
   function captureUtterance(opts) {
     opts = opts || {};
     if (typeof opts.transcribe !== 'function') return Promise.reject(new Error('voice captureUtterance: opts.transcribe is required'));
@@ -610,7 +701,14 @@
           silenceMs: opts.silenceMs,
           minSpeechMs: opts.minSpeechMs,
           maxSegmentMs: opts.maxSegmentMs,
-          onSegment: function (text) { finish(resolve, text); },
+          languageCode: opts.languageCode,
+          // A clip that is not worth sending (a sound tag, a fragment, the wrong language) is
+          // reported and the call keeps listening for the real utterance, until maxMs.
+          onSegment: function (text) {
+            var c = cleanTranscript(text, { minWords: opts.minWords, minChars: opts.minChars, languageCode: opts.languageCode });
+            if (typeof opts.onCandidate === 'function') opts.onCandidate(text, { dropped: c.keep ? null : c.reason });
+            if (c.keep) finish(resolve, c.text);
+          },
           // One-shot: unlike the wake listener, there is no "next segment" to keep trying, so a
           // failed transcribe() rejects captureUtterance right away instead of silently waiting
           // out maxMs for a segment that already happened and failed.
@@ -618,6 +716,206 @@
         });
       }, function (err) { finish(reject, err); });
     });
+  }
+
+  // ---------------------------------------------------------------- barge-in: talking over a reply
+
+  var activeBargeIn = null; // the one barge-in listener this module runs at a time
+
+  /** Listens while a reply is read aloud and fires once when the user starts talking over it.
+   *  The hazard is the reply itself: what leaks from the speakers into the microphone must never
+   *  count as the user. Three guards:
+   *  - the microphone is opened with echoCancellation, noiseSuppression and autoGainControl, and what
+   *    the device really applied is read back and passed to opts.onReady(settings); without echo
+   *    cancellation the margin and the minimum speech time below are raised by half;
+   *  - a floor follows the level the reply itself produces: the median (floorPercentile 0.5) of the last
+   *    floorWindowMs (1500) of frames below the trigger, collected from the start (nothing fires in
+   *    the first warmupMs). A percentile, not an average: an average rose with every loud stretch of
+   *    the reply and left the trigger too high for the user right after one. The trigger is
+   *    max(threshold, floor x margin): the reply can swing up to margin x its median, for any length
+   *    of time, without firing it; speech on top of the reply has to clear that;
+   *  - the sound has to stay above the trigger for minSpeechMs, allowing dips of up to gapMs between
+   *    syllables.
+   *  The recording starts at the first frame above the trigger, so nothing the user said is lost,
+   *  and is thrown away (never transcribed) if the sound does not last.
+   *  opts: { onBargeIn(event), transcribe (for event.capture), onReady(settings), onError(err),
+   *  onCandidate(text, { dropped }), languageCode, minWords, minChars, threshold (0.06),
+   *  margin (2.5), minSpeechMs (300), gapMs (120), warmupMs (250), pollMs (30), floorWindowMs (1500),
+   *  floorPercentile (0.5),
+   *  captureThreshold (0.02), silenceMs (800), maxSegmentMs (15000), levelSource + createRecorder
+   *  (a mic the caller owns; micSettings to describe it), the createMicSource options otherwise }.
+   *  event: { at, level, floor, capture(captureOpts) -> Promise<string>, cancel() }.
+   *  The UI stops playback on onBargeIn, then calls event.capture(): it goes on recording the same
+   *  clip until the user pauses (captureThreshold, silenceMs; playback is expected to be stopped by
+   *  then), transcribes it, and resolves with the cleaned text, or '' when cleanTranscript dropped it
+   *  (reported to onCandidate with the reason). isStopCommand(text) tells "stop"/"wait" apart from
+   *  something to send. event.cancel() discards the clip. Either way the microphone is released
+   *  afterwards when this call opened it. Fires at most once; start a new listener for the next reply.
+   *  Returns stop(): ends everything this call started at once, including a capture in progress,
+   *  whose promise rejects ("stopped") and whose transcribe() request is aborted. Starting a new
+   *  listener stops the previous one. */
+  function startBargeInListener(opts) {
+    opts = opts || {};
+    var onBargeIn = typeof opts.onBargeIn === 'function' ? opts.onBargeIn : function () {};
+    var threshold = opts.threshold != null ? opts.threshold : 0.06;
+    var margin = opts.margin || 2.5;
+    var minSpeechMs = opts.minSpeechMs != null ? opts.minSpeechMs : 300;
+    var gapMs = opts.gapMs != null ? opts.gapMs : 120;
+    var warmupMs = opts.warmupMs != null ? opts.warmupMs : 250;
+    var pollMs = opts.pollMs || 30;
+    var floorWindowMs = opts.floorWindowMs || 1500;
+    var floorPercentile = opts.floorPercentile != null ? opts.floorPercentile : 0.5;
+
+    if (activeBargeIn) activeBargeIn.stop();
+
+    var stopped = false;
+    var fired = false;
+    var timer = null;
+    var src = null;
+    var ownedClose = null;
+    var startedAt = 0;
+    var recent = []; // [time, level] of frames below the trigger, for the floor
+    var floor = 0;
+    var candidateSince = 0;
+    var lastAbove = 0;
+    var rec = null;
+    var capturing = null;
+
+    function level() { try { return src.levelSource.getLevel(); } catch (e) { return 0; } }
+    function releaseMic() { if (ownedClose) { var c = ownedClose; ownedClose = null; try { c(); } catch (e) { /* already closed */ } } }
+    function discard() {
+      if (rec) { var r = rec; rec = null; try { Promise.resolve(r.stop()).catch(function () {}); } catch (e) { /* discarded anyway */ } }
+      candidateSince = 0;
+    }
+
+    var handle = {
+      stop: function () {
+        if (stopped) return;
+        stopped = true;
+        clearInterval(timer);
+        if (capturing) capturing.abort();
+        discard();
+        releaseMic();
+        if (activeBargeIn === handle) activeBargeIn = null;
+      },
+    };
+    activeBargeIn = handle;
+
+    function capture(captureOpts) {
+      captureOpts = captureOpts || {};
+      var transcribe = captureOpts.transcribe || opts.transcribe;
+      if (stopped) return Promise.reject(new Error('voice barge-in: stopped'));
+      if (capturing || !rec) return Promise.reject(new Error('voice barge-in: nothing to capture'));
+      if (typeof transcribe !== 'function') return Promise.reject(new Error('voice barge-in: opts.transcribe is required to capture'));
+      var silence = captureOpts.threshold != null ? captureOpts.threshold : (opts.captureThreshold != null ? opts.captureThreshold : 0.02);
+      var silenceMs = captureOpts.silenceMs != null ? captureOpts.silenceMs : (opts.silenceMs != null ? opts.silenceMs : 800);
+      var maxSegmentMs = captureOpts.maxSegmentMs || opts.maxSegmentMs || 15000;
+      var lang = captureOpts.languageCode || opts.languageCode;
+      var clip = rec;
+      rec = null;
+      var began = candidateSince || Date.now();
+      return new Promise(function (resolve, reject) {
+        var done = false;
+        var ending = false;
+        var silentSince = 0;
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var poll = null;
+        function end(fn, arg) {
+          if (done) return;
+          done = true;
+          clearInterval(poll);
+          capturing = null;
+          releaseMic();
+          fn(arg);
+        }
+        capturing = {
+          abort: function () {
+            if (controller) { try { controller.abort(); } catch (e) { /* best effort */ } }
+            if (!ending) { try { Promise.resolve(clip.stop()).catch(function () {}); } catch (e) { /* best effort */ } }
+            end(reject, new Error('voice barge-in: stopped'));
+          },
+        };
+        function finishClip() {
+          if (ending) return;
+          ending = true;
+          clearInterval(poll);
+          Promise.resolve(clip.stop()).then(function (blob) {
+            if (done) return null;
+            var t = { signal: controller ? controller.signal : undefined };
+            if (lang) t.languageCode = lang;
+            return transcribe(blob, t);
+          }).then(function (text) {
+            if (done) return;
+            var c = cleanTranscript(text, { minWords: opts.minWords, minChars: opts.minChars, languageCode: lang });
+            if (typeof opts.onCandidate === 'function') opts.onCandidate(text, { dropped: c.keep ? null : c.reason });
+            end(resolve, c.text);
+          }, function (err) { end(reject, err); });
+        }
+        poll = setInterval(function () {
+          if (done || ending) return;
+          var now = Date.now();
+          if (level() >= silence) silentSince = 0;
+          else if (!silentSince) silentSince = now;
+          if ((silentSince && now - silentSince >= silenceMs) || now - began >= maxSegmentMs) finishClip();
+        }, pollMs);
+      });
+    }
+
+    function cancel() {
+      if (capturing) return;
+      discard();
+      if (!stopped) { stopped = true; clearInterval(timer); if (activeBargeIn === handle) activeBargeIn = null; }
+      releaseMic();
+    }
+
+    function tick() {
+      if (stopped || fired) return;
+      var lvl = level();
+      var now = Date.now();
+      while (recent.length && now - recent[0][0] > floorWindowMs) recent.shift();
+      if (recent.length) {
+        var sorted = recent.map(function (x) { return x[1]; }).sort(function (a, b) { return a - b; });
+        floor = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * floorPercentile))];
+      }
+      if (now - startedAt < warmupMs) { recent.push([now, lvl]); return; }
+      var trigger = Math.max(threshold, floor * margin);
+      if (lvl >= trigger) {
+        lastAbove = now;
+        if (!candidateSince) {
+          candidateSince = now;
+          try { rec = src.createRecorder(); rec.start(); } catch (e) { rec = null; }
+        }
+        if (now - candidateSince >= minSpeechMs) {
+          fired = true;
+          clearInterval(timer);
+          onBargeIn({ at: now, level: lvl, floor: floor, capture: capture, cancel: cancel });
+        }
+      } else {
+        recent.push([now, lvl]);
+        if (candidateSince && now - lastAbove > gapMs) discard();
+      }
+    }
+
+    resolveSource(opts).then(function (s) {
+      if (stopped) { if (s.owned && s.close) s.close(); return; }
+      src = s;
+      if (s.owned) ownedClose = s.close;
+      var settings = s.settings || { echoCancellation: null, noiseSuppression: null, autoGainControl: null };
+      if (settings.echoCancellation === false) { margin *= 1.5; minSpeechMs *= 1.5; }
+      if (typeof opts.onReady === 'function') opts.onReady(Object.assign({}, settings, { margin: margin, minSpeechMs: minSpeechMs }));
+      startedAt = Date.now();
+      timer = setInterval(tick, pollMs);
+    }, function (err) {
+      handle.stop();
+      if (typeof opts.onError === 'function') opts.onError(err);
+    });
+
+    return handle.stop;
+  }
+
+  /** Stops whichever barge-in listener is running, capture included; a no-op if none is. */
+  function stopBargeInListener() {
+    if (activeBargeIn) activeBargeIn.stop();
   }
 
   // ---------------------------------------------------------------- reading a reply in pieces
@@ -776,6 +1074,11 @@
     startWakeListener: startWakeListener,
     stopWakeListener: stopWakeListener,
     captureUtterance: captureUtterance,
+    cleanTranscript: cleanTranscript,
+    isStopCommand: isStopCommand,
+    startBargeInListener: startBargeInListener,
+    stopBargeInListener: stopBargeInListener,
+    defaultLanguageCode: defaultLanguageCode,
     splitForSpeech: splitForSpeech,
     playChunked: playChunked,
   };

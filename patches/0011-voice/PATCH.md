@@ -460,10 +460,11 @@ is - the key always comes from the settings record at call time).
 
 | file | what |
 |---|---|
-| `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore`, `createVoiceClient` (the flat convenience wrapper), the wake-phrase/utterance-capture VAD engine (`startWakeListener`, `stopWakeListener`, `captureUtterance`, `createMicSource`, `matchWakePhrase`), and piece-by-piece reading (`splitForSpeech`, `playChunked`) |
-| `test-voice.js` | 53 checks against a stand-in HTTP server standing in for both ElevenLabs and the settings store - no real network, no real AionUi, no real key |
-| `test-wake.js` | 34 checks for the wake-phrase listener, its matching and utterance capture, against a fake level source and a fake recorder - no real microphone |
+| `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore`, `createVoiceClient` (the flat convenience wrapper), the wake-phrase/utterance-capture VAD engine (`startWakeListener`, `stopWakeListener`, `captureUtterance`, `createMicSource`, `matchWakePhrase`), piece-by-piece reading (`splitForSpeech`, `playChunked`), what is worth sending (`cleanTranscript`, `isStopCommand`), and barge-in (`startBargeInListener`, `stopBargeInListener`) |
+| `test-voice.js` | 59 checks against a stand-in HTTP server standing in for both ElevenLabs and the settings store - no real network, no real AionUi, no real key |
+| `test-wake.js` | 52 checks for the wake-phrase listener, its matching, utterance capture and the transcript filter, against a fake level source and a fake recorder - no real microphone |
 | `test-speak.js` | 36 checks for `splitForSpeech` and `playChunked`, against a fake Audio element and a synthesize() the test answers piece by piece |
+| `test-barge.js` | 24 checks for barge-in: a fake microphone whose level is the reply leaking in, with and without the user talking over it, the capture after it, stopping, and the real-microphone path with fake getUserMedia/AudioContext/MediaRecorder |
 | `aiondx-voice-ui.js` | the composer's mic button (idle/recording/transcribing, matching patch 0001's 28x28 Arco circle pills), a speaker button on each agent reply (idle/loading/playing, stops on a second click or the clip ending), and a settings panel section on Settings > Appearance (provider, API key, voice, from `listVoices()` when the provider offers one) |
 | `dev-harness.html`, `voice-provider.stub.js`, `dev-smoke-test.js` | a UI-only dev loop: a minimal composer/message/settings DOM plus a stand-in `window.__aionDxVoice` (not shipped), driven with real mouse and a fake microphone in headless Edge, 16/16 |
 | `dev-harness-real.html`, `dev-smoke-test-real.js` | the same real-mouse check against the actual `aiondx-voice.js`, with only `window.fetch` stubbed (the settings store and ElevenLabs' three endpoints) - no real network or key, 14/14 |
@@ -734,3 +735,68 @@ Tests: `dev-smoke-test-handsfree.js` 67 (barge-in stops the reply within a secon
 leaking into the mic does not trigger it; manual speaker barge-in; stop-all during a reply leaves nothing listening; wake phrase
 stripped, phrase-only not sent, one-breath request sent; a sound label and a fragment not sent, with their reasons);
 `dev-smoke-test-real.js` 36 (the language default, its code on the mic's transcribe(), a chosen language saved and used).
+
+## November 7th, 2026 (evening): barge-in, a locked language, and clips not worth sending (aiondx-voice.js)
+
+From the user's test of 0.26.8 (the in-app test agent's report: a short "eh?" sent as Japanese "え？", a tap sent as Chinese
+"[打鼓声]", a fragment "it and", the wake phrase written "Aeon DX") and the user's own ask: interrupt a reply by talking.
+The UI half is the two commits above (8c6dac7, 1918f54); this is the module's.
+
+**Barge-in: `startBargeInListener(opts) -> stop`.** Runs while a reply is read; fires `onBargeIn(event)` once when the user
+starts talking over it. The hazard is the reply leaking from the speakers into the microphone, so:
+
+- The microphone (`createMicSource`, now for every listener) is opened with `echoCancellation`, `noiseSuppression` and
+  `autoGainControl`, and what the device really applied is read back from the track's `getSettings()` and given to
+  `opts.onReady(settings)`. Without echo cancellation the margin and minimum speech time are raised by half.
+- The trigger is relative to the reply's own level: the median of the last 1.5 s of frames below the trigger, times
+  `margin` (2.5), never below `threshold` (0.06). The first version used a running average; it rose with every loud stretch
+  of the reply and left the trigger too high for the user right after one (speech at 0.3 over a reply at 0.08 did not fire),
+  and a 75th percentile sat on the loud stretches early in a reply. The median does neither.
+- The sound has to stay above the trigger for `minSpeechMs` (300), with dips of up to `gapMs` (120) between syllables.
+- The recording starts at the first frame above the trigger, so the user's first word is in it; if the sound does not
+  last, it is thrown away untranscribed (no request is made).
+
+`event.capture()` goes on recording that same clip until the user pauses (`captureThreshold` 0.02 for `silenceMs` 800; the UI
+stops playback first), transcribes it, and resolves with the cleaned text, or `''` if it was not worth sending (reason to
+`onCandidate`). `isStopCommand(text)` says whether it was just "stop"/"wait"/"hold on" (send nothing). `event.cancel()`
+discards it. `stop()` ends everything at once: a capture in progress rejects ("stopped") and its transcribe request is
+aborted. One listener at a time; `stopBargeInListener()` stops it.
+
+Measured with the defaults against a fake microphone (the reply's level wavering around 0.08):
+- the reply alone, with a stretch at 2.6 x its typical level held for 800 ms: no fire; at 3 x: fires;
+- the user's voice on top of it at 0.12 or 0.16: no fire; at 0.2, 0.25, 0.3 (2.5 x the reply and up): fires 310-350 ms
+  after they start;
+- a cough or tap (0.5 for 80 ms): no fire; ordinary speech in a quiet room (0.12): fires.
+So, by construction, the user has to be about 8 dB louder than what reaches the microphone of the reply. With echo
+cancellation on, the leak should sit far below the user's own voice; that is the assumption the real test will check.
+Not measured: a real microphone, real speakers, real echo cancellation.
+
+**The language.** `transcribe()` now always sends `language_code` (ISO-639-1 or -3, per ElevenLabs' speech-to-text
+reference, checked today; null means auto-detect, which is what produced the Japanese and Chinese): the call's
+`languageCode`, else the provider's, which the client takes from the settings record's `languageCode`, else the app's
+language from `navigator.language` (`defaultLanguageCode()`, "en-US" -> "en"). `'auto'` sends none. It also sends
+`tag_audio_events=false`, so ElevenLabs stops writing sound tags like "[laughter]" at all.
+
+**What is worth sending: `cleanTranscript(text, { minWords, minChars, languageCode }) -> { keep, text, reason }`.** Sound
+tags in brackets, parentheses or asterisks (ASCII and full-width) are removed; then a clip is dropped as `'empty'`,
+`'sound-tag'` (nothing but tags), `'wrong-language'` (no Latin letter while a Latin-script language is locked: the "え？"),
+`'too-short'` (under `minWords`, default 1, or `minChars` letters, default 2) or `'fragment'` (three words or fewer ending on
+"and", "or", "but", "the", "a", "an", "of", "because", "than", "nor": the "it and"; words like "on" and "it" are left out on
+purpose, "turn it on" is a request). `captureUtterance` and the barge-in capture use it: a dropped clip goes to
+`onCandidate(text, { dropped: reason })` and capture keeps listening; the wake listener reports it the same way
+(`{ matched, distance, dropped }`) and never wakes on one. All take `languageCode`, which goes to every transcribe.
+
+**Also:** `runVad` (the wake listener and `captureUtterance`) now starts recording at the first loud frame instead of after
+`minSpeechMs`, which cut the first syllable or two off every clip; a sound too short to count is discarded untranscribed.
+"Hey, Aeon DX" was already matched (distance 1) and is now in the tests.
+
+Tests: `test-barge.js` 24, new (the reply alone never fires or records; speech over it fires about `minSpeechMs` after its
+start, with the recording from the first word; cough, quiet room; capture, a sound-tag capture resolving "" with its reason,
+"Stop."; stopping before it fires and during a capture, with the request aborted; one listener at a time; the real-mic path
+asking for the three constraints, reporting what was applied, raising the margin without echo cancellation, and `cancel()`
+releasing the mic); `test-wake.js` 52 (the report's cases through `cleanTranscript`, `isStopCommand`, `captureUtterance`
+skipping junk with reasons and the language on every call, the wake listener's dropped meta, "Hey, Aeon DX", onset
+recording); `test-voice.js` 59 (`language_code` default, per call, per provider, `'auto'`, from the settings record;
+`tag_audio_events=false`). The UI harnesses against this module: `dev-smoke-test-real.js` 36, `dev-smoke-test.js` 36,
+`dev-smoke-test-handsfree-team.js` 12, `dev-smoke-test-handsfree.js` 67 (it hit its 60 s deadline once when run straight after
+the other harnesses, then passed three times on its own).
