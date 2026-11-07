@@ -157,7 +157,18 @@ function startTap(opts) {
 // config switches it off.
 const USAGE_EVERY_MS = 5 * 60000;
 const USAGE_AFTER_TURN_MS = 90000;
-const USAGE_MODEL = 'claude-haiku-4-5-20251001';
+// Always the newest Haiku the account is offered (a request of 2026-10-12): the build Claude Code itself resolves `haiku` to, as the model
+// catalog (claude-model-catalog.js) last saved it in the account's config folder; this constant only when there is no catalog yet.
+const USAGE_MODEL = 'claude-haiku-5-5';
+function usageModel(configDir) {
+  try {
+    const st = JSON.parse(require('fs').readFileSync(require('path').join(configDir, 'aiondx-models.json'), 'utf8'));
+    const h = (st.models || []).find((m) => m && m.value === 'haiku');
+    const id = h && String(h.resolvedModel || '');
+    if (/^claude-haiku-[0-9a-z-]+$/.test(id)) return id;
+  } catch { /* no catalog yet */ }
+  return USAGE_MODEL;
+}
 
 function headerMap(headers) {
   const g = (k) => headers.get(k);
@@ -222,7 +233,7 @@ function startUsage(opts, log) {
     if (sig === lastSig && now - lastPut < gapMs) return;
     lastSig = sig; lastPut = now; lastAt = now;
     const body = {};
-    body[accKey] = Object.assign({ label: u.label || '', at: now, http: info ? info.status : 0, via: 'tap' }, usage);
+    body[accKey] = Object.assign({ label: u.label || '', plan: u.plan || '', at: now, http: info ? info.status : 0, via: 'tap' }, usage);
     body[convKey] = { acct: u.key, at: now };
     api('PUT', '/api/settings/client', body).then((r) => { if (!r.ok) log('usage not saved: ' + r.status); }, (e) => log('usage not saved: ' + e.message));
     log(`usage: 5h ${usage.five_hour.u} week ${usage.seven_day.u} (${usage.status || '?'}), http ${info ? info.status : '?'}, from claude's own traffic`);
@@ -248,7 +259,7 @@ function startUsage(opts, log) {
         const r = await fetch(opts.usageUrl || 'https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { authorization: 'Bearer ' + token, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: USAGE_MODEL, max_tokens: 1, system: "You are Claude Code, Anthropic's official CLI for Claude.", messages: [{ role: 'user', content: '.' }] }),
+          body: JSON.stringify({ model: u.configDir ? usageModel(u.configDir) : USAGE_MODEL, max_tokens: 1, system: "You are Claude Code, Anthropic's official CLI for Claude.", messages: [{ role: 'user', content: '.' }] }),
           signal: AbortSignal.timeout(15000),
         });
         try { await r.arrayBuffer(); } catch { /* body not needed */ }
@@ -278,7 +289,7 @@ function startUsage(opts, log) {
 // ---------------------------------------------------------------------------
 // a request of October 1st, and a team's developer agent "got switched off yolo mode without my having done so". AionCore starts Claude with
 // --permission-mode default and applies the chat's stored mode afterwards with a set_permission_mode request
-// (aionui-session claude.rs); when that step is missed the process stays on default while AionUi still shows YOLO,
+// (aiondx-session claude.rs); when that step is missed the process stays on default while AionUi still shows YOLO,
 // and even in bypassPermissions Claude asks (can_use_tool) for what its own safety checks flag, a dangerous rm for
 // one. Each of those stops the agent until the owner clicks. So a can_use_tool request on a chat whose STORED mode is
 // bypassPermissions is answered here, at once, with allow, and AionCore never sees it. The stored mode, read from the
@@ -573,4 +584,4 @@ function isStreamSession(args) {
   return i >= 0 && args[i + 1] === 'stream-json';
 }
 
-module.exports = { startProxy, isStreamSession, startTap, readUsage };
+module.exports = { usageModel, startProxy, isStreamSession, startTap, readUsage };

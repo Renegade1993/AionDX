@@ -162,7 +162,7 @@ async function pageTarget() {
       await sleep(300);
     };
     const load = async (query) => {
-      await send('Page.navigate', { url: `${BASE}?${query}` });
+      await send('Page.navigate', { url: `${BASE}?${query}&dxopen=0` });
       await sleep(1600);
     };
     const shot = async (name) => {
@@ -980,6 +980,32 @@ async function pageTarget() {
       rec = (await store())[SOLO_KEY];
       check(sc, "the agent's Stop button switches it off, as yours", st.on === false && st.offReason === 'you pressed Stop' && rec.on === false && rec.by === 'user', JSON.stringify([st.on, st.offReason, rec]));
       await js(`(() => { document.querySelector('#solo .sendbox-stop-button').remove(); return 0; })()`);
+      // Stop that the button's own handler did not carry out (2026-10-13): the chat still runs the same turn 2.5 seconds later.
+      const stopBtn = async () => { await js(`(() => { const a = document.querySelector('#solo .sendbox-actions'); const b = document.createElement('button'); b.type = 'button';
+        b.className = 'arco-btn arco-btn-secondary arco-btn-shape-circle sendbox-stop-button'; b.textContent = 'stop'; a.appendChild(b); return 0; })()`); };
+      const runtime = (state, turn) => js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.runtime = { state: '${state}', is_processing: true, turn_id: '${turn}' }; return 0; })()`);
+      const cancels = () => js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/cancel').map(c => c.body)`);
+      await stopBtn();
+      await runtime('running', 'turn_A');
+      await js('window.__calls.length = 0; document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
+      await humanClick('#solo .sendbox-stop-button');
+      await sleep(3600);
+      let cc = await cancels();
+      check(sc, 'Stop with the same turn still running 2.5 seconds later sends the cancel itself, with the turn id the server gave', cc.length === 1 && cc[0].turn_id === 'turn_A', JSON.stringify(cc));
+      check(sc, 'and says so', (await toasts()).some(t => /^Stop sent again\./.test(t)), JSON.stringify(await toasts()));
+      await runtime('cancelling', 'turn_B');
+      await js('window.__calls.length = 0; 0');
+      await humanClick('#solo .sendbox-stop-button');
+      await sleep(3600);
+      check(sc, 'a cancel already under way is left alone', (await cancels()).length === 0, JSON.stringify(await cancels()));
+      await runtime('running', 'turn_C');
+      await js('window.__calls.length = 0; 0');
+      await humanClick('#solo .sendbox-stop-button');
+      await sleep(900);
+      await runtime('running', 'turn_D');
+      await sleep(3000);
+      check(sc, 'a new turn started after the press (a message sent after Stop) is not cancelled', (await cancels()).length === 0, JSON.stringify(await cancels()));
+      await js(`(() => { delete window.__stub.routes['GET /api/conversations/harness1'].data.runtime; document.querySelector('#solo .sendbox-stop-button').remove(); return 0; })()`);
       // Your words in the chat's history.
       await pickForever('');
       await js(`(() => { window.__stub.histories.harness1.push({ id: 'f-off', position: 'right', type: 'text', hidden: false, created_at: Date.now() + 1000, content: { content: 'ok, turn off your loop' } }); return 0; })()`);
@@ -1255,6 +1281,37 @@ async function pageTarget() {
       await sleep(400);
       await js('window.__aionDx.repaint()');
       check(sc, 'a chat that is not Claude gets no Unsend', (await btn()) === null);
+      // Edit (2026-10-10): the same take-back, and the message's text comes back in the message box.
+      await load('theme=light');
+      await js('window.__aionDx.repaint()');
+      await sleep(400);
+      await js('window.__aionDx.repaint()');
+      const edBtn = () => js(`(() => { const b = document.querySelector('[data-testid="message-status-badge"] [data-testid="aiondx-edit"]'); return b ? { text: b.textContent, disabled: b.disabled } : null; })()`);
+      let eb = await edBtn();
+      check(sc, 'an Unread message also gets Edit beside Unsend', eb && eb.text === 'Edit' && !eb.disabled, JSON.stringify(eb));
+      const shown = await js(`(document.getElementById('message-m-77').querySelector('[data-testid="message-text-content"]').textContent || '').trim()`);
+      await js(`(() => { const t = document.querySelector('[data-testid="sendbox-input"]'); const d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); d.set.call(t, 'half-typed'); t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await humanClick('[data-testid="aiondx-edit"]');
+      await sleep(400);
+      const ereq = (await store())['aiondx.unsend.req.' + MSG];
+      check(sc, 'clicking Edit asks the router for the take-back', ereq && ereq.conv === 'harness1' && ereq.messageId === 'm-77', JSON.stringify(ereq));
+      check(sc, 'the box is left alone until the message is back', (await js(`document.querySelector('[data-testid="sendbox-input"]').value`)) === 'half-typed');
+      await putStore('aiondx.unsend.result.' + MSG, { cancelled: true, conv: 'harness1', messageId: 'm-77', at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await sleep(400);
+      const boxNow = await js(`document.querySelector('[data-testid="sendbox-input"]').value`);
+      check(sc, 'once taken back, its text is in the box after what was typed', boxNow === 'half-typed\n\n' + shown && shown.length > 0, JSON.stringify([boxNow, shown]));
+      // Too late: the box keeps only what was typed.
+      await load('theme=light');
+      await js('window.__aionDx.repaint()');
+      await sleep(400);
+      await js('window.__aionDx.repaint()');
+      await humanClick('[data-testid="aiondx-edit"]');
+      await sleep(300);
+      await putStore('aiondx.unsend.result.' + MSG, { cancelled: false, conv: 'harness1', messageId: 'm-77', at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await sleep(400);
+      check(sc, 'if the agent had already taken it, Edit puts nothing in the box', (await js(`document.querySelector('[data-testid="sendbox-input"]').value`)) === '' && /^Too late to unsend/.test((await toasts())[0] || ''), JSON.stringify([await toasts()]));
       // And nothing waits above the box any more.
       await load('team=1&theme=light');
       await js('window.__aionDx.pulseNow()');
@@ -1424,14 +1481,18 @@ async function pageTarget() {
       check(sc, 'it comes on once there is something to send', await js(`!document.querySelector('[data-testid="aiondx-sched-btn"]').disabled`));
       await humanClick(btn);
       await sleep(250);
-      const items = await js(`[...document.querySelectorAll('.aiondx-sched-menu .aiondx-sched-quick-item .aiondx-item-title')].map(i => i.textContent)`);
-      check(sc, 'it opens a menu of times', items.length === 4 && items[0] === 'In 15 minutes' && items[1] === 'In 1 hour' && /^(Today|Tomorrow) at 9:00$/.test(items[3]), JSON.stringify(items));
+      const menu = await js(`(() => { const m = document.querySelector('.aiondx-sched-menu'); if (!m) return null; const vis = s => { const e = m.querySelector(s); return !!e && e.offsetParent !== null; };
+        return { modes: [...m.querySelectorAll('.aiondx-sched-mode')].map(b => b.textContent + (b.classList.contains('aiondx-sched-mode-on') ? '*' : '')), inShown: vis('.aiondx-sched-days') && vis('.aiondx-sched-hours') && vis('.aiondx-sched-mins'), atShown: vis('.aiondx-sched-date'),
+          vals: [m.querySelector('.aiondx-sched-days').value, m.querySelector('.aiondx-sched-hours').value, m.querySelector('.aiondx-sched-mins').value], presets: m.querySelectorAll('.aiondx-sched-quick-item').length, preview: m.querySelector('.aiondx-sched-preview').textContent }; })()`);
+      check(sc, 'it opens a box with two ways to say when: In (days, hours, minutes) and At (date and time), In showing first', menu && menu.modes.join() === 'In*,At' && menu.inShown && !menu.atShown && menu.presets === 0 && menu.vals.join() === '0,0,15' && /^Sends /.test(menu.preview), JSON.stringify(menu));
       await shot('click-test-sched-menu');
-      await humanClick('.aiondx-sched-menu .aiondx-sched-quick-item');
+      // In: typed days, hours and minutes are added to now.
+      await js(`(() => { const m = document.querySelector('.aiondx-sched-menu'); const set = (s, v) => { const e = m.querySelector(s); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); }; set('.aiondx-sched-days', '1'); set('.aiondx-sched-hours', '2'); set('.aiondx-sched-mins', '30'); return 0; })()`);
+      await humanClick('.aiondx-sched-go');
       await sleep(500);
       let keys = await schedKeys();
       let rec = keys.length === 1 ? (await store())[keys[0]] : null;
-      check(sc, 'choosing one puts the message in the store for that chat, 15 minutes out', rec && rec.scope === 'conv.harness1' && rec.text === 'run the full test pass at noon' && Math.abs(rec.due - (Date.now() + 900000)) < 20000, JSON.stringify(rec));
+      check(sc, 'In 1 day 2 hours 30 minutes puts the message in the store for that chat, that long from now', rec && rec.scope === 'conv.harness1' && rec.text === 'run the full test pass at noon' && Math.abs(rec.due - (Date.now() + 86400000 + 2 * 3600000 + 30 * 60000)) < 20000, JSON.stringify(rec));
       check(sc, 'and empties the box, with a count on the button', (await js(`document.querySelector('[data-testid="sendbox-input"]').value`)) === '' &&
         (await js(`document.querySelector('.aiondx-sched-count').textContent`)) === '1');
       check(sc, 'with a notice that says when', (await toasts()).some(t => /^Scheduled for .+\./.test(t)), JSON.stringify(await toasts()));
@@ -1455,8 +1516,11 @@ async function pageTarget() {
       await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); window.__calls.length = 0; 0');
       await js('window.__aionDx.fireSched()');
       await sleep(900);
-      check(sc, 'one due while the app was closed goes out when it opens, and the notice says it was late',
-        (await posts('/api/conversations/harness1/messages')).length === 1 && (await toasts()).some(t => /^Scheduled message sent late \(it was due at \d\d:\d\d\)\./.test(t)), JSON.stringify(await toasts()));
+      // 2026-10-31: opening the app never starts an agent. It is not sent; it waits in the menu as failed.
+      check(sc, 'one due while the app was closed is NOT sent when it opens (nothing starts an agent on open)',
+        (await posts('/api/conversations/harness1/messages')).length === 0, JSON.stringify(await posts('/api/conversations/harness1/messages')));
+      check(sc, 'and it is kept as failed, with the reason, for Try again',
+        await js(`(() => { const r = window.__aionDx && window.__aionDx.schedState ? window.__aionDx.schedState('late1') : null; return r ? /was not running, so it was not sent/.test(String(r.failed || '')) : 'no-hook'; })()`) !== false, '');
 
       // Another open window has claimed it: not sent here. A claim that went stale: sent.
       await putStore('aiondx.sched.claim1', { v: 1, id: 'claim1', scope: 'conv.harness1', text: 'claimed elsewhere', due: Date.now() - 1000, at: Date.now() - 5000, claim: { by: 'otherwin', at: Date.now() } });
@@ -1464,26 +1528,33 @@ async function pageTarget() {
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.fireSched()');
       await sleep(600);
-      check(sc, 'a message another window has just claimed is left to it', (await posts('/api/conversations/harness1/messages')).length === 0 && (await schedKeys()).length === 1);
+      check(sc, 'a message another window has just claimed is left to it', (await posts('/api/conversations/harness1/messages')).length === 0 && (await schedKeys()).length === 2);   // late1 (kept as failed) and claim1
       await putStore('aiondx.sched.claim1', { v: 1, id: 'claim1', scope: 'conv.harness1', text: 'claimed elsewhere', due: Date.now() - 1000, at: Date.now() - 5000, claim: { by: 'otherwin', at: Date.now() - 300000 } });
       await js('window.__aionDx.pullNow()');
       await js('window.__aionDx.fireSched()');
       await sleep(900);
-      check(sc, 'and one whose claim has gone stale is sent', (await posts('/api/conversations/harness1/messages')).length === 1 && (await schedKeys()).length === 0);
+      check(sc, 'and one whose claim has gone stale is sent', (await posts('/api/conversations/harness1/messages')).length === 1 && (await schedKeys()).length === 1);   // only late1, kept as failed
 
       // Cancel from the menu; a time picked by hand; a time that has passed.
       await load('theme=light');
       await typeIn('[data-testid="sendbox-input"]', 'draft for later');
       await humanClick(btn);
       await sleep(250);
+      await humanClick('.aiondx-sched-mode[data-mode="at"]');
+      const atInfo = await js(`(() => { const m = document.querySelector('.aiondx-sched-menu'); const d = new Date(); const p = n => ('0' + n).slice(-2);
+        const today = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+        const e = m.querySelector('.aiondx-sched-date'), t = m.querySelector('.aiondx-sched-time');
+        return { shown: e.offsetParent !== null && t.offsetParent !== null, inHidden: m.querySelector('.aiondx-sched-days').offsetParent === null, date: e.value, today, time: t.value }; })()`);
+      check(sc, 'At shows a date, starting today (or the day an hour from now falls on), and a time', atInfo.shown && atInfo.inHidden && /^\d\d:\d\d$/.test(atInfo.time) && Math.abs(new Date(atInfo.date + 'T00:00').getTime() - new Date(atInfo.today + 'T00:00').getTime()) <= 86400000, JSON.stringify(atInfo));
       const hand = await js(`(() => { const d = new Date(Date.now() + 2 * 3600000); const p = n => ('0' + n).slice(-2);
-        const v = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
-        document.querySelector('.aiondx-sched-when').value = v; return new Date(v).getTime(); })()`);
+        const m = document.querySelector('.aiondx-sched-menu'); const set = (s, v) => { const e = m.querySelector(s); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
+        set('.aiondx-sched-date', d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())); set('.aiondx-sched-time', p(d.getHours()) + ':' + p(d.getMinutes()));
+        return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()).getTime(); })()`);
       await humanClick('.aiondx-sched-go');
       await sleep(500);
       keys = await schedKeys();
       rec = keys.length === 1 ? (await store())[keys[0]] : null;
-      check(sc, 'a time picked by hand is used as it is', rec && rec.due === hand && rec.text === 'draft for later', JSON.stringify([rec, hand]));
+      check(sc, 'a date and time picked by hand are used as they are', rec && rec.due === hand && rec.text === 'draft for later', JSON.stringify([rec, hand]));
       await humanClick(btn);
       await sleep(250);
       const waiting = await js(`[...document.querySelectorAll('.aiondx-sched-item')].map(r => [r.querySelector('.aiondx-sched-item-when').textContent, r.querySelector('.aiondx-sched-item-text').textContent])`);
@@ -1491,25 +1562,44 @@ async function pageTarget() {
       await humanClick('.aiondx-sched-cancel');
       await sleep(400);
       check(sc, 'Cancel removes it', (await schedKeys()).length === 0);
-      await humanClick('.aiondx-sched-menu .aiondx-sched-quick-item');
+      await js(`(() => { const g = document.querySelector('.aiondx-sched-go'); if (g) g.click(); return 0; })()`);
       await sleep(200);
-      check(sc, 'with nothing in the box the times do nothing', (await schedKeys()).length === 0);
+      check(sc, 'with nothing in the box Schedule does nothing', (await schedKeys()).length === 0 && await js(`document.querySelector('.aiondx-sched-go').disabled`));
       await typeIn('[data-testid="sendbox-input"]', 'too late');
       await humanClick(btn);
       await sleep(250);
-      await js(`(() => { const m = document.querySelector('.aiondx-sched-when'); if (m) { const d = new Date(Date.now() - 86400000); const p = n => ('0' + n).slice(-2);
-        m.value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); } return 0; })()`);
+      await js(`(() => { const m = document.querySelector('.aiondx-sched-menu'); if (!m) return 0; const set = (s, v) => { const e = m.querySelector(s); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
+        m.querySelector('.aiondx-sched-mode[data-mode="at"]').click(); const d = new Date(Date.now() - 86400000); const p = n => ('0' + n).slice(-2);
+        set('.aiondx-sched-date', d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())); set('.aiondx-sched-time', p(d.getHours()) + ':' + p(d.getMinutes())); return 0; })()`);
       await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
       await js(`(() => { const g = document.querySelector('.aiondx-sched-go'); if (g) g.click(); return 0; })()`);
       await sleep(300);
       check(sc, 'a time that has passed is refused', (await schedKeys()).length === 0 && (await toasts()).some(t => /^That time has passed\./.test(t)), JSON.stringify(await toasts()));
+      // In with every box empty or zero: refused with a notice, nothing stored.
+      await js(`(() => { const m = document.querySelector('.aiondx-sched-menu'); if (!m) return 0; m.querySelector('.aiondx-sched-mode[data-mode="in"]').click();
+        ['.aiondx-sched-days', '.aiondx-sched-hours', '.aiondx-sched-mins'].forEach(s => { const e = m.querySelector(s); e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })); }); return 0; })()`);
+      await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
+      await js(`(() => { const g = document.querySelector('.aiondx-sched-go'); if (g) g.click(); return 0; })()`);
+      await sleep(300);
+      check(sc, 'In with nothing typed is refused with a notice', (await schedKeys()).length === 0 && (await toasts()).some(t => /^Type how long to wait first\./.test(t)), JSON.stringify(await toasts()));
+      // Enter in a box schedules, and 90 typed as minutes is 90 minutes.
+      await js(`(() => { const m = document.querySelector('.aiondx-sched-menu'); const e = m.querySelector('.aiondx-sched-mins'); e.value = '90'; e.dispatchEvent(new Event('input', { bubbles: true }));
+        e.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return 0; })()`);
+      await sleep(400);
+      keys = await schedKeys();
+      rec = keys.length === 1 ? (await store())[keys[0]] : null;
+      check(sc, 'Enter in a box schedules it, and 90 minutes is 90 minutes', rec && rec.text === 'too late' && Math.abs(rec.due - (Date.now() + 90 * 60000)) < 20000, JSON.stringify(rec));
+      await humanClick(btn);
+      await sleep(250);
+      await humanClick('.aiondx-sched-cancel');
+      await sleep(300);
 
       // A team member's own box.
       await load('team=1&theme=light');
       await typeIn('[data-slot-id="slotB"] [data-testid="sendbox-input"]', 'worker, rerun the seed check');
       await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-sched-btn"]');
       await sleep(250);
-      await humanClick('.aiondx-sched-menu .aiondx-sched-quick-item');
+      await humanClick('.aiondx-sched-go');
       await sleep(500);
       keys = await schedKeys();
       rec = keys.length === 1 ? (await store())[keys[0]] : null;
@@ -1587,13 +1677,31 @@ async function pageTarget() {
       p = await posts('/api/shell/open-folder-with');
       check(sc, "clicking a folder chip opens the folder in Explorer, not AionUi's preview", p.length === 1 && p[0].body.folder_path === 'C:/Work/Project/build/' && p[0].body.tool === 'explorer' && (await js('window.__previewClicks')) === 0, JSON.stringify(p));
       await js('window.__calls.length = 0; 0');
-      await inShadow('span[data-local-file-path$="notes.md"][data-local-file-path^="C:"] .markdown-local-file-link', 'el.click()');
+      const notesLabel = 'span[data-local-file-path$="notes.md"][data-local-file-path^="C:"] .markdown-local-file-link';
+      const altClick = "el.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, altKey: true }))";
+      await js('window.__previewClicks = 0; 0');
+      await inShadow(notesLabel, 'el.click()');
       await sleep(300);
-      check(sc, "clicking a file chip still previews it in AionUi", (await posts('/api/shell/open-file')).length === 0 && (await js('window.__previewClicks')) === 1);
+      p = await posts('/api/shell/open-file');
+      check(sc, "clicking a file chip opens the file outside AionDX by default, and not in a preview tab", p.length === 1 && p[0].body.file_path === 'C:/Work/Project/notes.md' && (await js('window.__previewClicks')) === 0, JSON.stringify(p));
       await js('window.__calls.length = 0; 0');
+      await inShadow(notesLabel, altClick);
+      await sleep(300);
+      check(sc, 'Alt+click on a file chip uses the other choice: the preview', (await posts('/api/shell/open-file')).length === 0 && (await js('window.__previewClicks')) === 1);
+      // A chip that has just appeared, before the folder check has marked it, still goes to Explorer.
+      await js(`(() => { const root = document.getElementById('md1').shadowRoot; const s = document.createElement('span'); s.setAttribute('data-local-file-path', 'C:/Work/Project/fresh/'); s.innerHTML = '<button class="markdown-local-file-link" id="fresh">fresh folder</button>'; root.querySelector('p').appendChild(s); window.__previewClicks = 0; window.__calls.length = 0; return 0; })()`);
+      await inShadow('#fresh', 'el.click()');
+      await sleep(300);
+      p = await posts('/api/shell/open-folder-with');
+      check(sc, 'a folder chip clicked before the page has checked it still opens in Explorer, not a tab', p.length === 1 && p[0].body.folder_path === 'C:/Work/Project/fresh/' && (await js('window.__previewClicks')) === 0, JSON.stringify(p));
+      await js("window.__aionDx.setOption('links.files', 'preview'); window.__calls.length = 0; window.__previewClicks = 0; 0");
+      await inShadow(notesLabel, 'el.click()');
+      await sleep(300);
+      check(sc, "with the option set to preview, a file chip previews in AionDX", (await posts('/api/shell/open-file')).length === 0 && (await js('window.__previewClicks')) === 1);
+      await js("window.__aionDx.setOption('links.files', undefined); window.__calls.length = 0; 0");
       await js('window.__aionDx.decorateLinks()');
       await sleep(200);
-      check(sc, 'looking again adds no second button', (await js(`document.getElementById('md1').shadowRoot.querySelectorAll('.aiondx-ext').length`)) === 2);
+      check(sc, 'looking again adds no second button', (await js(`document.getElementById('md1').shadowRoot.querySelectorAll('.aiondx-ext').length`)) === 3);
     }
 
     // ---- Stop must stop (R-017, 2026-10-01): the draft box does not restart the agent after Stop ----
@@ -2048,7 +2156,7 @@ async function pageTarget() {
       await sleep(200);
       await humanClick('.aiondx-acct-menu [data-agent="cc33dd44"]');
       await humanClick('.aiondx-acct-menu .aiondx-acct-move');
-      await sleep(400);
+      for (let i = 0; i < 12 && ((await store())['aiondx.agent.conv.harness1'] || ((await ctl('')) || {}).label !== 'Main'); i++) { await js('window.__aionDx.repaint(); 0'); await sleep(250); }   // a hidden page paints late
       check(sc, 'moving back to its own agent removes the choice', !(await store())['aiondx.agent.conv.harness1'] && (await ctl('')).label === 'Main');
       // The first version's pick (an account name) still shows, and a new pick replaces it.
       await putStore('aiondx.accounts', { v: 1, accounts: [{ id: 'main', label: 'Main (Plan A)' }, { id: 'second', label: 'Second' }],
@@ -2082,6 +2190,23 @@ async function pageTarget() {
       // Another kind of agent: a new chat in the same folder, this conversation in its message box.
       await humanClick('[data-testid="aiondx-account"]');
       await sleep(300);
+      // On a window too short for the menu either way (a laptop screen), it stays inside the window and scrolls (2026-10-24).
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      await send('Emulation.setDeviceMetricsOverride', { width: 1076, height: 300, deviceScaleFactor: 1, mobile: false });
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-account"]');
+      await sleep(300);
+      const fit = await js(`(() => { const m = document.querySelector('.aiondx-acct-menu'); if (!m) return null; const b = m.getBoundingClientRect();
+        return { top: Math.round(b.top), bottom: Math.round(b.bottom), h: innerHeight, scrolls: m.scrollHeight > m.clientHeight }; })()`);
+      check(sc, 'on a short window the agent menu stays inside it and scrolls', fit && fit.top >= 0 && fit.bottom <= fit.h && fit.scrolls, JSON.stringify(fit));
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      await send('Emulation.clearDeviceMetricsOverride');
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-account"]');
+      await sleep(300);
+      // the menu may scroll inside on this window: bring the item into view in it, as a person scrolls a menu
+      await js(`(() => { const e = document.querySelector('.aiondx-acct-menu [data-assistant="bare:codex"]'); if (e) e.scrollIntoView({ block: 'nearest' }); return 0; })()`);
+      await sleep(150);
       await humanClick('.aiondx-acct-menu [data-assistant="bare:codex"]');
       const conf2 = await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`);
       check(sc, 'continuing with another kind of agent asks first, and says this chat stays', /^Continue with Codex\?/.test(conf2) && /This chat stays as it is\./.test(conf2), conf2);
@@ -2110,7 +2235,7 @@ async function pageTarget() {
       await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
       await sleep(300);
       items = await menuItems();
-      check(sc, 'a member offers only the Claude agents', items.length === 2 && items.every((i) => i.group === 'here'), JSON.stringify(items));
+      check(sc, 'a member offers only the Claude agents to switch to in place (and, apart, the swap list)', items.filter((i) => i.group === 'here').length === 2 && items.every((i) => i.group === 'here' || i.group === 'swap'), JSON.stringify(items));
       await humanClick('.aiondx-acct-menu [data-agent="cc33dd44"]');
       await humanClick('.aiondx-acct-menu .aiondx-acct-move');
       await sleep(400);
@@ -2341,6 +2466,14 @@ async function pageTarget() {
       await rightClick('#message-a1 [data-testid="message-text-content"]');
       menu = await js(`[...document.querySelectorAll('[data-testid="aiondx-colour-menu"] .arco-dropdown-menu-item')].map(i => i.textContent)`);
       check(sc, "right-clicking an agent's reply offers that agent's colour", JSON.stringify(menu) === JSON.stringify(["Colour of Claude Code (Main)'s replies..."]), JSON.stringify(menu));
+      // A link inside a reply gets the main process's menu (Open link in browser, Copy link): the colour menu stays out of its way (2026-10-22).
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      await js(`(() => { const a = document.createElement('a'); a.id = 'reply-link'; a.href = 'https://example.com/x'; a.textContent = 'a link in a reply';
+        document.querySelector('#message-a1 [data-testid="message-text-content"]').appendChild(a); return 0; })()`);
+      await rightClick('#reply-link');
+      check(sc, 'right-clicking a link in a reply shows no colour menu, so the link menu can open', !(await js('!!document.querySelector(\'[data-testid="aiondx-colour-menu"]\')')));
+      await js(`document.getElementById('reply-link').remove(); 0`);
+      await rightClick('#message-a1 [data-testid="message-text-content"]');
       await humanClick('[data-testid="aiondx-colour-menu"] [data-colour-key="agent:cc33dd44"]');
       const hash = await js('location.hash');
       await js(`(() => { const sec = document.createElement('section'); sec.id = 'fake-appearance'; const grid = document.createElement('div'); sec.appendChild(grid);
@@ -2488,6 +2621,53 @@ async function pageTarget() {
       await humanClick('.aiondx-w-back');
       v = await w();
       check(sc, 'and Back returns to Look for my setup', v && v.buttons[0] === 'Look for my setup', JSON.stringify(v));
+
+      // Sign in to your agents (2026-10-12): the agent's own sign-in, started from a button. A stand-in for the main process's bridge.
+      await js(`(() => {
+        window.__si = { calls: [], state: 'running', logged: false };
+        window.aiondxSignin = {
+          status: (a, acc) => Promise.resolve({ ok: true, installed: true, loggedIn: window.__si.logged, email: window.__si.logged ? 'someone@example.com' : '', plan: 'pro' }),
+          start: (a, acc) => { window.__si.calls.push(['start', a, acc || '']); window.__si.state = 'running'; return Promise.resolve({ ok: true, url: 'https://claude.com/cai/oauth/authorize?x=1' }); },
+          code: (c) => { window.__si.calls.push(['code', c]); window.__si.state = 'done'; window.__si.logged = true; return Promise.resolve({ ok: true }); },
+          poll: () => Promise.resolve({ ok: true, state: window.__si.state }),
+          cancel: () => { window.__si.calls.push(['cancel']); return Promise.resolve({ ok: true }); },
+          register: (acc, label) => { window.__si.calls.push(['register', acc, label]); return Promise.resolve({ ok: true, id: acc, label }); },
+        };
+        window.prompt = () => 'work';
+        return 0; })()`);
+      await humanClick('.aiondx-w-agy');
+      await humanClick('.aiondx-w-back');
+      v = await w();
+      check(sc, 'with the sign-in bridge, the first step offers Sign in to your agents', v && v.buttons.includes('Sign in to your agents'), JSON.stringify(v));
+      await humanClick('.aiondx-w-accounts');
+      await sleep(300);
+      const acc = () => js(`(() => { const r = document.querySelector('[data-testid="aiondx-acc-claude"]'); const f = document.querySelector('.aiondx-acc-flow'); return r ? { state: r.querySelector('.aiondx-acc-state').textContent,
+        signin: r.querySelector('.aiondx-acc-signin').textContent, flow: f.hidden ? null : f.querySelector('.aiondx-acc-flow-msg').textContent, link: (f.querySelector('a') || {}).href || null,
+        status: (document.querySelector('.aiondx-welcome-status') || {}).textContent } : null; })()`);
+      let a = await acc();
+      check(sc, 'the page names Claude Code and whether it is signed in', a && a.state === 'Not signed in.' && a.signin === 'Sign in', JSON.stringify(a));
+      await humanClick('.aiondx-acc-signin');
+      await sleep(400);
+      a = await acc();
+      check(sc, "Sign in starts Claude Code's own sign-in and shows its link and a box for the code", a && a.flow && /opened in your browser/.test(a.flow) && a.link === 'https://claude.com/cai/oauth/authorize?x=1' &&
+        JSON.stringify((await js('window.__si.calls'))[0]) === JSON.stringify(['start', 'claude', '']), JSON.stringify([a, await js('window.__si.calls')]));
+      await typeInto('.aiondx-acc-code', 'CODE-123');
+      await humanClick('.aiondx-acc-send');
+      await sleep(2600);
+      a = await acc();
+      check(sc, 'a pasted code goes to the sign-in, and when it finishes the page says who is signed in', JSON.stringify((await js('window.__si.calls'))[1]) === JSON.stringify(['code', 'CODE-123']) &&
+        a.flow === null && a.state === 'Signed in as someone@example.com (pro).' && a.signin === 'Sign in again' && /^Signed in\./.test(a.status), JSON.stringify(a));
+      await humanClick('.aiondx-acc-add');
+      await sleep(400);
+      await typeInto('.aiondx-acc-code', 'CODE-456');
+      await humanClick('.aiondx-acc-send');
+      await sleep(2800);
+      const calls = await js('window.__si.calls');
+      a = await acc();
+      check(sc, "Add another Claude account signs it in to its own folder and adds it to every chat's account menu",
+        JSON.stringify(calls[2]) === JSON.stringify(['start', 'claude', 'work']) && JSON.stringify(calls[4]) === JSON.stringify(['register', 'work', 'Work (pro)']) &&
+        ((await store())['aiondx.accounts'] || { accounts: [] }).accounts.some((x) => x.id === 'work' && x.label === 'Work (pro)') && /"Work \(pro\)" is now in every Claude chat's account menu/.test(a.status), JSON.stringify([calls, a, (await store())['aiondx.accounts']]));
+      await js(`(() => { delete window.aiondxSignin; return 0; })()`);
     }
 
     // ---- model names with their versions (2026-09-26, the friend's install: "only shows Fable, Opus, Sonnet") ----
@@ -2533,6 +2713,16 @@ async function pageTarget() {
       check(sc, "the new-chat page's model picker gets it", (await js(`document.querySelector('#fake-guid .guid-model-label').textContent`)) === 'Haiku 4.5',
         await js(`document.querySelector('#fake-guid .guid-model-label').textContent`));
       await js(`(() => { document.getElementById('fake-guid').remove(); return 0; })()`);
+      // 2026-10-12: a disabled agent with an old list after the enabled ones no longer wins, and a name the enabled agents disagree on goes plain.
+      await js(`(() => { window.__stub.routes['GET /api/agents/management'] = { success: true, data: [
+        { id: 'cc33dd44', name: 'Claude Code (Main)', backend: 'claude', enabled: true, config_options: [{ id: 'model', options: [{ value: 'haiku', name: 'Haiku', description: 'Haiku 5.5 · Fastest' }, { value: 'fable', name: 'Fable', description: 'Fable 5.1 · Most capable' }] }] },
+        { id: 'ee55ff66', name: 'Claude Code (Second)', backend: 'claude', enabled: true, config_options: [{ id: 'model', options: [{ value: 'haiku', name: 'Haiku', description: 'Haiku 5.5 · Fastest' }, { value: 'fable', name: 'Fable', description: 'Fable 5 · Most capable' }] }] },
+        { id: '2d23ff1c', name: 'Claude Code', backend: 'claude', enabled: false, config_options: [{ id: 'model', options: [{ value: 'haiku', name: 'Haiku', description: 'Haiku 4.5 · Fastest' }] }] }] }; return 0; })()`);
+      await js(`fetch('http://127.0.0.1:58699/api/agents/management', { credentials: 'include' }).then(r => r.json()); 0`);
+      await sleep(500);
+      const labs = JSON.parse(await js("localStorage.getItem('aionui.dx.modelLabels') || '{}'"));
+      check(sc, "a disabled agent's old list does not overwrite the enabled agents' newer name", labs.Haiku === 'Haiku 5.5', JSON.stringify(labs));
+      check(sc, 'a name the enabled agents disagree on is left plain', labs.Fable === undefined, JSON.stringify(labs));
     }
 
     // ---- Welcome to AionDX (2026-09-26) ----
@@ -2650,6 +2840,210 @@ async function pageTarget() {
       await humanClick('[data-testid="aiondx-setup-open"]');
       v = await w();
       check(sc, 'Settings > Appearance has Open AionDX setup, which brings it back', v && v.title === 'Welcome to AionDX', JSON.stringify(v));
+    }
+
+    // ---- clearing agent caches (2026-10-13, a request) ----
+    {
+      const sc = 'caches';
+      const addSection = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
+        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
+        sec.appendChild(grid); document.body.appendChild(sec); return 0; })()`);
+      await load('theme=light');
+      await addSection();
+      await sleep(600);
+      check(sc, 'without the cache bridge (the browser, WebUI) Settings has no Clear agent caches button', !(await js(`!!document.querySelector('[data-testid="aiondx-cache-open"]')`)));
+      await load('theme=light');
+      await js(`(() => {
+        window.__cc = { calls: [], gone: false };
+        const g = (count, bytes, targets) => ({ count, bytes, targets: targets || [], partial: false });
+        window.aiondxCache = {
+          profiles: () => Promise.resolve({ ok: true, profiles: [{ id: 'claude:main', kind: 'claude', label: 'Claude Code (main)', dir: '~\\\\.claude' }, { id: 'devin', kind: 'devin', label: 'Devin', dir: '~\\\\AppData\\\\Roaming\\\\Devin' }] }),
+          scan: (id, days) => { window.__cc.calls.push(['scan', id, days]);
+            const empty = window.__cc.gone && id === 'devin';
+            return Promise.resolve({ ok: true, profile: { id }, days, groups: {
+              cache: id === 'devin' ? (empty ? g(0, 0) : g(2009, 476000000, [{ label: 'Cache', files: 314, bytes: 365000000 }])) : g(181, 500000),
+              history: days >= 1 ? (id === 'devin' ? g(3, 300000) : g(297, 553000000, [{ label: 'session transcripts', files: 297, bytes: 553000000 }])) : { error: 'History is cleared by age: choose 1 day or more.' } } }); },
+          clear: (id, group, days) => { window.__cc.calls.push(['clear', id, group, days]); if (id === 'devin' && group === 'cache') window.__cc.gone = true; return Promise.resolve({ ok: true, deleted: 2009, bytes: 476000000, skipped: 2 }); },
+        };
+        return 0; })()`);
+      await addSection();
+      await sleep(600);
+      check(sc, 'with the bridge, Settings > Appearance has Clear agent caches', await js(`!!document.querySelector('[data-testid="aiondx-cache-open"]')`));
+      await humanClick('[data-testid="aiondx-cache-open"]');
+      await sleep(900);
+      const panel = () => js(`(() => { const p = document.querySelector('[data-testid="aiondx-cache"]'); if (!p || p.hidden) return null;
+        const rows = [...p.querySelectorAll('.aiondx-cache-row')].map(r => ({ name: r.querySelector('.aiondx-cache-name').textContent, dir: r.querySelector('.aiondx-cache-dir').textContent,
+          lines: [...r.querySelectorAll('.aiondx-cache-line')].map(l => ({ g: l.getAttribute('data-group'), info: l.querySelector('.aiondx-cache-line-info').textContent, btn: l.querySelector('button') && l.querySelector('button').textContent,
+            off: !!(l.querySelector('button') && l.querySelector('button').disabled) })) }));
+        return { days: p.querySelector('.aiondx-cache-days').value, ages: [...p.querySelectorAll('.aiondx-cache-days option')].map(o => o.textContent), rows, status: p.querySelector('.aiondx-cache-status').textContent }; })()`);
+      let pn = await panel();
+      check(sc, 'the panel lists every profile with its folder, starting at a week', pn && pn.days === '7' && pn.rows.length === 2 && pn.rows[0].name === 'Claude Code (main)' && /\.claude$/.test(pn.rows[0].dir) && pn.rows[1].name === 'Devin', JSON.stringify(pn));
+      check(sc, 'with the ages Everything, 1 day, 1 week, 1 month, 3 months and 6 months', pn && JSON.stringify(pn.ages) === JSON.stringify(['Everything (caches only)', '1 day', '1 week', '1 month', '3 months', '6 months']), JSON.stringify(pn && pn.ages));
+      check(sc, 'each profile shows what its caches and its history hold, in size and files', pn && pn.rows[1].lines[0].info === '454 MB in 2,009 files' && pn.rows[1].lines[1].info === '293 KB in 3 files' &&
+        pn.rows[0].lines[1].info === '527 MB in 297 files' && pn.rows[0].lines[0].btn === 'Clear caches' && pn.rows[0].lines[1].btn === 'Clear history', JSON.stringify(pn && pn.rows));
+      check(sc, 'it scanned every profile at that age, and removed nothing', JSON.stringify((await js('window.__cc.calls'))) === JSON.stringify([['scan', 'claude:main', 7], ['scan', 'devin', 7]]));
+      // Everything: the history group is refused, the caches are not.
+      await js(`(() => { const sel = document.querySelector('.aiondx-cache-days'); sel.value = '0'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
+      await sleep(900);
+      pn = await panel();
+      check(sc, 'Everything is for caches only: History says to choose an age and its button is off', pn && pn.rows[0].lines[1].info === 'History is cleared by age: choose 1 day or more.' && pn.rows[0].lines[1].off && !pn.rows[0].lines[0].off, JSON.stringify(pn && pn.rows[0]));
+      await js(`(() => { const sel = document.querySelector('.aiondx-cache-days'); sel.value = '30'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
+      await sleep(900);
+      await js('window.__cc.calls.length = 0; 0');
+      // Clearing Devin's caches: a second click confirms, Cancel backs out, Remove does it.
+      await humanClick('[data-profile="devin"] [data-group="cache"] button');
+      await sleep(200);
+      const conf = await js(`(() => { const l = document.querySelector('[data-profile="devin"] [data-group="cache"]'); return { info: l.querySelector('.aiondx-cache-line-info').textContent, btns: [...l.querySelectorAll('button')].map(b => b.textContent) }; })()`);
+      check(sc, 'a click on Clear caches asks first, with what goes and from whom, older than the age chosen', /^Remove 2,009 files \(454 MB\) from Devin, older than 1 month\?$/.test(conf.info) && JSON.stringify(conf.btns) === JSON.stringify(['Remove', 'Cancel']) &&
+        !(await js('window.__cc.calls.some(c => c[0] === "clear")')), JSON.stringify(conf));
+      await humanClick('[data-profile="devin"] .aiondx-cache-no');
+      await sleep(700);
+      check(sc, 'Cancel removes nothing and shows the row again', !(await js('window.__cc.calls.some(c => c[0] === "clear")')) && (await panel()).rows[1].lines[0].btn === 'Clear caches');
+      await humanClick('[data-profile="devin"] [data-group="cache"] button');
+      await humanClick('[data-profile="devin"] .aiondx-cache-yes');
+      await sleep(1200);
+      const clears = await js('window.__cc.calls.filter(c => c[0] === "clear")');
+      pn = await panel();
+      check(sc, 'Remove clears that profile and that group at that age, and says what was removed', JSON.stringify(clears) === JSON.stringify([['clear', 'devin', 'cache', 30]]) &&
+        /^Devin: Removed 2,009 files \(454 MB\)\. 2 files left: in use, or newer than ten minutes\.$/.test(pn.status), JSON.stringify([clears, pn && pn.status]));
+      check(sc, 'and the row is read again: nothing left to clear at this age', pn.rows[1].lines[0].info === 'Nothing to clear at this age.' && pn.rows[1].lines[0].off, JSON.stringify(pn.rows[1]));
+      // History warns that a chat cannot be resumed.
+      await humanClick('[data-profile="claude:main"] [data-group="history"] button');
+      await sleep(200);
+      const hc = await js(`document.querySelector('[data-profile="claude:main"] [data-group="history"] .aiondx-cache-line-info').textContent`);
+      check(sc, 'Clear history warns that a Claude chat whose transcript goes cannot be resumed', /Remove 297 files \(527 MB\) from Claude Code \(main\), older than 1 month\? Claude chats whose transcript goes cannot be resumed\.$/.test(hc), hc);
+      await humanClick('[data-profile="claude:main"] .aiondx-cache-no');
+      await js(`(() => { document.querySelector('[data-testid="aiondx-cache"] .aiondx-cache-days').focus(); return 0; })()`);
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await sleep(200);
+      check(sc, 'Escape closes the panel', !(await panel()));
+      await js(`(() => { delete window.aiondxCache; return 0; })()`);
+    }
+
+    // ---- a Stop that is there when AionUi's is not (2026-10-13, a request) ----
+    {
+      const sc = 'stop-fallback';
+      await load('theme=light');
+      const stopBtn = () => js(`(() => { const b = document.querySelector('#solo [data-testid="aiondx-stop-btn"]'); return b ? { title: b.title, force: b.classList.contains('aiondx-stop--force') } : null; })()`);
+      const posts2 = (p) => js(`window.__calls.filter(c => c.method === 'POST' && c.path === ${JSON.stringify(p)}).map(c => c.body)`);
+      // The server says the chat is mid-turn while its status reads finished: the mismatch AionUi's own Stop button cannot see.
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.runtime = { state: 'running', is_processing: true, turn_id: 'turn_X' }; window.__aionDx.stopTimes(700, 2600); window.__aionDx.setLive('conv:harness1', 'working'); window.__calls.length = 0; return 0; })()`);
+      await sleep(250);
+      await js('window.__aionDx.repaint()');
+      check(sc, 'a chat that has only just started working gets no fallback button yet', !(await stopBtn()));
+      await sleep(1600);
+      await js('window.__aionDx.repaint()');
+      let b = await stopBtn();
+      check(sc, 'a chat working for a while with no Stop button of AionUi on screen gets AionDX\'s own', b && /^Stop: AionUi shows no Stop button/.test(b.title) && !b.force, JSON.stringify(b));
+      await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
+      await humanClick('#solo [data-testid="aiondx-stop-btn"]');
+      await sleep(700);
+      check(sc, 'its click cancels with the turn id the server gave', JSON.stringify(await posts2('/api/conversations/harness1/cancel')) === JSON.stringify([{ turn_id: 'turn_X' }]), JSON.stringify(await posts2('/api/conversations/harness1/cancel')));
+      check(sc, 'and says so', (await toasts()).some(t => /^Stop sent\./.test(t)), JSON.stringify(await toasts()));
+      // The agent ignores it: 2.6 s on, still working, the button becomes Force stop.
+      await sleep(2400);
+      await js('window.__aionDx.repaint()');
+      b = await stopBtn();
+      check(sc, 'a chat still working after a Stop gets Force stop', b && b.force && /^Force stop: the agent did not stop/.test(b.title), JSON.stringify(b));
+      await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); window.__calls.length = 0; 0');
+      await humanClick('#solo [data-testid="aiondx-stop-btn"]');
+      await sleep(300);
+      check(sc, 'the first click on Force stop only asks to click again', (await toasts()).some(t => /^Click Force stop again to restart the agent\./.test(t)) && (await posts2('/api/conversations/harness1/runtime/restart')).length === 0, JSON.stringify(await toasts()));
+      await humanClick('#solo [data-testid="aiondx-stop-btn"]');
+      await sleep(500);
+      check(sc, 'the second restarts the agent, which ends its turn', (await posts2('/api/conversations/harness1/runtime/restart')).length === 1 && (await toasts()).some(t => /^The agent was restarted\./.test(t)), JSON.stringify(await toasts()));
+      // It stops: the button goes.
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime; window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
+      await js('window.__aionDx.repaint()');
+      check(sc, 'once the chat is idle the button is gone', !(await stopBtn()));
+      // AionUi's own Stop is on screen: no second one.
+      await js(`(() => { const a = document.querySelector('#solo .sendbox-actions'); const x = document.createElement('button'); x.type = 'button'; x.className = 'arco-btn sendbox-stop-button'; x.textContent = 'stop'; a.appendChild(x);
+        window.__aionDx.setLive('conv:harness1', 'working'); return 0; })()`);
+      await sleep(1500);
+      await js('window.__aionDx.repaint()');
+      check(sc, 'with AionUi\'s own Stop button showing there is no fallback', !(await stopBtn()));
+      await js(`(() => { document.querySelector('#solo .sendbox-stop-button').remove(); window.__aionDx.setLive('conv:harness1', 'idle'); window.__aionDx.stopTimes(3000, 12000); return 0; })()`);
+    }
+
+    // ---- a message the backend refuses is held, not lost (2026-11-01) ----
+    {
+      const sc = 'unsent';
+      await load('theme=light');
+      const posts3 = () => js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/messages').map(c => c.body && c.body.content)`);
+      // The backend refuses it with 409 (a confirmation is waiting); the confirmation is still listed.
+      await js(`(() => { const r = window.__stub.routes;
+        r['POST /api/conversations/harness1/messages'] = { __status: 409, success: false, error: 'conversation is already running' };
+        r['GET /api/conversations/harness1/confirmations'] = { success: true, data: [{ id: 'c1' }] };
+        window.__calls.length = 0; document.querySelectorAll('.aiondx-toast').forEach(t => t.remove());
+        window.fetch('http://127.0.0.1:1/api/conversations/harness1/messages', { method: 'POST', body: JSON.stringify({ content: 'hold me please' }) }); return 0; })()`);
+      await sleep(500);
+      check(sc, 'a 409 on a chat\'s message says the message is held', (await toasts()).some(t => /^A confirmation is waiting, so your message is held\./.test(t)), JSON.stringify(await toasts()));
+      await sleep(2600);
+      check(sc, 'it is not sent again while the confirmation is still waiting', (await posts3()).length === 1, JSON.stringify(await posts3()));
+      // The confirmation is answered and the backend takes the message: it goes in.
+      await js(`(() => { const r = window.__stub.routes;
+        r['GET /api/conversations/harness1/confirmations'] = { success: true, data: [] };
+        r['POST /api/conversations/harness1/messages'] = { success: true, data: {} }; return 0; })()`);
+      await sleep(2800);
+      check(sc, 'once the confirmation is answered the held message is sent, once more', JSON.stringify(await posts3()) === JSON.stringify(['hold me please', 'hold me please']), JSON.stringify(await posts3()));
+      check(sc, 'and says it went in', (await toasts()).some(t => /^Your message went in\./.test(t)), JSON.stringify(await toasts()));
+      // Any other refusal puts the text back in the box.
+      await js(`(() => { const r = window.__stub.routes; r['POST /api/conversations/harness1/messages'] = { __status: 500, success: false };
+        document.querySelectorAll('.aiondx-toast').forEach(t => t.remove());
+        window.fetch('http://127.0.0.1:1/api/conversations/harness1/messages', { method: 'POST', body: JSON.stringify({ content: 'bring me back' }) }); return 0; })()`);
+      await sleep(600);
+      check(sc, 'a 500 puts the text back in the message box and says why',
+        (await js(`(() => { const t = document.querySelector('[data-testid="sendbox-input"]'); const a = t && (t.tagName === 'TEXTAREA' ? t : t.querySelector('textarea')); return a ? a.value : null; })()`)) === 'bring me back' && (await toasts()).some(t => /^Your message was not sent: HTTP 500\./.test(t)),
+        JSON.stringify(await toasts()));
+      await js(`(() => { const r = window.__stub.routes; r['POST /api/conversations/harness1/messages'] = { success: true, data: {} }; delete r['GET /api/conversations/harness1/confirmations']; return 0; })()`);
+
+      // A bolt for a solo chat: while it works and the box holds a message, the bolt ends the turn and sends the message first.
+      await load('theme=light');
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.runtime = { state: 'running', is_processing: true, turn_id: 'turn_Z' };
+        window.__aionDx.setLive('conv:harness1', 'working'); window.__calls.length = 0; return 0; })()`);
+      check(sc, 'a working solo chat with an empty box has no bolt', !(await js(`!!document.querySelector('#solo [data-testid="aiondx-solo-bolt"]')`)));
+      await humanClick('[data-testid="sendbox-input"]');
+      await send('Input.insertText', { text: 'answer me now' });
+      await sleep(900);
+      await js('window.__aionDx.repaint()');
+      check(sc, 'with a message typed it shows the bolt', await js(`!!document.querySelector('#solo [data-testid="aiondx-solo-bolt"]')`));
+      await humanClick('#solo [data-testid="aiondx-solo-bolt"]');
+      await sleep(300);
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime; return 0; })()`);
+      await sleep(1700);
+      const cancels = await js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/cancel').map(c => c.body)`);
+      check(sc, 'the bolt cancels the running turn', JSON.stringify(cancels) === JSON.stringify([{ turn_id: 'turn_Z' }]), JSON.stringify(cancels));
+      check(sc, 'and then sends the message, once', JSON.stringify(await posts3()) === JSON.stringify(['answer me now']), JSON.stringify(await posts3()));
+      await js(`(() => { window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
+
+      // The context meter is always there; a snowflake says the provider's prompt cache has gone cold (2026-11-01).
+      await load('theme=light');
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime;
+        r.data.extra = Object.assign({}, r.data.extra, { backend: 'claude', last_token_usage: { total_tokens: 84000 }, last_context_limit: 200000 });
+        r.data.updated_at = Date.now() - 12 * 60000; window.__aionDx.resetCtx(); window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
+      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
+      // AionUi's own ring is on screen (the harness has one): AionDX draws none of its own and adds the snowflake to it.
+      check(sc, 'with AionUi\'s ring showing, AionDX draws no second one and puts the snowflake in AionUi\'s',
+        await js(`!document.querySelector('#solo [data-testid="aiondx-ctx"]') && !!document.querySelector('#solo .context-usage-indicator .aiondx-snow')`));
+      // AionUi's ring is gone (it holds no count): AionDX draws the meter.
+      await js(`(() => { const s = document.querySelector('#solo .context-usage-indicator:not(.aiondx-ctx)'); if (s) s.remove(); window.__aionDx.resetCtx(); return 0; })()`);
+      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
+      const ring = () => js(`(() => { const e = document.querySelector('#solo [data-testid="aiondx-ctx"]'); if (!e) return null; const c = e.querySelectorAll('circle')[1];
+        return { snow: !!e.querySelector('.aiondx-snow'), title: e.title, snowTitle: (e.querySelector('.aiondx-snow') || {}).title || '', off: c.getAttribute('stroke-dashoffset'), dash: c.getAttribute('stroke-dasharray') }; })()`);
+      let rg = await ring();
+      check(sc, 'a chat with no AionUi ring still shows the context meter', !!rg, JSON.stringify(rg));
+      check(sc, 'it is 42% full (84K of 200K)', rg && Math.abs(1 - Number(rg.off) / Number(rg.dash) - 0.42) < 0.01 && /42\.0% of the context window used \(84K of 200K\)/.test(rg.title), JSON.stringify(rg));
+      check(sc, 'a Claude chat idle for 12 minutes (cache lifetime 5) has the snowflake, with the reason', rg && rg.snow && /Cold: Anthropic keeps a prompt cache about 5 minutes/.test(rg.snowTitle), JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.updated_at = Date.now() - 60000; window.__aionDx.resetCtx(); return 0; })()`);
+      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
+      rg = await ring();
+      check(sc, 'a turn a minute ago: the meter stays, no snowflake', rg && !rg.snow, JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.updated_at = Date.now() - 20 * 60000; r.data.extra.backend = 'devin'; window.__aionDx.resetCtx(); return 0; })()`);
+      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
+      rg = await ring();
+      check(sc, 'a provider with no verified cache time is never shown cold', rg && !rg.snow, JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.backend = 'claude'; delete r.data.updated_at; return 0; })()`);
     }
 
     // ---- the Claude usage meter (2026-09-26) ----
@@ -2835,6 +3229,202 @@ async function pageTarget() {
       check(sc, 'and nudges it once the session is running', (await posts('/api/teams/team1/agents/slotB/messages')).length === 1);
     }
 
+    // ---- options, links, pictures, quotes in drafts, cache buttons on agent entries (2026-10-20, requests) ----
+    {
+      const sc = 'options';
+      await js("localStorage.removeItem('aionui.dx.options'); 0");
+      const addSection = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
+        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
+        sec.appendChild(grid); document.body.appendChild(sec); return 0; })()`);
+      await load('theme=light');
+      await addSection();
+      await sleep(700);
+      const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      const schema = ((await store())['aiondx.options.schema'] || {});
+      check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.files' && o.default === 'outside' && o.choices.length === 2) && !schema.options.some((o) => o.id === 'links.external') &&
+        schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));
+      check(sc, 'there is no option to open web links inside AionDX', (await js(`window.__aionDx.option('links.external')`)) === undefined);
+      await js(`(() => { const i = document.querySelector('[data-testid="aiondx-opt-spellcheck"]'); i.checked = false; i.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
+      await sleep(400);
+      const rec = (await store())['aiondx.options'] || {};
+      check(sc, 'changing one writes it to the store, and only it', rec.values && rec.values.spellcheck === false && Object.keys(rec.values).length === 1 && rec.by === 'user', JSON.stringify(rec));
+      check(sc, 'turning spelling off sets spellcheck="false" on the message box', (await js(`document.querySelector('[data-testid="sendbox-input"]').getAttribute('spellcheck')`)) === 'false');
+      await js(`document.querySelector('[data-opt="spellcheck"] .aiondx-opt-reset').click(); 0`);
+      await sleep(400);
+      check(sc, 'Reset puts the default back, and the store no longer holds it', (await js(`window.__aionDx.option('spellcheck')`)) === true && !(((await store())['aiondx.options'] || {}).values || {}).spellcheck &&
+        (await js(`document.querySelector('[data-testid="sendbox-input"]').getAttribute('spellcheck')`)) === 'true');
+      // The command line (or an agent) writes the store; the page takes it.
+      await js(`(() => { window.__stub.store['aiondx.options'] = { values: { 'links.files': 'preview', 'stop.show': 9999, 'nonsense': 1 }, at: Date.now() + 5000, by: 'agent' }; return window.__aionDx.pullNow(); })()`);
+      await sleep(400);
+      check(sc, 'a newer value from the store (an agent, the command line) is applied, clamped to its limits', (await js(`window.__aionDx.option('links.files')`)) === 'preview' && (await js(`window.__aionDx.option('stop.show')`)) === 120 &&
+        (await js(`document.querySelector('[data-testid="aiondx-opt-links.files"]').value`)) === 'preview');
+      check(sc, 'a value the list does not know is ignored', !('nonsense' in (await js(`window.__aionDx.options().values`))));
+    }
+    {
+      const sc = 'links';
+      await js("localStorage.removeItem('aionui.dx.options'); 0");
+      await load('theme=light');
+      await js(`(() => {
+        window.__stub.routes['POST /api/shell/open-external'] = { success: true };
+        window.__tab = 0;
+        document.addEventListener('click', () => { window.__tab++; });   // stands for AionUi's own handler (preview.openBrowserTab)
+        const a = document.createElement('a'); a.id = 'tl'; a.href = 'https://example.com/page?x=1'; a.target = '_blank'; a.textContent = 'a link in a reply';
+        a.style.cssText = 'position:absolute;left:30px;top:300px;z-index:5;background:#fff;color:#000;padding:4px';
+        document.body.appendChild(a);
+        const m = document.createElement('a'); m.id = 'ml'; m.href = 'mailto:x@example.com'; m.textContent = 'mail'; m.style.cssText = 'position:absolute;left:30px;top:340px;z-index:5;background:#fff;color:#000;padding:4px';
+        document.body.appendChild(m);
+        window.__calls.length = 0; return 0; })()`);
+      await humanClick('#tl');
+      await sleep(500);
+      const opened = await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').map(c => c.body)`);
+      check(sc, 'a click on a web link goes to the system browser (open-external)', opened.length === 1 && opened[0].url === 'https://example.com/page?x=1', JSON.stringify(opened));
+      check(sc, "and AionUi's own tab handler never hears it", (await js(`window.__tab`)) === 0);
+      await js(`(() => { document.getElementById('tl').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, altKey: true })); return 0; })()`);
+      await sleep(300);
+      check(sc, 'Alt+click goes to the system browser too: there is no tab to choose', (await js(`window.__tab`)) === 0 && (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 2);
+      await js(`(() => { document.getElementById('tl').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ctrlKey: true })); return 0; })()`);
+      await sleep(300);
+      check(sc, 'Ctrl+click goes to the system browser too', (await js(`window.__tab`)) === 0 && (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 3);
+      await js(`(() => { document.getElementById('ml').addEventListener('click', e => e.preventDefault()); document.getElementById('ml').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })); return 0; })()`);
+      await sleep(200);
+      check(sc, 'a mailto link is not touched', (await js(`window.__calls.filter(c => c.path === '/api/shell/open-external').length`)) === 3);
+
+      // Pictures: the page keeps the file path each one was loaded from.
+      const DATA = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+      await js(`(() => { window.__stub.routes['POST /api/fs/image-base64'] = { success: true, data: ${JSON.stringify(DATA)} }; return 0; })()`);
+      await js(`(async () => { await fetch('http://127.0.0.1:1/api/fs/image-base64', { method: 'POST', body: JSON.stringify({ path: 'C:\\\\Users\\\\me\\\\pics\\\\one.png' }) });
+        const img = document.createElement('img'); img.id = 'pic'; img.src = ${JSON.stringify(DATA)}; img.style.cssText = 'position:absolute;left:200px;top:300px;width:40px;height:40px;z-index:5'; document.body.appendChild(img);
+        const other = document.createElement('img'); other.id = 'pic2'; other.src = ${JSON.stringify(DATA.replace('AAAAAAAAAAA', 'BBBBBBBBBBB') + 'zz')}; other.style.cssText = 'position:absolute;left:260px;top:300px;width:40px;height:40px;z-index:5'; document.body.appendChild(other);
+        return 0; })()`);
+      await sleep(400);
+      await js(`document.getElementById('pic').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); 0`);
+      check(sc, 'a picture loaded from a path knows that path when it is right-clicked', (await js(`window.__aionDx.imagePathAt(1, 1)`)) === 'C:\\Users\\me\\pics\\one.png', await js(`window.__aionDx.imagePathAt(1, 1)`));
+      await js(`document.getElementById('pic2').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); 0`);
+      check(sc, 'a picture with no known file answers nothing', (await js(`window.__aionDx.imagePathAt(1, 1)`)) === '');
+    }
+    {
+      const sc = 'draft-quote';
+      await js("localStorage.removeItem('aionui.dx.options'); 0");
+      await load('theme=light');
+      await js(`(() => { const panel = document.querySelector('.sendbox-panel'); const q = document.createElement('div'); q.className = 'flex items-start';
+        q.innerHTML = '<div class="flex-1 min-w-0 line-clamp-3 whitespace-pre-wrap break-all">the sentence being answered</div>'; panel.insertBefore(q, panel.firstChild); return 0; })()`);
+      check(sc, 'the reply quote over a message box is read from the page', (await js(`window.__aionDx.draftQuoteOf(document.querySelector('[data-testid="sendbox-input"]'))`)) === 'the sentence being answered');
+      await js(`(() => { const ta = document.querySelector('[data-testid="sendbox-input"]'); ta.focus(); ta.value = 'my answer'; ta.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await sleep(300);
+      const d = await js(`JSON.parse(localStorage.getItem('aionui.dx.draft.conv.harness1'))`);
+      check(sc, 'the draft keeps the quote with its text', d && d.text === 'my answer' && d.quote === 'the sentence being answered', JSON.stringify(d));
+      // A quote with no text at all is still a draft.
+      await js(`(() => { const ta = document.querySelector('[data-testid="sendbox-input"]'); ta.value = ''; ta.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await sleep(300);
+      const d2 = await js(`JSON.parse(localStorage.getItem('aionui.dx.draft.conv.harness1'))`);
+      check(sc, 'a quote with no text is kept as a draft too', d2 && d2.text === '' && d2.quote === 'the sentence being answered', JSON.stringify(d2));
+      // React's setter, found through the fiber (a stand-in chain with the same shape as SendBox's hooks).
+      const hit = await js(`(() => { const ta = document.querySelector('[data-testid="sendbox-input"]'); const got = [];
+        const hooks = [{ memoizedState: null, queue: { dispatch: () => {} } }, { memoizedState: { current: null }, queue: null }, { memoizedState: null, queue: { dispatch: (v) => got.push(v) } }, { memoizedState: 0, queue: { dispatch: () => {} } }];
+        hooks.forEach((h, i) => { h.next = hooks[i + 1] || null; });
+        ta['__reactFiber$test'] = { memoizedState: hooks[0], return: null };
+        const ok = window.__aionDx.setReplyQuoteInBox(ta, 'quoted again'); return { ok, got }; })()`);
+      check(sc, "the quote is put back through the send box's own state when its hooks are found", hit.ok === true && hit.got.length === 1 && hit.got[0].content === 'quoted again' && hit.got[0].position === 'left', JSON.stringify(hit));
+      // After a restart with no setter to be found, the quote returns as a block quote ahead of the text. The saved draft is in the settings store (a page that
+      // is being left saves its own box over a local copy, so the store is what a test can seed).
+      await load('theme=light&seeddraft=hello&seedquote=' + encodeURIComponent('line one\nline two'));
+      await sleep(1800);
+      const restored = await js(`document.querySelector('[data-testid="sendbox-input"]').value`);
+      check(sc, 'a saved quote comes back with the draft (as a block quote when React gives no setter)', restored === '> line one\n> line two\n\nhello', JSON.stringify(restored));
+      await load('theme=light&seeddraft=hello&seedquote=old&seedstore=' + encodeURIComponent(JSON.stringify({ 'aiondx.options': { values: { 'draft.quote': false }, at: Date.now() } })));
+      await sleep(1800);
+      const noq = await js(`document.querySelector('[data-testid="sendbox-input"]').value`);
+      check(sc, 'with the option draft.quote off the quote is not restored', noq === 'hello', JSON.stringify(noq));
+      await js(`window.__aionDx.setOption('draft.quote', undefined); localStorage.removeItem('aionui.dx.draft.conv.harness1'); 0`);
+    }
+    {
+      const sc = 'agent-cache';
+      await js("localStorage.removeItem('aionui.dx.options'); 0");
+      await load('theme=light');
+      await js(`(() => {
+        window.__cc = { calls: [] };
+        window.aiondxCache = {
+          profiles: () => Promise.resolve({ ok: true, profiles: [{ id: 'claude:main', kind: 'claude', label: 'Claude Code (main)', dir: 'a' }, { id: 'claude:second', kind: 'claude', label: 'Claude Code (second)', dir: 'b' }, { id: 'devin', kind: 'devin', label: 'Devin', dir: 'c' }] }),
+          scan: (id, days) => { window.__cc.calls.push(['scan', id]); return Promise.resolve({ ok: true, profile: { id }, days, groups: { cache: { count: 1, bytes: 10, targets: [], partial: false }, history: { count: 0, bytes: 0, targets: [], partial: false } } }); },
+          clear: () => Promise.resolve({ ok: true, deleted: 0, bytes: 0 })
+        };
+        const mk = (id, name, extra) => { const r = document.createElement('div'); r.setAttribute('data-testid', 'agent-row-' + id); r.className = 'group flex';
+          r.innerHTML = '<div class="flex"><span class="truncate text-14px">' + name + '</span></div><div class="ms-12px flex flex-shrink-0 items-center gap-8px"><button data-testid="agent-row-test-' + id + '">Test</button><button data-testid="agent-row-edit-' + id + '">Edit</button></div>';
+          r.style.cssText = 'position:absolute;left:20px;top:' + extra + 'px;z-index:5;background:#222;color:#fff'; document.body.appendChild(r); };
+        mk('c1', 'Claude Code (Second)', 300); mk('c2', 'Gemini CLI', 340); mk('c3', 'Devin', 380); mk('c4', 'Claude Code', 420);
+        return 0; })()`);
+      await js('window.__aionDx.repaint(); 0');
+      await sleep(500);
+      const btns = await js(`[...document.querySelectorAll('.aiondx-agent-cache')].map(b => b.getAttribute('data-profile'))`);
+      check(sc, 'Settings > Agents gives Claude Code accounts and Devin a Clear cache button, and no other agent', JSON.stringify(btns) === JSON.stringify(['claude:second', 'devin', 'claude:main']), JSON.stringify(btns));
+      check(sc, 'it sits in the entry beside Test and Edit, first', await js(`document.querySelector('[data-testid="agent-row-c1"]').lastElementChild.firstElementChild.className.includes('aiondx-agent-cache')`));
+      await humanClick('[data-testid="aiondx-agent-cache-c1"]');
+      await sleep(1000);
+      const pn = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-cache"]'); if (!p || p.hidden) return null; const rows = [...p.querySelectorAll('.aiondx-cache-row')];
+        return { first: rows[0].getAttribute('data-profile'), outlined: rows[0].classList.contains('aiondx-cache-row--focus'), n: rows.length }; })()`);
+      check(sc, "its button opens the panel at that account, first and outlined", pn && pn.first === 'claude:second' && pn.outlined && pn.n === 3, JSON.stringify(pn));
+      check(sc, 'and reads that profile first', (await js('window.__cc.calls[0]')).join() === 'scan,claude:second');
+    }
+
+    {
+      const sc = 'older-pages';
+      await load('theme=light');
+      const ask = (n) => js(`(() => { window.__calls.length = 0; window.__answered = 0; for (let i = 0; i < ${n}; i++) fetch('http://127.0.0.1:1/api/conversations/harness1/messages?limit=50&before=m' + i, { credentials: 'include' }).then(() => { window.__answered++; }); return 0; })()`);
+      const reached = () => js(`window.__calls.filter(c => /messages$/.test(c.path) && /before=/.test(c.url)).length`);
+      await ask(6);
+      await sleep(900);
+      check(sc, 'older pages asked for in a chain with no scrolling: the first three go through, the rest wait', (await reached()) === 3 && (await js('window.__answered')) === 3, (await reached()) + ' reached, ' + (await js('window.__answered')) + ' answered');
+      await js(`document.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true })); 0`);
+      await sleep(1000);
+      check(sc, 'a wheel turn from the user lets the waiting ones through', (await reached()) === 6 && (await js('window.__answered')) === 6, (await reached()) + ' reached, ' + (await js('window.__answered')) + ' answered');
+      await js(`document.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true })); 0`);
+      await ask(5);
+      await sleep(700);
+      check(sc, 'while the user is scrolling, every page goes through', (await reached()) === 5, String(await reached()));
+      // A click on a tab or a button is not scrolling: the chain that follows it is still paced.
+      await sleep(11000);
+      await js(`document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true })); 0`);
+      await ask(6);
+      await sleep(700);
+      check(sc, 'a click or an ordinary key is not scrolling: the chain after it is still held at three', (await reached()) === 3, String(await reached()));
+      await js(`window.__aionDx.setOption('lag.chainPages', 1); 0`);
+      await sleep(11000);
+      await ask(3);
+      await sleep(700);
+      check(sc, 'the number allowed is the option lag.chainPages', (await reached()) === 1, String(await reached()));
+      await js(`window.__aionDx.setOption('lag.chainPages', undefined); 0`);
+    }
+    {
+      const sc = 'swap';
+      await load('team=1&theme=light');
+      await sleep(1200);
+      await js('window.__aionDx.repaint(); 0');
+      await sleep(700);
+      await js('window.__aionDx.repaint(); 0');
+      await sleep(300);
+      const items = () => js(`[...document.querySelectorAll('.aiondx-acct-menu .arco-dropdown-menu-item')].map(i => ({ assistant: i.getAttribute('data-assistant'), agent: i.getAttribute('data-agent'), group: i.parentElement.getAttribute('data-group'), text: i.textContent }))`);
+      check(sc, 'every member column has the agent control, a Claude member with one Claude agent included', (await js(`document.querySelectorAll('[data-testid="aiondx-account"]').length`)) >= 2);
+      await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
+      await sleep(300);
+      const swaps = (await items()).filter((i) => i.group === 'swap');
+      check(sc, 'its menu offers to swap the member for any other enabled agent, in the same slot', swaps.length >= 2 && swaps.every((i) => i.assistant && /A new conversation on this agent/.test(i.text)), JSON.stringify(swaps));
+      check(sc, 'the title says who is being swapped', /Swap this member for/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)));
+      await js(`window.__stub.routes['POST /api/teams/team1/agents/slotB/replace'] = { success: true, data: { slot_id: 'slotB' } }; window.__calls.length = 0; 0`);
+      await js(`document.querySelector('.aiondx-acct-menu [data-assistant="${swaps[0].assistant}"]').click(); 0`);   // the menu can run past a short page: a real press would miss it
+      check(sc, 'a click asks first: what stays, what is new, and that the team stops', /Swap this member for/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)) && /Every agent in this team stops now/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)));
+      await js(`document.querySelector('.aiondx-acct-menu .aiondx-acct-move').click(); 0`);
+      await sleep(500);
+      check(sc, 'with an agent in the team working (the lead is), nothing is swapped and it says why', (await js(`window.__calls.filter(c => c.path.endsWith('/replace')).length`)) === 0 && (await toasts()).some((t) => /Not swapped: an agent in this team is working/.test(t)), JSON.stringify(await toasts()));
+      await js(`(() => { const w = window.__stub.routes['GET /api/teams/team1/run-state'].data.slot_work[0]; w.state = 'idle'; w.active_turn_id = null; return 0; })()`);
+      await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
+      await sleep(300);
+      await js(`document.querySelector('.aiondx-acct-menu [data-assistant="${swaps[0].assistant}"]').click(); 0`);
+      await js('window.__calls.length = 0; 0');
+      await js(`document.querySelector('.aiondx-acct-menu .aiondx-acct-move').click(); 0`);
+      const posted = await js(`window.__calls.filter(c => c.path.endsWith('/replace')).map(c => [c.method, c.path, c.body])`);
+      check(sc, 'with the team idle, the swap is posted to that slot with the chosen assistant', posted.length === 1 && posted[0][0] === 'POST' && posted[0][1] === '/api/teams/team1/agents/slotB/replace' && posted[0][2].assistant_id === swaps[0].assistant, JSON.stringify(posted));
+    }
     clearTimeout(deadline);
     let failed = 0;
     for (const r of results) {

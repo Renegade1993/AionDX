@@ -1,0 +1,186 @@
+diff --git a/crates/aionui-mcp/src/oauth_service.rs b/crates/aionui-mcp/src/oauth_service.rs
+index dddce6e..d93207e 100644
+--- a/crates/aionui-mcp/src/oauth_service.rs
++++ b/crates/aionui-mcp/src/oauth_service.rs
+@@ -36,12 +36,26 @@ const EXPIRY_MARGIN_MS: i64 = 5 * 60 * 1000;
+ // ---------------------------------------------------------------------------
+ 
+ /// OAuth Authorization Server Metadata (RFC 8414) — subset of fields we need.
++///
++/// Unknown top-level fields are ignored by default (no `deny_unknown_fields`), so a
++/// resource or authorization server that adds its own extra fields to this document
++/// does not break discovery.
+ #[derive(Debug, Deserialize)]
+ struct OAuthServerMetadata {
+     authorization_endpoint: String,
+     token_endpoint: String,
+ }
+ 
++/// OAuth 2.0 Protected Resource Metadata (RFC 9728) — subset of fields we need.
++///
++/// Same tolerance as `OAuthServerMetadata`: fields we don't model (including
++/// nonstandard vendor hints) are silently ignored rather than causing a parse error.
++#[derive(Debug, Deserialize)]
++struct ProtectedResourceMetadata {
++    #[serde(default)]
++    authorization_servers: Vec<String>,
++}
++
+ // ---------------------------------------------------------------------------
+ // Pending login state
+ // ---------------------------------------------------------------------------
+@@ -271,11 +285,37 @@ impl McpOAuthService {
+ 
+     /// Discover OAuth authorization server metadata.
+     ///
+-    /// Tries `.well-known/oauth-authorization-server` first,
+-    /// falls back to `.well-known/openid-configuration`.
++    /// Many MCP servers (this resource server's metadata is authoritative per the MCP
++    /// authorization spec) delegate authorization to a separate host — e.g. a resource at
++    /// `mcp.example.com` protected by an authorization server at `auth.example.com`. RFC 9728
++    /// protected-resource metadata is how the resource tells us where that authorization
++    /// server lives, so it is tried first. Only if that document is absent (or names no
++    /// authorization server) do we fall back to assuming the authorization server is
++    /// colocated with the resource itself.
+     async fn discover_endpoints(&self, server_url: &str) -> Result<OAuthServerMetadata, McpError> {
+         let base = server_url.trim_end_matches('/');
+ 
++        if let Some(resource_metadata_url) = protected_resource_metadata_url(base)
++            && let Ok(resource_metadata) = self.fetch_json::<ProtectedResourceMetadata>(&resource_metadata_url).await
++            && let Some(auth_server) = resource_metadata.authorization_servers.first()
++        {
++            let auth_server = auth_server.trim_end_matches('/');
++            if let Ok(metadata) = self
++                .fetch_metadata(&format!("{auth_server}/.well-known/oauth-authorization-server"))
++                .await
++            {
++                debug!(server_url, auth_server, "Discovered OAuth metadata via RFC 9728 + RFC 8414");
++                return Ok(metadata);
++            }
++            if let Ok(metadata) = self
++                .fetch_metadata(&format!("{auth_server}/.well-known/openid-configuration"))
++                .await
++            {
++                debug!(server_url, auth_server, "Discovered OAuth metadata via RFC 9728 + OIDC");
++                return Ok(metadata);
++            }
++        }
++
+         let well_known_url = format!("{base}/.well-known/oauth-authorization-server");
+         if let Ok(metadata) = self.fetch_metadata(&well_known_url).await {
+             debug!(server_url, "Discovered OAuth metadata via RFC 8414");
+@@ -290,13 +330,19 @@ impl McpOAuthService {
+ 
+         Err(McpError::OAuth(format!(
+             "Failed to discover OAuth endpoints for '{server_url}': \
+-             no .well-known/oauth-authorization-server or \
+-             .well-known/openid-configuration found"
++             no RFC 9728 protected-resource metadata naming an authorization server, \
++             no .well-known/oauth-authorization-server, and \
++             no .well-known/openid-configuration found"
+         )))
+     }
+ 
+     /// Fetch and parse OAuth server metadata from a URL.
+     async fn fetch_metadata(&self, url: &str) -> Result<OAuthServerMetadata, McpError> {
++        self.fetch_json(url).await
++    }
++
++    /// Fetch and parse any JSON metadata document from a URL.
++    async fn fetch_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, McpError> {
+         let resp = self
+             .http_client
+             .get(url)
+@@ -506,6 +552,31 @@ impl McpOAuthService {
+     }
+ }
+ 
++// ---------------------------------------------------------------------------
++// RFC 9728 protected-resource metadata URL
++// ---------------------------------------------------------------------------
++
++/// Build the RFC 9728 protected-resource-metadata URL for an MCP resource URL.
++///
++/// Per RFC 9728 §3.1, the `.well-known` path component is inserted between the
++/// authority and the resource's own path — not appended after it. For
++/// `https://mcp.example.com/mcp` that is
++/// `https://mcp.example.com/.well-known/oauth-protected-resource/mcp`, not
++/// `https://mcp.example.com/mcp/.well-known/oauth-protected-resource`.
++fn protected_resource_metadata_url(resource_url: &str) -> Option<String> {
++    let mut url = reqwest::Url::parse(resource_url).ok()?;
++    let path = url.path().trim_start_matches('/');
++    let new_path = if path.is_empty() {
++        "/.well-known/oauth-protected-resource".to_string()
++    } else {
++        format!("/.well-known/oauth-protected-resource/{path}")
++    };
++    url.set_path(&new_path);
++    url.set_query(None);
++    url.set_fragment(None);
++    Some(url.to_string())
++}
++
+ // ---------------------------------------------------------------------------
+ // Query parameter parsing
+ // ---------------------------------------------------------------------------
+@@ -670,6 +741,60 @@ mod tests {
+         assert_eq!(url_decode("a%20b+c%3Dd"), "a b c=d");
+     }
+ 
++    // -- protected_resource_metadata_url --------------------------------------
++
++    #[test]
++    fn protected_resource_metadata_url_inserts_well_known_before_path() {
++        assert_eq!(
++            protected_resource_metadata_url("https://mcp.higgsfield.ai/mcp").unwrap(),
++            "https://mcp.higgsfield.ai/.well-known/oauth-protected-resource/mcp"
++        );
++    }
++
++    #[test]
++    fn protected_resource_metadata_url_handles_root_resource() {
++        assert_eq!(
++            protected_resource_metadata_url("https://example.com").unwrap(),
++            "https://example.com/.well-known/oauth-protected-resource"
++        );
++    }
++
++    #[test]
++    fn protected_resource_metadata_url_rejects_unparseable_input() {
++        assert!(protected_resource_metadata_url("not a url").is_none());
++    }
++
++    // -- ProtectedResourceMetadata deserialization ----------------------------
++
++    #[test]
++    fn protected_resource_metadata_ignores_nonstandard_vendor_fields() {
++        // Captured from GET https://mcp.higgsfield.ai/.well-known/oauth-protected-resource/mcp
++        let body = r#"{
++            "resource": "https://mcp.higgsfield.ai/mcp",
++            "authorization_servers": ["https://clerk.higgsfield.ai"],
++            "scopes_supported": ["openid", "email", "offline_access"],
++            "bearer_methods_supported": ["header"],
++            "higgsfield_auth_hints": {
++                "selection": "client_capability_based",
++                "options": [{
++                    "flow": "authorization_code_pkce",
++                    "authorization_server": "https://clerk.higgsfield.ai",
++                    "potential_clients": ["anthropic", "claude", "claude-ai", "claude-code", "openclaw", "hermes"],
++                    "use_when": "Client can complete an OAuth authorization-code redirect using one of its registered redirect mechanisms.",
++                    "requires": ["authorization_endpoint", "token_endpoint", "redirect_uri_receiver", "pkce"]
++                }]
++            }
++        }"#;
++        let metadata: ProtectedResourceMetadata = serde_json::from_str(body).unwrap();
++        assert_eq!(metadata.authorization_servers, vec!["https://clerk.higgsfield.ai"]);
++    }
++
++    #[test]
++    fn protected_resource_metadata_defaults_authorization_servers_when_absent() {
++        let metadata: ProtectedResourceMetadata = serde_json::from_str("{}").unwrap();
++        assert!(metadata.authorization_servers.is_empty());
++    }
++
+     // -- McpOAuthService construction ----------------------------------------
+ 
+     #[test]

@@ -95,6 +95,20 @@
     };
   };
 
+  // A fake speechSynthesis/SpeechSynthesisUtterance, overriding whatever headless Edge's own
+  // (voice-less, unreliable to wait on) implementation would do - deterministic and fast, like
+  // the fake mic above. Forced on with defineProperty: speechSynthesis is a getter-only property
+  // on window in most engines, so plain assignment silently no-ops instead of throwing.
+  window.__systemSpeechCalls = [];
+  window.__systemSpeechCancelled = 0;
+  Object.defineProperty(window, 'speechSynthesis', { configurable: true, writable: true, value: {
+    cancel: function () { window.__systemSpeechCancelled++; },
+    speak: function (u) { window.__systemSpeechCalls.push(u.text); setTimeout(function () { if (u.onend) u.onend(); }, 20); },
+  } });
+  Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, writable: true, value: function (text) {
+    this.text = text; this.onend = null; this.onerror = null;
+  } });
+
   window.__agentReply = function (text) {
     var list = document.getElementById('messages');
     var row = document.createElement('div');

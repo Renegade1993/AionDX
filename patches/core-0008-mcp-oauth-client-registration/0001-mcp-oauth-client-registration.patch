@@ -1,0 +1,616 @@
+diff --git a/crates/aionui-mcp/src/oauth_service.rs b/crates/aionui-mcp/src/oauth_service.rs
+index d93207e..43b715a 100644
+--- a/crates/aionui-mcp/src/oauth_service.rs
++++ b/crates/aionui-mcp/src/oauth_service.rs
+@@ -8,7 +8,7 @@ use aionui_db::{IOAuthTokenRepository, UpsertOAuthTokenParams};
+ use oauth2::basic::BasicClient;
+ use oauth2::{
+     AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken,
+-    TokenResponse, TokenUrl,
++    Scope, TokenResponse, TokenUrl,
+ };
+ use serde::Deserialize;
+ use tokio::io::{AsyncReadExt, AsyncWriteExt};
+@@ -28,6 +28,17 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(120);
+ /// Default OAuth client ID for MCP servers (public client, no secret).
+ const DEFAULT_CLIENT_ID: &str = "aionui";
+ 
++/// How long registering a client with an authorization server may take before it is given up on.
++const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(20);
++
++/// Name an authorization server shows for the app when it asks the user to approve it.
++const CLIENT_NAME: &str = "AionDX";
++
++/// A stored token's `token_type` is `bearer`; when the login used a client registered by the
++/// authorization server (RFC 7591), the id follows after this mark so a refresh can use the same
++/// client. (The `oauth_tokens` table has no column for it, and no schema change is made.)
++const CLIENT_ID_MARK: &str = ";client_id=";
++
+ /// Token expiry safety margin (refresh 5 minutes before expiration).
+ const EXPIRY_MARGIN_MS: i64 = 5 * 60 * 1000;
+ 
+@@ -44,6 +55,19 @@ const EXPIRY_MARGIN_MS: i64 = 5 * 60 * 1000;
+ struct OAuthServerMetadata {
+     authorization_endpoint: String,
+     token_endpoint: String,
++    /// RFC 7591 dynamic client registration endpoint, when the server offers one.
++    #[serde(default)]
++    registration_endpoint: Option<String>,
++    /// Scopes the protected resource asks for (RFC 9728 `scopes_supported`). Not part of the
++    /// authorization server's own document; filled in by `discover_endpoints`.
++    #[serde(skip)]
++    scopes: Vec<String>,
++}
++
++/// RFC 7591 client registration response — only the identifier is needed (a public client).
++#[derive(Debug, Deserialize)]
++struct ClientRegistrationResponse {
++    client_id: String,
+ }
+ 
+ /// OAuth 2.0 Protected Resource Metadata (RFC 9728) — subset of fields we need.
+@@ -54,6 +78,8 @@ struct OAuthServerMetadata {
+ struct ProtectedResourceMetadata {
+     #[serde(default)]
+     authorization_servers: Vec<String>,
++    #[serde(default)]
++    scopes_supported: Vec<String>,
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -70,6 +96,8 @@ struct PendingLogin {
+     auth_url: String,
+     token_url: String,
+     redirect_url: String,
++    /// The client id this login was started with: a freshly registered one, or `DEFAULT_CLIENT_ID`.
++    client_id: String,
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -192,7 +220,10 @@ impl McpOAuthService {
+             if now >= expires_at - EXPIRY_MARGIN_MS
+                 && let Some(ref refresh_token) = row.refresh_token
+             {
+-                match self.refresh_token(user_id, server_url, refresh_token).await {
++                match self
++                    .refresh_token(user_id, server_url, refresh_token, &row.token_type)
++                    .await
++                {
+                     Ok(new_token) => return Ok(Some(new_token)),
+                     Err(e) => {
+                         warn!(
+@@ -219,6 +250,7 @@ impl McpOAuthService {
+ 
+         let auth_url_str = metadata.authorization_endpoint.clone();
+         let token_url_str = metadata.token_endpoint.clone();
++        let scopes = metadata.scopes.clone();
+ 
+         let auth_url = AuthUrl::new(metadata.authorization_endpoint)
+             .map_err(|e| McpError::OAuth(format!("Invalid auth URL: {e}")))?;
+@@ -237,17 +269,35 @@ impl McpOAuthService {
+         let redirect = RedirectUrl::new(redirect_url_str.clone())
+             .map_err(|e| McpError::OAuth(format!("Invalid redirect URL: {e}")))?;
+ 
+-        let client = BasicClient::new(ClientId::new(DEFAULT_CLIENT_ID.to_string()))
++        // A server that offers dynamic client registration (RFC 7591) only accepts clients it has
++        // registered, so register one for this login. If that fails, try the fixed client id as
++        // before. The redirect address has a new port every login, so a new client is registered
++        // each time; the token keeps its id for the refresh.
++        let client_id = match metadata.registration_endpoint.as_deref() {
++            Some(endpoint) => match self.register_client(endpoint, &redirect_url_str).await {
++                Ok(id) => id,
++                Err(e) => {
++                    warn!(server_url, error = %e, "Client registration failed, using the default client id");
++                    DEFAULT_CLIENT_ID.to_string()
++                }
++            },
++            None => DEFAULT_CLIENT_ID.to_string(),
++        };
++
++        let client = BasicClient::new(ClientId::new(client_id.clone()))
+             .set_auth_uri(auth_url)
+             .set_token_uri(token_url)
+             .set_redirect_uri(redirect);
+ 
+         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+ 
+-        let (authorize_url, csrf_token) = client
++        let mut authorize_request = client
+             .authorize_url(CsrfToken::new_random)
+-            .set_pkce_challenge(pkce_challenge)
+-            .url();
++            .set_pkce_challenge(pkce_challenge);
++        for scope in &scopes {
++            authorize_request = authorize_request.add_scope(Scope::new(scope.clone()));
++        }
++        let (authorize_url, csrf_token) = authorize_request.url();
+ 
+         {
+             let mut pending = self.pending.lock().await;
+@@ -260,6 +310,7 @@ impl McpOAuthService {
+                     auth_url: auth_url_str,
+                     token_url: token_url_str,
+                     redirect_url: redirect_url_str,
++                    client_id,
+                 },
+             );
+         }
+@@ -296,22 +347,29 @@ impl McpOAuthService {
+         let base = server_url.trim_end_matches('/');
+ 
+         if let Some(resource_metadata_url) = protected_resource_metadata_url(base)
+-            && let Ok(resource_metadata) = self.fetch_json::<ProtectedResourceMetadata>(&resource_metadata_url).await
++            && let Ok(resource_metadata) = self
++                .fetch_json::<ProtectedResourceMetadata>(&resource_metadata_url)
++                .await
+             && let Some(auth_server) = resource_metadata.authorization_servers.first()
+         {
+             let auth_server = auth_server.trim_end_matches('/');
+-            if let Ok(metadata) = self
++            if let Ok(mut metadata) = self
+                 .fetch_metadata(&format!("{auth_server}/.well-known/oauth-authorization-server"))
+                 .await
+             {
+-                debug!(server_url, auth_server, "Discovered OAuth metadata via RFC 9728 + RFC 8414");
++                debug!(
++                    server_url,
++                    auth_server, "Discovered OAuth metadata via RFC 9728 + RFC 8414"
++                );
++                metadata.scopes = resource_metadata.scopes_supported.clone();
+                 return Ok(metadata);
+             }
+-            if let Ok(metadata) = self
++            if let Ok(mut metadata) = self
+                 .fetch_metadata(&format!("{auth_server}/.well-known/openid-configuration"))
+                 .await
+             {
+                 debug!(server_url, auth_server, "Discovered OAuth metadata via RFC 9728 + OIDC");
++                metadata.scopes = resource_metadata.scopes_supported.clone();
+                 return Ok(metadata);
+             }
+         }
+@@ -336,6 +394,46 @@ impl McpOAuthService {
+         )))
+     }
+ 
++    /// Register AionCore as a public client with the authorization server (RFC 7591) and return
++    /// the client id it issued, for the given loopback redirect address.
++    async fn register_client(&self, registration_endpoint: &str, redirect_url: &str) -> Result<String, McpError> {
++        let body = serde_json::json!({
++            "client_name": CLIENT_NAME,
++            "redirect_uris": [redirect_url],
++            "grant_types": ["authorization_code", "refresh_token"],
++            "response_types": ["code"],
++            "token_endpoint_auth_method": "none",
++        });
++
++        let resp = self
++            .http_client
++            .post(registration_endpoint)
++            .timeout(REGISTRATION_TIMEOUT)
++            .json(&body)
++            .send()
++            .await
++            .map_err(|e| McpError::OAuth(format!("Client registration request failed: {e}")))?;
++
++        if !resp.status().is_success() {
++            return Err(McpError::OAuth(format!(
++                "Client registration endpoint returned {}",
++                resp.status()
++            )));
++        }
++
++        let registered: ClientRegistrationResponse = resp
++            .json()
++            .await
++            .map_err(|e| McpError::OAuth(format!("Failed to parse client registration response: {e}")))?;
++
++        if registered.client_id.is_empty() {
++            return Err(McpError::OAuth(
++                "Client registration returned an empty client_id".to_string(),
++            ));
++        }
++        Ok(registered.client_id)
++    }
++
+     /// Fetch and parse OAuth server metadata from a URL.
+     async fn fetch_metadata(&self, url: &str) -> Result<OAuthServerMetadata, McpError> {
+         self.fetch_json(url).await
+@@ -438,7 +536,7 @@ impl McpOAuthService {
+         code: String,
+         state: String,
+     ) -> Result<(), McpError> {
+-        let (auth_url_str, token_url_str, redirect_url_str, pkce_verifier) = {
++        let (auth_url_str, token_url_str, redirect_url_str, pkce_verifier, client_id) = {
+             let mut guard = self.pending.lock().await;
+             let pending = guard
+                 .remove(&(user_id.to_string(), state))
+@@ -448,6 +546,7 @@ impl McpOAuthService {
+                 pending.token_url,
+                 pending.redirect_url,
+                 pending.pkce_verifier,
++                pending.client_id,
+             )
+         };
+ 
+@@ -456,7 +555,7 @@ impl McpOAuthService {
+         let redirect =
+             RedirectUrl::new(redirect_url_str).map_err(|e| McpError::OAuth(format!("Invalid redirect URL: {e}")))?;
+ 
+-        let client = BasicClient::new(ClientId::new(DEFAULT_CLIENT_ID.to_string()))
++        let client = BasicClient::new(ClientId::new(client_id.clone()))
+             .set_auth_uri(auth_url)
+             .set_token_uri(token_url)
+             .set_redirect_uri(redirect);
+@@ -470,7 +569,8 @@ impl McpOAuthService {
+             .await
+             .map_err(|e| McpError::OAuth(format!("Token exchange failed: {e}")))?;
+ 
+-        self.persist_token(user_id, server_url, &token_result).await?;
++        self.persist_token(user_id, server_url, &client_id, &token_result)
++            .await?;
+         debug!(server_url, "OAuth tokens stored successfully");
+         Ok(())
+     }
+@@ -481,12 +581,14 @@ impl McpOAuthService {
+         user_id: &str,
+         server_url: &str,
+         refresh_token_value: &str,
++        stored_token_type: &str,
+     ) -> Result<String, McpError> {
+         let metadata = self.discover_endpoints(server_url).await?;
+         let token_url =
+             TokenUrl::new(metadata.token_endpoint).map_err(|e| McpError::OAuth(format!("Invalid token URL: {e}")))?;
+ 
+-        let client = BasicClient::new(ClientId::new(DEFAULT_CLIENT_ID.to_string())).set_token_uri(token_url);
++        // The refresh token belongs to the client the login used, so refresh as that client.
++        let client = BasicClient::new(ClientId::new(client_id_of(stored_token_type))).set_token_uri(token_url);
+ 
+         let http_client = Self::build_no_redirect_client()?;
+ 
+@@ -513,7 +615,7 @@ impl McpOAuthService {
+                 server_url,
+                 access_token: &new_access_token,
+                 refresh_token: Some(new_refresh),
+-                token_type: "bearer",
++                token_type: stored_token_type,
+                 expires_at,
+             })
+             .await?;
+@@ -527,9 +629,11 @@ impl McpOAuthService {
+         &self,
+         user_id: &str,
+         server_url: &str,
++        client_id: &str,
+         token_result: &TR,
+     ) -> Result<(), McpError> {
+         let expires_at: Option<TimestampMs> = token_result.expires_in().map(|d| now_ms() + d.as_millis() as i64);
++        let token_type = token_type_for(client_id);
+ 
+         self.token_repo
+             .upsert(UpsertOAuthTokenParams {
+@@ -537,7 +641,7 @@ impl McpOAuthService {
+                 server_url,
+                 access_token: token_result.access_token().secret(),
+                 refresh_token: token_result.refresh_token().map(|t| t.secret().as_str()),
+-                token_type: "bearer",
++                token_type: &token_type,
+                 expires_at,
+             })
+             .await?;
+@@ -577,6 +681,31 @@ fn protected_resource_metadata_url(resource_url: &str) -> Option<String> {
+     Some(url.to_string())
+ }
+ 
++// ---------------------------------------------------------------------------
++// Client id kept with a stored token
++// ---------------------------------------------------------------------------
++
++/// The `token_type` to store for a login made with `client_id`: plain `bearer` for the default
++/// client (what older versions stored), `bearer;client_id=<id>` for a registered one.
++fn token_type_for(client_id: &str) -> String {
++    if client_id == DEFAULT_CLIENT_ID {
++        "bearer".to_string()
++    } else {
++        format!("bearer{CLIENT_ID_MARK}{client_id}")
++    }
++}
++
++/// The client id a stored `token_type` was saved with; `DEFAULT_CLIENT_ID` for a token saved
++/// before client registration existed.
++fn client_id_of(token_type: &str) -> String {
++    token_type
++        .split_once(CLIENT_ID_MARK)
++        .map(|(_, id)| id)
++        .filter(|id| !id.is_empty())
++        .unwrap_or(DEFAULT_CLIENT_ID)
++        .to_string()
++}
++
+ // ---------------------------------------------------------------------------
+ // Query parameter parsing
+ // ---------------------------------------------------------------------------
+@@ -795,6 +924,275 @@ mod tests {
+         assert!(metadata.authorization_servers.is_empty());
+     }
+ 
++    // -- Client registration (RFC 7591) ---------------------------------------
++
++    #[test]
++    fn token_type_keeps_the_registered_client_id() {
++        assert_eq!(token_type_for(DEFAULT_CLIENT_ID), "bearer");
++        assert_eq!(token_type_for("1k8k2eyslRxn3UhS"), "bearer;client_id=1k8k2eyslRxn3UhS");
++        assert_eq!(client_id_of("bearer;client_id=1k8k2eyslRxn3UhS"), "1k8k2eyslRxn3UhS");
++    }
++
++    #[test]
++    fn token_saved_before_registration_existed_refreshes_as_the_default_client() {
++        assert_eq!(client_id_of("bearer"), DEFAULT_CLIENT_ID);
++        assert_eq!(client_id_of("bearer;client_id="), DEFAULT_CLIENT_ID);
++        assert_eq!(client_id_of(""), DEFAULT_CLIENT_ID);
++    }
++
++    #[test]
++    fn server_metadata_reads_the_registration_endpoint() {
++        // Abridged from GET https://clerk.higgsfield.ai/.well-known/oauth-authorization-server
++        let body = r#"{
++            "issuer": "https://clerk.higgsfield.ai",
++            "authorization_endpoint": "https://clerk.higgsfield.ai/oauth/authorize",
++            "token_endpoint": "https://clerk.higgsfield.ai/oauth/token",
++            "registration_endpoint": "https://clerk.higgsfield.ai/oauth/register",
++            "client_id_metadata_document_supported": true
++        }"#;
++        let metadata: OAuthServerMetadata = serde_json::from_str(body).unwrap();
++        assert_eq!(
++            metadata.registration_endpoint.as_deref(),
++            Some("https://clerk.higgsfield.ai/oauth/register")
++        );
++        assert!(metadata.scopes.is_empty());
++    }
++
++    #[test]
++    fn server_metadata_without_a_registration_endpoint_still_parses() {
++        let body =
++            r#"{"authorization_endpoint": "https://a.example/auth", "token_endpoint": "https://a.example/token"}"#;
++        let metadata: OAuthServerMetadata = serde_json::from_str(body).unwrap();
++        assert!(metadata.registration_endpoint.is_none());
++    }
++
++    #[test]
++    fn protected_resource_metadata_reads_the_scopes() {
++        let body = r#"{"authorization_servers": ["https://clerk.higgsfield.ai"], "scopes_supported": ["openid", "email", "offline_access"]}"#;
++        let metadata: ProtectedResourceMetadata = serde_json::from_str(body).unwrap();
++        assert_eq!(metadata.scopes_supported, vec!["openid", "email", "offline_access"]);
++    }
++
++    /// Answers one HTTP request on a local port with `status_line` and `body`; resolves to the
++    /// request text it received.
++    async fn serve_once(status_line: &'static str, body: &'static str) -> (String, tokio::task::JoinHandle<String>) {
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let url = format!("http://{}/register", listener.local_addr().unwrap());
++        let handle = tokio::spawn(async move {
++            let (mut stream, _) = listener.accept().await.unwrap();
++            let mut received = Vec::new();
++            let mut buf = [0u8; 4096];
++            loop {
++                let n = stream.read(&mut buf).await.unwrap();
++                received.extend_from_slice(&buf[..n]);
++                let text = String::from_utf8_lossy(&received).to_string();
++                if let Some((head, rest)) = text.split_once("\r\n\r\n") {
++                    let length = head
++                        .lines()
++                        .find_map(|l| {
++                            l.to_ascii_lowercase()
++                                .strip_prefix("content-length:")
++                                .map(|v| v.trim().parse::<usize>().unwrap())
++                        })
++                        .unwrap_or(0);
++                    if rest.len() >= length {
++                        break;
++                    }
++                }
++                if n == 0 {
++                    break;
++                }
++            }
++            let response = format!(
++                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
++                body.len()
++            );
++            stream.write_all(response.as_bytes()).await.unwrap();
++            String::from_utf8_lossy(&received).to_string()
++        });
++        (url, handle)
++    }
++
++    #[tokio::test]
++    async fn register_client_posts_a_public_client_and_returns_the_issued_id() {
++        let (url, server) = serve_once(
++            "201 Created",
++            r#"{"client_id": "1k8k2eyslRxn3UhS", "client_name": "AionDX"}"#,
++        )
++        .await;
++        let svc = McpOAuthService::new(Arc::new(MockTokenRepo), reqwest::Client::new());
++
++        let id = svc
++            .register_client(&url, "http://127.0.0.1:53123/callback")
++            .await
++            .unwrap();
++        assert_eq!(id, "1k8k2eyslRxn3UhS");
++
++        let request = server.await.unwrap();
++        assert!(request.starts_with("POST /register "));
++        assert!(request.contains("\"redirect_uris\":[\"http://127.0.0.1:53123/callback\"]"));
++        assert!(request.contains("\"token_endpoint_auth_method\":\"none\""));
++        assert!(request.contains("\"client_name\":\"AionDX\""));
++    }
++
++    /// A stand-in for an MCP server whose authorization server is on the same local address but
++    /// found only through RFC 9728 metadata, and which registers clients. Serves requests until
++    /// the test ends; returns its base address.
++    async fn serve_mcp_with_registration() -> String {
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let base = format!("http://{}", listener.local_addr().unwrap());
++        let served = base.clone();
++        tokio::spawn(async move {
++            loop {
++                let Ok((mut stream, _)) = listener.accept().await else {
++                    return;
++                };
++                let base = served.clone();
++                tokio::spawn(async move {
++                    let mut buf = vec![0u8; 8192];
++                    let mut len = 0;
++                    // Headers, then the whole body when there is one.
++                    loop {
++                        let n = stream.read(&mut buf[len..]).await.unwrap_or(0);
++                        len += n;
++                        let text = String::from_utf8_lossy(&buf[..len]).to_string();
++                        if let Some((head, rest)) = text.split_once("\r\n\r\n") {
++                            let want = head
++                                .lines()
++                                .find_map(|l| {
++                                    l.to_ascii_lowercase()
++                                        .strip_prefix("content-length:")
++                                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
++                                })
++                                .unwrap_or(0);
++                            if rest.len() >= want {
++                                break;
++                            }
++                        }
++                        if n == 0 {
++                            break;
++                        }
++                    }
++                    let request = String::from_utf8_lossy(&buf[..len]).to_string();
++                    let first = request.lines().next().unwrap_or("").to_string();
++                    let (status, body) = if first.starts_with("GET /.well-known/oauth-protected-resource/mcp ") {
++                        (
++                            "200 OK",
++                            format!(
++                                r#"{{"resource": "{base}/mcp", "authorization_servers": ["{base}/auth"], "scopes_supported": ["openid", "offline_access"]}}"#
++                            ),
++                        )
++                    } else if first.starts_with("GET /auth/.well-known/oauth-authorization-server ") {
++                        (
++                            "200 OK",
++                            format!(
++                                r#"{{"authorization_endpoint": "{base}/auth/authorize", "token_endpoint": "{base}/auth/token", "registration_endpoint": "{base}/auth/register"}}"#
++                            ),
++                        )
++                    } else if first.starts_with("POST /auth/register ") {
++                        ("201 Created", r#"{"client_id": "registered-123"}"#.to_string())
++                    } else {
++                        ("404 Not Found", "{}".to_string())
++                    };
++                    let response = format!(
++                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
++                        body.len()
++                    );
++                    let _ = stream.write_all(response.as_bytes()).await;
++                });
++            }
++        });
++        base
++    }
++
++    #[tokio::test]
++    async fn login_registers_a_client_and_asks_for_the_resources_scopes() {
++        let base = serve_mcp_with_registration().await;
++        let svc = McpOAuthService::new(Arc::new(MockTokenRepo), reqwest::Client::new());
++
++        let (authorize_url, _listener) = svc.prepare_login_flow("user-a", &format!("{base}/mcp")).await.unwrap();
++
++        let parsed = reqwest::Url::parse(&authorize_url).unwrap();
++        assert_eq!(parsed.path(), "/auth/authorize");
++        let query: HashMap<String, String> = parsed
++            .query_pairs()
++            .map(|(k, v)| (k.into_owned(), v.into_owned()))
++            .collect();
++        assert_eq!(query.get("client_id").map(String::as_str), Some("registered-123"));
++        assert_eq!(query.get("scope").map(String::as_str), Some("openid offline_access"));
++        assert_eq!(query.get("code_challenge_method").map(String::as_str), Some("S256"));
++
++        let pending = svc.pending.lock().await;
++        let login = pending.values().next().unwrap();
++        assert_eq!(login.client_id, "registered-123");
++        assert_eq!(login.token_url, format!("{base}/auth/token"));
++    }
++
++    #[tokio::test]
++    async fn login_falls_back_to_the_default_client_when_registration_fails() {
++        // Same server, but the registration endpoint named in the metadata answers 404 (not routed).
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let base = format!("http://{}", listener.local_addr().unwrap());
++        let served = base.clone();
++        tokio::spawn(async move {
++            loop {
++                let Ok((mut stream, _)) = listener.accept().await else {
++                    return;
++                };
++                let base = served.clone();
++                tokio::spawn(async move {
++                    let mut buf = vec![0u8; 8192];
++                    let n = stream.read(&mut buf).await.unwrap_or(0);
++                    let first = String::from_utf8_lossy(&buf[..n])
++                        .lines()
++                        .next()
++                        .unwrap_or("")
++                        .to_string();
++                    let (status, body) = if first.starts_with("GET /.well-known/oauth-authorization-server ") {
++                        (
++                            "200 OK",
++                            format!(
++                                r#"{{"authorization_endpoint": "{base}/authorize", "token_endpoint": "{base}/token", "registration_endpoint": "{base}/register"}}"#
++                            ),
++                        )
++                    } else {
++                        ("404 Not Found", "{}".to_string())
++                    };
++                    let response = format!(
++                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
++                        body.len()
++                    );
++                    let _ = stream.write_all(response.as_bytes()).await;
++                });
++            }
++        });
++        let svc = McpOAuthService::new(Arc::new(MockTokenRepo), reqwest::Client::new());
++
++        let (authorize_url, _listener) = svc.prepare_login_flow("user-a", &base).await.unwrap();
++
++        let parsed = reqwest::Url::parse(&authorize_url).unwrap();
++        let query: HashMap<String, String> = parsed
++            .query_pairs()
++            .map(|(k, v)| (k.into_owned(), v.into_owned()))
++            .collect();
++        assert_eq!(query.get("client_id").map(String::as_str), Some(DEFAULT_CLIENT_ID));
++        assert!(!query.contains_key("scope"));
++    }
++
++    #[tokio::test]
++    async fn register_client_reports_a_refusal() {
++        let (url, _server) = serve_once("400 Bad Request", r#"{"error": "invalid_redirect_uri"}"#).await;
++        let svc = McpOAuthService::new(Arc::new(MockTokenRepo), reqwest::Client::new());
++        assert!(svc.register_client(&url, "http://127.0.0.1:1/callback").await.is_err());
++    }
++
++    #[tokio::test]
++    async fn register_client_rejects_a_reply_without_a_client_id() {
++        let (url, _server) = serve_once("201 Created", r#"{"client_name": "AionDX"}"#).await;
++        let svc = McpOAuthService::new(Arc::new(MockTokenRepo), reqwest::Client::new());
++        assert!(svc.register_client(&url, "http://127.0.0.1:1/callback").await.is_err());
++    }
++
+     // -- McpOAuthService construction ----------------------------------------
+ 
+     #[test]
+@@ -831,6 +1229,7 @@ mod tests {
+                 auth_url: "https://auth.example.com/authorize".to_string(),
+                 token_url: "https://auth.example.com/token".to_string(),
+                 redirect_url: "http://127.0.0.1/callback".to_string(),
++                client_id: DEFAULT_CLIENT_ID.to_string(),
+             },
+         );
+     }

@@ -1,6 +1,6 @@
 # 0011-voice: provider-agnostic voice (TTS/STT), ElevenLabs first
 
-**Target:** renderer only (two plain global scripts, like patch 0001's `aionui-dx.js`), plus one key
+**Target:** renderer only (two plain global scripts, like patch 0001's `aiondx-ui.js`), plus one key
 in AionUi's per-user settings store. **Status:** both halves done, wired into the build, and QA-verified
 against a real AionUi 2.2.2 base (2026-10-11):
 - `node patches\0011-voice\test-voice.js` - 46/46.
@@ -469,7 +469,7 @@ is - the key always comes from the settings record at call time).
 
 ## Installing, checking, removing
 
-Wired into the build the same way `aionui-dx.js` is: two more script tags in `index.html`
+Wired into the build the same way `aiondx-ui.js` is: two more script tags in `index.html`
 (`<script src="./aiondx-voice.js" defer></script>` then `<script src="./aiondx-voice-ui.js" defer></script>`,
 module before the UI that builds a client from it), a `Copy-Item` of each file to
 `out\renderer\`, both added to `tools\privacy-check.js`'s `--files` list, and `0011-voice` added to
@@ -501,3 +501,82 @@ patch leaves behind.
   checks.
 - The wake-phrase listener and utterance capture (build 2026-10-11.3 above) are core-module-only so
   far; the UI wiring and a real-microphone check are listed in that section.
+- Still unresolved: the commit-identity finding above.
+
+## October 14th, 2026: changes made while merging into main (the AionDX owner's review)
+
+The patch was merged as it came (commit 0091a9b; its own tests pass: `test-voice.js` 46, `dev-smoke-test.js` 16, `dev-smoke-test-real.js` 14). Three changes on top, in `aiondx-voice-ui.js`:
+
+- **Pacing on long chats.** The owner reported lag in chats of thousands of messages. AionUi draws every loaded message with no virtualization, and this file's render ran on every change of the page,
+  with a `querySelector` per reply row and a forced layout (`getClientRects`) for each composer. In the harness (`tools\dx-harness\quick-lag.js`, 3,000 rows, a reply streaming in) the original added about
+  70% to the browser's own time and 8 seconds of page queries; with these changes it costs about what no voice UI costs. On a page with over 400 messages the composer, reply and panel scans run at most every
+  400 ms and a repaint after a slow render waits (at most 0.75 s); a small page is painted on the next frame as before.
+- **Reply scan.** Rows already looked at carry `data-aiondx-voice` (1 has its button, 0 is not an agent reply, 2 was left for hover), so only new rows are walked; every 10 seconds all rows are looked at again in
+  case React dropped a button. On a big page only the newest 40 replies get their speaker button; an older reply gets its button when the pointer reaches it (a speaker button on every one of thousands of
+  replies doubled the page's layout cost). A small page has a speaker button on every reply, as designed.
+- **What leaves the PC.** The settings panel now says that what is said, and each reply played back, goes to the chosen provider under the user's own account and key, that nothing is sent until a key is entered
+  and a button pressed, and that the key is kept in AionDX's settings on this PC as typed. (The key sits in the same settings store the agents' own API can read; storing it with the operating system's
+  protection instead is a possible next step.)
+
+## October 20th, 2026: the speaker button works with no key
+
+K: "clicking the agent message narration button does nothing for me". With no ElevenLabs key the provider refused before anything was spoken and the button showed only an error state with a label nobody
+reads. The speaker button now falls back to the voice Windows already has (the browser's `speechSynthesis`: free, offline, nothing leaves the PC) when there is no provider, no key or no voice module; the
+reply is read in pieces of a sentence or two (the engine can stop partway through one long utterance); Stop works. The option `voice.system` (patch 0001's list, default on) turns the fall-back off. The
+panel's privacy text says so. An ElevenLabs key still wins when there is one. Speech to text has no free fall-back (the browser's recogniser needs Google's service), so the microphone still needs a key.
+
+## November 6th, 2026: merged onto current `origin/main` (render pacing + the system voice)
+
+`voice-core-elevenlabs` merged forward past the two sections above (62c4088, 49d2cc4, 87e39da) plus
+20 unrelated upstream commits, onto `origin/main`'s tip. Two real conflicts, both in content both
+sides had touched:
+
+- **`render()`.** The owner's `due()`-gated calls (`ensureMicButtons`/`ensurePlayButtons` every
+  400 ms, `ensureVoicePanel` every 1000 ms on a big page) merged alongside this side's
+  `ensureStopAllButtons()`/`ensureHandsFree()`/`ensureHandsFreeBadges()`, which `due()` did not know
+  about yet. Resolved by giving stop-all the same 400 ms gate as the mic button next to it (one
+  `due('mic', 400)` call, reused - `due()` stamps its own "last ran" the instant it returns true, so
+  calling it twice with the same name in one pass would make the second call see the first's stamp
+  and wrongly skip) and hands-free its own `due('handsfree', 400)` gate, kept separate so its cadence
+  can be tuned on its own later. All of this only matters on a big page; `due()` returns true
+  unconditionally otherwise, so no small-page behaviour changed.
+- **This file.** Both sides had appended to "Not yet done" / kept writing new sections past it;
+  resolved by keeping both bullets and both of the owner's sections (October 14th and 20th, above)
+  after this side's own build .2/.3/.4 and the October 17th transcribe-error section, in the order
+  each was actually written.
+
+Also renamed a stale `aionui-dx.js` comment reference (one spot, `aiondx-voice-ui.js`'s
+`findHfTarget` doc comment) to `aiondx-ui.js`, matching patch 0001's upstream rename. The `$root`
+build-tooling fix (2a002e6) needed no changes - `origin/main`'s `tools\build-release.ps1` still had
+only the hardcoded junction path this fix already replaces, and it merged in untouched.
+
+Full suite re-run after the merge, all green: `test-voice.js` 46/46, `test-wake.js` 27/27,
+`dev-smoke-test.js` 34/34, `dev-smoke-test-real.js` 18/18, `dev-smoke-test-handsfree-team.js` 12/12,
+and `dev-smoke-test-handsfree.js` - extended from 28 to 35 checks for the two interactions the merge
+raised and neither side's existing suite covered:
+
+- **Does hands-free's auto-play fall back to the system voice with no key?** Yes, by construction -
+  `waitForReplyThenPlay()` calls the same `startPlayback()` the manual speaker button does, so it
+  gets the same fallback for free. Worth noting for what it is, though: speech to text has no free
+  fall-back in this module (the October 20th section above says so), so hands-free's own wake-phrase
+  and utterance capture need a working provider regardless - clearing the key before enabling
+  hands-free just breaks the microphone, confirmed the hard way (the first version of this test did
+  exactly that and the wake phrase was never heard; `onTranscribeError` correctly reported "no
+  provider configured" on every failed clip, exactly as 1bb6fe4 was built to do, which is what
+  pointed at the real ordering problem). The realistic shape of "falls back to system voice" is a key
+  revoked mid-conversation, between a turn being sent and its reply coming back - the test now clears
+  the key in that window, after the utterance already sent with a working key.
+- **Does stop-all still stop a system-voice utterance, not just an Audio element?** Yes -
+  `systemSpeak()`'s `currentPlayback.audio` is a shim object whose `.pause()` calls
+  `speechSynthesis.cancel()`; `stopPlayback()` (which the stop-all button calls) only ever calls
+  `.pause()` on whatever `currentPlayback.audio` is, real `Audio` element or this shim, so no change
+  was needed on either side for this to already work - confirmed against a fake `speechSynthesis`
+  injected into the handsfree harness (real browser speech synthesis has no voices and nothing
+  reliable to wait on inside a headless, user-data-dir-less profile).
+
+Not re-tested: the `due()` gate on a page actually past the 400-message `bigPage()` threshold -
+none of the five harnesses build a page that large, and hands-free's own timers (VAD polling, the
+listen/speak state machine) run on their own `setInterval`/`setTimeout`, not inside `render()`, so
+the only big-page risk is `ensureHandsFree()`'s DOM re-attach noticing a swapped composer up to
+400 ms later than before. Judged low enough risk not to need a dedicated large-page harness for this
+merge; flagged here rather than silently skipped.

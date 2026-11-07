@@ -61,7 +61,7 @@ api = http.createServer((req, res) => {
   req.on('data', (c) => { raw += c; });
   req.on('end', () => {
     const url = new URL(req.url, 'http://x');
-    if (req.headers['x-aionui-runtime-token'] !== 'tok') return reply(res, 401, { success: false, message: 'Invalid runtime token' });
+    if (req.headers['x-aiondx-runtime-token'] !== 'tok') return reply(res, 401, { success: false, message: 'Invalid runtime token' });
     let m;
     if (req.method === 'GET' && url.pathname === '/api/teams') return reply(res, 200, { success: true, data: [] });
     if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/conversations\/([^/]+)$/))) return reply(res, 200, { success: true, data: { id: m[1], name: 'Project chat' } });
@@ -99,7 +99,7 @@ const baseEnv = (more) => ({
   TEMP: TMP, TMP: TMP, AIONDX_MCP_FILE: FILE, AIONDX_LOOP_LOG_DIR: TMP, AIONDX_LOOP_NO_ANCESTORS: '1', ...(more || {}),
 });
 const inChat = (more) => baseEnv({
-  AIONUI_BASE_URL: `http://127.0.0.1:${api.address().port}`, AIONUI_RUNTIME_TOKEN: 'tok', AIONUI_USER_ID: 'u1', AIONUI_CONVERSATION_ID: 'convH',
+  AIONDX_BASE_URL: `http://127.0.0.1:${api.address().port}`, AIONDX_RUNTIME_TOKEN: 'tok', AIONDX_USER_ID: 'u1', AIONDX_CONVERSATION_ID: 'convH',
   CLAUDE_CODE_OAUTH_TOKEN: 'sk-claude-secret', ...(more || {}),
 });
 // Async on purpose: spawnSync would block this process, and with it the stand-in API and the HTTP server.
@@ -206,7 +206,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
     /--param name=value/.test(r.out) && /--json-file/.test(r.out), r.out);
   r = await mcp('call', 'fix', 'env', '--param', 'name=FIXTURE_SECRET');
   check('the server gets its credential from the file', r.out.trim() === 'abc123', r.out);
-  r = await run(['mcp', 'call', 'fix', 'env', '--param', 'name=AIONUI_RUNTIME_TOKEN'], inChat());
+  r = await run(['mcp', 'call', 'fix', 'env', '--param', 'name=AIONDX_RUNTIME_TOKEN'], inChat());
   const r2 = await run(['mcp', 'call', 'fix', 'env', '--param', 'name=CLAUDE_CODE_OAUTH_TOKEN'], inChat());
   check("the server never gets the agent's AionUi token or Claude sign-in", r.out.trim() === '(unset)' && r2.out.trim() === '(unset)', r.out + r2.out);
   r = await mcp('call', 'fix', 'image');

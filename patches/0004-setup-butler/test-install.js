@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for install.js, against a throwaway AionUi data folder (AIONDX_AIONUI_DATA), never the
+ * Tests for install.js, against a throwaway AionUi data folder (AIONDX_AIONDX_DATA), never the
  * real one. Run: node patches\0004-setup-butler\test-install.js
  */
 'use strict';
@@ -15,7 +15,7 @@ let pass = 0, fail = 0;
 const check = (name, ok, detail) => { if (ok) { pass++; console.log('PASS  ' + name); } else { fail++; console.log('FAIL  ' + name + (detail ? '   ' + String(detail).slice(0, 300) : '')); } };
 
 const data = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-install-'));
-const run = (...args) => spawnSync(process.execPath, [INSTALL, ...args], { encoding: 'utf8', windowsHide: true, env: Object.assign({}, process.env, { AIONDX_AIONUI_DATA: data }) });
+const run = (...args) => spawnSync(process.execPath, [INSTALL, ...args], { encoding: 'utf8', windowsHide: true, env: Object.assign({}, process.env, { AIONDX_AIONDX_DATA: data }) });
 const dst = path.join(data, 'builtin-skills', 'auto-inject', 'aiondx-setup');
 
 let r = run('--check');

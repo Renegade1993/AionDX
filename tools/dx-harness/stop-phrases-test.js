@@ -1,8 +1,8 @@
 // stop-phrases-test.js: which of your messages switch a Loop off (patch 0001 saysStop).
 // Run: node tools\dx-harness\stop-phrases-test.js. Exit 0 only when every case is right.
-// Pulls STOP_RES, STOP_NOT_RES, STOP_SUBORD_RE and saysStop out of aionui-dx.js and runs them on sample messages.
+// Pulls STOP_RES, STOP_NOT_RES, STOP_SUBORD_RE and saysStop out of aiondx-ui.js and runs them on sample messages.
 const fs = require('fs');
-const src = fs.readFileSync(require('path').join(__dirname, '..', '..', 'patches', '0001-renderer-dx', 'aionui-dx.js'), 'utf8');
+const src = fs.readFileSync(require('path').join(__dirname, '..', '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'), 'utf8');
 const grab = (start, endMark) => { const i = src.indexOf(start); const j = src.indexOf(endMark, i); return src.slice(i, j + endMark.length); };
 const code = grab('  var STOP_RES = [', '];') + '\n' + grab('  var STOP_NOT_RES = [', '];') + '\n' + grab('  var STOP_SUBORD_RE =', ';') + '\n' +
   grab('  function saysStop(text) {', '\n    return false;\n  }') + '\nmodule.exports = saysStop;';

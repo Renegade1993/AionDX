@@ -201,6 +201,54 @@ async function pageTarget() {
     check('that error note is marked as a problem (not the neutral styling)',
       await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").getAttribute("data-ok")') === '0');
 
+    // ---- auto-play falls back to the system voice when no key is set, and stop-all can still
+    // stop it - the owner's merge brought in systemSpeak() as an alternative to a real Audio
+    // element, and hands-free's own auto-play (waitForReplyThenPlay) calls the same startPlayback()
+    // the manual speaker button does, so this should already work by construction; proving it
+    // live rather than trusting that reading, the same way the stale-DOM-reference bug turned out
+    // to need an actual re-render in a real harness rather than just reasoning about the code.
+    // The key is cleared only AFTER the utterance is sent, not before enabling hands-free: speech
+    // to text has no free fall-back in this module (PATCH.md says so plainly), so wake-phrase
+    // detection and utterance capture need a working provider too - clearing it any earlier just
+    // breaks the mic, never reaching a reply to auto-play at all. The realistic shape of this case
+    // is a key revoked mid-conversation (expired, removed in Settings) between a turn being sent
+    // and its reply coming back, not "no key, ever" - that case can never reach auto-play in the
+    // first place, hands-free or not. ----
+    await js(`window.__aionDxVoiceUI.setHfTestOpts({
+      levelSource: window.__hfLevelSource, createRecorder: window.__hfCreateRecorder,
+      pollMs: 10, minSpeechMs: 30, silenceMs: 50, threshold: 0.5, maxSegmentMs: 4000
+    })`);   // restored: the previous test broke createRecorder on purpose to force a startup failure
+    await js(`window.__conv.status = 'running'`);   // left 'finished' by the cycle above; a stale 'finished' here would let
+                                                       // waitForReplyThenPlay's poll grab message-a1's old reply instead of waiting for a new one
+
+    await humanClick('#aiondx-voice-handsfree');
+    check('hands-free starts again (provider still configured - the mic needs it)',
+      await waitFor('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"', 40));
+    await speak('Hey AionDX');
+    await waitFor('window.__aionDxVoiceUI.hfState().state === "listening"', 40);
+    await speak('Tell me a joke');
+    await waitFor('(window.__sentMessages || []).includes("Tell me a joke")', 40);
+    check('the utterance was sent while the key still worked',
+      await js('(window.__sentMessages || []).includes("Tell me a joke")'));
+
+    await js(`window.__aionDxVoice.setSettings({ provider: null, apiKey: null })`);   // the key goes away while the reply is in flight
+    await js(`window.__agentReply('No key needed for this one.')`);
+    await js(`window.__conv.status = 'finished'`);
+    check('the reply auto-plays through the system voice, not a dead-end error',
+      await waitFor('(window.__systemSpeechCalls || []).includes("No key needed for this one.")', 40),
+      JSON.stringify(await js('window.__systemSpeechCalls')));
+    check('the play button shows "playing" for the system-voice utterance too',
+      await waitFor('(document.querySelector("#message-a2 .aiondx-voice-play-btn") || {}).dataset && document.querySelector("#message-a2 .aiondx-voice-play-btn").dataset.state === "playing"', 20));
+
+    const cancelledBefore = await js('window.__systemSpeechCancelled');
+    await humanClick('.aiondx-voice-stopall-btn');
+    check('the stop-all button cancels the system voice (speechSynthesis.cancel, not audio.pause on nothing)',
+      (await js('window.__systemSpeechCancelled')) > cancelledBefore);
+    check('the play button settles back to idle after stop-all cancels the system voice',
+      await js('document.querySelector("#message-a2 .aiondx-voice-play-btn").dataset.state') === 'idle');
+    check('stop-all tore hands-free down too, same as it does for a real Audio element',
+      await js('window.__aionDxVoiceUI.hfState().active === false'));
+
   } catch (e) {
     check('smoke test ran without throwing', false, e.stack || String(e));
   }

@@ -20,6 +20,14 @@ Windows SmartScreen asks you to confirm it ("More info", then "Run anyway").
 - **Drafts that survive a restart.** What you typed, and the pictures and files you attached, are kept per chat.
 - **Schedule send, Stop that really stops, YOLO mode that does not ask about every Bash command, undo and redo in the
   message box,** and more.
+- **Voice (optional).** A microphone button in the message box and a speaker button on an agent's reply, through ElevenLabs
+  with your own account and key. Nothing is sent until you enter a key and press one of the buttons. With no key, the speaker
+  button reads the reply with the voice Windows already has.
+- **A right-click menu** with spelling suggestions, Copy link and Open link in browser, Copy image and Open image location,
+  and cut, copy and paste. Web links open in your system browser unless you choose a tab inside AionDX.
+- **Options an agent can change.** Every choice AionDX offers is listed (Settings > Appearance > AionDX options, or
+  `aiondx config list`) and can be read and set by your agents with `aiondx config`. A team lead can read and set each member's
+  agent, model and effort, and swap the agent in any slot, with `aiondx member`.
 - **A first screen that brings your setup over** from the other AI apps on the PC.
 - **Its own look,** its own name everywhere, and no sign-in with anyone.
 - **No telemetry.** The crash reports and usage analytics that AionUi sends to its own services are switched off. AionDX itself
@@ -74,6 +82,10 @@ node tools\test-installer-migrate.js                 # the installer, in a sandb
 node tools\smoke-standalone.js                       # the staged app, first run, in a throwaway profile
 node tools\test-live-undo.js                         # message-box undo, in the real app
 ```
+
+## Contributors
+
+- PotatoNateO: the voice feature (speech to text and text to speech, ElevenLabs first; `patches/0011-voice`).
 
 ## Licence and credits
 

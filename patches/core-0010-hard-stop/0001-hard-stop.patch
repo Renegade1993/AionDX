@@ -1,0 +1,631 @@
+diff --git a/crates/aionui-app/src/router/team_conversation_adapters.rs b/crates/aionui-app/src/router/team_conversation_adapters.rs
+index 1462f31..4394f8b 100644
+--- a/crates/aionui-app/src/router/team_conversation_adapters.rs
++++ b/crates/aionui-app/src/router/team_conversation_adapters.rs
+@@ -159,6 +159,11 @@ impl AgentTurnCancellationPort for TeamConversationAdapters {
+             .map_err(map_conversation_turn_error)
+     }
+ 
++    /// AionDX core-0010: the user wrote to this conversation; a Stop they pressed earlier no longer holds scheduled tasks back.
++    fn user_wrote(&self, conversation_id: &str) {
++        self.conversation_service.runtime_state().clear_user_stopped(conversation_id);
++    }
++
+     /// AionDX core-0002: the member's running turn takes the message at its next step, as a solo chat's does.
+     async fn steer_agent_turn(
+         &self,
+diff --git a/crates/aionui-conversation/src/background_stream.rs b/crates/aionui-conversation/src/background_stream.rs
+index cb48c81..e784513 100644
+--- a/crates/aionui-conversation/src/background_stream.rs
++++ b/crates/aionui-conversation/src/background_stream.rs
+@@ -74,6 +74,8 @@ pub(crate) struct BackgroundStreamWatcher {
+     /// Expiry for a pending `MessageLifecycle{Started}` (see
+     /// [`PENDING_STARTED_TTL`]); injectable so tests can use a short bound.
+     pub pending_started_ttl: std::time::Duration,
++    /// AionDX core-0010: ends the agent's turn. Called when the agent starts a turn of its own after the user pressed Stop.
++    pub cancel_when_stopped: Option<Arc<dyn Fn() + Send + Sync>>,
+ }
+ 
+ impl BackgroundStreamWatcher {
+@@ -113,6 +115,7 @@ impl BackgroundStreamWatcher {
+         // arming instant bounds its lifetime: a Started whose terminal echo was
+         // lost must not claim an unrelated later turn (see PENDING_STARTED_TTL).
+         let mut pending_user_msg: Option<(String, std::time::Instant)> = None;
++        let mut last_stop_guard: Option<std::time::Instant> = None;
+         loop {
+             let ev = match rx.recv().await {
+                 Ok(ev) => ev,
+@@ -264,6 +267,22 @@ impl BackgroundStreamWatcher {
+                             None
+                         }
+                     });
++                    // AionDX core-0010: the agent's own process started this turn (a background task finished, a monitor
++                    // fired), after the user pressed Stop and has not written since. It is ended, not shown: a Stop holds until
++                    // the user's next message. At most one cancel every 3 seconds, however many frames follow.
++                    if serving_client_msg_id.is_none() && self.runtime_state.is_user_stopped(&self.conversation_id) {
++                        if last_stop_guard.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(3)) {
++                            last_stop_guard = Some(std::time::Instant::now());
++                            warn!(
++                                conversation_id = %self.conversation_id,
++                                "background stream: the agent started a turn after the user's Stop; cancelling it"
++                            );
++                            if let Some(guard) = &self.cancel_when_stopped {
++                                guard();
++                            }
++                        }
++                        continue;
++                    }
+                     self.run_orphan_turn(ev.clone(), &mut rx, serving_client_msg_id).await;
+                 }
+                 // Start/Finish strays, usage (the pump broadcasts usage itself),
+@@ -572,6 +591,7 @@ mod tests {
+             runtime_state: Arc::clone(&runtime_state),
+             title_only,
+             pending_started_ttl,
++            cancel_when_stopped: None,
+         };
+         let handle = tokio::spawn(watcher.run(tx.subscribe()));
+         Rig {
+diff --git a/crates/aionui-conversation/src/runtime_state.rs b/crates/aionui-conversation/src/runtime_state.rs
+index 796bbb3..0bb5ddd 100644
+--- a/crates/aionui-conversation/src/runtime_state.rs
++++ b/crates/aionui-conversation/src/runtime_state.rs
+@@ -22,6 +22,9 @@ struct ConversationRuntimeState {
+     deleting_conversations: HashSet<String>,
+     cancelling_conversations: HashSet<String>,
+     restarting_conversations: HashSet<String>,
++    /// AionDX core-0010: conversations the user pressed Stop in. While one is here, nothing automatic (a scheduled
++    /// task) may start a turn in it; the user's next message takes it out.
++    user_stopped_conversations: HashSet<String>,
+     /// Cancels that arrived before the turn's agent registered, keyed by
+     /// conversation and holding the turn they were meant for.
+     deferred_cancels: HashMap<String, String>,
+@@ -253,6 +256,38 @@ impl ConversationRuntimeStateService {
+             .unwrap_or(false)
+     }
+ 
++    /// AionDX core-0010: the user pressed Stop in this conversation. Scheduled tasks skip it until the user writes again.
++    pub fn mark_user_stopped(&self, conversation_id: &str) {
++        match self.state.lock() {
++            Ok(mut state) => {
++                if state.user_stopped_conversations.insert(conversation_id.to_owned()) {
++                    info!(conversation_id, "conversation stopped by the user: automatic starts are held");
++                }
++            }
++            Err(_) => warn!(conversation_id, "runtime state lock poisoned while marking a user stop"),
++        }
++    }
++
++    /// The user wrote to the conversation: automatic starts may run again.
++    pub fn clear_user_stopped(&self, conversation_id: &str) {
++        match self.state.lock() {
++            Ok(mut state) => {
++                if state.user_stopped_conversations.remove(conversation_id) {
++                    info!(conversation_id, "the user wrote again: automatic starts are allowed");
++                }
++            }
++            Err(_) => warn!(conversation_id, "runtime state lock poisoned while clearing a user stop"),
++        }
++    }
++
++
++    pub fn is_user_stopped(&self, conversation_id: &str) -> bool {
++        self.state
++            .lock()
++            .map(|state| state.user_stopped_conversations.contains(conversation_id))
++            .unwrap_or(false)
++    }
++
+     pub fn mark_cancelling(&self, conversation_id: &str) {
+         match self.state.lock() {
+             Ok(mut state) => {
+@@ -506,6 +541,7 @@ impl ConversationRuntimeStateService {
+                 let had_deleting = state.deleting_conversations.remove(conversation_id);
+                 let had_cancelling = state.cancelling_conversations.remove(conversation_id);
+                 let had_restarting = state.restarting_conversations.remove(conversation_id);
++                state.user_stopped_conversations.remove(conversation_id);
+                 state.deferred_cancels.remove(conversation_id);
+                 state.pending_mcp_restarts.remove(conversation_id);
+                 state
+@@ -893,6 +929,23 @@ mod tests {
+         assert!(!state.is_cancelling("conv-1"));
+     }
+ 
++    #[test]
++    fn user_stop_is_per_conversation_and_ends_when_the_user_writes_again() {
++        let state = ConversationRuntimeStateService::default();
++        assert!(!state.is_user_stopped("conv-1"));
++
++        state.mark_user_stopped("conv-1");
++        assert!(state.is_user_stopped("conv-1"));
++        assert!(!state.is_user_stopped("conv-2"));
++
++        state.clear_user_stopped("conv-1");
++        assert!(!state.is_user_stopped("conv-1"));
++
++        state.mark_user_stopped("conv-1");
++        state.clear_conversation("conv-1");
++        assert!(!state.is_user_stopped("conv-1"));
++    }
++
+     #[test]
+     fn clear_conversation_removes_active_turn_and_lifecycle_flags() {
+         let state = Arc::new(ConversationRuntimeStateService::default());
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index d10d418..7d83355 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -721,6 +721,17 @@ impl ConversationService {
+             runtime_state: Arc::clone(&self.runtime_state),
+             title_only,
+             pending_started_ttl: crate::background_stream::PENDING_STARTED_TTL,
++            cancel_when_stopped: {
++                let agent = agent.clone();
++                Some(Arc::new(move || {
++                    let agent = agent.clone();
++                    tokio::spawn(async move {
++                        if let Err(error) = agent.cancel().await {
++                            tracing::warn!(error = %ErrorChain(&error), "could not cancel a turn the agent started after Stop");
++                        }
++                    });
++                }))
++            },
+         };
+         let rx = agent.subscribe();
+         let join = tokio::spawn(watcher.run(rx));
+@@ -4176,6 +4187,8 @@ impl ConversationService {
+                 reason: "Message content must not be empty".into(),
+             });
+         }
++        // AionDX core-0010: the user is writing again, so a Stop no longer holds scheduled tasks back.
++        self.runtime_state.clear_user_stopped(conversation_id);
+         let send_started_at = now_ms();
+ 
+         // Verify conversation exists and belongs to user
+@@ -4725,6 +4738,12 @@ impl ConversationService {
+                 id: conversation_id.to_owned(),
+             })?;
+ 
++        // AionDX core-0010: a Stop from the user is sticky, whether or not it finds a turn to end. Scheduled tasks skip this
++        // conversation until the user writes to it again (send_message clears this).
++        if matches!(cause, TurnCancelCause::UserRequested) {
++            self.runtime_state.mark_user_stopped(conversation_id);
++        }
++
+         let active_turn_id = self.runtime_state.active_turn_id_for(conversation_id);
+         if active_turn_id.as_deref() != Some(turn_id) {
+             info!(
+diff --git a/crates/aionui-cron/src/executor.rs b/crates/aionui-cron/src/executor.rs
+index 4667172..834e30b 100644
+--- a/crates/aionui-cron/src/executor.rs
++++ b/crates/aionui-cron/src/executor.rs
+@@ -682,6 +682,16 @@ impl JobExecutor {
+         saved_skill: Option<&SavedSkillContext>,
+         retry_on_busy: bool,
+     ) -> ExecutionResult {
++        // AionDX core-0010: a scheduled run never starts a turn in a conversation the user has stopped, until the user writes to
++        // it again. (A "Run now" from the user, retry_on_busy false, is the user's own action and goes ahead.)
++        if retry_on_busy && self.conversation_service.runtime_state().is_user_stopped(conversation_id) {
++            info!(
++                job_id = %job.id,
++                conversation_id,
++                "scheduled task skipped: the user stopped this conversation and has not written to it since"
++            );
++            return ExecutionResult::Skipped;
++        }
+         match self.get_conversation_row(conversation_id).await {
+             Ok(Some(_)) => {}
+             Ok(None) => {
+diff --git a/crates/aionui-cron/src/prompt.rs b/crates/aionui-cron/src/prompt.rs
+index 5bc9ef9..b072a94 100644
+--- a/crates/aionui-cron/src/prompt.rs
++++ b/crates/aionui-cron/src/prompt.rs
+@@ -32,7 +32,7 @@ pub fn build_new_conversation_with_skill_prompt(task_name: &str, user_prompt: &s
+ /// an automatic task instruction rather than as user chat.
+ pub fn build_existing_conversation_prompt(task_name: &str, schedule_desc: &str, user_prompt: &str) -> String {
+     format!(
+-        "[Scheduled Task Execution]\nTask: {task_name}\nSchedule: {schedule_desc}\n\nThis message is NOT a conversation from the user — it is a scheduled task triggered automatically.\nThe text below is a TASK INSTRUCTION that you must execute, not something the user is saying to you.\n\nRules:\n1. Treat the instruction as a command to perform, not as a chat message to respond to.\n2. Execute it directly — do NOT ask clarifying questions.\n3. If the task requires external data (news, weather, etc.), search for the latest information.\n\nTask instruction:\n{user_prompt}"
++        "[Scheduled Task Execution]\nTask: {task_name}\nSchedule: {schedule_desc}\n\nThis message is NOT a conversation from the user — it is a scheduled task triggered automatically. The user did not send it just now.\nThe text below is a TASK INSTRUCTION, not something the user is saying to you.\n\nRules:\n1. The user outranks this task. If the user has told you to stop, or has written to you since this task was set up and is waiting for an answer, do not run the task: answer the user, and say the task was waiting.\n2. Otherwise treat the instruction as a command to perform, not as a chat message to respond to.\n3. Execute it directly — do NOT ask clarifying questions.\n4. If the task requires external data (news, weather, etc.), search for the latest information.\n\nTask instruction:\n{user_prompt}"
+     )
+ }
+ 
+diff --git a/crates/aionui-cron/src/service.rs b/crates/aionui-cron/src/service.rs
+index 232a915..18fea88 100644
+--- a/crates/aionui-cron/src/service.rs
++++ b/crates/aionui-cron/src/service.rs
+@@ -47,6 +47,10 @@ const PLACEHOLDER_PATTERNS: &[&str] = &[
+     "write your",
+     "put your",
+ ];
++/// AionDX core-0010: at start-up a job whose time passed this long ago is recorded as missed, not run.
++const MISSED_ON_START_GRACE_MS: i64 = 120_000;
++/// AionDX core-0010: at start-up an occurrence that died mid-run is run again only when it began this recently.
++const RECOVER_UNFINISHED_WITHIN_MS: i64 = 10 * 60 * 1_000;
+ const RUN_LEASE_MS: i64 = 60_000;
+ const RUN_LEASE_HEARTBEAT_MS: u64 = 20_000;
+ const RUN_HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+@@ -523,8 +527,13 @@ impl CronService {
+                 }
+             };
+ 
++            // AionDX core-0010: an occurrence that is overdue when AionCore starts is not run. The scheduler fired every such
++            // job at once (the first timer's time had passed), so a task missed over days ran the moment the app opened, and
++            // an occurrence that died mid-run was run again. A system resume already treats a missed run this way (see
++            // `handle_system_resume`); start-up now does the same: it is recorded as missed, the conversation gets a notice,
++            // and the job waits for its next time.
+             match self.repo.get_recoverable_run(&job.id, now).await {
+-                Ok(Some(run)) => {
++                Ok(Some(run)) if now - run.scheduled_at <= RECOVER_UNFINISHED_WITHIN_MS => {
+                     info!(
+                         job_id = %job.id,
+                         scheduled_at = run.scheduled_at,
+@@ -533,7 +542,26 @@ impl CronService {
+                     );
+                     self.scheduler.schedule_retry(&job.id, run.scheduled_at, run.wake_at);
+                 }
+-                Ok(None) => self.scheduler.schedule_job(&job),
++                Ok(Some(run)) => {
++                    info!(
++                        job_id = %job.id,
++                        scheduled_at = run.scheduled_at,
++                        "Unfinished cron occurrence is too old to run again; marking it missed"
++                    );
++                    self.mark_missed_on_start(&job).await;
++                }
++                Ok(None) => {
++                    if job.next_run_at.is_some_and(|next| now - next > MISSED_ON_START_GRACE_MS) {
++                        info!(
++                            job_id = %job.id,
++                            conversation_id = %job.conversation_id,
++                            "Start-up: missed job detected, marking missed without auto-execution"
++                        );
++                        self.mark_missed_on_start(&job).await;
++                    } else {
++                        self.scheduler.schedule_job(&job);
++                    }
++                }
+                 Err(error) => {
+                     warn!(job_id = %job.id, error = %error, "Failed to inspect recoverable cron run");
+                     self.scheduler.schedule_job(&job);
+@@ -1405,6 +1433,16 @@ impl CronService {
+         self.scheduler.reschedule_job(&updated);
+     }
+ 
++    /// AionDX core-0010: the same bookkeeping a system resume does for a missed job, at start-up.
++    async fn mark_missed_on_start(&self, job: &CronJob) {
++        self.record_missed_execution(job).await;
++        self.insert_missed_job_tips(job).await;
++        self.reschedule_after_missed(job).await;
++        if let Some(user_id) = self.owner_user_id_for_job(job).await {
++            self.emitter.emit_job_executed(&user_id, &job.id, "missed", None);
++        }
++    }
++
+     async fn record_missed_execution(&self, job: &CronJob) {
+         let params = UpdateCronJobParams {
+             last_status: Some(Some("missed".into())),
+diff --git a/crates/aionui-cron/tests/prompt_test.rs b/crates/aionui-cron/tests/prompt_test.rs
+index f733d69..3d81b7d 100644
+--- a/crates/aionui-cron/tests/prompt_test.rs
++++ b/crates/aionui-cron/tests/prompt_test.rs
+@@ -35,7 +35,7 @@ fn build_existing_conversation_prompt_matches_frontend_copy() {
+     let prompt = build_existing_conversation_prompt("Daily Report", "Every day at 9am", "Summarize it.");
+     assert_eq!(
+         prompt,
+-        "[Scheduled Task Execution]\nTask: Daily Report\nSchedule: Every day at 9am\n\nThis message is NOT a conversation from the user — it is a scheduled task triggered automatically.\nThe text below is a TASK INSTRUCTION that you must execute, not something the user is saying to you.\n\nRules:\n1. Treat the instruction as a command to perform, not as a chat message to respond to.\n2. Execute it directly — do NOT ask clarifying questions.\n3. If the task requires external data (news, weather, etc.), search for the latest information.\n\nTask instruction:\nSummarize it."
++        "[Scheduled Task Execution]\nTask: Daily Report\nSchedule: Every day at 9am\n\nThis message is NOT a conversation from the user — it is a scheduled task triggered automatically. The user did not send it just now.\nThe text below is a TASK INSTRUCTION, not something the user is saying to you.\n\nRules:\n1. The user outranks this task. If the user has told you to stop, or has written to you since this task was set up and is waiting for an answer, do not run the task: answer the user, and say the task was waiting.\n2. Otherwise treat the instruction as a command to perform, not as a chat message to respond to.\n3. Execute it directly — do NOT ask clarifying questions.\n4. If the task requires external data (news, weather, etc.), search for the latest information.\n\nTask instruction:\nSummarize it."
+     );
+ }
+ 
+diff --git a/crates/aionui-team/src/ports.rs b/crates/aionui-team/src/ports.rs
+index 8bf30df..e3e0c47 100644
+--- a/crates/aionui-team/src/ports.rs
++++ b/crates/aionui-team/src/ports.rs
+@@ -279,4 +279,8 @@ pub trait AgentTurnCancellationPort: Send + Sync {
+             reason: "not supported by this port",
+         })
+     }
++
++    /// AionDX core-0010: the user wrote to this member's conversation, so a Stop they pressed earlier no longer holds
++    /// scheduled tasks back. The default does nothing (ports with no such state need no change).
++    fn user_wrote(&self, _conversation_id: &str) {}
+ }
+diff --git a/crates/aionui-team/src/prompts/mod.rs b/crates/aionui-team/src/prompts/mod.rs
+index 27d2be1..03f6e1e 100644
+--- a/crates/aionui-team/src/prompts/mod.rs
++++ b/crates/aionui-team/src/prompts/mod.rs
+@@ -141,10 +141,9 @@ pub fn build_wake_payload(
+ 
+     payload.push_str(&wake_summary::render_task_board_summary(agent, tasks, current_slot_ids));
+ 
+-    payload.push_str(&format!(
+-        "You are **{}** (role: {}). Proceed with your work.\n",
+-        agent.name, agent.role,
+-    ));
++    // AionDX core-0010: this closing line used to end "Proceed with your work." Every wake carries it, a wake that comes after
++    // the user cancelled or rejected something included, and an agent reads it as the user's permission to carry on.
++    payload.push_str(&format!("You are **{}** (role: {}).\n", agent.name, agent.role));
+ 
+     payload
+ }
+diff --git a/crates/aionui-team/src/service.rs b/crates/aionui-team/src/service.rs
+index b6f0e1a..090f10f 100644
+--- a/crates/aionui-team/src/service.rs
++++ b/crates/aionui-team/src/service.rs
+@@ -1673,13 +1673,13 @@ impl TeamSessionService {
+             |_| {},
+         );
+ 
+-        if let Err(err) = session.try_start_recovery_drain("ensure_session_ready").await {
+-            warn!(
+-                team_id,
+-                error = %err,
+-                "team recovery scan failed after session ensure"
+-            );
+-        }
++        // AionDX core-0010: opening a team (the page asks for its session on every visit) never starts an agent. The lead's
++        // unread messages used to be turned into work here, so a visit alone made the lead run. They stay unread, and the
++        // lead reads all of them with the next message the user sends it.
++        info!(
++            team_id,
++            "team session ready; the recovery scan is not run on open (nothing starts an agent until the user sends a message)"
++        );
+ 
+         self.broadcast_session_status(&user_id, team_id, TeamSessionStatus::Ready, None, |p| {
+             p.server_count = Some(agents_snapshot.len());
+diff --git a/crates/aionui-team/src/session.rs b/crates/aionui-team/src/session.rs
+index cafd3ab..7628ba3 100644
+--- a/crates/aionui-team/src/session.rs
++++ b/crates/aionui-team/src/session.rs
+@@ -584,7 +584,7 @@ impl TeamSession {
+             .find_lead_slot_id()
+             .await
+             .ok_or_else(|| TeamError::AgentNotFound("no lead agent in team".into()))?;
+-        self.enqueue_user_message(&lead_slot_id, TeamRunTargetRole::Lead, content, files)
++        self.deliver_user_message(&lead_slot_id, TeamRunTargetRole::Lead, content, files)
+             .await
+     }
+ 
+@@ -595,10 +595,69 @@ impl TeamSession {
+         files: Option<Vec<String>>,
+     ) -> Result<TeamRunAckResponse, TeamError> {
+         let agent = self.scheduler.get_agent(slot_id).await?;
+-        self.enqueue_user_message(slot_id, target_role_for(agent.role), content, files)
++        self.deliver_user_message(slot_id, target_role_for(agent.role), content, files)
+             .await
+     }
+ 
++    /// AionDX core-0010: a message the user writes while the member is busy goes into the running turn when that turn can
++    /// take a message mid-turn, so the agent reads it before its next step and not after it has finished. Otherwise it is
++    /// queued in order, as before. Slash commands stay queued.
++    async fn deliver_user_message(
++        &self,
++        slot_id: &str,
++        role: TeamRunTargetRole,
++        content: &str,
++        files: Option<Vec<String>>,
++    ) -> Result<TeamRunAckResponse, TeamError> {
++        let ack = self.enqueue_user_message(slot_id, role, content, files).await?;
++        if matches!(ack.enqueue_status, TeamMessageEnqueueStatus::Queued) && !content.trim_start().starts_with('/') {
++            if let Err(error) = self.hand_queued_message_to_running_turn(slot_id, &ack.message_id).await {
++                debug!(team_id = %self.team.id, slot_id, error = %error, "could not hand the new user message to the running turn");
++            }
++        }
++        Ok(ack)
++    }
++
++    /// Hand one queued user message to the member's running turn when the backend takes messages mid-turn. The message
++    /// leaves the queue when it is taken; when it is not, it stays where it is (queue order is not changed).
++    async fn hand_queued_message_to_running_turn(&self, slot_id: &str, message_id: &str) -> Result<(), TeamError> {
++        let agent = self.scheduler.get_agent(slot_id).await?;
++        let rows = self
++            .mailbox
++            .peek_unread_by_ids(&self.team.id, slot_id, &[message_id.to_owned()])
++            .await?;
++        let Some(row) = rows.into_iter().next() else {
++            return Ok(());
++        };
++        if row.from_agent_id != "user" {
++            return Ok(());
++        }
++        let steered = self
++            .cancellation_port
++            .steer_agent_turn(
++                &self.user_id,
++                &agent.conversation_id,
++                &row.content,
++                row.files.clone().unwrap_or_default(),
++                false,
++            )
++            .await
++            .map_err(|error| TeamError::InvalidRequest(error.to_string()))?;
++        if let AgentTurnSteerOutcome::Delivered { turn_id } = steered {
++            if self.work_coordinator.take_queued_message(slot_id, message_id) {
++                self.mailbox.mark_read_batch(&self.team.id, &[message_id.to_owned()]).await?;
++            }
++            info!(
++                team_id = %self.team.id,
++                slot_id,
++                turn_id = %turn_id,
++                message_id,
++                "new user message delivered into the running turn"
++            );
++        }
++        Ok(())
++    }
++
+     /// Lazily bring up a teammate runtime on delivery. When the slot has no
+     /// running event loop, synchronously reserve its attach lease — this flips
+     /// the registry snapshot to `Attaching` immediately so both the enqueue ack
+@@ -664,6 +723,8 @@ impl TeamSession {
+         self.ensure_member_runtime_lazy(slot_id, false).await?;
+         self.publish_runtime_constraint(slot_id).await?;
+         let agent = self.scheduler.get_agent(slot_id).await?;
++        // AionDX core-0010: the user is writing to this member again, so a Stop no longer holds scheduled tasks back.
++        self.cancellation_port.user_wrote(&agent.conversation_id);
+         // Fallback classification when the message is NOT a recognized command:
+         // an active team run makes it an intervention, otherwise an ordinary
+         // user message (unchanged pre-fix behaviour → zero regression).
+@@ -1283,13 +1344,14 @@ impl TeamSession {
+         slot_id: &str,
+         reason: Option<String>,
+     ) -> Result<(), TeamError> {
+-        if self.team_run_manager.current_active_run_id().as_deref() != Some(team_run_id) {
+-            return Err(TeamError::InvalidRequest(format!(
+-                "team run {team_run_id} is not active"
+-            )));
+-        }
++        // AionDX core-0010: pausing a member does not need a team run. A turn started by a scheduled task, or one that began
++        // after its run ended, has no active run, and Stop used to do nothing then ("team run X is not active"). The member is
++        // paused whatever run the page names; the run in the events is the active one, or the one named when there is none.
++        let active_run = self.team_run_manager.current_active_run_id();
++        let team_run_id = active_run.as_deref().unwrap_or(team_run_id);
+         let outcome = self.work_coordinator.pause_slot(slot_id);
+         if let Some(target) = outcome.cancel_target {
++            let turn_started = target.turn_id.is_some();
+             if let Some(turn_id) = target.turn_id {
+                 let agent = self.scheduler.get_agent(slot_id).await?;
+                 self.cancellation_port
+@@ -1312,6 +1374,13 @@ impl TeamSession {
+                 );
+             }
+             self.work_coordinator.cancel_batch(&target.batch, "slot_paused");
++            // AionDX core-0010: the agent already read what this turn opened with. A Stop must not leave those messages unread, or
++            // the next turn opens with them again as if they were new.
++            if turn_started && !target.batch.mailbox_message_ids.is_empty() {
++                self.mailbox
++                    .mark_read_batch(&self.team.id, &target.batch.mailbox_message_ids)
++                    .await?;
++            }
+             if outcome.slot.role == TeamRunTargetRole::Teammate {
+                 self.notify_leader_child_interrupted(slot_id, reason).await?;
+             }
+@@ -2878,7 +2947,10 @@ mod tests {
+             reason: "agent cannot take a message mid-turn",
+         });
+         let (session, release_tx, _first) = session_with_running_worker(port.clone()).await;
+-        let queued = session.send_message_to_agent("worker-1", "please do this next", None).await.unwrap();
++        let queued = session
++            .enqueue_user_message("worker-1", TeamRunTargetRole::Teammate, "please do this next", None)
++            .await
++            .unwrap();
+         let moved = session.promote_queued_message_from_user("worker-1", &queued.message_id).await.unwrap();
+         assert_eq!(moved.outcome, TeamSteerOutcome::MovedToFront);
+         assert!(session.mailbox.peek_unread("t1", "worker-1").await.unwrap().iter().any(|m| m.id == queued.message_id));
+@@ -2891,7 +2963,10 @@ mod tests {
+             turn_id: "turn-background".into(),
+         });
+         let (session, release_tx, _first) = session_with_running_worker(port).await;
+-        let queued = session.send_message_to_agent("worker-1", "please do this next", None).await.unwrap();
++        let queued = session
++            .enqueue_user_message("worker-1", TeamRunTargetRole::Teammate, "please do this next", None)
++            .await
++            .unwrap();
+         let handed = session.promote_queued_message_from_user("worker-1", &queued.message_id).await.unwrap();
+         assert_eq!(handed.outcome, TeamSteerOutcome::DeliveredMidturn);
+         assert!(!session.mailbox.peek_unread("t1", "worker-1").await.unwrap().iter().any(|m| m.id == queued.message_id));
+@@ -2907,6 +2982,19 @@ mod tests {
+         session.stop();
+     }
+ 
++    #[tokio::test]
++    async fn a_message_sent_to_a_busy_member_is_handed_to_the_running_turn_at_once() {
++        // core-0010: the send itself does what the promote call does, and the message leaves the queue.
++        let port = SteeringPort::new(crate::ports::AgentTurnSteerOutcome::Delivered {
++            turn_id: "turn-background".into(),
++        });
++        let (session, release_tx, _first) = session_with_running_worker(port).await;
++        let sent = session.send_message_to_agent("worker-1", "look at this first", None).await.unwrap();
++        assert!(!session.mailbox.peek_unread("t1", "worker-1").await.unwrap().iter().any(|m| m.id == sent.message_id));
++        release_tx.send(()).unwrap();
++        session.stop();
++    }
++
+     #[derive(Default)]
+     struct NoopProjectionStore;
+ 
+diff --git a/crates/aionui-team/src/work_coordinator/coordinator.rs b/crates/aionui-team/src/work_coordinator/coordinator.rs
+index 028fa42..a92ea12 100644
+--- a/crates/aionui-team/src/work_coordinator/coordinator.rs
++++ b/crates/aionui-team/src/work_coordinator/coordinator.rs
+@@ -106,6 +106,9 @@ pub(super) struct CoordinatorState {
+     pub(super) enqueue_leases: HashMap<String, EnqueueLeaseRecord>,
+     interrupted_batches: HashMap<String, BatchInterruptMetadata>,
+     next_operation_id: u64,
++    /// AionDX core-0010: set when the user sends this session a message. Until then the unread mailbox rows left over from
++    /// an earlier session are not turned into work, so opening a team (which starts its session) starts no agent.
++    user_has_written: bool,
+ }
+ 
+ pub(crate) struct SlotWorkCoordinator {
+@@ -121,12 +124,19 @@ impl SlotWorkCoordinator {
+             team_id,
+             session_generation,
+             run_causality,
+-            state: Mutex::new(CoordinatorState::default()),
++            state: Mutex::new(CoordinatorState {
++                // The coordinator's own unit tests exercise recovery as it was.
++                user_has_written: cfg!(test),
++                ..CoordinatorState::default()
++            }),
+         }
+     }
+ 
+     pub(crate) fn acquire_enqueue(&self, request: EnqueueRequest) -> Result<EnqueueLease, TeamError> {
+         let mut state = self.lock_state();
++        if matches!(request.binding, CausalBinding::UserVisible) {
++            state.user_has_written = true;
++        }
+         let slot = state
+             .slots
+             .entry(request.slot_id.clone())
+@@ -382,7 +392,9 @@ impl SlotWorkCoordinator {
+         }
+ 
+         let mut created_recovery_intent_ids = Vec::new();
+-        for message_id in unread_message_ids {
++        // AionDX core-0010: no recovery work until the user has written to this session (see `user_has_written`).
++        let recover = state.user_has_written;
++        for message_id in unread_message_ids.iter().filter(|_| recover) {
+             let already_owned = state.intents.values().any(|intent| {
+                 intent.slot_id == slot_id
+                     && intent.mailbox_message_id.as_deref() == Some(message_id.as_str())
+diff --git a/crates/aionui-team/tests/session_service_integration.rs b/crates/aionui-team/tests/session_service_integration.rs
+index df6b228..181a0ce 100644
+--- a/crates/aionui-team/tests/session_service_integration.rs
++++ b/crates/aionui-team/tests/session_service_integration.rs
+@@ -2361,29 +2361,14 @@ async fn recovery_creates_system_run_intents_without_restoring_old_memory_run()
+ 
+     svc.ensure_session("user1", &created.id).await.expect("ensure");
+ 
+-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+-        loop {
+-            if !turn_port.requests.lock().unwrap().is_empty() {
+-                break;
+-            }
+-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+-        }
+-    })
+-    .await
+-    .expect("recovery turn should run");
+-
+-    let requests = turn_port.requests.lock().unwrap();
+-    assert_eq!(requests.len(), 1);
+-    assert_eq!(requests[0].slot_id, lead_slot_id);
+-    // Recovery drain now runs the recovered turn inside a freshly opened
+-    // SystemLifecycle run (not run-less background, and not a restored
+-    // pre-restart run), so the recovered turn carries a run id.
++    // AionDX core-0010: opening a team starts no agent. The unread backlog stays unread until the user writes to the lead.
++    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+     assert!(
+-        requests[0].team_run_id.is_some(),
+-        "recovery work must run inside a system run, not run-less background"
++        turn_port.requests.lock().unwrap().is_empty(),
++        "opening a team must not run a recovery turn for the unread backlog"
+     );
++    let _ = &lead_slot_id;
+ }
+-
+ #[tokio::test]
+ async fn teammate_first_wake_uses_canonical_prompt_at_service_boundary() {
+     let (svc, _team_repo, turn_port, _conv_repo) = setup_with_recording_turn_port();

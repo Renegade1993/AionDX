@@ -27,7 +27,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const SRC = path.join(__dirname, 'skill', 'aiondx-setup');
-const DATA = process.env.AIONDX_AIONUI_DATA || path.join(process.env.APPDATA || '', 'AionUi', 'aionui');
+const DATA = process.env.AIONDX_AIONDX_DATA || path.join(process.env.APPDATA || '', 'AionUi', 'aionui');
 const AUTO = path.join(DATA, 'builtin-skills', 'auto-inject');
 const DST = path.join(AUTO, 'aiondx-setup');
 const STAMP = '.aiondx';

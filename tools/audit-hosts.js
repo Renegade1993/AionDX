@@ -15,7 +15,7 @@ const files = [];
 (function walk(d) {
   for (const e of fs.readdirSync(d, { withFileTypes: true })) {
     const p = path.join(d, e.name);
-    if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (/out[\/\\](renderer[\/\\]assets|main|preload)[\/\\].*\.js$/.test(p) && !/aionui-dx\.js$/.test(p)) files.push(p);
+    if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (/out[\/\\](renderer[\/\\]assets|main|preload)[\/\\].*\.js$/.test(p) && !/aiondx-ui\.js$/.test(p)) files.push(p);
   }
 })(dir);
 const hosts = {};

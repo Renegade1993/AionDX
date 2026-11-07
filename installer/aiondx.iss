@@ -455,6 +455,8 @@ begin
   if Param('AIONUIDIR') <> '' then Args := Args + ' --dir "' + Param('AIONUIDIR') + '" --no-elevate';
   if Param('AIONUIDATA') <> '' then Args := Args + ' --data "' + Param('AIONUIDATA') + '"';
   Say('moving from AionUi: ' + Helper + ' ' + Args);
+  WizardForm.StatusLabel.WordWrap := True;
+  WizardForm.StatusLabel.Height := WizardForm.ProgressGauge.Top - WizardForm.StatusLabel.Top - ScaleY(4);
   WizardForm.StatusLabel.Caption := 'Moving from AionUi: backing up your chats and removing AionUi...';
   WizardForm.FilenameLabel.Caption := '';
   if not Exec(Helper, Args, '', SW_HIDE, ewWaitUntilTerminated, Code) then
@@ -536,6 +538,85 @@ begin
   Say('install manifest ' + DataDir() + '\install.json (' + State + ')');
 end;
 
+{ ---- the data folder (a request of 2026-11-01): %APPDATA%\AionUi becomes %APPDATA%\AionDX, with every chat intact ----
+  The work is done by resources\aiondx\bin\aiondx-data-move.js (patches\0016-data-move), run on the node.exe AionDX ships, while the apps are closed.
+  It checks first and changes nothing unless every check passes, backs up the chats database, renames the folder, rewrites the old path in every
+  place it is stored (the database, Claude Code's per-chat history folders, small settings files), verifies the result (rows, integrity, no old path
+  left, every working folder as before), and undoes everything on any failure. A refusal or a failure leaves AionDX using the AionUi folder where
+  it is, so nothing is ever left half moved. Test hooks: /DATAROOT= /DATAHOME= /DATALOCAL= /NODE= point the step at made-up folders; without
+  /DATAROOT the step is skipped when a test points the migration at made-up data, and with /DATAMOVE=no. }
+procedure MoveDataFolder();
+var Root, Home, Loc, Node, Tool, Args: String; Rc: Integer;
+begin
+  Root := Param('DATAROOT');
+  if (Root = '') and ((Param('AIONUIDATA') <> '') or (Lowercase(Param('DATAMOVE')) = 'no')) then
+  begin
+    Say('data folder: not moved (a test, or /DATAMOVE=no)');
+    Exit;
+  end;
+  if Root = '' then Root := ExpandConstant('{userappdata}');
+  Home := Param('DATAHOME');
+  if Home = '' then Home := GetEnv('USERPROFILE');
+  Loc := Param('DATALOCAL');
+  if Loc = '' then Loc := ExpandConstant('{localappdata}');
+  if not DirExists(Root + '\AionUi') then begin Say('data folder: no earlier folder to move'); Exit; end;
+  if Running('AionUi.exe') > 0 then begin Say('data folder: AionUi is running; not moved'); Exit; end;
+  if Running('AionDX.exe') > 0 then begin Say('data folder: AionDX is running; not moved (it keeps using the AionUi folder where it is)'); Exit; end;
+  Node := Param('NODE');
+  if Node = '' then Node := ExpandConstant('{app}\resources\bundled-aioncore\win32-x64\managed-resources\node\node-v24.11.0-win-x64\node.exe');
+  Tool := ExpandConstant('{app}\resources\aiondx\bin\aiondx-data-move.js');
+  if (not FileExists(Node)) or (not FileExists(Tool)) then begin Say('data folder: the move tool is missing (' + Node + ' / ' + Tool + '); not moved'); Exit; end;
+  Args := '--no-warnings "' + Tool + '" run --roaming "' + Root + '" --home "' + Home + '" --local "' + Loc + '"';
+  Say('data folder: moving ' + Root + '\AionUi to ' + Root + '\AionDX (backup, rewrite of the stored paths, verification; details in ' + Loc + '\AionDX\data-move)');
+  if not WizardSilent then
+  begin
+    // one short line: the label does not wrap by default, so a long sentence ran off the right edge of the window
+    WizardForm.StatusLabel.WordWrap := True;
+    WizardForm.StatusLabel.Height := WizardForm.ProgressGauge.Top - WizardForm.StatusLabel.Top - ScaleY(4);
+    WizardForm.StatusLabel.Caption := 'Moving your chats to AionDX. This can take a few minutes.';
+    WizardForm.FilenameLabel.Caption := '';
+  end;
+  if not Exec(Node, Args, '', SW_HIDE, ewWaitUntilTerminated, Rc) then
+  begin
+    Say('data folder: the move tool could not start; not moved');
+    Exit;
+  end;
+  Say('data folder: the move tool finished with exit code ' + IntToStr(Rc));
+  if Rc = 0 then Say('data folder: moved, verified; the backup of the chats database is in ' + Loc + '\AionDX\data-move')
+  else if Rc = 3 then Say('data folder: nothing to move')
+  else if Rc = 8 then
+  begin
+    Say('data folder: FAILED and could not be fully undone; the backup is in ' + Loc + '\AionDX\data-move');
+    SuppressibleMsgBox('AionDX could not finish moving your chats and could not fully undo it. Nothing was deleted: a backup of your chats database is in ' + Loc + '\AionDX\data-move. Run aiondx-data-move.cmd rollback from ' + ExpandConstant('{app}\resources\aiondx\bin') + ' to put everything back, or ask for help.', mbError, MB_OK, IDOK);
+  end
+  else
+  begin
+    Say('data folder: not moved (exit code ' + IntToStr(Rc) + '); AionDX uses the AionUi folder where it is');
+    SuppressibleMsgBox('AionDX did not move your chats to its own folder (see ' + Loc + '\AionDX\data-move for why). Nothing was changed: AionDX will keep using your AionUi folder, and every chat is as it was. A program still working in one of your chat folders (an agent left running) is the usual reason: close it, then run aiondx-data-move.cmd run from ' + ExpandConstant('{app}\resources\aiondx\bin') + ' to finish the move.', mbInformation, MB_OK, IDOK);
+  end;
+end;
+{ ---- the Claude launcher in %APPDATA%\npm (2026-11-02) ----
+  A PC that already had AionDX's launcher there (claude-account-router.js and its companions) kept the old copy across an update. From 0.26.0
+  AionCore names a chat to its agent as AIONDX_CONVERSATION_ID, which the old copy does not read: it passed every Claude agent through with
+  no per-chat account and no usage readings. resources\aiondx\bin\aiondx-refresh-launcher.js replaces the four files that differ (the old ones
+  are kept as .bak-<date>) and points the router's config at the moved chats database. A router that is not AionDX's is left alone. }
+procedure RefreshLauncher();
+var Root, Loc, Node, Tool: String; Rc: Integer;
+begin
+  Root := Param('DATAROOT');
+  if (Root = '') and (Param('AIONUIDATA') <> '') then begin Say('launcher: not refreshed (a test)'); Exit; end;
+  if Root = '' then Root := ExpandConstant('{userappdata}');
+  Loc := Param('DATALOCAL');
+  if Loc = '' then Loc := ExpandConstant('{localappdata}');
+  Node := Param('NODE');
+  if Node = '' then Node := ExpandConstant('{app}\resources\bundled-aioncore\win32-x64\managed-resources\node\node-v24.11.0-win-x64\node.exe');
+  Tool := ExpandConstant('{app}\resources\aiondx\bin\aiondx-refresh-launcher.js');
+  if (not FileExists(Node)) or (not FileExists(Tool)) then begin Say('launcher: the refresh tool is missing; not refreshed'); Exit; end;
+  if not Exec(Node, '--no-warnings "' + Tool + '" --roaming "' + Root + '" --local "' + Loc + '"', '', SW_HIDE, ewWaitUntilTerminated, Rc) then
+    Say('launcher: the refresh tool could not start')
+  else
+    Say('launcher: refresh finished with exit code ' + IntToStr(Rc) + ' (details in ' + Loc + '\AionDX\logs\launcher-refresh.log)');
+end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
@@ -543,6 +624,8 @@ begin
     Say('installed to ' + ExpandConstant('{app}'));
     WriteInstallManifest('installed', 'install');
     if MovingToAionDx() then RunMigration();
+    MoveDataFolder();
+    RefreshLauncher();
   end;
   if CurStep = ssDone then
   begin

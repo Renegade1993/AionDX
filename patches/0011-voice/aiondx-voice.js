@@ -5,7 +5,7 @@
  *
  * ENVIRONMENT. This file depends on nothing but fetch, Blob and FormData, which Node 18+ and every
  * browser both have, so it runs unchanged in the renderer (as window.AionDxVoice, a plain global
- * script like aionui-dx.js) and under plain Node for its own tests (as module.exports). It touches
+ * script like aiondx-ui.js) and under plain Node for its own tests (as module.exports). It touches
  * no DOM and no localStorage.
  *
  * THE INTERFACE. A VoiceProvider is { id, name, synthesize(text, opts) -> Promise<Blob>,

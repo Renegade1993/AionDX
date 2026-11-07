@@ -10,7 +10,7 @@
  * Themes: `theme.userThemes` and `theme.activeId` in AionUi's settings store (GET/PUT
  * /api/settings/client), where Settings > Appearance keeps user themes; AionDX's are upserted by id
  * and every other theme is left alone. AionUi reads the store once at startup, so a change shows
- * after its next start. Needs the runtime token of an AionUi chat's shell (AIONUI_* variables).
+ * after its next start. Needs the runtime token of an AionUi chat's shell (AIONDX_* variables).
  *
  * Shortcuts: every AionUi.lnk on the desktop, in the Start menu and pinned to the taskbar gets
  * %LOCALAPPDATA%\AionDX\icons\aiondx.ico as its icon (the window itself gets the mark from the
@@ -44,12 +44,12 @@ const SHORTCUTS = SHORTCUT_DIRS.filter((d) => fs.existsSync(d)).flatMap((d) =>
 // ---------------------------------------------------------------- AionUi's settings store
 
 function identity() {
-  const need = ['AIONUI_BASE_URL', 'AIONUI_RUNTIME_TOKEN', 'AIONUI_USER_ID', 'AIONUI_CONVERSATION_ID'];
+  const need = ['AIONDX_BASE_URL', 'AIONDX_RUNTIME_TOKEN', 'AIONDX_USER_ID', 'AIONDX_CONVERSATION_ID'];
   const missing = need.filter((k) => !process.env[k]);
   if (missing.length) throw new Error(`the themes need AionUi's API: run this from an agent's shell inside AionUi (${missing.join(', ')} not set)`);
-  return { base: process.env.AIONUI_BASE_URL.replace(/\/$/, ''), headers: {
-    'x-aionui-runtime-token': process.env.AIONUI_RUNTIME_TOKEN, 'x-aionui-user-id': process.env.AIONUI_USER_ID,
-    'x-aionui-conversation-id': process.env.AIONUI_CONVERSATION_ID } };
+  return { base: process.env.AIONDX_BASE_URL.replace(/\/$/, ''), headers: {
+    'x-aiondx-runtime-token': process.env.AIONDX_RUNTIME_TOKEN, 'x-aiondx-user-id': process.env.AIONDX_USER_ID,
+    'x-aiondx-conversation-id': process.env.AIONDX_CONVERSATION_ID } };
 }
 async function api(method, p, body) {
   const id = identity();

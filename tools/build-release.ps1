@@ -69,7 +69,7 @@ function Run([string]$exe, [string[]]$argv, [string]$what) {
 $utf8 = New-Object Text.UTF8Encoding $false
 
 $built = (Get-Date).ToUniversalTime()
-$rendererBuild = ([regex]::Match((Get-Content "$root\patches\0001-renderer-dx\aionui-dx.js" -Raw), "var BUILD = '([^']+)'")).Groups[1].Value
+$rendererBuild = ([regex]::Match((Get-Content "$root\patches\0001-renderer-dx\aiondx-ui.js" -Raw), "var BUILD = '([^']+)'")).Groups[1].Value
 $buildId = $built.ToString('yyyyMMdd.HHmm') + '-r' + $rendererBuild
 $coreManifest = Get-Content (Join-Path $AionUiDir 'resources\bundled-aioncore\win32-x64\manifest.json') -Raw | ConvertFrom-Json
 $aioncoreVer = [string]$coreManifest.version
@@ -94,28 +94,35 @@ Copy-Item $Unpacked "$work\stock\app.asar.unpacked" -Recurse
 $ext = "$work\extracted"
 Run "$root\vendor\node_modules\.bin\asar.cmd" @('extract', "$work\stock\app.asar", $ext) 'asar extract'
 $idx = Get-Content "$ext\out\renderer\index.html" -Raw
-if ($idx -notmatch 'aionui-dx\.js') {
-  $idx = $idx -replace '(<script type="module" crossorigin src="\./assets/index-[^"]+\.js"></script>)', "`$1`r`n    <script src=`"./aionui-dx.js`" defer></script>"
+if ($idx -notmatch 'aiondx-ui\.js') {
+  $idx = $idx -replace '(<script type="module" crossorigin src="\./assets/index-[^"]+\.js"></script>)', "`$1`r`n    <script src=`"./aiondx-ui.js`" defer></script>"
   Set-Content "$ext\out\renderer\index.html" $idx -NoNewline -Encoding utf8
 }
-Copy-Item "$root\patches\0001-renderer-dx\aionui-dx.js" "$ext\out\renderer\aionui-dx.js" -Force
-Say "patch 0001: aionui-dx.js ($rendererBuild) and its script tag"
+Copy-Item "$root\patches\0001-renderer-dx\aiondx-ui.js" "$ext\out\renderer\aiondx-ui.js" -Force
+Say "patch 0001: aiondx-ui.js ($rendererBuild) and its script tag"
 # Patch 0011: aiondx-voice.js (the provider-agnostic TTS/STT module, window.AionDxVoice) loads
 # before aiondx-voice-ui.js (the composer's mic button, playback control and settings panel,
 # window.__aionDxVoice built from it) - both deferred, so document order is execution order.
 if ($idx -notmatch 'aiondx-voice\.js') {
-  $idx = $idx -replace '(<script src="\./aionui-dx\.js" defer></script>)', "`$1`r`n    <script src=`"./aiondx-voice.js`" defer></script>`r`n    <script src=`"./aiondx-voice-ui.js`" defer></script>"
+  $idx = $idx -replace '(<script src="\./aiondx-ui\.js" defer></script>)', "`$1`r`n    <script src=`"./aiondx-voice.js`" defer></script>`r`n    <script src=`"./aiondx-voice-ui.js`" defer></script>"
   Set-Content "$ext\out\renderer\index.html" $idx -NoNewline -Encoding utf8
 }
 Copy-Item "$root\patches\0011-voice\aiondx-voice.js" "$ext\out\renderer\aiondx-voice.js" -Force
 Copy-Item "$root\patches\0011-voice\aiondx-voice-ui.js" "$ext\out\renderer\aiondx-voice-ui.js" -Force
 Say "patch 0011: aiondx-voice.js, aiondx-voice-ui.js and their script tags"
-foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-identity')) {
+foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-identity', '0012-no-builtin-browser', '0013-chat-anchors', '0014-mcp-oauth-ui-state', '0017-dollar-text')) {
   Run $node @("$root\patches\$p\apply.js", $ext) "patch $p"
   Say "patch $p applied"
 }
 Run $node @("$root\patches\0010-official-identity\apply.js", $ext, $Version, '--report', "$work\0010-report.txt") 'patch 0010'
 Say "patch 0010 applied (report: $work\0010-report.txt)"
+# The AionDX names (a request of 2026-11-01): AionUi is renamed to AionDX across the app, except the licence notices, web addresses and the stored values
+# tools\brand-names.js lists. Patch 0015 goes after it: it holds the old data folder's name, which must stay as written.
+# The two unpacked scripts stay stock here (the pack step refuses changes to unpacked files); they are renamed in the stage below.
+Run $node @("$root\tools\brand-names.js", $ext, '--mode', 'asar', '--skip', 'out/main/builtin-mcp-browser.js,out/main/builtin-mcp-image-gen.js', '--report', "$work\brand-asar-report.json") 'brand names'
+Say "names: AionUi renamed to AionDX (report: $work\brand-asar-report.json)"
+Run $node @("$root\patches\0015-data-folder\apply.js", $ext) 'patch 0015'
+Say "patch 0015 applied (data folder)"
 Run $node @("$root\tools\pack-asar.js", $ext, "$work\stock\app.asar", "$work\packed\app.asar") 'pack'
 
 # 3. Stage the app. Everything AionUi's installer put here, except its uninstaller, its updater feed file
@@ -130,6 +137,11 @@ foreach ($d in @('app.asar.unpacked', 'bundled-aioncore', 'hub', 'pet-states', '
 foreach ($f in @('app.png', 'elevate.exe', 'manifest.webmanifest', 'sw.js')) {
   $src = Join-Path $AionUiDir "resources\$f"
   if (Test-Path $src) { Copy-Item $src (Join-Path $stage "resources\$f") }
+}
+# The unpacked scripts, the hub index and the other files AionUi's installer put beside the asar get the AionDX names too.
+foreach ($d in @('resources\app.asar.unpacked\out', 'resources\hub', 'resources\pet-states', 'resources\pwa', 'resources\sw.js', 'resources\manifest.webmanifest')) {
+  $t = Join-Path $stage $d
+  if (Test-Path $t) { Run $node @("$root\tools\brand-names.js", $t, '--mode', 'asar') "brand names ($d)" }
 }
 # AionCore: the stock binary, or with -AionDxCore AionDX's own build of that same version, made by
 # tools\build-aioncore.ps1 -Patched (vendor\aioncore, with aioncore.json naming the stock binary it replaces).
@@ -193,6 +205,11 @@ Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\a
 Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\claude.exe", "$root\patches\0005-claude-exe-shim\claude-shim.cs") 'build claude.exe'
 Copy-Item "$root\patches\0002-claude-model-currency\claude-account-router.js" $bin
 Copy-Item "$root\patches\0002-claude-model-currency\claude-stream-proxy.js" $bin
+Copy-Item "$root\patches\0002-claude-model-currency\claude-model-catalog.js" $bin
+Copy-Item "$root\patches\0002-claude-model-currency\aiondx-model-refresh.js" $bin
+Copy-Item "$root\patches\0016-data-move\aiondx-data-move.js" $bin
+Copy-Item "$root\patches\0002-claude-model-currency\aiondx-refresh-launcher.js" $bin
+Set-Content -Path (Join-Path $bin "aiondx-data-move.cmd") -Encoding Ascii -Value @("@echo off", "rem Undo or repeat the move of AionUi's data folder (installer step): aiondx-data-move.cmd rollback | plan | run", "set NODE=%~dp0..\..\bundled-aioncore\win32-x64\managed-resources\node\node-v24.11.0-win-x64\node.exe", "if not exist ""%NODE%"" set NODE=node", """%NODE%"" ""%~dp0aiondx-data-move.js"" %*")
 Copy-Item "$root\patches\0009-identity\icon\aiondx.ico" "$payload\icons\aiondx.ico"
 Copy-Item "$root\patches\0007-loop-tool\skill\aiondx-loop" "$payload\skills\aiondx-loop" -Recurse
 Copy-Item "$root\patches\0004-setup-butler\skill\aiondx-setup" "$payload\skills\aiondx-setup" -Recurse
@@ -211,7 +228,7 @@ Files AionDX changed or added:
 - AionDX.exe: AionUi.exe, renamed, with the AionDX icon and version strings. Program code unchanged.
 - resources\app.asar: AionUi's app with these changes:
   0001 the Loop, Respond now, drafts, background colours, the agent control, Welcome to AionDX, the /plugin panel
-       (out/renderer/aionui-dx.js and one script tag in out/renderer/index.html)
+       (out/renderer/aiondx-ui.js and one script tag in out/renderer/index.html)
   0003 no aionui.com sign-in: a local account (out/main/index.js)
   0006 Antigravity in place of the Butler (renderer chunks)
   0009 the AionDX mark, name and themes; at start, AionDX's programs first on PATH, Node.js on PATH when the PC has
@@ -311,9 +328,14 @@ Copy-Item "$dist\README.txt" "$stage\README.txt"
 # 7b. Nothing about this PC, its user, their accounts, people or other projects ships (a request of 2026-09-27, after team
 # names, a tester's name and this PC's name were found in the shipped comments and release.json). Every file AionDX
 # adds to the app: its renderer scripts, its block of the main process, the payload, the README. Any hit stops the build.
-Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aionui-dx.js", "$ext\out\renderer\aiondx-themes.js", "$ext\out\renderer\aiondx-voice.js", "$ext\out\renderer\aiondx-voice-ui.js", "$stage\README.txt") 'privacy check: renderer and README'
+Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aiondx-ui.js", "$ext\out\renderer\aiondx-themes.js", "$ext\out\renderer\aiondx-voice.js", "$ext\out\renderer\aiondx-voice-ui.js", "$stage\README.txt") 'privacy check: renderer and README'
 Run $node @("$root\tools\privacy-check.js", '--block', "$ext\out\main\index.js") 'privacy check: main process block'
 Run $node @("$root\tools\privacy-check.js", '--dir', $payload) 'privacy check: payload'
+
+# 7c. Nothing in what ships gives anyone access to the owner's GitHub or any other account (K, October 10th: a friend said an
+# installer sent to him gave him access). The whole staged app, the tracked files and the git history are read for tokens, sign-in
+# addresses, private keys and key files; the GitHub side (collaborators and so on) is checked by hand with --github before an upload.
+Run $node @("$root\tools\security-sweep.js", '--payload', $stage) 'security sweep: staged app, files, history'
 
 if ($StageOnly) { Say "stage only: the staged app is in $stage; no installer compiled"; exit 0 }
 

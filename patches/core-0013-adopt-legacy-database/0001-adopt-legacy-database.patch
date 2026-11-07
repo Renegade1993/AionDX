@@ -1,0 +1,117 @@
+diff --git a/crates/aionui-app/src/commands/cmd_doctor.rs b/crates/aionui-app/src/commands/cmd_doctor.rs
+index e3957e2..1f5db97 100644
+--- a/crates/aionui-app/src/commands/cmd_doctor.rs
++++ b/crates/aionui-app/src/commands/cmd_doctor.rs
+@@ -34,7 +34,7 @@ pub async fn run_doctor(cli: &Cli, merged_path: &str) -> Result<ExitCode, CliBou
+ 
+     // Use the real on-disk DB so the report reflects the user's actual
+     // catalog (including custom agents they've added via the UI).
+-    let db_path = cli.data_dir.join("aionui-backend.db");
++    let db_path = aionui_app::AppConfig::database_path_in(&cli.data_dir);
+     maybe_copy_legacy_database(&db_path).map_err(|_| doctor_database_error())?;
+     let database = init_database(&db_path).await.map_err(|_| doctor_database_error())?;
+ 
+diff --git a/crates/aionui-app/src/commands/cmd_secret.rs b/crates/aionui-app/src/commands/cmd_secret.rs
+index 8b5b4d9..176dbbf 100644
+--- a/crates/aionui-app/src/commands/cmd_secret.rs
++++ b/crates/aionui-app/src/commands/cmd_secret.rs
+@@ -210,7 +210,7 @@ fn map_secret_error(err: SecretError) -> CliBoundaryError {
+ }
+ 
+ async fn open_database(cli: &Cli) -> Result<Database, CliBoundaryError> {
+-    let db_path = cli.data_dir.join("aionui-backend.db");
++    let db_path = aionui_app::AppConfig::database_path_in(&cli.data_dir);
+     maybe_copy_legacy_database(&db_path).map_err(|_| database_error())?;
+     init_database(&db_path).await.map_err(|_| database_error())
+ }
+diff --git a/crates/aionui-app/src/commands/cmd_user.rs b/crates/aionui-app/src/commands/cmd_user.rs
+index 8bd71ac..8e7a80f 100644
+--- a/crates/aionui-app/src/commands/cmd_user.rs
++++ b/crates/aionui-app/src/commands/cmd_user.rs
+@@ -202,7 +202,7 @@ async fn apply_user_status(
+ }
+ 
+ async fn open_database(cli: &Cli) -> Result<Database, CliBoundaryError> {
+-    let db_path = cli.data_dir.join("aionui-backend.db");
++    let db_path = aionui_app::AppConfig::database_path_in(&cli.data_dir);
+     maybe_copy_legacy_database(&db_path).map_err(|_| database_error())?;
+     init_database(&db_path).await.map_err(|_| database_error())
+ }
+diff --git a/crates/aionui-app/src/config.rs b/crates/aionui-app/src/config.rs
+index 8f6b00e..a21d760 100644
+--- a/crates/aionui-app/src/config.rs
++++ b/crates/aionui-app/src/config.rs
+@@ -1,6 +1,6 @@
+ //! Application configuration parsed from CLI arguments + key derivation.
+ 
+-use std::path::PathBuf;
++use std::path::{Path, PathBuf};
+ 
+ use sha2::{Digest, Sha256};
+ 
+@@ -68,7 +68,35 @@ impl AppConfig {
+ 
+     /// Path to the SQLite database file.
+     pub fn database_path(&self) -> PathBuf {
+-        self.data_dir.join("aionui-backend.db")
++        Self::database_path_in(&self.data_dir)
++    }
++
++    /// AionDX core-0013: the database path for a data folder. A database an earlier version wrote under its old file name is
++    /// renamed to the current name first (with its -wal and -shm files), so existing chats carry over.
++    pub fn database_path_in(data_dir: &Path) -> PathBuf {
++        let target = data_dir.join("aionui-backend.db");
++        adopt_legacy_database(&target);
++        target
++    }
++}
++
++/// Renames the database file an earlier version wrote to the current name, when only the old one exists.
++fn adopt_legacy_database(target: &Path) {
++    if target.exists() {
++        return;
++    }
++    let legacy = target.with_file_name("aionui-backend.db"); // legacy-name
++    if !legacy.exists() {
++        return;
++    }
++    for suffix in ["", "-wal", "-shm"] {
++        let from = PathBuf::from(format!("{}{suffix}", legacy.display()));
++        let to = PathBuf::from(format!("{}{suffix}", target.display()));
++        if from.exists() {
++            if let Err(error) = std::fs::rename(&from, &to) {
++                tracing::warn!(from = %from.display(), to = %to.display(), error = %error, "could not move the earlier database file");
++            }
++        }
+     }
+ }
+ 
+@@ -144,4 +172,28 @@ mod tests {
+         };
+         assert_eq!(config.database_path(), PathBuf::from("/tmp/aionui/aionui-backend.db"));
+     }
++
++    #[test]
++    fn an_earlier_versions_database_is_renamed_with_its_wal_files() {
++        let dir = tempfile::tempdir().unwrap();
++        let old = dir.path().join("aionui-backend.db"); // legacy-name
++        std::fs::write(&old, b"data").unwrap();
++        std::fs::write(dir.path().join("aionui-backend.db-wal"), b"wal").unwrap(); // legacy-name
++        let target = AppConfig::database_path_in(dir.path());
++        assert!(target.exists() && std::fs::read(&target).unwrap() == b"data");
++        assert!(!old.exists());
++        assert!(dir.path().join(format!("{}-wal", target.file_name().unwrap().to_string_lossy())).exists());
++    }
++
++    #[test]
++    fn a_current_database_is_left_alone_when_the_old_file_is_also_there() {
++        let dir = tempfile::tempdir().unwrap();
++        let target = AppConfig::database_path_in(dir.path());
++        std::fs::write(&target, b"current").unwrap();
++        let old = dir.path().join("aionui-backend.db"); // legacy-name
++        std::fs::write(&old, b"old").unwrap();
++        let again = AppConfig::database_path_in(dir.path());
++        assert_eq!(std::fs::read(&again).unwrap(), b"current");
++        assert!(old.exists());
++    }
+ }

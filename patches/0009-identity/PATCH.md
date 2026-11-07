@@ -128,3 +128,56 @@ hash the user was shown. A `claude.cmd` goes through `cmd.exe` and refuses `& | 
 Measured while building it: `claude plugin` ignores `CLAUDE_CONFIG_DIR` when started through the developer's launcher, so a test
 install went into the owner's own `~/.claude` (removed again the same minute: plugin uninstalled, `enabledPlugins` taken back
 out of settings.json, the cache folders deleted). Test plugin changes only through the harness stub.
+
+## October 12th, 2026: the model refresh at start, and signing an agent in from a button
+
+- **Model refresh.** After the per-user setup ends, and every twelve hours while AionDX runs, `__aiondxStart` starts
+  `aiondx-model-refresh.js` (patch 0002; from AionDX's bin folder, or `%APPDATA%\npm` in the developer layout) on the Node.js AionDX ships,
+  hidden and detached. `AIONDX_NO_REFRESH=1` skips it.
+- **`aiondx:signin`** (main process) and **`window.aiondxSignin`** (preload: `status`, `start`, `code`, `poll`, `cancel`, `register`). A
+  request of 2026-10-11: setting up agents took an agent and a long time. The agent's own CLI signs in, so its credentials stay where it keeps
+  them and AionDX never holds a key. For Claude Code: `claude auth login --claudeai`, hidden, its link read from its output, a pasted code
+  written to its input (it takes one there, checked offline with `tools\probe-claude-login.js`), `claude auth status --json` for the result.
+  Inherited tokens are taken out of its environment (they would sign it in as that token). An extra account (`account`: a short word) signs
+  in to `%USERPROFILE%\.claude-<name>`, and `register` adds it to the Claude launcher's `accounts` (a backup kept; a config that is not JSON
+  is left alone), so every chat's account menu can use it. One sign-in at a time, killed after ten minutes. `claude setup-token` was not
+  used: it prints nothing through pipes. Tests: `test-signin.js` (18, a stand-in Claude Code).
+
+## October 13th, 2026: opening AionDX again while it is still closing, and clearing agent caches
+
+- **Close, then open again** (`aiondx-restart.js`, the helper's `__aiondxRestart`, copied into the asar's `out/aiondx`). Closing AionUi does not quit at
+  once: before-quit stops AionCore first (up to ten seconds) and the process keeps the single-instance lock. A second start in that window lost the
+  lock, asked the closing process to show its window, and quit; the closing process showed a window for half a second and finished quitting with it.
+  Now a closing AionDX writes `%LOCALAPPDATA%\AionDX\quitting.json` (its process id and the time) when before-quit fires. A starting AionDX reads it
+  before asking for the lock: when that process is alive and the marker is under 2.5 minutes old it waits for the process to go (at most a minute) and
+  then starts as the first instance; it logs "[AionDX] waited N s for the previous AionDX to finish closing". After a quit it also looks for an
+  AionCore of this install whose parent is gone, gives it fifteen seconds, and ends it, so it cannot hold the database against the new one. The
+  marker is removed by the start that dealt with it. Skipped by `AIONDX_NO_RESTART_WAIT=1` and in the multi-instance and test modes.
+  The cause is read from AionUi's source and AionCore's logs; the wait for AionCore to release the database after a quit is a guess that the
+  orphan check covers. Tests: `test-restart.js` (real processes), `test-restart-block.js` (the rendered block), `tools\test-live-restart.js` (the
+  staged app closed with a close request and started again on the same profile).
+- **Agent caches** (`aiondx-cache.js`, `aiondx:cache` in the helper, `aiondxCache` in the preload). Profiles are found on the PC (every Claude Code
+  config folder, Devin, AionUi and AionDX). Two groups each: caches (rebuild themselves; any age, or everything) and history (Claude Code's session
+  transcripts, file history and to-do lists, Devin's logs and local edit history, AionUi's logs; older than 1 day or more only). A fixed list of folders
+  per profile; never credentials, settings, CLAUDE.md, memory, skills, agents, plugins, installs or databases (Devin's session database is not
+  touched); a link is never followed or removed; a file used in the last ten minutes is left alone; two minutes at most; each clear logs counts only to
+  `%LOCALAPPDATA%\AionDX\logs\cache-clear.log`. The scan runs as Node in a child process (a copy of the module in userData), one at a time.
+  `node aiondx-cache.js profiles | scan ID --days N | clear ID --group cache|history --days N --yes` works from a terminal; without `--yes` it is a dry run.
+  Tests: `test-cache.js` (28), `test-cache-bridge.js` (16).
+
+- **Where the restart wait runs** (found in the real app, 2026-10-13). The helper block sits after AionUi's single-instance lock request in the bundle
+  (line 51476 against 51163), so an IIFE there ran after the lock had already failed. The wait is now a function declaration, `__aiondxRestartStart`, hoisted,
+  and an edit calls it from just before `const gotTheLock`. After a wait the helper also takes the lock itself, asking again for up to 8 seconds
+  (`takeLock`): the previous process counts as gone when its exit code is set, a moment before Windows lets go of the lock file.
+  `tools\test-live-restart.js` (the staged app closed from inside, started again on the same profile, 9 checks) reproduced the fault before the change.
+
+## October 20th, 2026: the right-click menu, links, pictures and spelling
+
+- `aiondx-menu.js` replaces the inline right-click block (cut, copy, paste, select all, copy on a selection) and extends it: a misspelled word in a text box gets up to five suggestions and "Add to
+  dictionary"; a link gets "Open link in browser" (http and https only) and "Copy link" ("Copy email address" for mailto); a picture gets "Copy image" (`webContents.copyImageAt`) and "Open image location"
+  (`shell.showItemInFolder` on the file path, which the page knows: patch 0001 `__aionDx.imagePathAt`, asked through `executeJavaScript` with a 400 ms limit; greyed with a reason when the picture has
+  no file). Electron asks the main process for a menu only when the page did not handle the right-click, so AionUi's own menus are untouched. `buildTemplate` is pure and tested without Electron
+  (`test-menu.js`, 29 checks).
+- Spell checking is Chromium's own checker through the session (`setSpellCheckerLanguages`: the PC's language where Chromium has it, then English), on by default; the option `spellcheck` (patch 0001)
+  switches the underlines per message box. Whether the checker finds its dictionaries offline on a PC with none cached is shown by the live test (`tools\test-live-menu.js`).
+- `AIONDX_MENU_TEST_FILE` (tests): the template's labels are written to that file and no menu is shown, so a test never puts a native menu on the screen.

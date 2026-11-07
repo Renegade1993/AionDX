@@ -7,7 +7,7 @@
  * AionUi routes `backend='claude'` conversations through its direct-CLI path, which spawns
  * plain `claude` from PATH using AionUi's own HOME and ignores the agent's configured
  * command. That is what silently billed both AionUi agents to the main account.
- * It does, however, inject AIONUI_CONVERSATION_ID into that process. This router reads it,
+ * It does, however, inject AIONDX_CONVERSATION_ID into that process. This router reads it,
  * looks up which agent owns the conversation, and sets HOME/USERPROFILE and the OAuth token
  * for that account before handing off.
  *
@@ -148,14 +148,17 @@ function versionOf(exe, cache) {
  *  came from somewhere other than its own installer or npm (winget, say). */
 function claudeOnPath() {
   const out = [];
-  for (const d of String(process.env.PATH || '').split(';')) {
-    const dir = d.trim().replace(/^"|"$/g, '');
-    if (!dir) continue;
+  const add = (exe) => { if (fs.existsSync(exe) && !out.some((x) => x.toLowerCase() === exe.toLowerCase())) out.push(exe); };
+  const dirs = String(process.env.PATH || '').split(';').map((d) => d.trim().replace(/^"|"$/g, '')).filter(Boolean);
+  // An npm prefix of the user's own choosing (a request of 2026-10-12: a PC whose npm prefix is %LOCALAPPDATA%\Programs\nodejs, with an
+  // older hand-made router in it, so the folder itself is skipped below). The package's own claude.exe is Claude Code, never a shim.
+  if (process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'nodejs'));
+  for (const dir of dirs) {
     try {
+      add(path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'));
       if (path.resolve(dir).toLowerCase() === path.resolve(HERE).toLowerCase()) continue;
       if (fs.existsSync(path.join(dir, 'claude-account-router.js'))) continue;
-      const exe = path.join(dir, 'claude.exe');
-      if (fs.existsSync(exe) && !out.some((x) => x.toLowerCase() === exe.toLowerCase())) out.push(exe);
+      add(path.join(dir, 'claude.exe'));
     } catch { /* an unreadable PATH entry */ }
   }
   return out;
@@ -267,7 +270,15 @@ function carryTranscript(targetDir, dirs) {
 // hands a chat's process its own agent's. So a moved chat gets the chosen agent's environment in place of
 // its own agent's. A config file's named accounts (token files; the developer's machine) still win where they exist.
 
-const DEFAULT_DB = path.join(process.env.APPDATA || path.join(realProfileDir(), 'AppData', 'Roaming'), 'AionUi', 'aionui', 'aionui-backend.db');
+/** The chats database: AionDX's own data folder, or an earlier AionUi folder that is still being used in place, under the file name
+ *  AionCore writes now or the one an earlier version wrote (AionDX, 2026-11-01). The first that exists; the current one's path if none does. */
+function findBackendDb(appData) {
+  const names = ['aiondx-backend.db', 'aionui-backend.db']; // legacy-name
+  const dirs = [path.join(appData, 'AionDX', 'aionui'), path.join(appData, 'AionUi', 'aionui')]; // legacy-name
+  for (const n of names) for (const d of dirs) { const f = path.join(d, n); try { if (require('fs').existsSync(f)) return f; } catch (e) { /* next */ } }
+  return path.join(dirs[0], names[0]);
+}
+const DEFAULT_DB = findBackendDb(process.env.APPDATA || path.join(realProfileDir(), 'AppData', 'Roaming'));
 
 /** What the database says about this chat: its agent, its user, any per-chat choice, and every Claude
  *  agent's environment. Read-only; any failure leaves the fields empty. */
@@ -356,14 +367,30 @@ function isStreamSession() {
  *  The token itself goes along only when the config asks for the old direct probe ("usageProbe": true), which called
  *  the API with it and is off (Anthropic's terms do not permit a Free, Pro or Max OAuth token in any tool but Claude
  *  Code). "usageMeter": false switches the meter off. */
+/** The plan's name for the meter, from the two plan fields Claude Code keeps in the config folder's .credentials.json (never the token):
+ *  subscriptionType "max" with rateLimitTier ending _20x is Ultra (Anthropic renamed Max 20x to Ultra on 2026-10-30, and Ultra has no 5-hour
+ *  window); "max" otherwise is Max (formerly Max 5x); pro, team and enterprise as they are. '' when it cannot be read. */
+function planOf(dir) {
+  try {
+    const o = JSON.parse(fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8')).claudeAiOauth || {};
+    const t = String(o.subscriptionType || '').toLowerCase(), tier = String(o.rateLimitTier || '').toLowerCase();
+    if (t === 'max') return /20x/.test(tier) ? 'Ultra' : 'Max';
+    return t ? t[0].toUpperCase() + t.slice(1) : '';
+  } catch { return ''; }
+}
 function usageFor(env, cfg, label) {
+  const u = usageFor0(env, cfg, label);
+  if (u && u.configDir) { const p = planOf(u.configDir); if (p) u.plan = p; }
+  return u;
+}
+function usageFor0(env, cfg, label) {
   if ((cfg && cfg.usageMeter === false) || process.env.AIONDX_NO_USAGE === '1') return null;
   const probe = !!(cfg && cfg.usageProbe === true);
   const hash = (s) => require('crypto').createHash('sha256').update(s).digest('hex').slice(0, 12);
   const named = /^(its own agent|account|agent .*)$/.test(String(label || '')) ? '' : String(label || '');
   const token = String(env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN || '').trim();
-  if (token) return Object.assign({ key: hash(token), label: named, probe }, probe ? { token } : {});
   const dir = env.CLAUDE_CONFIG_DIR || path.join(env.USERPROFILE || env.HOME || realProfileDir(), '.claude');
+  if (token) return Object.assign({ key: hash(token), label: named, probe, configDir: dir }, probe ? { token } : {});
   const file = path.join(dir, '.credentials.json');
   let plan = '', hasToken = false;
   try {
@@ -371,7 +398,7 @@ function usageFor(env, cfg, label) {
     if (o && o.accessToken) { hasToken = true; plan = String(o.subscriptionType || ''); }
   } catch { /* a login kept in the system's secure store has no file: the meter does not need one */ }
   const lab = named || (plan ? plan[0].toUpperCase() + plan.slice(1) : '');
-  if (hasToken) return Object.assign({ key: hash('file:' + path.resolve(file).toLowerCase()), label: lab, probe }, probe ? { tokenFile: file } : {});
+  if (hasToken) return Object.assign({ key: hash('file:' + path.resolve(file).toLowerCase()), label: lab, probe, configDir: dir }, probe ? { tokenFile: file } : {});
   return { key: hash('dir:' + path.resolve(dir).toLowerCase()), label: lab, probe: false };
 }
 function proxyOff(env, convId, dbPath, usage, cfg) {
@@ -383,17 +410,42 @@ function proxyOff(env, convId, dbPath, usage, cfg) {
     handOff(env);
     return;
   }
-  const headers = process.env.AIONUI_RUNTIME_TOKEN ? {
-    'x-aionui-runtime-token': process.env.AIONUI_RUNTIME_TOKEN,
-    'x-aionui-user-id': process.env.AIONUI_USER_ID || '',
-    'x-aionui-conversation-id': convId,
+  const runtimeToken = process.env.AIONDX_RUNTIME_TOKEN || process.env.AIONUI_RUNTIME_TOKEN; // legacy-name
+  const headers = runtimeToken ? {
+    'x-aiondx-runtime-token': runtimeToken,
+    'x-aiondx-user-id': process.env.AIONDX_USER_ID || process.env.AIONUI_USER_ID || '', // legacy-name
+    'x-aiondx-conversation-id': convId,
   } : null;
   proxy.startProxy({
     exe: RESOLVED.exe, args, env, convId, database: dbPath, usage,
     tap: !(cfg && cfg.usageTap === false), approve: !(cfg && cfg.autoApprove === false),   // each can be switched off in the config
-    apiBase: String(process.env.AIONUI_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers,
+    apiBase: String(process.env.AIONDX_BASE_URL || process.env.AIONUI_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers, // legacy-name
     log: (m) => routerLog(`conv=${convId} ${m}`),
   }).then((code) => process.exit(code), () => process.exit(1));
+}
+
+/** Keep this account's model picker current (a request of 2026-10-11): when the saved catalog in its config folder is older than six hours
+ *  (thirty minutes after a failed try), start claude-model-catalog.js, detached and hidden, with this chat's own environment. It asks Claude Code
+ *  what the account may use and updates availableModels in the folder's settings.json for the chats that start afterwards; this launch does not
+ *  wait for it. "modelCatalog": false in the router config switches it off. Any trouble here is swallowed: a chat must always start. */
+function keepCatalogCurrent(env, cfg) {
+  try {
+    if (cfg && cfg.modelCatalog === false) return;
+    const script = path.join(HERE, 'claude-model-catalog.js');
+    if (!fs.existsSync(script)) return;
+    const dir = env.CLAUDE_CONFIG_DIR || path.join(env.HOME || env.USERPROFILE || realProfileDir(), '.claude');
+    let st = null;
+    try { st = JSON.parse(fs.readFileSync(path.join(dir, 'aiondx-models.json'), 'utf8')); } catch { /* none yet */ }
+    const now = Date.now();
+    if (st && st.at && now - st.at < 6 * 3600000) return;
+    if (st && st.failedAt && now - st.failedAt < 30 * 60000) return;
+    if (st && st.startedAt && now - st.startedAt < 2 * 60000) return;
+    const child = require('child_process').spawn(process.execPath, [script, '--config-dir', dir, '--exe', RESOLVED.exe],
+      { env, detached: true, stdio: 'ignore', windowsHide: true });
+    child.on('error', () => {});
+    child.unref();
+    routerLog(`catalog refresh started for ${dir}`);
+  } catch { /* never in the way of a chat */ }
 }
 
 // ---- everything below is best-effort; any throw lands in the catch and passes through ----
@@ -405,10 +457,12 @@ try {
 
   RESOLVED = resolveClaudeExe(cfg);
 
-  const convId = process.env.AIONUI_CONVERSATION_ID;
-  if (!convId) handOff(null); // not an AionUi conversation: stock behaviour
+  // AIONDX_CONVERSATION_ID from AionCore 0.26.0; AIONUI_CONVERSATION_ID before (an agent started by an older core still routes)
+  const convId = process.env.AIONDX_CONVERSATION_ID || process.env.AIONUI_CONVERSATION_ID; // legacy-name
+  if (!convId) handOff(null); // not an AionDX conversation: stock behaviour
 
-  const dbPath = (cfg && cfg.database) || DEFAULT_DB;
+  // the config's database path, unless that file is gone (the data folder moved to AionDX's name): then the one found by name
+  const dbPath = (cfg && cfg.database && fs.existsSync(cfg.database)) ? cfg.database : DEFAULT_DB;
   const facts = readChat(dbPath, convId);
   const accounts = (cfg && cfg.accounts) || {};
   const agentId = facts.agentId;
@@ -431,7 +485,10 @@ try {
     }
     if (account.tokenFile && fs.existsSync(account.tokenFile)) {
       const tok = fs.readFileSync(account.tokenFile, 'utf8').trim();
-      if (tok) { env.CLAUDE_CODE_OAUTH_TOKEN = tok; env.ANTHROPIC_AUTH_TOKEN = tok; }
+      // CLAUDE_CODE_OAUTH_TOKEN only: Claude Code takes it out of the environment of every command it runs, and keeps ANTHROPIC_AUTH_TOKEN
+      // in, so a tool call that listed its variables printed the token into the chat (a report of 2026-10-12; measured offline with
+      // tools\probe-subprocess-env.js). A copy inherited from the parent goes too, so no command sees this account's token.
+      if (tok) { env.CLAUDE_CODE_OAUTH_TOKEN = tok; delete env.ANTHROPIC_AUTH_TOKEN; }
     }
     delete env.ANTHROPIC_API_KEY;
     label = account.label || 'account';
@@ -463,6 +520,7 @@ try {
     }
   } catch { /* logging must never break a launch */ }
 
+  keepCatalogCurrent(env, cfg);
   if (!(cfg && cfg.streamProxy === false) && isStreamSession()) proxyOff(env, convId, dbPath, usageFor(env, cfg, label), cfg);
   else handOff(env);
 } catch (e) {

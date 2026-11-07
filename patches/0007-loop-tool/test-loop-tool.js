@@ -57,6 +57,8 @@ const slash = {
   convG: ['compress', 'memory'], convN: ['init'],
 };
 let down = false;
+const memberModels = {};
+const memberOpts = { mode: 'default', effort: 'medium' };
 const stub = { pause: 'ok', restart: 'ok' };   // what the pause and restart routes answer
 // Each member's queue, as GET /api/teams/{id}/run-state reports it (aionui-api-types team.rs TeamSlotWorkPayload).
 const work = { slotL: { state: 'running', fg: 0, bg: 0 }, slotW: { state: 'running', fg: 0, bg: 3 }, slotV: { state: 'idle', fg: 0, bg: 0 } };
@@ -111,11 +113,35 @@ server = http.createServer((req, res) => {
     const entry = { method: req.method, path: url.pathname, query: url.search, headers: req.headers, body: raw ? JSON.parse(raw) : null };
     requests.push(entry);
     if (url.pathname.startsWith('/gh/')) return gitHub(req, res, url, entry);
-    if (req.headers['x-aionui-runtime-token'] !== TOKEN || req.headers['x-aionui-user-id'] !== 'u1' || !req.headers['x-aionui-conversation-id']) {
+    if (req.headers['x-aiondx-runtime-token'] !== TOKEN || req.headers['x-aiondx-user-id'] !== 'u1' || !req.headers['x-aiondx-conversation-id']) {
       return reply(res, 401, { success: false, message: 'Invalid runtime token' });
     }
     let m;
     if (req.method === 'GET' && url.pathname === '/api/teams') return reply(res, 200, { success: true, data: teams });
+    if (req.method === 'GET' && url.pathname === '/api/teams/team1') {
+      return reply(res, 200, { success: true, data: { id: 'team1', name: 'Team One', assistants: teams[0].assistants.map((a) => ({ ...a, assistant_name: a.name + ' agent', assistant_id: 'bare:' + a.slot_id, model: memberModels[a.slot_id] || 'default' })) } });
+    }
+    if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/teams\/team1\/conversations\/([^/]+)\/config-options$/))) {
+      if (m[1] === 'convV') return reply(res, 409, { success: false, error_code: 'TEAM_RUNTIME_NOT_READY', message: 'Team agent runtime is not ready' });
+      return reply(res, 200, { success: true, data: { config_options: [
+        { id: 'mode', type: 'select', current_value: memberOpts.mode, options: [{ value: 'default' }, { value: 'acceptEdits' }, { value: 'bypassPermissions' }] },
+        { id: 'reasoning_effort', type: 'select', current_value: memberOpts.effort, options: [{ value: 'low' }, { value: 'medium' }, { value: 'high' }] }] } });
+    }
+    if (req.method === 'PUT' && (m = url.pathname.match(/^\/api\/teams\/team1\/conversations\/([^/]+)\/config-options\/([^/]+)$/))) {
+      if (m[2] === 'mode') memberOpts.mode = entry.body.value; else memberOpts.effort = entry.body.value;
+      return reply(res, 200, { success: true, data: { confirmation: 'applied' } });
+    }
+    if (req.method === 'PATCH' && (m = url.pathname.match(/^\/api\/teams\/team1\/agents\/([^/]+)\/model$/))) {
+      memberModels[m[1]] = entry.body.model_id;
+      return reply(res, 200, { success: true });
+    }
+    if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/teams\/team1\/agents\/([^/]+)\/replace$/))) {
+      if (!entry.body || !entry.body.assistant_id) return reply(res, 400, { success: false, message: 'assistant_id is required' });
+      return reply(res, 200, { success: true, data: { slot_id: m[1], assistant_name: 'Replacement', conversation_id: 'convNEW', name: entry.body.name || 'Worker', role: 'teammate', backend: 'codex' } });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/assistants') {
+      return reply(res, 200, { success: true, data: [{ id: 'bare:claude', name: 'Claude Code', enabled: true, agent: { type: 'acp' } }, { id: 'bare:codex', name: 'Codex', enabled: false, agent: { type: 'acp' } }] });
+    }
     if (req.method === 'GET' && url.pathname === '/api/teams/team1/run-state') {
       return reply(res, 200, { success: true, data: { session_generation: 'g1', active_run: null, slot_work: Object.entries(work).map(([slot, w]) => ({
         slot_id: slot, role: slot === 'slotL' ? 'lead' : 'teammate', state: w.state, queued_foreground_count: w.fg, queued_background_count: w.bg,
@@ -184,8 +210,8 @@ server = http.createServer((req, res) => {
 function startTool(convId, extraEnv) {
   const env = {
     SYSTEMROOT: process.env.SYSTEMROOT, AIONDX_LOOP_LOG_DIR: LOGDIR, AIONDX_MCP_FILE: MCPFILE,
-    AIONUI_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONUI_RUNTIME_TOKEN: TOKEN,
-    AIONUI_USER_ID: 'u1', AIONUI_CONVERSATION_ID: convId, ...(extraEnv || {}),
+    AIONDX_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONDX_RUNTIME_TOKEN: TOKEN,
+    AIONDX_USER_ID: 'u1', AIONDX_CONVERSATION_ID: convId, ...(extraEnv || {}),
   };
   const child = spawn(EXE, [], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   children.push(child);
@@ -272,7 +298,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let r = await solo.call('loop_status');
   check('status of a Loop never switched on', !r.isError && /^Loop for you \(chat "Solo chat"\): OFF \(never switched on\)/.test(r.text), r.text);
   check('status says when AionUi is not running the Loop', /has not reported in the last 5 minutes/.test(r.text) && /AionDX Apply Update/.test(r.text), r.text);
-  check('it authenticates with the runtime token headers', requests.every((q) => q.headers['x-aionui-runtime-token'] === TOKEN && q.headers['x-aionui-conversation-id'] === 'convS'));
+  check('it authenticates with the runtime token headers', requests.every((q) => q.headers['x-aiondx-runtime-token'] === TOKEN && q.headers['x-aiondx-conversation-id'] === 'convS'));
 
   r = await solo.call('loop_set', { on: true, note: 'long list ahead' });
   let rec = kv['aiondx.loop.conv.convS'];
@@ -498,7 +524,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // ---- no identity, a refused token, AionUi gone ----
   // The parent walk is switched off here: run inside an AionUi chat, it would reach that chat's real
   // agent and the real API (it did, read-only, the first time this suite ran).
-  const orphan = startTool('convS', { AIONUI_CONVERSATION_ID: '', AIONUI_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
+  const orphan = startTool('convS', { AIONDX_CONVERSATION_ID: '', AIONDX_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
   check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 13, tlOrphan.result && tlOrphan.result.tools.length);
@@ -507,7 +533,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // An agent that passes its MCP servers no environment: the tool finds its chat in the parent.
   // The stand-in parent carries the identity; the tool itself gets none.
-  const fakeId = { AIONUI_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONUI_RUNTIME_TOKEN: TOKEN, AIONUI_USER_ID: 'u1', AIONUI_CONVERSATION_ID: 'convW' };
+  const fakeId = { AIONDX_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONDX_RUNTIME_TOKEN: TOKEN, AIONDX_USER_ID: 'u1', AIONDX_CONVERSATION_ID: 'convW' };
   const viaParent = spawnSync(process.execPath, ['-e', `
     const r = require('child_process').spawnSync(${JSON.stringify(EXE)}, ['--identity'],
       { env: { SYSTEMROOT: process.env.SYSTEMROOT }, encoding: 'utf8', windowsHide: true });
@@ -516,7 +542,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try { vp = JSON.parse(viaParent.stdout); } catch { /* reported below */ }
   check('with no environment of its own it finds the chat in its parent process', vp.conversation_id === 'convW' && /^process node\.exe \d+$/.test(vp.source || '') && vp.has_token, viaParent.stdout);
 
-  const badTok = startTool('convS', { AIONUI_RUNTIME_TOKEN: 'tok-stale' });
+  const badTok = startTool('convS', { AIONDX_RUNTIME_TOKEN: 'tok-stale' });
   await badTok.rpc('initialize', { protocolVersion: '2025-06-18' });
   r = await badTok.call('loop_status');
   check('a refused token is reported plainly', r.isError && /AionUi's API answered 401 to GET \/api\/teams: Invalid runtime token/.test(r.text), r.text);
@@ -591,7 +617,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- the shell program (aiondx.exe), for chats whose MCP servers were fixed before the tool existed ----
   const cliEnv = (convId) => ({ SYSTEMROOT: process.env.SYSTEMROOT, AIONDX_LOOP_LOG_DIR: LOGDIR, AIONDX_MCP_FILE: MCPFILE,
-    AIONUI_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONUI_RUNTIME_TOKEN: TOKEN, AIONUI_USER_ID: 'u1', AIONUI_CONVERSATION_ID: convId });
+    AIONDX_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONDX_RUNTIME_TOKEN: TOKEN, AIONDX_USER_ID: 'u1', AIONDX_CONVERSATION_ID: convId });
   // Async on purpose: spawnSync would block this process, and with it the stand-in API the program calls.
   const run = (cmd, argv, env) => new Promise((resolve) => {
     const ch = spawn(cmd, argv, { env, windowsHide: true });
@@ -772,7 +798,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     /^Claude usage for you \(main \(Plan A\)\), read 3 min ago, from Claude's own traffic:/.test(uc.stdout) && /5-hour window: 63% used, resets \d\d:\d\d, in 2 h 14 min\./.test(uc.stdout) &&
     /Weekly window: 41% used, resets \w{3} \d\d:\d\d, in \d+ h/.test(uc.stdout) && !/second account/.test(uc.stdout), uc.stdout);
   uc = await cli(['usage'], 'convL');
-  check('a chat with no reading is told when one appears, and that nothing is called to get it', uc.status === 0 && /^No usage reading for this chat yet\./.test(uc.stdout) && /nothing is called to get it/.test(uc.stdout), uc.stdout);
+  check('a chat with no reading is told why: which launcher started its Claude, or that this is not a Claude chat (2026-10-12)', uc.status === 0 && /^No usage reading for this chat yet\./.test(uc.stdout) && /(launcher|No Claude Code process was found above this one)/.test(uc.stdout), uc.stdout);
   uc = await cli(['usage', '--all'], 'convS');
   check('--all adds the other accounts', /another account \(second account\)/.test(uc.stdout) && /5-hour window: 12% used/.test(uc.stdout) && /main \(Plan A\)/.test(uc.stdout), uc.stdout);
   uc = await cli(['usage', '--bogus'], 'convS');
@@ -801,7 +827,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('no alerts: it says so and how to set one', ua.status === 0 && /^No usage alerts are set for this team./.test(ua.stdout) && /aiondx usage alert --at 80 --window 5h --notify lead/.test(ua.stdout), ua.stdout);
   ua = await cli(['usage', 'alert', '--at', '80', '--window', '5h', '--message', 'Wrap up and write the handoff.'], 'convL');
   const alertRec = kv['aiondx.usagealert.team.team1'];
-  check('the lead sets a 5-hour alert for the lead: saved under the team, as the agent', ua.status === 0 && /^Saved\. When the 5-hour window reaches 80%/.test(ua.stdout) && alertRec && alertRec.rules.length === 1 &&
+  check('the lead sets a 5-hour alert for the lead: saved under the team, as the agent', ua.status === 0 && /^(WARNING: [^\n]*\n)?Saved\. When the 5-hour window reaches 80%/.test(ua.stdout) && alertRec && alertRec.rules.length === 1 &&
     alertRec.rules[0].window === '5h' && alertRec.rules[0].at === 0.8 && alertRec.rules[0].notify === 'lead' && alertRec.rules[0].by === 'agent' && alertRec.rules[0].who === 'Lead' &&
     alertRec.rules[0].message === 'Wrap up and write the handoff.', ua.stdout + JSON.stringify(alertRec));
   ua = await cli(['usage', 'alert', '--at', '90%', '--window', 'week', '--notify', 'all'], 'convL');
@@ -810,6 +836,78 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ua = await cli(['usage', 'alert', '--at', '0.7'], 'convL');
   check('setting the same window and target again replaces it; 0.7 reads as 70%', ua.status === 0 && kv['aiondx.usagealert.team.team1'].rules.length === 2 &&
     kv['aiondx.usagealert.team.team1'].rules.some((r) => r.window === '5h' && r.at === 0.7), ua.stdout + JSON.stringify(kv['aiondx.usagealert.team.team1']));
+
+  // ---- aiondx config (a request of 2026-10-20): every option, readable and changeable by an agent ----
+  let cf = await cli(['config', 'list'], 'convL');
+  check('config list before the app has published its list says to open the app', cf.status === 1 && /not in the settings store yet/.test(cf.stdout), cf.stdout);
+  kv['aiondx.options.schema'] = { build: 't', options: [
+    { id: 'links.external', group: 'Links', type: 'choice', default: 'system', choices: ['system', 'tab'], label: 'Open web links in', desc: 'Where a link opens.' },
+    { id: 'spellcheck', group: 'Typing', type: 'bool', default: true, label: 'Check spelling', desc: 'Underline misspelled words.' },
+    { id: 'stop.show', group: 'Stop', type: 'number', min: 1, max: 120, unit: 'seconds', default: 3, label: 'Show a Stop button after', desc: 'A working chat gets a Stop.' },
+    { id: 'via.loop', group: 'Other settings', type: 'command', via: 'aiondx loop set --help', label: 'The Loop', desc: 'Keeps an agent working.' }] };
+  cf = await cli(['config', 'list'], 'convL');
+  check('config list shows each option with its value, default, limits and what it does, and the commands last', cf.status === 0 && /links\.external = system {2}\[system\] {2}one of: system, tab/.test(cf.stdout) &&
+    /spellcheck = on {2}\[on\] {2}on or off/.test(cf.stdout) && /stop\.show = 3 {2}\[3\] {2}1 to 120 seconds/.test(cf.stdout) && /Check spelling\. Underline misspelled words\./.test(cf.stdout) &&
+    /The Loop: Keeps an agent working\.  -> aiondx loop set --help/.test(cf.stdout) && cf.stdout.indexOf('Stop\n') < cf.stdout.indexOf('Settings with their own command'), cf.stdout);
+  cf = await cli(['config', 'set', 'links.external', 'tab'], 'convL');
+  check('set writes a choice, stamped as an agent, with the time', cf.status === 0 && /links\.external is now tab/.test(cf.stdout) && kv['aiondx.options'] && kv['aiondx.options'].values['links.external'] === 'tab' &&
+    kv['aiondx.options'].by === 'agent' && kv['aiondx.options'].at > 1000000000000, cf.stdout + JSON.stringify(kv['aiondx.options']));
+  cf = await cli(['config', 'set', 'spellcheck', 'off'], 'convL');
+  check('a switch is stored as a real boolean, and the earlier value is kept', cf.status === 0 && kv['aiondx.options'].values.spellcheck === false && kv['aiondx.options'].values['links.external'] === 'tab', JSON.stringify(kv['aiondx.options']));
+  cf = await cli(['config', 'set', 'stop.show', '9'], 'convL');
+  check('a number is stored as a number', cf.status === 0 && kv['aiondx.options'].values['stop.show'] === 9, JSON.stringify(kv['aiondx.options']));
+  cf = await cli(['config', 'set', 'stop.show', '500'], 'convL');
+  check('a number past its limit is refused with the limits', cf.status === 1 && /between 1 and 120 seconds/.test(cf.stdout) && kv['aiondx.options'].values['stop.show'] === 9, cf.stdout);
+  cf = await cli(['config', 'set', 'links.external', 'bogus'], 'convL');
+  check('a choice that is not listed is refused with the choices', cf.status === 1 && /must be one of: system, tab/.test(cf.stdout), cf.stdout);
+  cf = await cli(['config', 'set', 'nothing.here', 'on'], 'convL');
+  check('an unknown option is refused with the list of options', cf.status === 1 && /There is no option called nothing\.here\. The options are: links\.external, spellcheck, stop\.show\./.test(cf.stdout), cf.stdout);
+  cf = await cli(['config', 'set', 'via.loop', 'on'], 'convL');
+  check('a setting with its own command says which command', cf.status === 1 && /not a value: change it with aiondx loop set --help/.test(cf.stdout), cf.stdout);
+  cf = await cli(['config', 'get', 'stop.show'], 'convL');
+  check('get prints the value', cf.status === 0 && cf.stdout.trim() === '9', cf.stdout);
+  cf = await cli(['config', 'get', 'spellcheck'], 'convL');
+  check('get prints a switch as on or off', cf.status === 0 && cf.stdout.trim() === 'off', cf.stdout);
+  cf = await cli(['config', 'set', 'links.external', 'system'], 'convL');
+  check('setting a value equal to the default removes it from the store', cf.status === 0 && !('links.external' in kv['aiondx.options'].values), JSON.stringify(kv['aiondx.options']));
+  cf = await cli(['config', 'list', '--json'], 'convL');
+  let cfj = null; try { cfj = JSON.parse(cf.stdout); } catch (e) { /* checked below */ }
+  check('list --json is machine readable, with the value of each option', cf.status === 0 && cfj && cfj.options.find((x) => x.id === 'stop.show').value === 9 && cfj.options.find((x) => x.id === 'spellcheck').value === false &&
+    cfj.options.find((x) => x.id === 'links.external').value === 'system' && !('value' in cfj.options.find((x) => x.id === 'via.loop')), cf.stdout.slice(0, 200));
+  cf = await cli(['config', 'reset', 'stop.show'], 'convL');
+  check('reset puts one option back', cf.status === 0 && !('stop.show' in kv['aiondx.options'].values) && kv['aiondx.options'].values.spellcheck === false, JSON.stringify(kv['aiondx.options']));
+  cf = await cli(['config', 'reset', '--all'], 'convL');
+  check('reset --all puts every option back', cf.status === 0 && Object.keys(kv['aiondx.options'].values).length === 0, JSON.stringify(kv['aiondx.options']));
+  cf = await cli(['config'], 'convL');
+  check('config on its own prints the help (and exits 2)', cf.status === 2 && /aiondx config set ID VALUE/.test(cf.stdout), cf.stdout);
+  delete kv['aiondx.options']; delete kv['aiondx.options.schema'];
+
+  // ---- aiondx member (R-054, 2026-10-16; the swap, 2026-10-20): the lead reads and sets what each member runs on ----
+  let mb = await cli(['member', 'list'], 'convL');
+  check('member list shows every member: agent, model, effort, mode and slot (effort and mode only where its agent runs)', mb.status === 0 && /Worker: agent Worker agent \[bare:slotW\], model default, effort medium, mode default, slot slotW/.test(mb.stdout) &&
+    /Viewer: agent Viewer agent \[bare:slotV\], model default, effort not available \(agent not running\), mode not available, slot slotV/.test(mb.stdout) && /Lead \(lead\):/.test(mb.stdout), mb.stdout);
+  mb = await cli(['member', 'set', '--member', 'Worker', '--model', 'haiku', '--effort', 'LOW', '--mode', 'acceptEdits'], 'convL');
+  check('member set changes the model (the roster route), the effort and the mode (the agent\'s options), matching the listed spelling', mb.status === 0 && memberModels.slotW === 'haiku' && memberOpts.effort === 'low' && memberOpts.mode === 'acceptEdits' &&
+    /Worker: model haiku, effort low, mode acceptEdits/.test(mb.stdout), mb.stdout + JSON.stringify([memberModels, memberOpts]));
+  mb = await cli(['member', 'set', '--member', 'Worker', '--effort', 'max'], 'convL');
+  check('an effort the agent does not offer is refused with the choices', mb.status === 1 && /effort for Worker must be one of: low, medium, high\./.test(mb.stdout) && memberOpts.effort === 'low', mb.stdout);
+  mb = await cli(['member', 'set', '--member', 'Viewer', '--model', 'sonnet', '--effort', 'high'], 'convL');
+  check('a member that has not started keeps its model change and is told effort needs it running', mb.status === 1 && memberModels.slotV === 'sonnet' && /Saved model sonnet\./.test(mb.stdout) && /not running/.test(mb.stdout), mb.stdout);
+  mb = await cli(['member', 'set', '--member', 'Worker'], 'convL');
+  check('set with nothing to set says so', mb.status === 1 && /Give --model, --effort or --mode/.test(mb.stdout), mb.stdout);
+  mb = await cli(['member', 'replace', '--member', 'Worker', '--assistant', 'bare:codex', '--name', 'Coder'], 'convL');
+  const rep = requests.filter((q) => q.method === 'POST' && q.path === '/api/teams/team1/agents/slotW/replace').pop();
+  check('member replace posts the assistant (and name) to the slot and reports the new conversation', mb.status === 0 && rep && rep.body.assistant_id === 'bare:codex' && rep.body.name === 'Coder' && /Worker now runs Replacement in the same slot \(slotW\)/.test(mb.stdout) && /convNEW/.test(mb.stdout), mb.stdout);
+  mb = await cli(['member', 'replace', '--member', 'Lead', '--assistant', 'bare:codex'], 'convL');
+  check('the lead cannot replace itself from its own session', mb.status === 1 && /That is you/.test(mb.stdout), mb.stdout);
+  mb = await cli(['member', 'replace', '--member', 'Worker'], 'convL');
+  check('replace without an assistant says which command lists them', mb.status === 1 && /aiondx member assistants/.test(mb.stdout), mb.stdout);
+  mb = await cli(['member', 'assistants'], 'convL');
+  check('member assistants lists the agents a slot can be given', mb.status === 0 && /bare:claude {2}Claude Code {2}\(acp\)/.test(mb.stdout) && /bare:codex {2}Codex {2}\(acp, off\)/.test(mb.stdout), mb.stdout);
+  mb = await cli(['member', 'list'], 'convW');
+  check('a teammate cannot read or change the members', mb.status === 1 && /Only the team lead/.test(mb.stdout), mb.stdout);
+  mb = await cli(['member', 'list'], 'convS');
+  check('a solo chat is told this is for teams', mb.status === 1 && /not on one/.test(mb.stdout), mb.stdout);
   ua = await cli(['usage', 'alert', '--at', '60', '--notify', 'lead'], 'convW');
   check('a member may not alert the lead or the team', ua.status === 1 && /Only the team lead sets an alert for the lead or for every member/.test(ua.stdout), ua.stdout);
   ua = await cli(['usage', 'alert', '--at', '60'], 'convW');
@@ -845,7 +943,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   fs.writeFileSync(path.join(showOut, 'Install Game (test build).exe'), 'MZ');
   fs.writeFileSync(path.join(showOut, 'notes.txt'), 'hi');
   const showRun = (args) => new Promise((resolve) => {
-    const c = spawn(CLI, args, { cwd: showWork, env: Object.assign({}, process.env, { AIONUI_CONVERSATION_ID: 'convS' }), windowsHide: true });
+    const c = spawn(CLI, args, { cwd: showWork, env: Object.assign({}, process.env, { AIONDX_CONVERSATION_ID: 'convS' }), windowsHide: true });
     children.push(c);
     let out = '';
     c.stdout.on('data', (d) => { out += d; });
@@ -874,7 +972,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const alertTool = startTool('convS');
   await alertTool.rpc('initialize', { protocolVersion: '2025-06-18' });
   r = await alertTool.call('usage_alert', { at: 75, window: 'week' });
-  check('the usage_alert tool sets one when given a percent', !r.isError && /^Saved\. When the weekly window reaches 75%/.test(r.text) && kv['aiondx.usagealert.conv.convS'].rules.length === 2, r.text);
+  check('the usage_alert tool sets one when given a percent', !r.isError && /^(WARNING: [^\n]*\n)?Saved\. When the weekly window reaches 75%/.test(r.text) && kv['aiondx.usagealert.conv.convS'].rules.length === 2, r.text);
   r = await alertTool.call('usage_alert', { action: 'list' });
   check('and lists them', !r.isError && /Weekly window at 75%/.test(r.text) && /5-hour window at 85%/.test(r.text), r.text);
   r = await alertTool.call('usage_alert', { action: 'remove' });

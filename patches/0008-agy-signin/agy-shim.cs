@@ -2,7 +2,7 @@
 //
 // a request of 2026-09-24.
 //
-// AionUi runs Antigravity's CLI in print mode (`agy -p ... --output-format stream-json`, aionui-session
+// AionUi runs Antigravity's CLI in print mode (`agy -p ... --output-format stream-json`, aiondx-session
 // antigravity/argv.rs). Signed out, print mode tries a silent sign-in, then opens Google's sign-in
 // page and waits 60 seconds for the browser to come back to its local callback
 // (http://localhost:<port>/auth/callback); past that it exits with "authentication failed or timed
@@ -90,7 +90,7 @@ namespace AionDx
             }
             // One line per launch, so "is AionUi running the wrapper at all?" has an answer.
             Log("run: " + (IsTurn(args) ? "chat turn" : (args.Length > 0 ? args[0] : "(no arguments)")) +
-                " conv=" + (Environment.GetEnvironmentVariable("AIONUI_CONVERSATION_ID") ?? "-"));
+                " conv=" + (Environment.GetEnvironmentVariable("AIONDX_CONVERSATION_ID") ?? "-"));
             if (IsTurn(args) && !EnsureSignedIn(real, false))
             {
                 Log("sign-in did not complete; running the turn anyway so agy reports it");
@@ -146,7 +146,7 @@ namespace AionDx
         static readonly Regex SignedOutWords = new Regex(@"sign(ed)?[\s-]*in\b|signed[\s-]*out|not\s+logged\s+in|log\s*in\s+required|authenticat", RegexOptions.IgnoreCase);
         // The chat's own settings a hidden agy must not act on: its folder (a folder-trust prompt there would
         // stand in front of the sign-in) and AionCore's permission hook for this turn.
-        static readonly string[] HiddenAgyDrops = { "PWD", "AIONUI_ANTIGRAVITY_HOOK_BASE_URL", "AIONUI_ANTIGRAVITY_HOOK_TOKEN", "AIONUI_ANTIGRAVITY_HOOK_CONVERSATION_ID" };
+        static readonly string[] HiddenAgyDrops = { "PWD", "AIONDX_ANTIGRAVITY_HOOK_BASE_URL", "AIONDX_ANTIGRAVITY_HOOK_TOKEN", "AIONDX_ANTIGRAVITY_HOOK_CONVERSATION_ID" };
 
         /** Is agy signed in? `agy models` with its input closed, every wait bounded. Signed on a clean exit;
          *  SignedOut only when agy says so; Unknown for anything else (offline, a proxy, Google's own errors,
@@ -320,12 +320,12 @@ namespace AionDx
         /** AionUi's API with this agent's runtime token (aioncore puts it in every agent process). */
         static string Store(string method, string path, string body)
         {
-            string b = Environment.GetEnvironmentVariable("AIONUI_BASE_URL"), t = Environment.GetEnvironmentVariable("AIONUI_RUNTIME_TOKEN"),
-                   u = Environment.GetEnvironmentVariable("AIONUI_USER_ID"), c = Environment.GetEnvironmentVariable("AIONUI_CONVERSATION_ID");
+            string b = Environment.GetEnvironmentVariable("AIONDX_BASE_URL"), t = Environment.GetEnvironmentVariable("AIONDX_RUNTIME_TOKEN"),
+                   u = Environment.GetEnvironmentVariable("AIONDX_USER_ID"), c = Environment.GetEnvironmentVariable("AIONDX_CONVERSATION_ID");
             if (string.IsNullOrEmpty(b) || string.IsNullOrEmpty(t) || string.IsNullOrEmpty(u) || string.IsNullOrEmpty(c)) return null;
             var req = (HttpWebRequest)WebRequest.Create(b.TrimEnd('/') + path);
             req.Method = method; req.Proxy = null; req.Timeout = 5000; req.ReadWriteTimeout = 5000;
-            req.Headers["x-aionui-runtime-token"] = t; req.Headers["x-aionui-user-id"] = u; req.Headers["x-aionui-conversation-id"] = c;
+            req.Headers["x-aiondx-runtime-token"] = t; req.Headers["x-aiondx-user-id"] = u; req.Headers["x-aiondx-conversation-id"] = c;
             if (body != null)
             {
                 var bytes = Encoding.UTF8.GetBytes(body);
@@ -402,14 +402,14 @@ namespace AionDx
         {
             try
             {
-                string b = Environment.GetEnvironmentVariable("AIONUI_BASE_URL"), t = Environment.GetEnvironmentVariable("AIONUI_RUNTIME_TOKEN"),
-                       u = Environment.GetEnvironmentVariable("AIONUI_USER_ID"), c = Environment.GetEnvironmentVariable("AIONUI_CONVERSATION_ID");
+                string b = Environment.GetEnvironmentVariable("AIONDX_BASE_URL"), t = Environment.GetEnvironmentVariable("AIONDX_RUNTIME_TOKEN"),
+                       u = Environment.GetEnvironmentVariable("AIONDX_USER_ID"), c = Environment.GetEnvironmentVariable("AIONDX_CONVERSATION_ID");
                 if (string.IsNullOrEmpty(b) || string.IsNullOrEmpty(t) || string.IsNullOrEmpty(u) || string.IsNullOrEmpty(c)) return;
                 long now = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
                 string body = "{\"aiondx.agy.signin\":{\"state\":\"" + state + "\",\"message\":" + JsonStr(message) + ",\"conversation\":" + JsonStr(c) + ",\"at\":" + now + "}}";
                 var req = (HttpWebRequest)WebRequest.Create(b.TrimEnd('/') + "/api/settings/client");
                 req.Method = "PUT"; req.Proxy = null; req.Timeout = 5000; req.ContentType = "application/json";
-                req.Headers["x-aionui-runtime-token"] = t; req.Headers["x-aionui-user-id"] = u; req.Headers["x-aionui-conversation-id"] = c;
+                req.Headers["x-aiondx-runtime-token"] = t; req.Headers["x-aiondx-user-id"] = u; req.Headers["x-aiondx-conversation-id"] = c;
                 var bytes = Encoding.UTF8.GetBytes(body);
                 req.ContentLength = bytes.Length;
                 using (var s = req.GetRequestStream()) s.Write(bytes, 0, bytes.Length);

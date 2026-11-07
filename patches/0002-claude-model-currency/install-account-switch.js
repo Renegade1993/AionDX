@@ -14,7 +14,7 @@
  *   node patches\0002-claude-model-currency\install-account-switch.js           install
  *   node patches\0002-claude-model-currency\install-account-switch.js --check   report only
  *
- * Step 3 needs AionUi running and the AIONUI_* variables of an agent shell (any Claude chat in
+ * Step 3 needs AionUi running and the AIONDX_* variables of an agent shell (any Claude chat in
  * AionUi has them). Never prints a token.
  */
 'use strict';
@@ -47,6 +47,18 @@ const PROXY_LIVE = path.join(NPM, 'claude-stream-proxy.js');
 if (sameFile(PROXY_SRC, PROXY_LIVE)) say('pass-through: installed copy matches this folder');
 else if (check) say('pass-through: ' + (fs.existsSync(PROXY_LIVE) ? 'installed copy differs from this folder' : 'not installed'));
 else { fs.copyFileSync(PROXY_SRC, PROXY_LIVE); say('pass-through: installed'); }
+// the model catalog refresher the router starts (2026-10-11)
+const CATALOG_SRC = path.join(__dirname, 'claude-model-catalog.js');
+const CATALOG_LIVE = path.join(NPM, 'claude-model-catalog.js');
+if (sameFile(CATALOG_SRC, CATALOG_LIVE)) say('model catalog: installed copy matches this folder');
+else if (check) say('model catalog: ' + (fs.existsSync(CATALOG_LIVE) ? 'installed copy differs from this folder' : 'not installed'));
+else { fs.copyFileSync(CATALOG_SRC, CATALOG_LIVE); say('model catalog: installed'); }
+// the picker refresh AionDX starts at launch and every twelve hours (2026-10-12)
+const REFRESH_SRC = path.join(__dirname, 'aiondx-model-refresh.js');
+const REFRESH_LIVE = path.join(NPM, 'aiondx-model-refresh.js');
+if (sameFile(REFRESH_SRC, REFRESH_LIVE)) say('picker refresh: installed copy matches this folder');
+else if (check) say('picker refresh: ' + (fs.existsSync(REFRESH_LIVE) ? 'installed copy differs from this folder' : 'not installed'));
+else { fs.copyFileSync(REFRESH_SRC, REFRESH_LIVE); say('picker refresh: installed'); }
 
 // 2. plain account names in the config
 const cfg = JSON.parse(fs.readFileSync(CONFIG, 'utf8'));
@@ -88,18 +100,18 @@ const rec = { v: 1, accounts, agents, defaultAccount: named[(cfg.accounts[cfg.de
 say('store record: ' + JSON.stringify(rec));
 if (check) process.exit(0);
 
-const base = (process.env.AIONUI_BASE_URL || '').replace(/\/+$/, '');
-if (!base || !process.env.AIONUI_RUNTIME_TOKEN) {
-  say('store: skipped (no AIONUI_* variables here; run this from an AionUi agent shell)');
+const base = (process.env.AIONDX_BASE_URL || '').replace(/\/+$/, '');
+if (!base || !process.env.AIONDX_RUNTIME_TOKEN) {
+  say('store: skipped (no AIONDX_* variables here; run this from an AionUi agent shell)');
   process.exit(0);
 }
 fetch(base + '/api/settings/client', {
   method: 'PUT',
   headers: {
     'Content-Type': 'application/json',
-    'x-aionui-runtime-token': process.env.AIONUI_RUNTIME_TOKEN,
-    'x-aionui-user-id': process.env.AIONUI_USER_ID || '',
-    'x-aionui-conversation-id': process.env.AIONUI_CONVERSATION_ID || '',
+    'x-aiondx-runtime-token': process.env.AIONDX_RUNTIME_TOKEN,
+    'x-aiondx-user-id': process.env.AIONDX_USER_ID || '',
+    'x-aiondx-conversation-id': process.env.AIONDX_CONVERSATION_ID || '',
   },
   body: JSON.stringify({ 'aiondx.accounts': rec }),
 }).then((r) => { say('store: ' + (r.ok ? 'written' : 'refused (' + r.status + ')')); process.exit(r.ok ? 0 : 1); },

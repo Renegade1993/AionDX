@@ -3,7 +3,7 @@ REM ---------------------------------------------------------------------------
 REM  AionUi account router shim.  Rebuilt by AionDX patch 0002 on 2026-09-22.
 REM
 REM  Routes each AionUi conversation to the correct Claude account by reading
-REM  AIONUI_CONVERSATION_ID. Outside AionUi this behaves exactly like stock claude.
+REM  AIONDX_CONVERSATION_ID. Outside AionUi this behaves exactly like stock claude.
 REM
 REM  WHY IT HAD TO BE REBUILT
 REM  `claude install latest` deletes the npm package it replaces, and the npm shim

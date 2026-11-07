@@ -3,7 +3,7 @@ $root = 'C:\AI Projects\AionDX'
 $work = "$root\vendor"
 $src  = 'C:\Program Files\AionUi\resources\app.asar'
 $ext  = "$work\extracted"
-$patchJs = "$root\patches\0001-renderer-dx\aionui-dx.js"
+$patchJs = "$root\patches\0001-renderer-dx\aiondx-ui.js"
 
 if (Test-Path $ext) { Remove-Item $ext -Recurse -Force }
 Write-Host "extracting..."
@@ -12,14 +12,14 @@ if (-not (Test-Path "$ext\out\renderer\index.html")) { throw 'extract failed: in
 Write-Host "extracted OK"
 
 $idx = Get-Content "$ext\out\renderer\index.html" -Raw
-if ($idx -match 'aionui-dx\.js') { Write-Host 'index.html already patched' }
+if ($idx -match 'aiondx-ui\.js') { Write-Host 'index.html already patched' }
 else {
-  $idx = $idx -replace '(<script type="module" crossorigin src="\./assets/index-[^"]+\.js"></script>)', "`$1`r`n    <script src=`"./aionui-dx.js`" defer></script>"
+  $idx = $idx -replace '(<script type="module" crossorigin src="\./assets/index-[^"]+\.js"></script>)', "`$1`r`n    <script src=`"./aiondx-ui.js`" defer></script>"
   Set-Content "$ext\out\renderer\index.html" $idx -NoNewline -Encoding utf8
   Write-Host 'index.html patched'
 }
-Copy-Item $patchJs "$ext\out\renderer\aionui-dx.js" -Force
-Write-Host 'aionui-dx.js copied'
+Copy-Item $patchJs "$ext\out\renderer\aiondx-ui.js" -Force
+Write-Host 'aiondx-ui.js copied'
 
 # Patch 0003-local-account: no aionui.com sign-in. apply.js checks every anchor and writes nothing
 # unless all of them match, so a changed AionUi build stops the rebuild here instead of shipping.

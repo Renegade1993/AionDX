@@ -500,7 +500,7 @@ waiter installs it the moment AionUi fully closes). State in `vendor\install-sta
 ## Preview without installing
 
 `tools\dx-harness\harness.html` rebuilds the composer row from `AcpSendBox` markup, loads AionUi's
-shipped stylesheets out of `vendor\extracted\`, and runs the real `aionui-dx.js`. Query options
+shipped stylesheets out of `vendor\extracted\`, and runs the real `aiondx-ui.js`. Query options
 `?theme=dark`, `?on=1`, `?open=1`. Screenshot it headless:
 
 ```
@@ -871,3 +871,119 @@ member's Stop already pauses the member through AionCore's pause route.)
   the folder route that accepts a folder). A chip for a folder, a program, an archive, a media file or anything over 5 MB opens outside on a
   click instead of AionUi's preview ("too big to preview"). A link `https://aiondx.invalid/run?path=...` (or `run:...`) asks "Run this
   program?" and then starts it. A failure says why.
+
+## October 10th, 2026: build `2026-10-10.1`
+
+- **Unsend under a queued bubble** (`queuedFoot`, `unsendButton`). A message waiting in a team member's queue is drawn with the Respond-now
+  bolt but without an "Unread" badge (the member's chat does not hold it yet), and the October 9th Unsend had been attached to that badge, so it
+  never appeared. Each queued bubble now gets a line under it, "Waiting in the queue", with Unsend and Edit; the line goes when the message leaves
+  the queue. The queue scan (`scanTeamQueues`) now redraws the Unsend lines when it finishes instead of waiting for the next change of the page.
+  Proved in the real app by `tools\test-live-unsend.js`: a team, a Worker held in a tool call, a second message waiting, Unsend, and the mailbox
+  row gone from the queue.
+- **Edit** (`editUnread`, `finishEdit`). Beside Unsend, in the Unread badge and in the queued line: it takes the message back the same way and, once
+  that has worked, puts its text in the message box of that chat (after anything already typed, with a blank line between). If the message was
+  already read, nothing is changed and the box is left alone.
+- **Debug hooks**: `window.__aionDx.runUnsend()` and `teamUnsendState()`.
+
+## October 12th, 2026: build `2026-10-12.1`
+
+- **Sign in to your agents** (Welcome screen; `accountsStart`, `accountsStatus`, `accountsCode`, `accountsDone`). Offered on the first step
+  when the app has the sign-in bridge (patch 0009). Claude Code's row says whether it is signed in and as whom; Sign in starts its own sign-in
+  page, shows the link and a box for the code the page may show; Add another Claude account asks for a short name, signs that account in to
+  its own folder and adds it to `aiondx.accounts`, the list every Claude chat's account menu reads.
+- **Model names from the agents list** (`learnModels`). A disabled agent is skipped (the disabled built-in Claude still had Haiku 4.5 and its
+  name won over the enabled agents' Haiku 5.5), and a name the enabled agents disagree on in one answer goes back to plain.
+- Tests: click suite scenarios `one-click` (the sign-in page) and `model-labels` (disabled agents, disagreement).
+
+## October 13th, 2026: build `2026-10-13.1`
+
+- **Schedule send, a new box.** The four fixed times and the single date-and-time field are gone. The menu has two modes: In, with days, hours and
+  minutes typed by hand (a number box each, 15 minutes at first, up to 366 days), and At, with a date (today, or the day an hour from now falls
+  on) and a time. A line under the fields says when the message will go; Enter in a field schedules; the last mode chosen stays while the page is
+  open. The Waiting list, Send now, Try again and Cancel are as before.
+- **Stop backstop** (`stopBackstop`). The log of a chat that would not stop showed the first Stop landing, a new turn 17 seconds later (a message
+  typed after it), and the second press of Stop never reaching the server. After a press of Stop in a solo chat AionDX reads the chat's turn,
+  waits 2.5 seconds, and if the same turn is still running and no cancel is under way sends the cancel itself with the server's turn id and says
+  "Stop sent again." A different turn is left alone. The cancel route needs the turn id in its body (an empty body is a 400).
+- Tests: click suite scenario `sched` (both modes, Enter, 90 minutes, an empty In, a time in the past) and three Stop backstop cases in `loop`.
+
+## October 13th, 2026 (later): build `2026-10-13.1`, clearing agent caches
+
+- **Clear agent caches** (`openCaches`, `paintCaches`, `scanCacheRow`, `confirmCacheClear`). Settings > Appearance, under AionDX setup, has a "Clear agent
+  caches" button when the app has the bridge (patch 0009). It opens a panel with an age chooser (Everything, 1 day, 1 week, 1 month, 3 months,
+  6 months) and a row per profile, each scanned at that age: Caches and History, with sizes and file counts and a button each. A click asks first
+  ("Remove 2,009 files (454 MB) from Devin, older than 1 month?"; History adds that a Claude chat whose transcript goes cannot be resumed); Remove does it and
+  the row is read again. Everything is for caches only: History says to choose an age. Tests: click suite scenario `caches`.
+
+## October 13th, 2026 (evening): the fallback Stop and Force stop
+
+- **A Stop that is there when AionUi's is not** (`paintStop`, `fallbackStop`). AionUi draws its Stop button from the stream it has seen, so a turn it missed (a Loop
+  nudge, a scheduled or queued message, a page reconnecting) runs with no Stop on screen, and a press during a turn change can reach the server with the wrong
+  turn id (the server logs "cancel ignored because turn id mismatched"). A solo chat that AionDX's 3-second check finds working for 3 seconds with no
+  `.sendbox-stop-button` in its box gets AionDX's own Stop: it turns the Loop off and holds the draft box as AionUi's does, reads the turn id from the server
+  and cancels with it. Together with `stopBackstop` (after AionUi's own Stop, the same turn still running 2.5 seconds on gets the cancel again).
+- **Force stop.** A chat or team member still working 12 seconds after a Stop (AionUi's, this one, or the backstop) gets "Force stop": a second click within 5
+  seconds posts runtime/restart, which in AionCore cancels the turn, ends the agent process and starts it again; the chat keeps its history. Team members get
+  only the Force stop (their Stop in AionUi pauses the member).
+- A bug found by the new test and fixed before it shipped: the fallback's wrapper carried the draft button's anchor class, which `renderSched` uses to find its
+  own anchor, so the two buttons moved each other on every repaint and no click could finish. The wrapper has its own class.
+- Tests: click scenario `stop-fallback`; `tools\dx-harness\quick-stop.js` runs it alone, with the raw mouse events, in about 20 seconds.
+
+## October 14th, 2026: build `2026-10-13.1` again, render throttles for long chats
+
+- A request of October 14th ("the ui ... lagging so brutally bad for some conversations or teams"). Diagnosis in `! LLM Files\Research\2026-10-14_ui-lag-diagnosis.md`: AionUi renders every
+  loaded message with no virtualization, and AionDX's `render()`, which runs on every change of the page, swept the whole page three ways (a forced layout, two whole-page
+  `querySelectorAll`s). At 3,000 rows it took about 40% of the page's time while a reply streamed.
+- `every(name, ms)` throttles `hideDriftNotices` (1 s), `reconcileSpinners` (0.5 s) and `diagnoseMissing` (4 s); a skipped run books one repaint for when its interval is up. `schedule()` repaints on the
+  next frame as before unless the last render took over 8 ms, in which case it waits eight times as long (at most 0.75 s). `__aionDx.repaint()` runs everything at once. AionDX's share of the work at 3,000 rows
+  fell from 2,455 ms to 424 ms in the headless measurement (`tools\dx-harness\quick-lag.js`); the browser's own layout of the list is unchanged.
+
+## October 20th, 2026: build `2026-10-20.2`, options, links, pictures, quotes, swaps, paced history
+
+Build `2026-10-20.2` (a request of October 20th, after a folder link opened a preview tab): file and folder links open outside AionDX by default (option `links.files`, `outside` or `preview`). The
+chip handler (`watchLocalLinks`) decides at the click. Before, a chip went outside only after the async folder check had marked it (up to 3 seconds after it appeared), and a file that could be previewed
+always opened the Preview panel. Alt+click uses the other choice; Shift+click shows the file in its folder; a folder always opens in Explorer.
+
+Requests of October 20th (K's morning list). Everything below is in `aiondx-ui.js`; tests are the click scenarios `options`, `links`, `draft-quote`, `agent-cache`, `older-pages` and `swap`
+(`node tools\dx-harness\click-test.js`, about 540 checks), plus `tools\dx-harness\probe-eval.js` for running a few lines of page code against the harness.
+
+- One list of options (`OPTIONS`). Every choice AionDX offers is an entry with an id, a group, a label, what it does, a default and limits: `links.external`, `spellcheck`, `draft.quote`, `voice.system`,
+  `stop.show`, `stop.force`, `lag.bigPage`, `lag.chainPages`, and entries of type `command` that point at the mechanisms with their own command (the Loop, usage, MCP, colours, cache clearing). Settings >
+  Appearance draws its rows from the list; the list is published to the settings store (`aiondx.options.schema`) once per build; the values live in `aiondx.options = { values, at, by }` and a newer record
+  from the store wins, so `aiondx config list|get|set|reset` (patch 0007) and any agent change them with no knowledge of the page. A value equal to its default is not stored; values are cleaned to the
+  option's type and limits.
+- Web links (`links.external`, default the system browser). A capture-phase click on an `http(s)` anchor sends the address to AionCore's `POST /api/shell/open-external` and stops AionUi's own handler,
+  which opens a tab in the Preview panel (`Markdown/index.tsx handleLinkClick`). Alt+click uses the other choice. Mail links and AionDX's own anchors are untouched.
+- Pictures know their file. AionUi loads a chat picture from its path as a data URL (`POST /api/fs/image-base64`), which leaves no path in the page. The answer of that call is remembered against the picture
+  (its length and pieces of its start, middle and end); `__aionDx.imagePathAt(x, y)` returns the path of the picture last right-clicked. The right-click menu in the main process (patch 0009,
+  `aiondx-menu.js`) asks for it to offer "Open image location".
+- Spelling. Message boxes get `spellcheck` set from the option; Electron's checker (patch 0009) underlines and suggests.
+- A reply quote stays with its draft (`draft.quote`). The quote chip over a message box is read from the page each second with the draft text and kept with it (localStorage and the store, record
+  `{ text, quote, at }`); a quote with no text is still a draft. Restoring it: the quote is state inside AionUi's send box (a `useState`, set by an event private to the bundle), so the setter is found
+  through React's fiber (the hook after a ref, holding null, before a hook holding 0: `replyQuote`, then `caretPosition`, in SendBox of AionUi 2.2.2). When that shape is not found the quote goes
+  into the draft as a block quote, which is what a sent reply carries anyway.
+- Clear cache on the agent entries. Settings > Agents: a "Clear cache" button on the entry of each Claude Code account and of Devin, opening the cache panel at that profile (read first, shown first,
+  outlined). The profile is matched from the entry's name: "Claude Code (Second)" is `claude:second`, plain "Claude Code" is `claude:main`, "Devin" is `devin`.
+- Swap the agent in a team slot, the lead's included. The agent control now shows on every team member, and its menu has "Swap this member for" with every enabled agent. It asks first, refuses
+  while any agent in the team is working, and posts `POST /api/teams/{id}/agents/{slot}/replace` (AionCore patch core-0006), then reloads the team page.
+- Older messages, paced (`lag.chainPages`, default 3). AionUi loads older pages while the list is near the top, and a list that stays there (a member column that is not showing) chains page after
+  page: opening a large team's page on October 20th sent 38 requests in one second for one member, and a 30,000-message chat would load all of it into the page. A chain of older-page requests for one
+  conversation with no scrolling from the user (no wheel, touch, scrolling key or press on a scrollbar in the last 2.5 seconds; a click on a tab or a button is not scrolling) lets the first three through and holds the next unanswered until the user scrolls. Scrolling by
+  hand is unchanged.
+- Team members started from the page are recorded (`diagnose('team-attach', ...)`, with how long ago the user last pressed anything and where the call came from). On October 20th a member ran a turn
+  at the moment a team page was opened, and nothing recorded what made the page ask for it. See `! LLM Files\2026-10-20_Heroes-member-started-on-team-open.md`.
+- The ring-colour boxes are not written over while an edit waits for its commit (found by the new run: a render between a change and its commit reset the box).
+- Line endings: the file is LF, as in the repository.
+
+## October 22nd, 2026: build `2026-10-22.1`, web links always leave the app, the colour menu leaves links alone
+
+- The option `links.external` is removed. AionUi's built-in browser is gone (patch `0012-no-builtin-browser`), so a left click on a web link goes to the system browser whatever the modifier keys (Alt, Ctrl and Shift used to pick or skip the tab).
+- The colour menu (right-click in a reply) no longer handles a right-click whose path contains a web or mail link or a picture. It used to call `preventDefault` on every right-click inside a reply, which stops Electron's `context-menu` event, so a link in a reply showed only the colour item and none of Open link in browser, Copy link, Copy image (patch 0009, `aiondx-menu.js`).
+
+## October 24th, 2026: build `2026-10-24.1`, the rail's history in one request
+
+- `window.__aionDxAnchors(id, fallback)`: the anchor rail's loader (patch 0013, edit H1) calls it in place of AionUi's paged download of the whole history. It asks AionCore's `GET /api/conversations/{id}/anchors` (patch core-0009) and returns the turns shaped as the text messages the rail's own builder reads (a user message with the question, and a reply with the answer). If the request fails it calls the fallback, AionUi's own loader.
+
+## October 24th, 2026 (later): build `2026-10-24.2`, the agent menu fits a short window
+
+The agent control's menu (switch agent, continue in a new chat, swap a member) opened below the control or above it, and when it fitted neither way it simply ran off the bottom of the window: on a 514-pixel-tall page its last items were out of reach, and a click there closed it. `placeAcctMenu` now puts it on the side with more room, as tall as that room, scrolling inside. Found by the click suite after Edge's window lost height; the suite now checks the menu stays inside the window, and its clicks scroll an item into view first, as a person would.

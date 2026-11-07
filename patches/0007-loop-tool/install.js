@@ -20,7 +20,7 @@
  * after every swap, as it does patch 0004's installer.
  *
  * Registration talks to AionUi's API with the runtime token of the AionUi chat it runs in
- * (AIONUI_BASE_URL, AIONUI_RUNTIME_TOKEN, AIONUI_USER_ID, AIONUI_CONVERSATION_ID), so run the full
+ * (AIONDX_BASE_URL, AIONDX_RUNTIME_TOKEN, AIONDX_USER_ID, AIONDX_CONVERSATION_ID), so run the full
  * install from an agent's shell inside AionUi. A running agent holds its MCP server open; the old
  * copy is renamed aside (Windows allows renaming a running program) and each agent picks up the
  * new one at its next start.
@@ -40,7 +40,7 @@ const PROGRAMS = [
   { name: 'aiondx-loop.exe', target: 'winexe' },   // MCP server
   { name: 'aiondx.exe', target: 'exe' },           // shell
 ];
-const DATA = process.env.AIONDX_AIONUI_DATA || path.join(process.env.APPDATA || '', 'AionUi', 'aionui');
+const DATA = process.env.AIONDX_AIONDX_DATA || path.join(process.env.APPDATA || '', 'AionUi', 'aionui');
 const SKILL_SRC = path.join(DIR, 'skill', 'aiondx-loop', 'SKILL.md');
 const SKILL_DST = path.join(DATA, 'builtin-skills', 'auto-inject', 'aiondx-loop');
 const STAMP = '.aiondx';
@@ -127,12 +127,12 @@ function installSkill() {
 // ---------------------------------------------------------------- AionUi's API
 
 function identity() {
-  const need = ['AIONUI_BASE_URL', 'AIONUI_RUNTIME_TOKEN', 'AIONUI_USER_ID', 'AIONUI_CONVERSATION_ID'];
+  const need = ['AIONDX_BASE_URL', 'AIONDX_RUNTIME_TOKEN', 'AIONDX_USER_ID', 'AIONDX_CONVERSATION_ID'];
   const missing = need.filter((k) => !process.env[k]);
   if (missing.length) throw new Error(`the MCP row needs AionUi's API: run this from an agent's shell inside AionUi (${missing.join(', ')} not set), or pass --no-register`);
-  return { base: process.env.AIONUI_BASE_URL.replace(/\/$/, ''), headers: {
-    'x-aionui-runtime-token': process.env.AIONUI_RUNTIME_TOKEN, 'x-aionui-user-id': process.env.AIONUI_USER_ID,
-    'x-aionui-conversation-id': process.env.AIONUI_CONVERSATION_ID } };
+  return { base: process.env.AIONDX_BASE_URL.replace(/\/$/, ''), headers: {
+    'x-aiondx-runtime-token': process.env.AIONDX_RUNTIME_TOKEN, 'x-aiondx-user-id': process.env.AIONDX_USER_ID,
+    'x-aiondx-conversation-id': process.env.AIONDX_CONVERSATION_ID } };
 }
 
 async function api(method, p, body) {

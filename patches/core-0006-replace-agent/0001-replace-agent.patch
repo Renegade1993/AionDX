@@ -1,0 +1,211 @@
+diff --git a/crates/aionui-api-types/src/lib.rs b/crates/aionui-api-types/src/lib.rs
+index 68ce890..0b59826 100644
+--- a/crates/aionui-api-types/src/lib.rs
++++ b/crates/aionui-api-types/src/lib.rs
+@@ -207,7 +207,7 @@ pub use system::{
+ pub use team::{
+     AddAgentRequest, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamRequest, InterruptTeamAgentRequest,
+     SteerTeamAgentRequest, TeamSteerAgentResponse, TeamSteerOutcome,
+-    PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest, SendAgentMessageRequest, SendTeamMessageRequest,
++    PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest, ReplaceAgentRequest, SendAgentMessageRequest, SendTeamMessageRequest,
+     TeamActivityCursor, TeamActivityItemResponse, TeamActivityKind, TeamActivityPageResponse, TeamAgentInput,
+     TeamAgentRemovedPayload, TeamAgentRenamedPayload, TeamAgentResponse, TeamAgentRuntimeStatus,
+     TeamAgentRuntimeStatusPayload, TeamAgentSpawnedPayload, TeamAgentStatusPayload, TeamChildTurnPayload,
+diff --git a/crates/aionui-api-types/src/team.rs b/crates/aionui-api-types/src/team.rs
+index 5607e0e..d672c13 100644
+--- a/crates/aionui-api-types/src/team.rs
++++ b/crates/aionui-api-types/src/team.rs
+@@ -186,6 +186,18 @@ pub struct RenameAgentRequest {
+     pub name: String,
+ }
+ 
++/// Request body for `POST /api/teams/:id/agents/:slotId/replace` (AionDX): put another assistant in a member's slot, the lead's included.
++/// The slot id, the name and the role stay; the member gets a new conversation on the new assistant.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ReplaceAgentRequest {
++    pub assistant_id: String,
++    #[serde(default)]
++    pub name: Option<String>,
++    #[serde(default)]
++    pub model: Option<String>,
++}
++
+ // ---------------------------------------------------------------------------
+ // C. Team runtime context — persisted conversation.extra contract
+ // ---------------------------------------------------------------------------
+diff --git a/crates/aionui-team/src/provisioning.rs b/crates/aionui-team/src/provisioning.rs
+index 7114390..e0dbf5a 100644
+--- a/crates/aionui-team/src/provisioning.rs
++++ b/crates/aionui-team/src/provisioning.rs
+@@ -2,7 +2,7 @@ use std::sync::Arc;
+ 
+ use aionui_ai_agent::IWorkerTaskManager;
+ use aionui_api_types::{
+-    AddAgentRequest, GetConfigOptionsResponse, McpRuntimeSnapshot, SetConfigOptionRequest, SetConfigOptionResponse,
++    AddAgentRequest, GetConfigOptionsResponse, McpRuntimeSnapshot, ReplaceAgentRequest, SetConfigOptionRequest, SetConfigOptionResponse,
+     TeamAgentInput, TeamMcpSelection, TeamToolTransport, assistant_mcp_binding_fingerprint,
+ };
+ use aionui_common::{AgentKillReason, AgentType, ProviderWithModel, generate_id};
+@@ -421,6 +421,57 @@ impl TeamAgentProvisioner {
+         Ok(agent)
+     }
+ 
++    /// AionDX: the agent in `team.agents[index]` is replaced by one on the requested assistant, under the same slot id, name (unless a new one is
++    /// given) and role, with a new conversation. Any role may be replaced, the lead's included.
++    pub(crate) async fn replace_agent(
++        &self,
++        user_id: &str,
++        row: &TeamRow,
++        team: &mut Team,
++        index: usize,
++        req: ReplaceAgentRequest,
++    ) -> Result<TeamAgent, TeamError> {
++        let old = team.agents[index].clone();
++        let workspace = self.workspace_resolver().resolve_for_new_agent(row, team).await?;
++        let assistant_id = Self::effective_assistant_id(Some(req.assistant_id.as_str()));
++        if assistant_id.is_none() {
++            return Err(TeamError::InvalidRequest("assistant_id is required".into()));
++        }
++        let backend = self
++            .resolve_requested_backend(user_id, None, assistant_id.as_deref())
++            .await?;
++        let mcp_selection = self
++            .resolve_assistant_mcp_selection(user_id, assistant_id.as_deref())
++            .await?;
++        let name = req
++            .name
++            .as_deref()
++            .map(str::trim)
++            .filter(|value| !value.is_empty())
++            .map(str::to_owned)
++            .unwrap_or_else(|| old.name.clone());
++        let agent = self
++            .provision_new_agent(
++                NewAgentProvisioning {
++                    user_id: user_id.to_owned(),
++                    team_id: team.id.clone(),
++                    slot_id: old.slot_id.clone(),
++                    name,
++                    role: old.role,
++                    backend,
++                    model: req.model.unwrap_or_default(),
++                    assistant_id,
++                    workspace: Some(workspace),
++                    session_mode: row.session_mode.clone(),
++                },
++                Some(&mcp_selection),
++            )
++            .await?;
++        team.agents[index] = agent.clone();
++        self.persist_agents(&team.id, &team.agents).await?;
++        Ok(agent)
++    }
++
+     async fn resolve_requested_backend(
+         &self,
+         user_id: &str,
+diff --git a/crates/aionui-team/src/routes.rs b/crates/aionui-team/src/routes.rs
+index ec8ec9e..542bf83 100644
+--- a/crates/aionui-team/src/routes.rs
++++ b/crates/aionui-team/src/routes.rs
+@@ -11,7 +11,7 @@ use axum::routing::{get, post, put};
+ use aionui_ai_agent::ActiveLeaseRegistry;
+ use aionui_api_types::{
+     AddAgentRequest, ApiResponse, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamRequest,
+-    GetConfigOptionsResponse, InterruptTeamAgentRequest, PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest,
++    GetConfigOptionsResponse, InterruptTeamAgentRequest, PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest, ReplaceAgentRequest,
+     SendAgentMessageRequest, SendTeamMessageRequest, SetConfigOptionRequest, SetConfigOptionResponse, SetModeRequest,
+     SetModelRequest, SteerTeamAgentRequest, TeamSteerAgentResponse, TeamActivityPageResponse, TeamAgentResponse, TeamContextResetAvailability,
+     TeamContextResetResponse, TeamInterruptAgentResponse, TeamListResponse, TeamMailboxMessageResponse, TeamResponse,
+@@ -187,6 +187,7 @@ pub fn team_routes(state: TeamRouterState) -> Router {
+         .route("/api/teams/{id}/name", axum::routing::patch(rename_team))
+         .route("/api/teams/{id}/agents", post(add_agent))
+         .route("/api/teams/{id}/agents/{slot_id}", axum::routing::delete(remove_agent))
++        .route("/api/teams/{id}/agents/{slot_id}/replace", post(replace_agent))
+         .route(
+             "/api/teams/{id}/agents/{slot_id}/name",
+             axum::routing::patch(rename_agent),
+@@ -424,6 +425,21 @@ async fn add_agent(
+     Ok((StatusCode::CREATED, Json(ApiResponse::ok(agent))))
+ }
+ 
++/// AionDX: put another assistant in a member's slot, the lead's included. See TeamSessionService::replace_agent.
++async fn replace_agent(
++    State(state): State<TeamRouterState>,
++    Extension(user): Extension<CurrentUser>,
++    Path(params): Path<AgentPathParams>,
++    body: Result<Json<ReplaceAgentRequest>, JsonRejection>,
++) -> Result<Json<ApiResponse<TeamAgentResponse>>, ApiError> {
++    let Json(req) = body.map_err(ApiError::from)?;
++    let agent = state
++        .service
++        .replace_agent(&user.id, &params.id, &params.slot_id, req)
++        .await?;
++    Ok(Json(ApiResponse::ok(agent)))
++}
++
+ async fn remove_agent(
+     State(state): State<TeamRouterState>,
+     Extension(user): Extension<CurrentUser>,
+diff --git a/crates/aionui-team/src/service.rs b/crates/aionui-team/src/service.rs
+index 3a2fb07..94ccd9c 100644
+--- a/crates/aionui-team/src/service.rs
++++ b/crates/aionui-team/src/service.rs
+@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock, Weak};
+ use aionui_ai_agent::{ActiveLeaseRegistry, AgentError, AgentInstance, IWorkerTaskManager, IdleCleanupCoordinator};
+ use aionui_api_types::ChatFileRef;
+ use aionui_api_types::{
+-    AddAgentRequest, AssistantMcpBindingChanged, CreateTeamRequest, GetConfigOptionsResponse,
++    AddAgentRequest, AssistantMcpBindingChanged, CreateTeamRequest, GetConfigOptionsResponse, ReplaceAgentRequest,
+     InterruptTeamAgentRequest, SetConfigOptionRequest, SetConfigOptionResponse, SteerTeamAgentRequest, TeamActivityCursor,
+     TeamActivityPageResponse, TeamAgentResponse, TeamAgentRuntimeStatus, TeamContextResetAvailability,
+     TeamContextResetResponse, TeamContextResetRuntimeStatus, TeamContextResetStatus, TeamInterruptAgentResponse,
+@@ -1018,6 +1018,47 @@ impl TeamSessionService {
+         self.build_agent_response(user_id, team_id, &agent).await
+     }
+ 
++    /// AionDX: put another assistant in a member's slot, the lead's included (a request of 2026-10-20: "completely swap agent types in any team
++    /// slot"). The slot id, name and role stay, so the mailbox, the task owners and the lead marker still point at it; the slot gets a new
++    /// conversation on the new assistant (the old conversation is left as it is, out of the team). The team's live session is stopped, which
++    /// ends every member's running process, so the caller does this between turns; the next message starts the session again from the saved roster.
++    pub async fn replace_agent(
++        &self,
++        user_id: &str,
++        team_id: &str,
++        slot_id: &str,
++        req: ReplaceAgentRequest,
++    ) -> Result<TeamAgentResponse, TeamError> {
++        let lock = self
++            .add_agent_locks
++            .entry(team_id.to_owned())
++            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
++            .clone();
++        let _guard = lock.lock().await;
++
++        let row = self.load_owned_team_row(user_id, team_id).await?;
++        let mut team = Team::from_row(&row)?;
++        let index = team
++            .agents
++            .iter()
++            .position(|agent| agent.slot_id == slot_id)
++            .ok_or_else(|| TeamError::AgentNotFound(slot_id.into()))?;
++        let agent = self
++            .provisioner()
++            .replace_agent(user_id, &row, &mut team, index, req)
++            .await?;
++        // The old runtime held the old conversation: stop the session so every member is rebuilt from the saved roster on the next message.
++        self.stop_session_unchecked(team_id);
++        info!(
++            team_id = %team_id,
++            slot_id = %agent.slot_id,
++            assistant_id = %agent.assistant_id.as_deref().unwrap_or(""),
++            role = %agent.role,
++            "team agent replaced"
++        );
++        self.build_agent_response(user_id, team_id, &agent).await
++    }
++
+     pub async fn remove_agent(&self, user_id: &str, team_id: &str, slot_id: &str) -> Result<(), TeamError> {
+         let lock = self
+             .add_agent_locks

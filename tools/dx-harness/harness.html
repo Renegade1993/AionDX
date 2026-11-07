@@ -4,7 +4,7 @@
 
   Loads AionUi's own shipped stylesheets (extracted from app.asar into vendor\) and rebuilds the
   composer's action row with the DOM and classes AcpSendBox renders, then loads the real
-  aionui-dx.js. Nothing is installed and the running AionUi is never touched.
+  aiondx-ui.js. Nothing is installed and the running AionUi is never touched.
 
   A stub backend replaces window.fetch before the patch loads. It serves the response shapes the
   patch relies on, each checked against AionCore v0.2.2 source, and records every call in
@@ -153,7 +153,9 @@
     var noStore = q.get('nostore') === '1';
     // ?seeddraft=<text>: the settings store already holds a saved draft for the solo chat, newer than any
     // local copy (a crash lost localStorage, say).
-    if (q.get('seeddraft')) store['aiondx.draft.conv.harness1'] = { text: q.get('seeddraft'), at: Date.now() };
+    if (q.get('seeddraft')) store['aiondx.draft.conv.harness1'] = { text: q.get('seeddraft'), quote: q.get('seedquote') || '', at: Date.now() };
+    // ?seedstore=<json>: more keys already in the settings store (an option the command line set, say).
+    if (q.get('seedstore')) { try { Object.assign(store, JSON.parse(q.get('seedstore'))); } catch (e) { /* not JSON */ } }
     // A machine that has already been through the Welcome screen, unless ?welcome=1.
     if (q.get('welcome') !== '1') store['aiondx.welcome'] = { mode: 'later', at: Date.now() - 86400000 };
     // ?noagy=1: Antigravity is not installed, so it is missing from the new-chat list.
@@ -294,7 +296,7 @@
       }
       var hit = routes[method + ' ' + path];
       return Promise.resolve(new Response(JSON.stringify(hit || { success: false }), {
-        status: hit ? 200 : 404, headers: { 'Content-Type': 'application/json' }
+        status: hit ? (hit.__status || 200) : 404, headers: { 'Content-Type': 'application/json' }
       }));
     };
   })();
@@ -436,7 +438,7 @@
       }
     }
   </script>
-  <script src="../../patches/0001-renderer-dx/aionui-dx.js"></script>
+  <script src="../../patches/0001-renderer-dx/aiondx-ui.js"></script>
   <script>
     // The draft-queue button, as AionUi's own onClick (bubble phase): window.__draftAdds counts what it queued.
     document.addEventListener('click', function (ev) {
