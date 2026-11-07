@@ -89,13 +89,17 @@ async function pageTarget() {
     // ---- configure a provider through the settings panel before anything can transcribe/synthesize ----
     check('the settings panel is present', await js('!!document.querySelector("[data-testid=\\"aiondx-voice-panel\\"]")'));
     check('the provider select offers elevenlabs', await waitFor('[...document.querySelectorAll("#aiondx-voice-provider option")].some(o => o.value === "elevenlabs")'));
-    await js(`(() => { document.querySelector('#aiondx-voice-provider').value = 'elevenlabs';
-      document.querySelector('#aiondx-voice-provider').dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
+    // A user's path: the provider list already shows ElevenLabs, so nobody touches it - they type a key. Up to 0.26.6 that saved
+    // {apiKey} alone and every call then failed "voice: no provider configured" (an earlier version of this test set the provider
+    // through the select first, which a user never does, so it never saw that).
+    check('the provider select already shows elevenlabs with nothing saved', await js('document.querySelector("#aiondx-voice-provider").value === "elevenlabs"'));
     await humanClick('#aiondx-voice-apikey');
     await js(`(() => { const el = document.querySelector('#aiondx-voice-apikey');
       const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value'); d.set.call(el, 'test-key-123');
       el.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
     await sleep(600);   // the apiKey save's debounce
+    const afterKey = await js('window.__aionDxVoice.getSettings().then(s => JSON.stringify(s))');
+    check('typing only a key saves the provider the panel shows too', /"provider":"elevenlabs"/.test(afterKey || '') && /test-key-123/.test(afterKey || ''), afterKey);
     check('the voice select is populated from the real listVoices() call',
       await waitFor('document.querySelector("#aiondx-voice-voice").options.length >= 2', 50));
     await js(`(() => { const sel = document.querySelector('#aiondx-voice-voice'); if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
@@ -123,6 +127,9 @@ async function pageTarget() {
       await waitFor('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "idle"', 60));
     check('the real module called ElevenLabs\' text-to-speech endpoint',
       await js('window.__fetchCalls.some(c => c.url.indexOf("https://api.elevenlabs.io/v1/text-to-speech/") === 0 && c.method === "POST")'));
+    check('both ElevenLabs calls carried the key typed into the panel (not the Windows voice, not no key)',
+      await js('["https://api.elevenlabs.io/v1/speech-to-text", "https://api.elevenlabs.io/v1/text-to-speech/"].every((p) => window.__fetchCalls.some((c) => c.url.indexOf(p) === 0 && c.key === "test-key-123"))'),
+      JSON.stringify(await js('window.__fetchCalls.filter((c) => /elevenlabs/.test(c.url)).map((c) => c.url.replace("https://api.elevenlabs.io", "") + " " + c.key)')));
 
     // ---- markdown stripped before it ever reaches the real synthesize() call ----
     const spoken = await js(`window.__aionDxVoiceUI.spokenText(${JSON.stringify('# Title\n\nSee ```js\nconsole.log(1)\n``` and `x` and [a link](http://x).')})`);
@@ -135,6 +142,15 @@ async function pageTarget() {
     check('it enables once a real playback starts', await waitFor('document.querySelector(".aiondx-voice-stopall-btn").disabled === false'));
     await humanClick('.aiondx-voice-stopall-btn');
     check('clicking it stops a real in-flight playback', await waitFor('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "idle"', 20));
+
+    // ---- a record an earlier build left with a key and no provider (what the user had) is mended on the next load ----
+    await js(`window.__aionDxVoice.setSettings({ provider: null })`);
+    const broken = await js('window.__aionDxVoice.synthesize("x").then(() => "ok", (e) => e.message)');
+    check('(setup) a key with no provider fails the way 0.26.6 did', /no provider configured/.test(broken || ''), broken);
+    await js('window.__aionDxVoiceUI.reloadSettings()');
+    const mended = await waitFor('window.__aionDxVoice.getSettings().then((s) => s.provider === "elevenlabs" && s.apiKey === "test-key-123")', 40);
+    check('the next settings load saves the provider the panel shows, keeping the key', mended, await js('window.__aionDxVoice.getSettings().then((s) => JSON.stringify(s))'));
+    check('and synthesize works again', (await js('window.__aionDxVoice.synthesize("x").then(() => "ok", (e) => e.message)')) === 'ok');
 
   } catch (e) {
     check('smoke test ran without throwing', false, e.stack || String(e));

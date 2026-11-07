@@ -514,7 +514,9 @@
       loadingWrap = null;
       console.log('[dx-voice] synthesize error', e);
       // No provider or no key: read it with the voice the PC already has (free, offline), so the button does something on a fresh install.
-      if (canSpeakSystem() && /no provider configured|no API key|no voice module/i.test((e && e.message) || '')) {
+      // Never with a key saved: then the user chose their provider, and its failure is shown, not covered by another voice.
+      var hasKey = !!(settingsCache.data || {}).apiKey;
+      if (!hasKey && canSpeakSystem() && /no provider configured|no API key|no voice module/i.test((e && e.message) || '')) {
         try { systemSpeak(wrap, text); return; } catch (x) { console.log('[dx-voice] system voice failed', x); }
       }
       setPlayState(wrap, 'error', (e && e.message) || 'synthesis failed');
@@ -979,7 +981,9 @@
       // (onTranscribeError sets sawActivity too), so without this check the badge would have kept
       // saying "no microphone activity detected" while the mic was demonstrably working.
       if (hf.transcribeErrorMsg && hf.transcribeErrorAt >= hf.wakeStartedAt) {
-        return 'Listening for “' + phrase + '” — transcription failed: ' + hf.transcribeErrorMsg;
+        // The reason first: the badge is a narrow, ellipsized chip, and the old order ("Listening for “…” — trans…") hid exactly
+        // the part a user needed. The full text is also the badge's tooltip and the settings panel's status line.
+        return 'Transcription failed: ' + hf.transcribeErrorMsg + ' (listening for “' + phrase + '”)';
       }
       // sawActivity is set by onCandidate or onTranscribeError - proof the VAD actually heard
       // *something* and sent it to transcribe(), matched or not, successful or not. Silent since
@@ -1017,7 +1021,8 @@
       if (b.getAttribute('data-state') !== hf.state) b.setAttribute('data-state', hf.state);
       var text = b.querySelector('.aiondx-voice-hf-text');
       if (text.textContent !== label) text.textContent = label;
-      var aria = 'Hands-free conversation mode' + (mine && label ? ': ' + label : ' is off');
+      if (b.title !== label) b.title = label;   // the badge ellipsizes; the whole text on hover
+      var aria ='Hands-free conversation mode' + (mine && label ? ': ' + label : ' is off');
       if (b.getAttribute('aria-label') !== aria) b.setAttribute('aria-label', aria);
     }
   }
@@ -1074,21 +1079,55 @@
   // record behind /api/settings/client), so the panel reads from this cache instead of blocking
   // a render pass on a network round trip. A save updates it optimistically, then again from the
   // module's own merged record once the request resolves.
-  var SETTINGS_TTL_MS = 5000;
+  var SETTINGS_TTL_MS = 5000;           // while the settings panel is on screen
+  var SETTINGS_TTL_IDLE_MS = 30000;     // everywhere else (a save updates the cache directly anyway)
+  var SETTINGS_RETRY_MS = 1000;         // an empty answer while AionCore's session is not ready yet
   var settingsCache = { data: {}, loading: false, at: 0 };
-  function ensureSettingsLoaded() {
-    if (settingsCache.loading || (settingsCache.at && Date.now() - settingsCache.at < SETTINGS_TTL_MS)) return;
+  function coreSessionReady() {
+    var st = window.__coreUserState;
+    return !st || st.status === 'ready';   // no bridge state at all (WebUI, the dev harnesses): nothing to wait for
+  }
+  // Loaded on every page, not only Settings > Appearance: hands-free (handsFree, wakePhrase) and auto-play (voiceId) read this cache
+  // on chat and team pages too, and it used to stay empty there until the settings page had been opened once in that window.
+  // The settings store answers a GET that fails (401 before AionCore's session is up) with null, the same as "nothing saved", so an
+  // empty answer before the session is ready is retried after a second, and the session turning ready reloads it straight away.
+  function ensureSettingsLoaded(ttl) {
+    if (settingsCache.loading || (settingsCache.at && Date.now() - settingsCache.at < (ttl || SETTINGS_TTL_MS))) return;
     settingsCache.loading = true;
+    var sessionWasReady = coreSessionReady();
     Promise.resolve(call('getSettings') || {}).then(function (s) {
       settingsCache.loading = false;
       settingsCache.data = s || {};
-      settingsCache.at = Date.now();
+      var empty = !Object.keys(settingsCache.data).length;
+      settingsCache.at = (empty && !sessionWasReady) ? Date.now() - (ttl || SETTINGS_TTL_MS) + SETTINGS_RETRY_MS : Date.now();
+      healMissingProvider(settingsCache.data);
       schedule();
     }, function (e) {
       console.log('[dx-voice] getSettings error', e);
       settingsCache.loading = false;
-      settingsCache.at = Date.now();
+      settingsCache.at = Date.now() - (ttl || SETTINGS_TTL_MS) + SETTINGS_RETRY_MS;
     });
+  }
+  window.addEventListener('core-user-state-changed', function (ev) {
+    if (ev && ev.detail && ev.detail.status === 'ready') { settingsCache.at = 0; schedule(); }
+  });
+
+  /** The provider the panel shows when none is saved yet (the first one the module offers). */
+  function defaultProviderId() {
+    return (providerCache.list && providerCache.list[0] && providerCache.list[0].id) || 'elevenlabs';
+  }
+  // 0.26.6 and earlier: the panel showed ElevenLabs in its provider list without saving it, so typing a key saved {apiKey} alone, and
+  // every call then failed "voice: no provider configured" - the speaker button fell back to the Windows voice with a key saved, and
+  // hands-free's wake phrase failed to transcribe. A record left that way is given the provider the panel showed, once.
+  var healing = false;
+  function healMissingProvider(s) {
+    if (healing || !s || !s.apiKey || s.provider || !voice() || typeof voice().setSettings !== 'function') return;
+    healing = true;
+    var id = defaultProviderId();
+    Promise.resolve(call('setSettings', { provider: id })).then(function (merged) {
+      healing = false;
+      if (merged && typeof merged === 'object') { settingsCache.data = merged; settingsCache.at = Date.now(); schedule(); }
+    }, function (e) { healing = false; console.log('[dx-voice] could not save the provider for a stored key', e); });
   }
 
   function voiceAnchor() {
@@ -1188,6 +1227,10 @@
 
   function saveSettings(patch) {
     if (!voice() || typeof voice().setSettings !== 'function') { setStatus('Voice module not loaded: nothing was saved.', false); return; }
+    // A key saved with no provider chosen yet goes with the provider the panel is showing (see healMissingProvider).
+    if (patch.provider === undefined && !(settingsCache.data || {}).provider && (patch.apiKey || (settingsCache.data || {}).apiKey)) {
+      patch = Object.assign({ provider: defaultProviderId() }, patch);
+    }
     settingsCache.data = Object.assign({}, settingsCache.data, patch);   // optimistic, so the panel does not flicker back while the request is in flight
     // Also bumped here, not only after the save resolves: ensureSettingsLoaded() runs on every
     // render pass the settings panel is visible for, and if settingsCache.at was already more than
@@ -1306,6 +1349,7 @@
 
   function render() {
     try { ensureVoiceClient(); } catch (e) { console.log('[dx-voice] voice client init failed', e); }
+    try { ensureSettingsLoaded(pickerEl && pickerEl.isConnected ? SETTINGS_TTL_MS : SETTINGS_TTL_IDLE_MS); } catch (e) { console.log('[dx-voice] settings load failed', e); }
     // due() is keyed by name and stamps "last ran" the instant it returns true, so calling it
     // twice for two different checks in the same pass would make the second call see its own
     // first call as "already ran a moment ago" and skip - each distinct gate gets its own due()
@@ -1363,6 +1407,9 @@
     // threshold, maxSegmentMs) - test-only, never touched outside dev-smoke-test-handsfree.js.
     hfState: function () { return { active: hf.active, state: hf.state, key: hf.key }; },
     setHfTestOpts: function (opts) { hfInjectedOpts = Object.assign({}, hfInjectedOpts, opts || {}); },
-    clearHfTestOpts: function () { hfInjectedOpts = {}; }
+    clearHfTestOpts: function () { hfInjectedOpts = {}; },
+    // The settings this page is working from, and a re-read of them now (for settings changed outside this page's own panel).
+    settings: function () { return Object.assign({}, settingsCache.data); },
+    reloadSettings: function () { settingsCache.at = 0; render(); }
   };
 })();

@@ -123,10 +123,17 @@ async function pageTarget() {
     await sleep(120);
     await js('window.__hf.level = 0');
     check('a failed transcribe shows the real reason, not the generic stall hint',
-      await waitFor('(document.querySelector(".aiondx-voice-hf-text").textContent || "").includes("transcription failed")', 40),
+      await waitFor('/transcription failed/i.test(document.querySelector(".aiondx-voice-hf-text").textContent || "")', 40),
       await js('document.querySelector(".aiondx-voice-hf-text").textContent'));
+    // The badge is a narrow ellipsized chip (0.26.6 on a team page read `Listening for "Hey AionDX" — trans…`): the reason comes
+    // first, and the whole text is on hover and in the settings panel.
+    check('the badge leads with the reason, so even its cut-off part says what is wrong',
+      /^Transcription failed: .*429/.test(await js('document.querySelector(".aiondx-voice-hf-text").textContent')), await js('document.querySelector(".aiondx-voice-hf-text").textContent'));
+    check('the badge carries the full text as its tooltip',
+      await js('(() => { const b = document.querySelector(".sendbox-actions .aiondx-voice-hf"); return b.title === b.querySelector(".aiondx-voice-hf-text").textContent && /429 quota exceeded/.test(b.title) && /Hey AionDX/.test(b.title); })()'),
+      await js('document.querySelector(".sendbox-actions .aiondx-voice-hf").title'));
     check('the settings panel mirrors the same transcribe-error text',
-      await js('(document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent || "").includes("transcription failed")'));
+      await js('/transcription failed/i.test(document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent || "")'));
     check('hands-free keeps listening after one failed clip, it does not tear down',
       await js('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"'));
 
@@ -232,6 +239,8 @@ async function pageTarget() {
       await js('(window.__sentMessages || []).includes("Tell me a joke")'));
 
     await js(`window.__aionDxVoice.setSettings({ provider: null, apiKey: null })`);   // the key goes away while the reply is in flight
+    await js('window.__aionDxVoiceUI.reloadSettings()');   // removed outside this page's panel: the page re-reads it (the fall-back needs to know there is no key)
+    await waitFor('!window.__aionDxVoiceUI.settings().apiKey', 30);
     await js(`window.__agentReply('No key needed for this one.')`);
     await js(`window.__conv.status = 'finished'`);
     check('the reply auto-plays through the system voice, not a dead-end error',
@@ -246,8 +255,24 @@ async function pageTarget() {
       (await js('window.__systemSpeechCancelled')) > cancelledBefore);
     check('the play button settles back to idle after stop-all cancels the system voice',
       await js('document.querySelector("#message-a2 .aiondx-voice-play-btn").dataset.state') === 'idle');
-    check('stop-all tore hands-free down too, same as it does for a real Audio element',
-      await js('window.__aionDxVoiceUI.hfState().active === false'));
+    const stopAllTore = await js('window.__aionDxVoiceUI.hfState().active === false');
+
+    // ---- with a key saved, an ElevenLabs failure shows its error: the Windows voice is only for "no key at all" ----
+    await js(`window.__aionDxVoice.setSettings({ provider: 'elevenlabs', apiKey: 'saved-key', voiceId: 'v1' })`);
+    await js('window.__aionDxVoiceUI.reloadSettings()');
+    await waitFor('window.__aionDxVoiceUI.settings().apiKey === "saved-key"', 30);
+    await js(`window.__agentReply('A reply read with the saved key.'); window.__ttsFailNext = 1; window.__ttsKeys = []`);
+    const rowSel = await js(`'#' + document.getElementById('messages').lastElementChild.id`);
+    await waitFor(`!!document.querySelector('${rowSel} .aiondx-voice-play-btn')`, 30);
+    const spokenBefore = (await js('window.__systemSpeechCalls.length'));
+    await humanClick(`${rowSel} .aiondx-voice-play-btn`);
+    check('with a key saved, the saved key is what goes to ElevenLabs', await waitFor('(window.__ttsKeys || []).includes("saved-key")', 30), JSON.stringify(await js('window.__ttsKeys')));
+    check('and its failure shows as an error on the button',
+      await waitFor(`document.querySelector('${rowSel} .aiondx-voice-play-btn').dataset.state === 'error'`, 30),
+      await js(`document.querySelector('${rowSel} .aiondx-voice-play-btn').getAttribute('aria-label')`));
+    check('not covered up by the Windows voice', (await js('window.__systemSpeechCalls.length')) === spokenBefore, JSON.stringify(await js('window.__systemSpeechCalls')));
+
+    check('stop-all tore hands-free down too, same as it does for a real Audio element', stopAllTore);
 
   } catch (e) {
     check('smoke test ran without throwing', false, e.stack || String(e));

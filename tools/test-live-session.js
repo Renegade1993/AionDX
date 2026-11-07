@@ -65,10 +65,59 @@ const PUT = (body) => `(async () => { const r = await fetch('http://127.0.0.1:' 
     const draft = await app.js(PUT({ 'aionui.dx.draft.live-test': { text: 'live test', at: Date.now() } }));
     check('a write shaped like patch 0001\'s draft autosave is accepted', draft && draft.status === 200, JSON.stringify(draft));
     await app.js(PUT({ 'aionui.dx.draft.live-test': null }));
+
+    // The voice panel the way a user fills it in: the provider list already shows ElevenLabs, so only a key is typed. Up to 0.26.6
+    // that stored {apiKey} alone, and every call failed "voice: no provider configured" (the Windows voice read replies, the wake
+    // phrase never transcribed). ElevenLabs is stubbed: the point is which key is sent, not a real account.
+    await app.js(`location.hash = '#/settings/appearance'; 0`);
+    for (let i = 0; i < 40 && !(await app.js(`!!document.querySelector('#aiondx-voice-apikey')`)); i++) await sleep(500);
+    // Installed here, after the settings page is up: one installed before opening it was found gone afterwards (a request then
+    // reached the real ElevenLabs with the test's made-up key, and was refused). The check below refuses to call without it.
+    await app.js(`(() => { window.__eleven = []; const of = window.fetch; window.fetch = function (u, o) { const s = String(u);
+      if (/^https:\\/\\/api\\.elevenlabs\\.io\\//.test(s)) { window.__eleven.push({ url: s, key: ((o && o.headers) || {})['xi-api-key'] || null });
+        if (/speech-to-text/.test(s)) return Promise.resolve(new Response(JSON.stringify({ text: 'hello' }), { status: 200 }));
+        if (/\\/voices/.test(s)) return Promise.resolve(new Response(JSON.stringify({ voices: [] }), { status: 200 }));
+        return Promise.resolve(new Response(new Uint8Array(64), { status: 200, headers: { 'Content-Type': 'audio/mpeg' } })); }
+      return of.apply(this, arguments); }; return 0; })()`);
+    await app.js(`document.querySelector('#aiondx-voice-apikey').focus(); 0`);
+    await app.type('live-panel-key');
+    for (let i = 0; i < 20 && (await app.js('window.__aionDxVoice.getSettings().then((s) => s.apiKey)')) !== 'live-panel-key'; i++) await sleep(250);
+    const panelSaved = await app.js('window.__aionDxVoice.getSettings()');
+    check('a key typed into the voice panel is saved with the provider the panel shows', panelSaved && panelSaved.apiKey === 'live-panel-key' && panelSaved.provider === 'elevenlabs',
+      JSON.stringify(panelSaved && { provider: panelSaved.provider, hasKey: !!panelSaved.apiKey }));
+    // Only with the stub still in place: never a real request to ElevenLabs from a test.
+    const stubbed = (await app.js('Array.isArray(window.__eleven)')) === true;
+    check('(the ElevenLabs stub is in place)', stubbed);
+    const synth = stubbed ? await app.js(`window.__aionDxVoice.synthesize('hello').then(() => 'ok', (e) => e.message)`) : 'skipped: no stub';
+    const heard = stubbed ? await app.js(`window.__aionDxVoice.transcribe(new Blob(['x'], { type: 'audio/webm' })).then((t) => 'ok', (e) => e.message)`) : 'skipped: no stub';
+    const sent = (await app.js('window.__eleven')) || [];
+    check('and synthesize/transcribe send that key to ElevenLabs (no "no provider configured", no Windows voice)',
+      synth === 'ok' && heard === 'ok' && ['https://api.elevenlabs.io/v1/text-to-speech/', 'https://api.elevenlabs.io/v1/speech-to-text'].every((p) => sent.some((c) => c.url.indexOf(p) === 0 && c.key === 'live-panel-key')),
+      JSON.stringify({ synth, heard, sent }));
+    await app.js(`location.hash = '#/guid'; 0`);
   } catch (e) {
     check('the test ran to the end', false, e && e.stack || e);
   } finally {
     if (app) await app.close();
+  }
+
+  // Start-up order: the voice page script loads before AionCore's session is ready (a settings read answers 401 until then), and
+  // the start page has no voice panel. The saved settings must still reach the page's voice UI - hands-free and auto-play read them
+  // on chat and team pages, where they used to stay empty until Settings > Appearance had been opened once.
+  let app2 = null;
+  try {
+    app2 = await launch({ port: 9602, profile: path.join(os.tmpdir(), 'aiondx-session-profile'), keepProfile: true, deadlineMs: 200000 });
+    for (let i = 0; i < 60 && (await app2.js('!!window.__aionDxVoiceUI')) !== true; i++) await sleep(500);
+    let seen = null;
+    for (let i = 0; i < 60; i++) { seen = await app2.js('window.__aionDxVoiceUI.settings && window.__aionDxVoiceUI.settings()'); if (seen && seen.apiKey) break; await sleep(500); }
+    check('after a restart, the saved voice settings reach the page without opening Settings',
+      !!seen && seen.apiKey === 'live-panel-key' && seen.provider === 'elevenlabs', JSON.stringify(seen && { provider: seen.provider, hasKey: !!seen.apiKey }) + ' on ' + (await app2.js('location.hash')));
+    check('(that was on a page with no voice panel)', (await app2.js(`!!document.querySelector('[data-testid="aiondx-voice-panel"]')`)) === false);
+    await app2.js(PUT({ 'aiondx.voice.config': null }));
+  } catch (e) {
+    check('the restart part ran to the end', false, e && e.stack || e);
+  } finally {
+    if (app2) await app2.close();
   }
   console.log(`${pass}/${pass + fail} passed`);
   process.exit(fail ? 1 : 0);

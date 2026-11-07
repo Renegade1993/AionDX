@@ -580,3 +580,30 @@ listen/speak state machine) run on their own `setInterval`/`setTimeout`, not ins
 the only big-page risk is `ensureHandsFree()`'s DOM re-attach noticing a swapped composer up to
 400 ms later than before. Judged low enough risk not to need a dedicated large-page harness for this
 merge; flagged here rather than silently skipped.
+
+## November 7th, 2026: a key typed into the panel was saved without its provider
+
+User retest of staged 0.26.6, with the 403 fixed and a key saved: the speaker button read replies with the Windows voice, and the
+hands-free badge read `Listening for "Hey AionDX" — trans…` while the wake phrase did nothing.
+
+**Cause, seen live (live-app.js, the real panel, ElevenLabs stubbed):** with no provider saved, the panel's provider list *shows*
+ElevenLabs (`refreshVoicePanel`: `providerSel.value = providers[0].id`) but never saves it, and typing a key saves `{ apiKey }`
+alone. Every call then failed `voice: no provider configured`: `synthesize()` fell back to the Windows voice (that message is one
+the fall-back accepts), and every wake clip's `transcribe()` failed with it, which is what "trans…" was hiding. The client itself
+was not stale: `aiondx-voice.js` reads the stored record on every call. The suites never saw it because `dev-smoke-test-real.js`
+chose the provider through the select before typing the key, which a user does not do.
+
+**Fixed, all in `aiondx-voice-ui.js`:**
+- A key saved with no provider chosen yet is saved with the provider the panel shows; a record an earlier build left with a key
+  and no provider is given it on the next settings load (`healMissingProvider`).
+- The page's settings are loaded on every page, not only while Settings > Appearance is open (hands-free and auto-play read them on
+  chat and team pages, where they stayed empty until that page had been opened once). An empty answer before AionCore's session
+  is ready is retried after a second, and the session turning ready reloads it.
+- The hands-free badge leads with the reason (`Transcription failed: … (listening for "…")`) and carries the whole text as its
+  tooltip; the settings panel's status line already showed it in full.
+- With a key saved, the speaker button never falls back to the Windows voice: the provider's failure shows on the button.
+
+Tests: `dev-smoke-test-real.js` 24 (types only a key, as a user does; checks the key reaches both ElevenLabs endpoints; mends a
+record with no provider) - against the 0.26.6 UI it fails 8; `dev-smoke-test-handsfree.js` 40 (badge order and tooltip; a saved
+key's failure shows an error and not the Windows voice); `tools\test-live-session.js` 16 on staged 0.26.7 (a key typed into the
+real panel is saved with its provider and sent to ElevenLabs; after a restart the saved settings reach a page with no panel).
