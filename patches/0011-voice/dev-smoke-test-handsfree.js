@@ -137,6 +137,21 @@ async function pageTarget() {
     check('hands-free keeps listening after one failed clip, it does not tear down',
       await js('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"'));
 
+    // ---- what the wake listener heard, when it was not the phrase ----
+    await speak('yes  sir,   its   so   sunny');   // letters s and runs of spaces: the heard line collapses only the spaces
+    check('a clip that is not the wake phrase is shown as heard, in the badge\'s tooltip',
+      await waitFor('/Heard: “yes sir, its so sunny”/.test(document.querySelector(".sendbox-actions .aiondx-voice-hf").title)', 40),
+      await js('document.querySelector(".sendbox-actions .aiondx-voice-hf").title'));
+    check('and in the settings panel\'s status line',
+      await js('/Heard: “yes sir, its so sunny”/.test(document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent)'),
+      await js('document.querySelector("[data-testid=\\"aiondx-voice-hf-status\\"]").textContent'));
+    check('the badge itself keeps its short text (the heard line is not crammed into it)',
+      !/Heard:/.test(await js('document.querySelector(".aiondx-voice-hf-text").textContent')));
+    check('a clip that transcribed clears the earlier failure from the badge',
+      /^Listening for “Hey AionDX”/.test(await js('document.querySelector(".aiondx-voice-hf-text").textContent')),
+      await js('document.querySelector(".aiondx-voice-hf-text").textContent'));
+    check('still at the wake stage: that was not the phrase', await js('window.__aionDxVoiceUI.hfState().state === "wake"'));
+
     // ---- React replacing the composer's own DOM (same route, fresh nodes) must not leave the
     // UI stuck on stale references - the other half of the actual bug, alongside the swallowed
     // transcribe error: a long wake/listen cycle easily outlives one render pass, and a captured

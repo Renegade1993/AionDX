@@ -607,3 +607,26 @@ Tests: `dev-smoke-test-real.js` 24 (types only a key, as a user does; checks the
 record with no provider) - against the 0.26.6 UI it fails 8; `dev-smoke-test-handsfree.js` 40 (badge order and tooltip; a saved
 key's failure shows an error and not the Windows voice); `tools\test-live-session.js` 16 on staged 0.26.7 (a key typed into the
 real panel is saved with its provider and sent to ElevenLabs; after a restart the saved settings reach a page with no panel).
+
+## November 7th, 2026 (later): the speaker read the stylesheet after a reply; what the wake listener heard
+
+User retest of 0.26.7: the speaker button under a team member's reply worked with ElevenLabs, then went on to read
+"shadow DOM and other code". **Cause, reproduced live** (live-app.js, a reply row in the real page with AionUi's real ShadowView
+stylesheet taken from the bundle, synthesize() captured): `messageText()` used `shadowRoot.textContent`, and every reply's shadow
+root also holds the `<style>` ShadowView puts there. The text sent after the reply's own was a code block's Copy label and raw
+code, collapsed tool output, hidden text, then the whole stylesheet - beginning "/* Shadow DOM CSS variable definitions */",
+with "Code block horizontal scrollbar" a little further on. With the new `messageText()` the same reply sends: "Here is the fix
+for the build. a snippet of js code. Ran 2 tools That is all."
+
+`messageText()` now walks the rendered nodes and keeps only what is on screen: no style/script/template/svg, no buttons, nothing
+hidden (`checkVisibility`: display:none, visibility:hidden, a closed `<details>`), no `aria-hidden`, nothing another patch
+injected (`aiondx-*`); a `<pre>` is named ("a snippet of js code"), not read; blocks are separated.
+
+**What the wake listener heard:** every clip the wake stage transcribes (matched or not, `onCandidate(text)`) is shown as
+`Heard: "…"` in the hands-free badge's tooltip and the settings panel's status line (not in the narrow badge itself). A clip
+that transcribed also clears an earlier transcription failure from the badge.
+
+Tests: `dev-smoke-test.js` 36 (a shadow-root reply with a stylesheet, Copy button, code, collapsed and hidden text, another
+patch's pill: only the visible text is sent); `dev-smoke-test-handsfree.js` 45 (heard line in tooltip and status line, with
+letters and runs of spaces; a later good clip clears the failure). Against the previous UI, those checks fail. The handsfree
+harness's fake speechSynthesis now takes 1.5 s per utterance instead of 20 ms, which made its system-voice checks flaky.

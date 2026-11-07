@@ -171,6 +171,32 @@ async function pageTarget() {
     check('only one playback is ever active at once: the stop-all button is idle again at the end',
       await js('document.querySelector(".aiondx-voice-stopall-btn").disabled === true'));
 
+    // ---- only what a reply shows is read: its shadow root also holds ShadowView's <style> ----
+    // 0.26.7: the speaker read a team member's reply, then went on with "shadow DOM and other code" - the CSS comments of the
+    // stylesheet AionUi puts in each reply's shadow root, along with a code block's raw text, its Copy button and collapsed output.
+    await js(`(() => {
+      const row = document.createElement('div'); row.id = 'message-shadow1'; row.setAttribute('data-message-type', 'text'); row.setAttribute('data-message-position', 'left');
+      const content = document.createElement('div'); content.setAttribute('data-testid', 'message-text-content');
+      const host = document.createElement('div'); host.className = 'markdown-shadow'; content.appendChild(host); row.appendChild(content);
+      const root = host.attachShadow({ mode: 'open' });
+      const body = document.createElement('div'); body.className = 'markdown-shadow-body';
+      body.innerHTML = '<p>Here is the fix.</p><div><button>Copy</button><pre><code class="language-js">console.log("raw code")</code></pre></div>' +
+        '<details><summary>Ran 2 tools</summary><div>collapsed tool output</div></details><span style="display:none">hidden debug</span>' +
+        '<span aria-hidden="true">decorative</span><span class="aiondx-loop-pill">Loop</span><p>That is all.</p>';
+      const st = document.createElement('style'); st.textContent = '/* Shadow DOM CSS variable definitions */ :host { color: red } /* Code block horizontal scrollbar */';
+      root.appendChild(body); root.appendChild(st);
+      document.querySelector('#message-a2').after(row); return 0; })()`);
+    await waitFor('!!document.querySelector("#message-shadow1 .aiondx-voice-play-btn")', 40);
+    const synthBeforeShadow = await js('window.__aionDxVoiceStubCalls.filter(c => c.name === "synthesize").length');
+    await humanClick('#message-shadow1 .aiondx-voice-play-btn');
+    await waitFor(`window.__aionDxVoiceStubCalls.filter(c => c.name === "synthesize").length > ${synthBeforeShadow}`, 30);
+    const shadowSaid = await js('window.__aionDxVoiceStubCalls.filter(c => c.name === "synthesize").pop().args[0]');
+    check('a reply in a shadow root is read as it shows: its text, the code block named', /^Here is the fix\. a snippet of js code\. Ran 2 tools That is all\.$/.test(shadowSaid), shadowSaid);
+    check('and nothing it does not show: no stylesheet, raw code, Copy button, collapsed or hidden text, or another patch\'s pill',
+      !/Shadow DOM|scrollbar|:host|raw code|Copy|collapsed|hidden debug|decorative|Loop/.test(shadowSaid), shadowSaid);
+    await humanClick('.aiondx-voice-stopall-btn');
+    await waitFor('document.querySelector("#message-shadow1 .aiondx-voice-play-btn").dataset.state === "idle"', 40);
+
     // ---- settings panel ----
     check('the settings panel was inserted after the theme card', await js('!!document.querySelector("[data-testid=\\"aiondx-voice-panel\\"]")'));
     check('the provider select is populated', await waitFor('document.querySelector("#aiondx-voice-provider").options.length >= 2'));

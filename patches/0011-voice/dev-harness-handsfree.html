@@ -105,7 +105,7 @@
   window.__systemSpeechCancelled = 0;
   Object.defineProperty(window, 'speechSynthesis', { configurable: true, writable: true, value: {
     cancel: function () { window.__systemSpeechCancelled++; },
-    speak: function (u) { window.__systemSpeechCalls.push(u.text); setTimeout(function () { if (u.onend) u.onend(); }, 20); },
+    speak: function (u) { window.__systemSpeechCalls.push(u.text); setTimeout(function () { if (u.onend) u.onend(); }, 1500); },
   } });
   Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, writable: true, value: function (text) {
     this.text = text; this.onend = null; this.onerror = null;

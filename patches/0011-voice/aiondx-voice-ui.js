@@ -199,12 +199,48 @@
     if (sendBtn && !sendBtn.disabled) sendBtn.click();
   }
 
-  /** A reply's text sits in an open shadow root (ShadowView), not the host's own light DOM, so
-   *  content.textContent alone is empty for a rendered agent message. */
+  /** What a reply shows, as text to read aloud. Its text sits in an open shadow root (ShadowView), and textContent of that root
+   *  also returns the <style> AionUi puts there - whose CSS comments ("Shadow DOM CSS variable definitions", "Code block horizontal
+   *  scrollbar") were read out after the reply (a user's report: "shadow DOM and other code"). So the rendered nodes are walked
+   *  instead, keeping only what is on screen: no style/script/template/svg, no buttons (a code block's Copy), nothing hidden
+   *  (checkVisibility: display:none, visibility:hidden, a closed <details>), nothing another patch injected (aiondx-*). A rendered
+   *  code block (<pre>) is named, not read; blocks are separated so sentences do not run together. */
+  var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, TEMPLATE: 1, NOSCRIPT: 1, SVG: 1, BUTTON: 1, TEXTAREA: 1, INPUT: 1, SELECT: 1 };
+  var BLOCK_TAGS = /^(P|DIV|LI|UL|OL|H[1-6]|TR|TABLE|BLOCKQUOTE|SECTION|ARTICLE|HEADER|FOOTER|DETAILS|SUMMARY|HR|BR|DD|DT|FIGCAPTION)$/;
+  function isShown(el) {
+    if (el.hidden || el.getAttribute('aria-hidden') === 'true') return false;
+    if (typeof el.checkVisibility === 'function') return el.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true });
+    var cs = window.getComputedStyle ? getComputedStyle(el) : null;
+    return !cs || (cs.display !== 'none' && cs.visibility !== 'hidden');
+  }
+  function codeLanguage(pre) {
+    var el = pre.querySelector('code[class*="language-"]') || pre;
+    var m = /(?:^|\s)language-([\w+#-]+)/.exec(el.className || '') || /(?:^|\s)language-([\w+#-]+)/.exec(pre.className || '');
+    return m ? m[1] : (pre.getAttribute('data-language') || '');
+  }
+  function visibleText(root) {
+    var out = [];
+    (function walk(node) {
+      for (var c = node.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) { out.push(c.nodeValue); continue; }
+        if (c.nodeType !== 1) continue;
+        var tag = c.tagName.toUpperCase();
+        if (SKIP_TAGS[tag]) continue;
+        if (typeof c.className === 'string' && /(?:^|\s)aiondx-/.test(c.className)) continue;
+        if (!isShown(c)) continue;
+        if (tag === 'PRE') { var lang = codeLanguage(c); out.push(lang ? '\n a snippet of ' + lang + ' code. \n' : '\n a code block. \n'); continue; }
+        var block = BLOCK_TAGS.test(tag);
+        if (block) out.push('\n');
+        walk(c);
+        if (block) out.push('\n');
+      }
+    })(root);
+    return out.join('').replace(/[ \t]+\n/g, '\n').replace(/\n{2,}/g, '\n').trim();
+  }
   function messageText(content) {
     var sh = content.querySelector('.markdown-shadow');
-    if (sh && sh.shadowRoot) return (sh.shadowRoot.textContent || '').trim();
-    return (content.textContent || '').trim();
+    if (sh && sh.shadowRoot) return visibleText(sh.shadowRoot);
+    return visibleText(content);
   }
 
   /** Markdown read character-by-character sounds broken (a user's report: a fenced code block came
@@ -714,7 +750,7 @@
   // key: a string identifying what hf is currently running for ('conv:<id>' or 'team:<id>'), so
   // ensureHandsFree() can tell "already running for this exact target, leave it alone" apart from
   // "switched to a different one, restart" without caring about conv vs team itself.
-  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '', sawActivity: false, wakeStartedAt: 0, transcribeErrorMsg: '', transcribeErrorAt: 0 };
+  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '', sawActivity: false, wakeStartedAt: 0, transcribeErrorMsg: '', transcribeErrorAt: 0, heardText: '', heardAt: 0 };
   // Test-only: {levelSource, createRecorder} to hand startWakeListener/captureUtterance a fake mic
   // instead of the real one, the same injection test-wake.js uses for aiondx-voice.js itself. Set
   // through window.__aionDxVoiceUI.setHfTestSource, never touched in production.
@@ -805,6 +841,8 @@
     hf.wakeStartedAt = Date.now();
     hf.transcribeErrorMsg = '';
     hf.transcribeErrorAt = 0;
+    hf.heardText = '';
+    hf.heardAt = 0;
     setHfState('wake');
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
     var opts = Object.assign({
@@ -814,7 +852,16 @@
       // Any candidate, matched or not, is proof the mic + VAD pipeline is actually alive - see
       // hfStageLabel's stall hint, which is otherwise the only way to tell "it's listening and
       // just hasn't heard the phrase" apart from "it isn't really listening at all."
-      onCandidate: function () { if (myGen === hf.gen && !hf.sawActivity) { hf.sawActivity = true; paintHandsFreeBadge(); paintHandsFreeNote(); } },
+      // The text is what the wake listener heard (matched or not): shown as "Heard: …" in the badge's tooltip and the settings
+      // status line, so a phrase that is never accepted shows how it was heard instead of looking like nothing happened.
+      onCandidate: function (text) {
+        if (myGen !== hf.gen) return;
+        hf.sawActivity = true;
+        var t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+        if (t) { hf.heardText = t.length > 80 ? t.slice(0, 79) + '…' : t; hf.heardAt = Date.now(); }
+        hf.transcribeErrorMsg = '';   // a clip that transcribed: an earlier failure is no longer the state to show
+        paintHandsFreeBadge(); paintHandsFreeNote();
+      },
       // A failed transcribe() still proves the mic/VAD recorded and sent a real clip - that is
       // "activity" too, and a sharper signal than the stall hint: this is the exact bug a user
       // report traced to "every clip was failing to transcribe, with nothing ever saying so."
@@ -971,6 +1018,10 @@
   /** The one state->words mapping, shared by the composer badge and the settings panel's status
    *  line - so the two can never drift apart on what "waiting-reply" or "speaking" is called. */
   var HF_STALL_MS = 8000;   // long enough to not false-positive on a quiet room, short enough to be useful
+  /** What the wake listener last heard in this wake stage, for the tooltip and status line (not the badge itself: it is narrow). */
+  function hfHeardLine() {
+    return hf.state === 'wake' && hf.heardText && hf.heardAt >= hf.wakeStartedAt ? 'Heard: “' + hf.heardText + '”' : '';
+  }
   function hfStageLabel() {
     var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
     if (hf.state === 'wake') {
@@ -1021,7 +1072,8 @@
       if (b.getAttribute('data-state') !== hf.state) b.setAttribute('data-state', hf.state);
       var text = b.querySelector('.aiondx-voice-hf-text');
       if (text.textContent !== label) text.textContent = label;
-      if (b.title !== label) b.title = label;   // the badge ellipsizes; the whole text on hover
+      var tip = label + (hfHeardLine() ? ' — ' + hfHeardLine() : '');
+      if (b.title !== tip) b.title = tip;   // the badge ellipsizes; the whole text on hover, with what was heard
       var aria ='Hands-free conversation mode' + (mine && label ? ': ' + label : ' is off');
       if (b.getAttribute('aria-label') !== aria) b.setAttribute('aria-label', aria);
     }
@@ -1039,7 +1091,7 @@
     if (hf.lastError) return 'Hands-free mode stopped: ' + hf.lastError + '. Turn it back on to try again.';
     if (!settings.handsFree) return '';
     if (!hf.active) return 'Hands-free mode is on, but it only runs inside a conversation — open one to start it.';
-    return 'Hands-free mode is running: ' + hfStageLabel();
+    return 'Hands-free mode is running: ' + hfStageLabel() + (hfHeardLine() ? ' — ' + hfHeardLine() : '');
   }
   /** Called from refreshVoicePanel() (the settings panel's own render pass) and directly from
    *  setHfState() (so a user sitting on the Settings page watching sees it change the instant a
