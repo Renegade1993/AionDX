@@ -393,7 +393,7 @@
         stopMicStream(st);
         if (!blob.size) { setMicState(wrap, 'idle'); activeMic = null; return; }
         setMicState(wrap, 'transcribing');
-        var p = call('transcribe', blob);
+        var p = call('transcribe', blob, { language: speechLanguage() });
         (p || Promise.reject(new Error('no voice module'))).then(function (text) {
           activeMic = null;
           insertTranscript(ta, text);
@@ -810,7 +810,28 @@
   var hfInjectedOpts = {};
 
   function hfModule() { return window.AionDxVoice || null; }
-  function hfTranscribe(blob, opts) { return call('transcribe', blob, opts); }
+  // Speech language: a short sound left to auto-detection came back in another language (a user's test: "え？", then "[打鼓声]",
+  // from English speech). The settings record's `language` is an ISO 639-1 code, or empty for "the same as the app"; every
+  // transcribe() call gets a concrete code either way.
+  var SPEECH_LANGUAGES = [['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'],
+    ['nl', 'Dutch'], ['pl', 'Polish'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['tr', 'Turkish'], ['ar', 'Arabic'], ['hi', 'Hindi'],
+    ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese']];
+  function appLanguage() {
+    var tag = document.documentElement.getAttribute('lang') || '';
+    if (!tag) { try { tag = localStorage.getItem('i18nextLng') || localStorage.getItem('language') || ''; } catch (e) { tag = ''; } }
+    if (!tag) tag = navigator.language || 'en';
+    var code = String(tag).toLowerCase().split(/[-_]/)[0];
+    return /^[a-z]{2}$/.test(code) ? code : 'en';
+  }
+  function speechLanguage() {
+    var chosen = (settingsCache.data || {}).language;
+    return chosen && /^[a-z]{2}$/.test(chosen) ? chosen : appLanguage();
+  }
+  function languageName(code) {
+    for (var i = 0; i < SPEECH_LANGUAGES.length; i++) if (SPEECH_LANGUAGES[i][0] === code) return SPEECH_LANGUAGES[i][1];
+    return code;
+  }
+  function hfTranscribe(blob, opts) { return call('transcribe', blob, Object.assign({ language: speechLanguage() }, opts || {})); }
   function saysStopHF(text) {
     var t = String(text || '').toLowerCase();
     return HF_STOP_PHRASES.some(function (p) { return t.indexOf(p) >= 0; });
@@ -901,7 +922,19 @@
     var opts = Object.assign({
       phrase: phrase,
       transcribe: hfTranscribe,
-      onWake: function () { if (myGen === hf.gen) startListenStage(); },
+      // "Hey AionDX, what's the weather" in one breath: the request is in the wake clip itself, and is sent from it instead of
+      // being lost (a lone word after the phrase, "uh", is not a request: then it listens for the message as before).
+      onWake: function (text) {
+        if (myGen !== hf.gen) return;
+        var rest = stripWakePhrase(text);
+        if (rest && rest.split(/\s+/).length >= 2 && !saysStopHF(rest) && hf.target) {
+          if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }
+          sendComposerText(hf.target.ta, rest);
+          waitForReplyThenPlay(myGen);
+          return;
+        }
+        startListenStage();
+      },
       // Any candidate, matched or not, is proof the mic + VAD pipeline is actually alive - see
       // hfStageLabel's stall hint, which is otherwise the only way to tell "it's listening and
       // just hasn't heard the phrase" apart from "it isn't really listening at all."
@@ -939,6 +972,24 @@
     hf.wakeStop = m.startWakeListener(opts);
   }
 
+  /** A message's text with the wake phrase taken off its start, the way matchWakePhrase hears it ("Hey, Aeon DX, what's next"
+   *  -> "what's next"). Only at the start: the shortest run of leading words that matches, and only if the match begins at the
+   *  first word ("tell me what hey aiondx means" is left alone). Unchanged when the module has no matchWakePhrase. */
+  function stripWakePhrase(text) {
+    var m = hfModule();
+    var raw = String(text || '').trim();
+    if (!raw || !m || typeof m.matchWakePhrase !== 'function') return raw;
+    var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
+    var tokens = raw.split(/\s+/);
+    var most = Math.min(tokens.length, phrase.split(/\s+/).length + 3);   // a name can come back as several words ("AMD X")
+    for (var k = 1; k <= most; k++) {
+      if (!m.matchWakePhrase(tokens.slice(0, k).join(' '), phrase).matched) continue;
+      if (k > 1 && m.matchWakePhrase(tokens.slice(1, k).join(' '), phrase).matched) return raw;   // it starts after the first word
+      return tokens.slice(k).join(' ').replace(/^[\s,.;:!?—–-]+/, '');
+    }
+    return raw;
+  }
+
   function startListenStage() {
     var myGen = hf.gen;
     if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }   // release the wake mic before opening a fresh one
@@ -952,8 +1003,9 @@
       hf.abort = null;
       if (myGen !== hf.gen) return;
       if (saysStopHF(text)) { hf.lastError = ''; stopHandsFreeForGood(); return; }   // a deliberate stop, not a failure
-      var clean = String(text || '').trim();
-      if (!clean) { startListenStage(); return; }   // VAD cut a clip transcribe() read as empty: just listen again
+      // The wake phrase said again at the start ("Hey AionDX, …") is not part of the message; a message that was only the phrase is not sent.
+      var clean = stripWakePhrase(text);
+      if (!clean) { startListenStage(); return; }   // nothing (left) to send: just listen again
       sendComposerText(hf.target.ta, clean);   // hf.target read now, not whatever was current when this stage started
       waitForReplyThenPlay(myGen);
     }, function (e) {
@@ -1268,6 +1320,8 @@
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-voice">Voice</label>' +
         '<select id="aiondx-voice-voice" data-testid="aiondx-voice-voice"></select></div>' +
       '<div class="aiondx-voice-note" data-testid="aiondx-voice-note" hidden></div>' +
+      '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-language">Speech language</label>' +
+        '<select id="aiondx-voice-language" data-testid="aiondx-voice-language"></select></div>' +
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-handsfree">Hands-free</label>' +
         '<label class="aiondx-voice-toggle"><input type="checkbox" id="aiondx-voice-handsfree" data-testid="aiondx-voice-handsfree"> Hands-free conversation mode</label></div>' +
       '<div class="aiondx-voice-note">Say the wake phrase, then talk back and forth without touching the mic or speaker buttons. Off by default; the stop-all button (or saying a stop phrase) ends it.</div>' +
@@ -1300,6 +1354,8 @@
       reveal.textContent = show ? 'Hide' : 'Show';
     });
     voiceSel.addEventListener('change', function () { saveSettings({ voiceId: voiceSel.value }); });
+    var languageSel = el.querySelector('#aiondx-voice-language');
+    languageSel.addEventListener('change', function () { saveSettings({ language: languageSel.value }); });   // '' = the same as the app
     handsFreeBox.addEventListener('change', function () {
       if (!handsFreeBox.checked) hf.lastError = '';   // the user's own deliberate off: any earlier error is no longer the reason
       saveSettings({ handsFree: handsFreeBox.checked });
@@ -1388,9 +1444,10 @@
     var note = pickerEl.querySelector('[data-testid="aiondx-voice-note"]');
     var handsFreeBox = pickerEl.querySelector('#aiondx-voice-handsfree');
     var wakeInput = pickerEl.querySelector('#aiondx-voice-wakephrase');
+    var languageSel = pickerEl.querySelector('#aiondx-voice-language');
 
     var disabled = !v;
-    [providerSel, keyInput, voiceSel, pickerEl.querySelector('.aiondx-voice-reveal'), handsFreeBox, wakeInput].forEach(function (c) { c.disabled = disabled; });
+    [providerSel, keyInput, voiceSel, pickerEl.querySelector('.aiondx-voice-reveal'), handsFreeBox, wakeInput, languageSel].forEach(function (c) { c.disabled = disabled; });
     if (disabled) { setStatus('Voice module not loaded yet.', false); return; }
 
     ensureSettingsLoaded();
@@ -1401,6 +1458,9 @@
       var wantWake = settings.wakePhrase || DEFAULT_WAKE_PHRASE;
       if (wakeInput.value !== wantWake) wakeInput.value = wantWake;
     }
+    var langItems = [{ id: '', name: 'Same as the app (' + languageName(appLanguage()) + ')' }].concat(SPEECH_LANGUAGES.map(function (l) { return { id: l[0], name: l[1] }; }));
+    fillSelect(languageSel, langItems, settings.language || '', null);
+    if (!settings.language && languageSel.value !== '') languageSel.value = '';
     paintHandsFreeNote();
 
     // Providers: cached 30 s, since listProviders() is likely a plain in-memory list, not a network call.

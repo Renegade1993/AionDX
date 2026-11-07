@@ -204,6 +204,22 @@ async function pageTarget() {
     check('it did not go back through the wake stage to get there',
       await js('window.__aionDxVoiceUI.hfState().state !== "wake"'));
 
+    // ---- the wake phrase said again at the start of a message is not sent with it ----
+    await js(`window.__conv.status = 'running'`);   // hold the reply, so the next steps do not replay the long one above
+    await speak('Hey AionDX, what is the time');
+    check('a message that starts with the wake phrase is sent without it',
+      await waitFor('(window.__sentMessages || []).includes("what is the time")', 40), JSON.stringify(await js('window.__sentMessages')));
+    check('and the phrase itself never reaches the chat', !(await js('window.__sentMessages')).some((m) => /aion/i.test(m)));
+    await waitFor('window.__aionDxVoiceUI.hfState().state === "waiting-reply"', 20);
+    await js(`window.__agentReply('It is noon.')`);
+    await js(`window.__conv.status = 'finished'`);
+    await waitFor('window.__aionDxVoiceUI.hfState().state === "listening"', 60);
+    const sentBeforeBare = await js('window.__sentMessages.length');
+    await speak('Hey AionDX');
+    await sleep(1500);
+    check('a message that is only the wake phrase is not sent', (await js('window.__sentMessages.length')) === sentBeforeBare, JSON.stringify(await js('window.__sentMessages.slice(-2)')));
+    check('it keeps listening for the message instead', await js('window.__aionDxVoiceUI.hfState().state === "listening"'));
+
     // ---- a spoken stop phrase tears the whole thing down ----
     await speak('okay please stop listening now');
     check('a spoken stop phrase ends hands-free mode entirely',
@@ -214,6 +230,12 @@ async function pageTarget() {
     await humanClick('#aiondx-voice-handsfree');   // unchecked by the teardown above's refresh; this checks it again
     check('re-enabling starts the wake stage again',
       await waitFor('window.__aionDxVoiceUI.hfState().active && window.__aionDxVoiceUI.hfState().state === "wake"', 40));
+    // "Hey AionDX, read me the news" in one breath: the request comes in the wake clip itself and is sent from it.
+    await js(`window.__conv.status = 'running'`);
+    await speak('Hey AionDX, read me the news');
+    check('a request said with the wake phrase in one breath is sent, without the phrase',
+      await waitFor('(window.__sentMessages || []).includes("read me the news")', 40), JSON.stringify(await js('window.__sentMessages.slice(-2)')));
+    check('and hands-free waits for its reply (no second utterance needed)', await waitFor('window.__aionDxVoiceUI.hfState().state === "waiting-reply"', 20));
     await humanClick('.aiondx-voice-stopall-btn');
     check('the stop-all button also tears down hands-free mode, not just playback',
       await js('window.__aionDxVoiceUI.hfState().active === false'));
@@ -279,14 +301,14 @@ async function pageTarget() {
       await waitFor('(window.__systemSpeechCalls || []).includes("No key needed for this one.")', 40),
       JSON.stringify(await js('window.__systemSpeechCalls')));
     check('the play button shows "playing" for the system-voice utterance too',
-      await waitFor('(document.querySelector("#message-a2 .aiondx-voice-play-btn") || {}).dataset && document.querySelector("#message-a2 .aiondx-voice-play-btn").dataset.state === "playing"', 20));
+      await waitFor('(document.querySelector("#messages > :last-child .aiondx-voice-play-btn") || {}).dataset && document.querySelector("#messages > :last-child .aiondx-voice-play-btn").dataset.state === "playing"', 20));
 
     const cancelledBefore = await js('window.__systemSpeechCancelled');
     await humanClick('.aiondx-voice-stopall-btn');
     check('the stop-all button cancels the system voice (speechSynthesis.cancel, not audio.pause on nothing)',
       (await js('window.__systemSpeechCancelled')) > cancelledBefore);
     check('the play button settles back to idle after stop-all cancels the system voice',
-      await js('document.querySelector("#message-a2 .aiondx-voice-play-btn").dataset.state') === 'idle');
+      await js('document.querySelector("#messages > :last-child .aiondx-voice-play-btn").dataset.state') === 'idle');
     const stopAllTore = await js('window.__aionDxVoiceUI.hfState().active === false');
 
     // ---- with a key saved, an ElevenLabs failure shows its error: the Windows voice is only for "no key at all" ----
