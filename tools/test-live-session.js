@@ -44,6 +44,14 @@ const PUT = (body) => `(async () => { const r = await fetch('http://127.0.0.1:' 
     const read = await app.js(`fetch('http://127.0.0.1:' + window.__backendPort + '/api/settings/client?keys=theme.activeId', { credentials: 'include' }).then((r) => r.status)`);
     check('a read is answered (not 401)', read === 200, read);
 
+    // AionCore's own answer for the folders the app started it with (AIONUI_CACHE_DIR / _WORK_DIR / _LOG_DIR). In 0.26.0-0.26.4 the
+    // app passed them renamed, and AionCore reported cache_dir "" and log_dir "" (work_dir held only because --work-dir also carries it).
+    const sys = await app.js(`fetch('http://127.0.0.1:' + window.__backendPort + '/api/system/info', { credentials: 'include' }).then((r) => r.json()).then((j) => j.data || j)`);
+    const same = (a, b) => typeof a === 'string' && a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase();
+    check('AionCore has the app\'s cache folder (<profile>\\config)', sys && same(sys.cache_dir, path.join(app.profile, 'config')), JSON.stringify(sys));
+    check('AionCore has the app\'s log folder (<profile>\\logs)', sys && same(sys.log_dir, path.join(app.profile, 'logs')), JSON.stringify(sys));
+    check('AionCore has the app\'s work folder (<profile>\\aionui)', sys && same(sys.work_dir, path.join(app.profile, 'aionui')), JSON.stringify(sys));
+
     // Voice: the same client and call the settings panel's Save uses.
     for (let i = 0; i < 30 && (await app.js('!!window.__aionDxVoice')) !== true; i++) await sleep(500);
     const saved = await app.js(`window.__aionDxVoice.setSettings({ provider: 'elevenlabs', apiKey: 'live-test-not-a-real-key', voiceId: 'live-test-voice' })

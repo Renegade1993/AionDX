@@ -23,6 +23,17 @@ const SAMPLE = [
   "var m = document.cookie.match(/(?:^|;\\s*)aionui-csrf-token=([^;]+)/);",
   'emit("aionui-session-message", x);',
   'const label = "AionUi desktop";',
+  'function buildSpawnEnv(dirs, extraEnv) {',
+  '  const { PREBUILDS_ONLY: _prebuildsOnly, ...parentEnv } = process.env;',
+  '  return {',
+  '    ...parentEnv,',
+  '    AIONUI_CACHE_DIR: dirs.cacheDir,',
+  '    AIONUI_WORK_DIR: dirs.workDir,',
+  '    AIONUI_LOG_DIR: dirs.logDir,',
+  '    ...extraEnv',
+  '  };',
+  '}',
+  'const other = process.env.AIONUI_LOG_DIR_OVERRIDE;',
 ].join('\n');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-core-contract-'));
@@ -38,21 +49,33 @@ try {
     ok(`${mode}: the page's cookie lookup keeps the same name`, out.includes('aionui-csrf-token=([^;]+)'));
     ok(`${mode}: a longer name that only starts with it is still renamed`, out.includes('"aiondx-session-message"') && !out.includes('aionui-session-message'));
     ok(`${mode}: everything else is still renamed`, out.includes('"AionDX desktop"'));
+    ok(`${mode}: the folder variables AionCore is started with keep their names`,
+      out.includes('AIONUI_CACHE_DIR: dirs.cacheDir') && out.includes('AIONUI_WORK_DIR: dirs.workDir') && out.includes('AIONUI_LOG_DIR: dirs.logDir'), out);
+    ok(`${mode}: a longer variable that only starts with one is still renamed`, out.includes('AIONDX_LOG_DIR_OVERRIDE'));
   }
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
-const main = (s, c) => `const CORE_SESSION_COOKIE = "${s}";\nconst CORE_CSRF_COOKIE = "${c}";\n`;
-const stockCore = Buffer.from('\0set-cookie\0aionui-session\0x-csrf-token\0aionui-csrf-token\0', 'utf8');
-const renamedCore = Buffer.from('\0aiondx-session\0aiondx-csrf-token\0', 'utf8');
+const spawnEnv = (p) => `function buildSpawnEnv(dirs, extraEnv) {\n  const { PREBUILDS_ONLY: _prebuildsOnly, ...parentEnv } = process.env;\n  return {\n    ...parentEnv,\n` +
+  `    ${p}_CACHE_DIR: dirs.cacheDir,\n    ${p}_WORK_DIR: dirs.workDir,\n    ${p}_LOG_DIR: dirs.logDir,\n    ...extraEnv\n  };\n}\n`;
+const main = (s, c, p) => `const CORE_SESSION_COOKIE = "${s}";\nconst CORE_CSRF_COOKIE = "${c}";\n` + spawnEnv(p || (s.startsWith('aiondx') ? 'AIONDX' : 'AIONUI'));
+// The stock binary keeps its strings run together (AIONUI_WORK_DIRAIONCORE_BOOTSTRAP_SECRET): a name is found inside a longer run.
+const stockCore = Buffer.from('\0set-cookie\0aionui-session\0x-csrf-token\0aionui-csrf-token\0aionui/logsAIONUI_LOG_DIRaionuiAIONUI_WORK_DIRAIONCORE_BOOTSTRAP_SECRETAIONUI_CACHE_DIR\0', 'utf8');
+const renamedCore = Buffer.from('\0aiondx-session\0aiondx-csrf-token\0AIONDX_CACHE_DIR\0AIONDX_WORK_DIR\0AIONDX_LOG_DIR\0', 'utf8');
 
 ok('a stock-named app and the stock AionCore agree', check(main('aionui-session', 'aionui-csrf-token'), stockCore).problems.length === 0);
 const broken = check(main('aiondx-session', 'aiondx-csrf-token'), stockCore);
-ok('the 0.26.0 mismatch (renamed app, stock AionCore) is caught, both names', broken.problems.length === 2, broken.problems.join(' | '));
+ok('the 0.26.0 mismatch (renamed app, stock AionCore) is caught: both cookies and all three variables', broken.problems.length === 5, broken.problems.join(' | '));
 ok('a renamed app and a renamed AionCore agree', check(main('aiondx-session', 'aiondx-csrf-token'), renamedCore).problems.length === 0);
-ok('a stock-named app and a renamed AionCore are caught too', check(main('aionui-session', 'aionui-csrf-token'), renamedCore).problems.length === 2);
-ok('a missing constant is reported, not passed', check('const CORE_CSRF_COOKIE = "aionui-csrf-token";', stockCore).problems.length === 1);
+ok('a stock-named app and a renamed AionCore are caught too', check(main('aionui-session', 'aionui-csrf-token'), renamedCore).problems.length === 5);
+ok('a missing constant is reported, not passed', check('const CORE_CSRF_COOKIE = "aionui-csrf-token";\n' + spawnEnv('AIONUI'), stockCore).problems.length === 1);
+
+// The start-up variables (0.26.0-0.26.4: the cookies fixed, the folder variables still renamed in the app alone).
+const envOnly = check(main('aionui-session', 'aionui-csrf-token', 'AIONDX'), stockCore);
+ok('a renamed app\'s folder variables and the stock AionCore are caught, all three', envOnly.problems.length === 3 && envOnly.problems.every((p) => /does not read/.test(p)), envOnly.problems.join(' | '));
+ok('the variables are read from buildSpawnEnv, not the ones it strips', JSON.stringify(check(main('aionui-session', 'aionui-csrf-token'), stockCore).found.env) === '["AIONUI_CACHE_DIR","AIONUI_WORK_DIR","AIONUI_LOG_DIR"]');
+ok('a main process with no buildSpawnEnv is reported, not passed', check('const CORE_SESSION_COOKIE = "aionui-session";\nconst CORE_CSRF_COOKIE = "aionui-csrf-token";\n', stockCore).problems.some((p) => /buildSpawnEnv/.test(p)));
 
 const failed = results.filter((r) => !r.ok);
 for (const r of results) console.log(`${r.ok ? 'ok  ' : 'FAIL'} ${r.name}${!r.ok && r.detail ? ' -- ' + r.detail : ''}`);

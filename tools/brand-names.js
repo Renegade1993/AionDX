@@ -12,7 +12,8 @@
  *   - names an earlier version stored in the user's data (MCP server rows such as aionui-image-generation, entries in an agent's config, folders):
  *     a duplicate would appear next to the old one on every upgrade, so they are renamed in a later step with a migration;
  *   - key-derivation prefixes (`aionui-encryption-key:`, `aionui-secret-fingerprint:`): changing them makes stored secrets unreadable;
- *   - AionCore's cookie names (`aionui-session`, `aionui-csrf-token`): the app and AionCore must agree on them, and the stock AionCore
+ *   - AionCore's cookie names (`aionui-session`, `aionui-csrf-token`) and the folder variables the app starts it with
+ *     (`AIONUI_CACHE_DIR`, `AIONUI_WORK_DIR`, `AIONUI_LOG_DIR`): the app and AionCore must agree on them, and the stock AionCore
  *     is not renamed (tools\check-core-contract.js checks the built app against the AionCore it ships with);
  *   - lines marked `legacy-name`: code that reads something an earlier version wrote;
  *   - SQL migrations (their checksum is stored in every database, so one character changed refuses to start);
@@ -63,6 +64,9 @@ function brand(text, rel) {
   // AionCore's session and CSRF cookie names: a contract between the app and AionCore, kept in both modes so a stock AionCore
   // and AionDX's own build both match the app (renamed in the app alone, the app never found its session cookie: every write was refused)
   mask(/aionui-(?:session|csrf-token)(?![A-Za-z0-9_-])/g, 'cookie-name');
+  // the directories the app hands AionCore at start-up, by environment variable: the same contract (renamed in the app alone,
+  // AionCore reported no cache or log folder at all)
+  mask(/AIONUI_(?:CACHE|WORK|LOG)_DIR(?![A-Z0-9_])/g, 'core-env');
   // lines that stay whole (core: plain lines; asar bundles are minified, so only the line markers matter)
   if (mode === 'core') {
     text = text.split(/\r?\n/).map((line) => {
