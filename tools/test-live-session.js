@@ -79,6 +79,12 @@ const PUT = (body) => `(async () => { const r = await fetch('http://127.0.0.1:' 
         if (/\\/voices/.test(s)) return Promise.resolve(new Response(JSON.stringify({ voices: [] }), { status: 200 }));
         return Promise.resolve(new Response(new Uint8Array(64), { status: 200, headers: { 'Content-Type': 'audio/mpeg' } })); }
       return of.apply(this, arguments); }; return 0; })()`);
+    // 0.26.9: the speech language (a user's test got Japanese and Chinese back from short English sounds), and the interrupt.
+    for (let i = 0; i < 20 && !(await app.js(`!!document.querySelector('#aiondx-voice-language')`)); i++) await sleep(250);
+    const lang = await app.js(`(() => { const s = document.querySelector('#aiondx-voice-language'); return s ? { value: s.value, label: s.selectedOptions[0] && s.selectedOptions[0].textContent } : null; })()`);
+    check('the voice panel has a speech language, "the same as the app" by default', !!lang && lang.value === '' && /^Same as the app \(.+\)$/.test(lang.label), JSON.stringify(lang));
+    check('the shipped voice module offers the barge-in listener and the junk filter the panel and hands-free use',
+      (await app.js(`['startBargeInListener', 'isStopCommand', 'cleanTranscript', 'matchWakePhrase'].every((k) => typeof window.AionDxVoice[k] === 'function')`)) === true);
     await app.js(`document.querySelector('#aiondx-voice-apikey').focus(); 0`);
     await app.type('live-panel-key');
     for (let i = 0; i < 20 && (await app.js('window.__aionDxVoice.getSettings().then((s) => s.apiKey)')) !== 'live-panel-key'; i++) await sleep(250);

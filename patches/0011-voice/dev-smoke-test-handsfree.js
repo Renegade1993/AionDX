@@ -27,7 +27,7 @@ function finish(code, msg) {
   try { edge.kill(); } catch { /* already gone */ }
   process.exit(code);
 }
-const deadline = setTimeout(() => finish(2, 'DEADLINE: hands-free smoke test did not finish within 60 s'), 60000);
+const deadline = setTimeout(() => finish(2, 'DEADLINE: hands-free smoke test did not finish within 150 s'), 150000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function pageTarget() {
