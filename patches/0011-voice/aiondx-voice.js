@@ -36,6 +36,11 @@
   // ElevenLabs' own default sample voice ("Rachel"), published in their API docs; used only when the
   // user has picked a provider but no voice yet.
   var ELEVEN_DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
+  // ElevenLabs' models page (checked 2026-11-07): Flash v2.5 is the low-latency model for the plain
+  // text-to-speech endpoint, ~100 ms median, where Multilingual v2 (also the API's own default when
+  // model_id is left out) starts noticeably slower; 32 languages, half the price per character. Turbo
+  // v2.5 is deprecated in its favour. A settings record's modelId overrides it.
+  var ELEVEN_DEFAULT_TTS_MODEL = 'eleven_flash_v2_5';
 
   // ---------------------------------------------------------------- settings store
 
@@ -105,11 +110,13 @@
     );
   }
 
-  /** opts: { apiKey, voiceId? (default voice when a call does not name one), fetch? (for tests) }. */
+  /** opts: { apiKey, voiceId? (default voice when a call does not name one), modelId? (default TTS
+   *  model), fetch? (for tests) }. */
   function createElevenLabsProvider(opts) {
     opts = opts || {};
     var apiKey = opts.apiKey || '';
     var defaultVoiceId = opts.voiceId || ELEVEN_DEFAULT_VOICE_ID;
+    var defaultModelId = opts.modelId || ELEVEN_DEFAULT_TTS_MODEL;
     var fetchImpl = opts.fetch || fetch;
 
     function authHeaders(extra) {
@@ -120,17 +127,22 @@
       id: 'elevenlabs',
       name: 'ElevenLabs',
 
+      /** synthOpts: { voiceId?, modelId?, previousText?, nextText?, signal? }. previousText/nextText
+       *  are ElevenLabs' own continuity fields, so a reply spoken in pieces keeps its intonation
+       *  across the joins; signal aborts the request (stop-all). */
       synthesize: function (text, synthOpts) {
+        synthOpts = synthOpts || {};
         if (!apiKey) return Promise.reject(new Error('elevenlabs: no API key configured'));
         if (!text || !String(text).trim()) return Promise.reject(new Error('elevenlabs: no text to speak'));
-        var voiceId = (synthOpts && synthOpts.voiceId) || defaultVoiceId;
+        var voiceId = synthOpts.voiceId || defaultVoiceId;
+        var body = { text: String(text), model_id: synthOpts.modelId || defaultModelId };
+        if (synthOpts.previousText) body.previous_text = String(synthOpts.previousText);
+        if (synthOpts.nextText) body.next_text = String(synthOpts.nextText);
         return fetchImpl(ELEVEN_BASE + '/v1/text-to-speech/' + encodeURIComponent(voiceId), {
           method: 'POST',
           headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'audio/mpeg' }),
-          body: JSON.stringify({
-            text: String(text),
-            model_id: (synthOpts && synthOpts.modelId) || 'eleven_multilingual_v2',
-          }),
+          body: JSON.stringify(body),
+          signal: synthOpts.signal,
         }).then(function (r) {
           if (!r.ok) return errorText(r).then(function (t) { throw new Error('elevenlabs synthesize failed: http ' + r.status + (t ? ' ' + t : '')); });
           return r.blob();
@@ -200,7 +212,7 @@
     var cached = null; // { config, provider }
 
     function sameConfig(a, b) {
-      return !!a && !!b && a.provider === b.provider && a.apiKey === b.apiKey && a.voiceId === b.voiceId;
+      return !!a && !!b && a.provider === b.provider && a.apiKey === b.apiKey && a.voiceId === b.voiceId && a.modelId === b.modelId;
     }
 
     function currentProvider() {
@@ -215,7 +227,12 @@
 
     return {
       transcribe: function (audioBlob, transcribeOpts) { return currentProvider().then(function (p) { return p.transcribe(audioBlob, transcribeOpts); }); },
-      synthesize: function (text, voiceId) { return currentProvider().then(function (p) { return p.synthesize(text, voiceId ? { voiceId: voiceId } : undefined); }); },
+      // extra: { previousText, nextText, signal, modelId }, what playChunked passes for each piece.
+      synthesize: function (text, voiceId, extra) {
+        var o = Object.assign({}, extra || {});
+        if (voiceId) o.voiceId = voiceId;
+        return currentProvider().then(function (p) { return p.synthesize(text, o); });
+      },
       listVoices: function () { return currentProvider().then(function (p) { return p.listVoices ? p.listVoices() : []; }); },
       listProviders: function () { return Promise.resolve(listProviders()); },
       getSettings: function () { return store.getConfig().then(function (c) { return c || {}; }); },
@@ -401,15 +418,77 @@
     };
   }
 
+  // ---------------------------------------------------------------- wake phrase matching
+
+  /** Lowercase, accents and punctuation gone, "decks"/"ecks" read as the letter x (how a
+   *  transcriber spells a spoken "DX"), "okay" as "ok" (transcribers write either), single spaces. */
+  function normalizeSpoken(s) {
+    return String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/(?:ecks|eks|cks)\b/g, 'x')
+      .replace(/\bokay\b/g, 'ok')
+      .replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+
+  function editDistance(a, b) {
+    var prev = [], cur, i, j;
+    for (j = 0; j <= b.length; j++) prev[j] = j;
+    for (i = 1; i <= a.length; i++) {
+      cur = [i];
+      for (j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+
+  var VOWELS = 'aeiouy';
+
+  /** Whether a transcript contains the wake phrase as a speech transcriber is likely to write it.
+   *  A made-up name like "AionDX" comes back as "AonDX", "AMD X", "Android X" or "Aion DX" (heard
+   *  live, 2026-11-06), so an exact substring almost never matched. The rule, for a phrase of two or
+   *  more words, "<greeting> <name>":
+   *  1. some word of the transcript is within one edit of the greeting ("hey", "hay", "hei");
+   *  2. right after it, the name with spaces removed ("aiondx") is matched against the start of the
+   *     rest of the transcript, also with spaces removed, by edit distance, allowing up to
+   *     round(length x tolerance) edits (6 letters at the default 0.6: 4 edits);
+   *  3. the matched stretch must end with the name's last two letters exactly ("dx") and start with
+   *     the same kind of sound (vowel or consonant) as the name.
+   *  Rule 3 is what keeps ordinary speech out: "hey Android", "hey index", "hey Aiden" and "hey the
+   *  DX build" all fail it. A one-word phrase skips rule 1 and is looked for at any word.
+   *  Returns { matched, distance, maxEdits }; distance is Infinity when nothing was close. */
+  function matchWakePhrase(text, phrase, opts) {
+    var tolerance = opts && opts.tolerance != null ? opts.tolerance : 0.6;
+    var words = normalizeSpoken(phrase).split(' ').filter(Boolean);
+    if (!words.length) return { matched: false, distance: Infinity, maxEdits: 0 };
+    var greeting = words.length > 1 ? words[0] : '';
+    var name = words.slice(greeting ? 1 : 0).join('');
+    var ending = name.slice(-2);
+    var nameVowel = VOWELS.indexOf(name[0]) >= 0;
+    var maxEdits = Math.round(name.length * tolerance);
+    var heard = normalizeSpoken(text).split(' ').filter(Boolean);
+    var best = Infinity;
+    for (var i = 0; i < heard.length; i++) {
+      if (greeting && editDistance(heard[i], greeting) > (greeting.length >= 3 ? 1 : 0)) continue;
+      var rest = heard.slice(greeting ? i + 1 : i).join('');
+      if (!rest || (VOWELS.indexOf(rest[0]) >= 0) !== nameVowel) continue;
+      var longest = Math.min(rest.length, name.length + maxEdits);
+      for (var len = ending.length; len <= longest; len++) {
+        var stretch = rest.slice(0, len);
+        if (stretch.slice(-ending.length) !== ending) continue;
+        best = Math.min(best, editDistance(name, stretch));
+      }
+    }
+    return { matched: best <= maxEdits, distance: best, maxEdits: maxEdits };
+  }
+
   // ---------------------------------------------------------------- wake phrase + utterance capture
 
   var activeWakeListener = null; // the one wake listener this module runs at a time
 
   /** Listens on the mic in the background for opts.phrase, without streaming everything to the
    *  provider: runVad only sends a clip to transcribe() once the VAD has seen actual speech. A clip
-   *  whose transcript contains opts.phrase (case-insensitive substring - deliberately simple, not a
-   *  fuzzy matcher) calls opts.onWake(text); every other clip is dropped, optionally surfaced through
-   *  opts.onCandidate(text) for a "didn't catch that" debug affordance. opts.onTranscribeError(err),
+   *  whose transcript matches opts.phrase (matchWakePhrase: tolerant of how a transcriber spells a
+   *  made-up name; opts.tolerance tunes it) calls opts.onWake(text); every clip, matched or not, is
+   *  first passed to opts.onCandidate(text, { matched, distance }) so the UI can show what was heard. opts.onTranscribeError(err),
    *  if given, fires whenever a clip's transcribe() call itself fails (an ElevenLabs error, a
    *  network blip) - distinct from opts.onError below, which only ever fires once, for a listener
    *  that could not start at all (no microphone, no AudioContext). A caller that wires only
@@ -423,8 +502,8 @@
    *  already owns, or neither to let this open the real mic itself. */
   function startWakeListener(opts) {
     opts = opts || {};
-    var phrase = String(opts.phrase || '').trim().toLowerCase();
-    if (!phrase) throw new Error('voice wake listener: opts.phrase is required');
+    var phrase = String(opts.phrase || '').trim();
+    if (!normalizeSpoken(phrase)) throw new Error('voice wake listener: opts.phrase is required');
     if (typeof opts.transcribe !== 'function') throw new Error('voice wake listener: opts.transcribe is required');
     var onWake = typeof opts.onWake === 'function' ? opts.onWake : function () {};
     var onCandidate = typeof opts.onCandidate === 'function' ? opts.onCandidate : null;
@@ -459,8 +538,9 @@
         minSpeechMs: opts.minSpeechMs,
         maxSegmentMs: opts.maxSegmentMs,
         onSegment: function (text) {
-          if (onCandidate) onCandidate(text);
-          if (String(text || '').toLowerCase().indexOf(phrase) >= 0) onWake(text);
+          var m = matchWakePhrase(text, phrase, { tolerance: opts.tolerance });
+          if (onCandidate) onCandidate(text, { matched: m.matched, distance: m.distance });
+          if (m.matched) onWake(text);
         },
         onSegmentError: onTranscribeError,
       });
@@ -540,6 +620,150 @@
     });
   }
 
+  // ---------------------------------------------------------------- reading a reply in pieces
+
+  /** Splits a reply into pieces for playChunked: a short first piece (whole sentences, at least
+   *  opts.firstMin characters where the sentences allow, at most opts.firstMax), then pieces of
+   *  whole sentences up to opts.chunkMax. A sentence longer than the limit is cut at its last comma,
+   *  or else its last space, before the limit. */
+  function splitForSpeech(text, opts) {
+    opts = opts || {};
+    var firstMin = opts.firstMin != null ? opts.firstMin : 40;
+    var firstMax = opts.firstMax || 160;
+    var chunkMax = opts.chunkMax || 400;
+    var flat = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!flat) return [];
+    // A sentence ends at . ! or ? (and any closing quote or bracket) followed by a space, so
+    // "index.html" or "3.5" stays whole.
+    var sentences = flat.split(/(?<=[.!?]["')\]]*)\s+/).filter(Boolean);
+
+    function cut(s, max) {
+      var out = [];
+      while (s.length > max) {
+        var at = s.lastIndexOf(', ', max - 1);   // the comma stays with the first half, so it must fit too
+        if (at > max / 3) at += 1;
+        else at = s.lastIndexOf(' ', max);
+        if (at <= 0) at = max;
+        out.push(s.slice(0, at).trim());
+        s = s.slice(at).trim();
+      }
+      if (s) out.push(s);
+      return out;
+    }
+
+    var pieces = [];
+    var cur = '';
+    var limit = firstMax;
+    for (var i = 0; i < sentences.length; i++) {
+      var parts = cut(sentences[i], limit);
+      for (var j = 0; j < parts.length; j++) {
+        var next = cur ? cur + ' ' + parts[j] : parts[j];
+        var firstFull = !pieces.length && cur.length >= firstMin;
+        if (cur && (next.length > limit || firstFull)) {
+          pieces.push(cur);
+          cur = parts[j];
+          limit = chunkMax;
+        } else {
+          cur = next;
+        }
+      }
+    }
+    if (cur) pieces.push(cur);
+    return pieces;
+  }
+
+  /** Reads text aloud piece by piece, so the first sound comes after one short piece is
+   *  synthesized instead of the whole reply. The next piece is requested as soon as the current
+   *  one has arrived, so it is normally ready by the time the current one ends; only one request is
+   *  in flight at a time.
+   *  opts: { text, synthesize(pieceText, { previousText, nextText, signal }) -> Promise<Blob>
+   *  (a configured client's synthesize, wrapped to pass voiceId), onStart(), onEnd(), onError(err),
+   *  splitForSpeech's firstMin/firstMax/chunkMax, and for tests Audio, createObjectURL,
+   *  revokeObjectURL }. Returns { pause(), done, pieces }: pause() stops at once, aborting the
+   *  request in flight, stopping the audio and releasing its URL, and after it no callback fires;
+   *  done resolves with 'end', 'error' or 'stopped'. pause() lets the result stand in for an Audio
+   *  element wherever a caller only ever pauses one. */
+  function playChunked(opts) {
+    opts = opts || {};
+    var pieces = splitForSpeech(opts.text, opts);
+    var AudioCtor = opts.Audio || (typeof Audio !== 'undefined' ? Audio : null);
+    var makeUrl = opts.createObjectURL || function (b) { return URL.createObjectURL(b); };
+    var dropUrl = opts.revokeObjectURL || function (u) { try { URL.revokeObjectURL(u); } catch (e) { /* already gone */ } };
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var stopped = false;
+    var started = false;
+    var audio = null;
+    var url = null;
+    var requests = [];
+    var settle;
+    var done = new Promise(function (r) { settle = r; });
+
+    function release() {
+      if (controller) { try { controller.abort(); } catch (e) { /* best effort */ } }
+      if (audio) { try { audio.pause(); } catch (e) { /* best effort */ } audio = null; }
+      if (url) { dropUrl(url); url = null; }
+    }
+
+    function finish(kind, err) {
+      if (stopped) return;
+      stopped = true;
+      release();
+      if (kind === 'end' && typeof opts.onEnd === 'function') opts.onEnd();
+      if (kind === 'error' && typeof opts.onError === 'function') opts.onError(err);
+      settle(kind);
+    }
+
+    function request(i) {
+      if (!requests[i]) {
+        requests[i] = Promise.resolve().then(function () {
+          return opts.synthesize(pieces[i], {
+            previousText: i > 0 ? pieces[i - 1] : undefined,
+            nextText: i + 1 < pieces.length ? pieces[i + 1] : undefined,
+            signal: controller ? controller.signal : undefined,
+          });
+        });
+        requests[i].catch(function () { /* reported when this piece's turn comes */ });
+      }
+      return requests[i];
+    }
+
+    function playAt(i) {
+      if (stopped) return;
+      if (i >= pieces.length) { finish('end'); return; }
+      request(i).then(function (blob) {
+        if (stopped) return;
+        if (i + 1 < pieces.length) request(i + 1);
+        if (url) dropUrl(url);
+        url = makeUrl(blob);
+        var a = new AudioCtor(url);
+        audio = a;
+        a.addEventListener('ended', function () { if (!stopped && audio === a) playAt(i + 1); });
+        a.addEventListener('error', function () { if (!stopped && audio === a) finish('error', new Error('could not play the audio')); });
+        return Promise.resolve(a.play()).then(function () {
+          if (stopped || started) return;
+          started = true;
+          if (typeof opts.onStart === 'function') opts.onStart();
+        });
+      }).catch(function (e) { finish('error', e); });
+    }
+
+    if (typeof opts.synthesize !== 'function') Promise.resolve().then(function () { finish('error', new Error('voice playChunked: opts.synthesize is required')); });
+    else if (!AudioCtor) Promise.resolve().then(function () { finish('error', new Error('voice playChunked: no Audio available')); });
+    else if (!pieces.length) Promise.resolve().then(function () { finish('error', new Error('nothing to read')); });
+    else playAt(0);
+
+    return {
+      pause: function () {
+        if (stopped) return;
+        stopped = true;
+        release();
+        settle('stopped');
+      },
+      done: done,
+      pieces: pieces,
+    };
+  }
+
   return {
     VOICE_CONFIG_KEY: VOICE_CONFIG_KEY,
     createSettingsStore: createSettingsStore,
@@ -548,8 +772,11 @@
     createProvider: createProvider,
     createVoiceClient: createVoiceClient,
     createMicSource: createMicSource,
+    matchWakePhrase: matchWakePhrase,
     startWakeListener: startWakeListener,
     stopWakeListener: stopWakeListener,
     captureUtterance: captureUtterance,
+    splitForSpeech: splitForSpeech,
+    playChunked: playChunked,
   };
 });

@@ -259,6 +259,55 @@ async function speak(level, ms) { level.level = 1; await sleep(ms); level.level 
       check('captureUtterance rejects with the transcribe error itself, right away', threw === theError);
     }
 
+    // ---- matchWakePhrase: how a transcriber actually spells "Hey AionDX" (the user's own dictation,
+    // 2026-11-06: "Hey, AonDX", "Hey AMD X", "Hey Android X", "Hey, Aion DX") ----
+    {
+      const P = 'Hey AionDX';
+      const heard = ['Hey, AonDX', 'Hey AMD X', 'Hey Android X', 'Hey, Aion DX', 'hey aiondx', 'Hey AionDX, what time is it?',
+        'Okay so hey, Aion DX, can you check the build', 'Hey eon DX', 'Hey Ion DX.', 'Hey, AI on DX.', 'Hey Aeon decks', 'Hay AionDX', 'Hey Aion D.X.'];
+      const missed = heard.filter((t) => !AionDxVoice.matchWakePhrase(t, P).matched);
+      check('every transcription variant of the wake phrase matches', missed.length === 0, missed.join(' | '));
+
+      // Ordinary speech, including "hey" + a near-miss word. None of these may wake it.
+      const ordinary = ['hey can you run the tests again', 'hey there', "hey Andrew how's it going", 'hey Adam', 'hey android',
+        'hey how are you doing today', 'hey Alexa', 'hey Siri', 'OK Google', 'hey Aiden', 'hey index', 'hey Anthony', 'hey AMD',
+        'and the next one', 'the index is out of bounds', "let's add a new file called index.tsx", 'make sure the API key is never logged',
+        'can you rebuild the app and stage it', 'push it to the branch but do not open a PR yet', 'hey quick question about the build',
+        'Android Studio is installed', 'Aion is the name of the app', 'DX stands for developer experience', 'the AMD driver crashed again',
+        'hey Ann', 'hey on deck', 'hey Redux', 'hey check the DX', 'hey I need DX', 'hey the DX build is broken', 'hey, so the dx stuff',
+        'hey audio', 'hey Aion', 'hey eon', 'hey Hondo', 'they and I went to dinner', 'please check the onion dicing tutorial', 'stop listening'];
+      const woke = ordinary.filter((t) => AionDxVoice.matchWakePhrase(t, P).matched);
+      check('ordinary speech, near misses included, does not wake it (' + ordinary.length + ' sentences)', woke.length === 0, woke.join(' | '));
+
+      check('a custom phrase works the same way', AionDxVoice.matchWakePhrase('OK, computer, open the build', 'OK Computer').matched &&
+        AionDxVoice.matchWakePhrase('okay compooter', 'OK Computer').matched && !AionDxVoice.matchWakePhrase("okay, let's commit this", 'OK Computer').matched);
+      check('a one-word phrase is found anywhere', AionDxVoice.matchWakePhrase('so, Jarvis, are you up', 'Jarvis').matched && !AionDxVoice.matchWakePhrase('so are you up', 'Jarvis').matched);
+      check('tolerance 0 means an exact match after normalizing', AionDxVoice.matchWakePhrase('Hey, Aion DX!', P, { tolerance: 0 }).matched &&
+        !AionDxVoice.matchWakePhrase('Hey AonDX', P, { tolerance: 0 }).matched);
+    }
+
+    // ---- the listener uses it, and onCandidate says what was heard and whether it matched ----
+    {
+      const level = fakeLevelSource();
+      const woken = [];
+      const candidates = [];
+      const stop = AionDxVoice.startWakeListener(Object.assign({}, COMMON, {
+        phrase: 'Hey AionDX', levelSource: level, createRecorder: fakeRecorderFactory([]),
+        transcribe: queueTranscribe(['hey android', 'Hey AMD X']),
+        onWake: (t) => woken.push(t),
+        onCandidate: (t, info) => candidates.push([t, info]),
+      }));
+      await speak(level, SPEAK_MS);
+      await sleep(SETTLE_MS);
+      await speak(level, SPEAK_MS);
+      await sleep(SETTLE_MS);
+      stop();
+      check('the listener wakes on a transcription variant ("Hey AMD X")', woken.length === 1 && woken[0] === 'Hey AMD X');
+      check('onCandidate gets the heard text and whether it matched', candidates.length === 2 &&
+        candidates[0][0] === 'hey android' && candidates[0][1].matched === false &&
+        candidates[1][0] === 'Hey AMD X' && candidates[1][1].matched === true && candidates[1][1].distance === 3);
+    }
+
     // ---- input validation: clear errors, no network/mic access attempted ----
     {
       let threw = null;

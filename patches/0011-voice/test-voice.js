@@ -122,9 +122,28 @@ console.log = (...a) => { consoleLines.push(a.join(' ')); realLog(...a); };
     check('synthesize returns a Blob', audioBlob instanceof Blob && audioBlob.size === 4);
     check('the returned Blob carries the audio content type', audioBlob.type === 'audio/mpeg');
 
+    check('synthesize uses the low-latency Flash v2.5 model by default', JSON.parse(ttsReq.body.toString('utf8')).model_id === 'eleven_flash_v2_5');
+    check('synthesize sends no continuity fields when none are given', !('previous_text' in JSON.parse(ttsReq.body.toString('utf8'))));
+
     requests.length = 0;
     await provider.synthesize('hi', { voiceId: 'custom-voice-id' });
     check('synthesize uses the voice id a call names', /\/v1\/text-to-speech\/custom-voice-id$/.test(requests[requests.length - 1].url));
+
+    requests.length = 0;
+    await provider.synthesize('middle', { modelId: 'eleven_multilingual_v2', previousText: 'before.', nextText: 'after.' });
+    const contBody = JSON.parse(requests[requests.length - 1].body.toString('utf8'));
+    check('a model id and continuity text a call names are sent', contBody.model_id === 'eleven_multilingual_v2' && contBody.previous_text === 'before.' && contBody.next_text === 'after.');
+
+    const modelled = AionDxVoice.createElevenLabsProvider({ apiKey: API_KEY, modelId: 'eleven_flash_v2', fetch: makeFetch() });
+    requests.length = 0;
+    await modelled.synthesize('hi');
+    check('a provider built with a modelId uses it as its default', JSON.parse(requests[requests.length - 1].body.toString('utf8')).model_id === 'eleven_flash_v2');
+
+    const aborter = new AbortController();
+    aborter.abort();
+    threw = null;
+    try { await provider.synthesize('hello', { signal: aborter.signal }); } catch (e) { threw = e; }
+    check('synthesize honours an abort signal', threw && threw.name === 'AbortError');
 
     behavior.ttsStatus = 400; behavior.ttsBody = 'bad request: missing field';
     threw = null;
@@ -237,6 +256,16 @@ console.log = (...a) => { consoleLines.push(a.join(' ')); realLog(...a); };
     requests.length = 0;
     await client.synthesize('hi again');
     check('the client rebuilds its provider after setSettings changes the voice', /\/v1\/text-to-speech\/v2$/.test(requests[requests.length - 1].url));
+
+    requests.length = 0;
+    await client.synthesize('piece two', null, { previousText: 'piece one.', nextText: 'piece three.' });
+    const clientBody = JSON.parse(requests[requests.length - 1].body.toString('utf8'));
+    check('the client passes continuity text through to the provider', clientBody.previous_text === 'piece one.' && clientBody.next_text === 'piece three.');
+
+    await client.setSettings({ modelId: 'eleven_multilingual_v2' });
+    requests.length = 0;
+    await client.synthesize('with a stored model');
+    check('a modelId in the settings record reaches the request', JSON.parse(requests[requests.length - 1].body.toString('utf8')).model_id === 'eleven_multilingual_v2');
 
     // ---- the key never appears in anything this test observed on the console ----
     check('the API key was never written to the console', !consoleLines.some((l) => l.includes(API_KEY)));

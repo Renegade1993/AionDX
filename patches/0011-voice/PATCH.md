@@ -460,9 +460,10 @@ is - the key always comes from the settings record at call time).
 
 | file | what |
 |---|---|
-| `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore`, `createVoiceClient` (the flat convenience wrapper), and the wake-phrase/utterance-capture VAD engine (`startWakeListener`, `stopWakeListener`, `captureUtterance`, `createMicSource`) |
-| `test-voice.js` | 46 checks against a stand-in HTTP server standing in for both ElevenLabs and the settings store - no real network, no real AionUi, no real key |
-| `test-wake.js` | 22 checks for the wake-phrase listener and utterance capture, against a fake level source and a fake recorder - no real microphone |
+| `aiondx-voice.js` | the interface, `createElevenLabsProvider`, the provider registry (`createProvider`, `listProviders`), `createSettingsStore`, `createVoiceClient` (the flat convenience wrapper), the wake-phrase/utterance-capture VAD engine (`startWakeListener`, `stopWakeListener`, `captureUtterance`, `createMicSource`, `matchWakePhrase`), and piece-by-piece reading (`splitForSpeech`, `playChunked`) |
+| `test-voice.js` | 53 checks against a stand-in HTTP server standing in for both ElevenLabs and the settings store - no real network, no real AionUi, no real key |
+| `test-wake.js` | 34 checks for the wake-phrase listener, its matching and utterance capture, against a fake level source and a fake recorder - no real microphone |
+| `test-speak.js` | 36 checks for `splitForSpeech` and `playChunked`, against a fake Audio element and a synthesize() the test answers piece by piece |
 | `aiondx-voice-ui.js` | the composer's mic button (idle/recording/transcribing, matching patch 0001's 28x28 Arco circle pills), a speaker button on each agent reply (idle/loading/playing, stops on a second click or the clip ending), and a settings panel section on Settings > Appearance (provider, API key, voice, from `listVoices()` when the provider offers one) |
 | `dev-harness.html`, `voice-provider.stub.js`, `dev-smoke-test.js` | a UI-only dev loop: a minimal composer/message/settings DOM plus a stand-in `window.__aionDxVoice` (not shipped), driven with real mouse and a fake microphone in headless Edge, 16/16 |
 | `dev-harness-real.html`, `dev-smoke-test-real.js` | the same real-mouse check against the actual `aiondx-voice.js`, with only `window.fetch` stubbed (the settings store and ElevenLabs' three endpoints) - no real network or key, 14/14 |
@@ -630,3 +631,64 @@ Tests: `dev-smoke-test.js` 36 (a shadow-root reply with a stylesheet, Copy butto
 patch's pill: only the visible text is sent); `dev-smoke-test-handsfree.js` 45 (heard line in tooltip and status line, with
 letters and runs of spaces; a later good clip clears the failure). Against the previous UI, those checks fail. The handsfree
 harness's fake speechSynthesis now takes 1.5 s per utterance instead of 20 ms, which made its system-voice checks flaky.
+
+## November 7th, 2026: the wake phrase as a transcriber spells it, and the first word sooner
+
+User retest of 0.26.7: transcription worked, but saying "Hey AionDX" never woke hands-free, and the speaker button took a long
+time to start talking. Both in `aiondx-voice.js`.
+
+**The wake phrase.** The listener matched an exact substring, "hey aiondx", and a made-up name almost never comes back from a
+transcriber spelled that way: the user's own dictation came back as "Hey, AonDX", "Hey AMD X", "Hey Android X" and "Hey, Aion
+DX". `matchWakePhrase(text, phrase, { tolerance })`, which the listener now uses, for a phrase "<greeting> <name>":
+
+1. both sides are normalized: lowercase, accents and punctuation gone, "decks"/"ecks" read as the letter x, "okay" as "ok";
+2. some word heard is within one edit of the greeting ("hey", "hay", "hei");
+3. the name with its spaces removed ("aiondx") is compared, by edit distance, with the start of what follows, also without
+   spaces, allowing round(length x tolerance) edits: 4 for "aiondx" at the default 0.6 ("AonDX" is 1, "AMD X" 3, "Android X" 4);
+4. the stretch compared must end with the name's last two letters exactly ("dx") and begin with the same kind of sound, vowel or
+   consonant, as the name.
+
+Rule 4 is what keeps ordinary speech out: "hey android", "hey index", "hey Aiden" and "hey the DX build is broken" all fail it.
+A one-word phrase skips rule 2. Tolerance 0 means exact after normalizing.
+
+Measured: the four reported spellings and nine more ("Hey eon DX", "Hey, AI on DX.", "Hey Aeon decks", ...) all match; 38
+ordinary sentences and near misses do not. Over the repository's own prose (README and every PATCH.md, 2,289 sentences) no
+sentence wakes it as written, none with "hey " put in front of it, and "hey <word>" for each of the 3,211 distinct words in
+them wakes only for "aiondx" itself; every hit contained the phrase. Known to wake: "hey" followed by a short word starting with
+a vowel and then "DX" ("hey a DX", "hey Ann DX", "hey and X", "hey any DX news"), which sound close to the phrase.
+
+`onCandidate(text, { matched, distance })` now also says whether a clip matched and how far it was; the text was already passed,
+and the UI shows it as `Heard: "..."` (section above).
+
+**The first word sooner.** Two changes:
+
+- The default model is `eleven_flash_v2_5` instead of `eleven_multilingual_v2`. ElevenLabs' models page (checked November 7th)
+  gives Flash v2.5 about 100 ms median latency, 32 languages, half the price per character, and lists Turbo v2.5 as deprecated in
+  its favour; Multilingual v2 is the API's own default and the slower one. A `modelId` in the settings record overrides it.
+  (Their newest real-time model, `eleven_v4_turbo`, is documented for the dialogue websocket; the text-to-speech page does not
+  list it, so it was not used.)
+- `playChunked({ text, synthesize, onStart, onEnd, onError })` reads a reply in pieces: a short first piece (whole sentences,
+  40 to 160 characters where the sentences allow), then pieces of up to 400. The first piece plays as soon as it arrives; the
+  next is requested the moment the current one arrives, so it is normally ready when the current one ends, and only one request
+  is in flight at a time. Each piece carries ElevenLabs' `previous_text`/`next_text`, so the intonation runs on across the joins.
+  It returns `{ pause(), done, pieces }`: `pause()` aborts the request in flight, stops the audio and releases its URL, and no
+  callback fires after it, so it can stand in for the `Audio` element the speaker button already keeps (`currentPlayback.audio`)
+  and stop-all stops it the same way. `synthesize()` now takes an abort signal, `previousText`, `nextText` and `modelId`
+  (client: `synthesize(text, voiceId, extra)`).
+
+The streaming endpoint (`/v1/text-to-speech/{voice}/stream`) was not used: its bytes only help if playback starts before the
+response ends, which means MediaSource and an MP3 source buffer; short pieces give most of the gain with the Blob and `Audio`
+path the button already has. The speaker button and hands-free auto-play still call `synthesize()` for the whole reply until
+`aiondx-voice-ui.js` switches `startPlayback()` to `playChunked()` (Voice UI Engineer).
+
+Not measured: the real time to first audio. There is no ElevenLabs key here, so the gain is by construction (one short piece
+on the fastest model instead of the whole reply on the slowest), not timed.
+
+Tests: `test-wake.js` 34 (the variants and negatives above, a custom phrase, a one-word phrase, tolerance 0, the listener waking
+on "Hey AMD X" and reporting what it heard); `test-voice.js` 53 (the default model, continuity fields, a stored `modelId`, an
+aborted request); `test-speak.js` 36, new (the split; first sound after the first piece only; the next piece fetched while one
+plays; a late piece waited for, not skipped; order, URLs released, one request at a time; stopping before the first piece,
+while playing, and a late `ended` after a stop; a failed later piece, a blocked `play()`, nothing to read; the real client
+sending every piece to the stored voice on Flash v2.5). `dev-smoke-test-real.js` 24, `dev-smoke-test-handsfree.js` 45 and
+`dev-smoke-test-handsfree-team.js` 12 still pass with the new module (the solo hands-free harness hit its 60 s deadline once
+under load, then passed twice).
