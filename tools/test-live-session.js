@@ -95,6 +95,30 @@ const PUT = (body) => `(async () => { const r = await fetch('http://127.0.0.1:' 
       synth === 'ok' && heard === 'ok' && ['https://api.elevenlabs.io/v1/text-to-speech/', 'https://api.elevenlabs.io/v1/speech-to-text'].every((p) => sent.some((c) => c.url.indexOf(p) === 0 && c.key === 'live-panel-key')),
       JSON.stringify({ synth, heard, sent }));
     await app.js(`location.hash = '#/guid'; 0`);
+
+    // The speaker reads what a reply shows. A reply's text sits in a shadow root next to the <style> AionUi's ShadowView puts
+    // there; 0.26.7 read that stylesheet aloud after the reply ("shadow DOM and other code"), along with a code block's Copy
+    // label and raw code and any collapsed or hidden text.
+    for (let i = 0; i < 40 && (await app.js('location.hash')) !== '#/guid'; i++) await sleep(500);
+    await sleep(3000);
+    await app.js(`(() => {
+      const row = document.createElement('div'); row.id = 'message-livetest1'; row.setAttribute('data-message-type', 'text'); row.setAttribute('data-message-position', 'left');
+      row.style.cssText = 'position:fixed;left:20px;top:60px;width:600px;z-index:99999';
+      const content = document.createElement('div'); content.setAttribute('data-testid', 'message-text-content');
+      const host = document.createElement('div'); host.className = 'markdown-shadow'; content.appendChild(host); row.appendChild(content);
+      const root = host.attachShadow({ mode: 'open' });
+      const body = document.createElement('div'); body.className = 'markdown-shadow-body';
+      body.innerHTML = '<p>Here is the fix.</p><div><button>Copy</button><pre><code class="language-js">console.log(1)</code></pre></div>' +
+        '<details><summary>Ran 2 tools</summary><div>collapsed tool output</div></details><span style="display:none">hidden text</span><p>That is all.</p>';
+      const st = document.createElement('style'); st.textContent = '/* Shadow DOM CSS variable definitions */ :host { color: inherit } /* Code block horizontal scrollbar */';
+      root.appendChild(body); root.appendChild(st); document.body.appendChild(row); return 0; })()`);
+    for (let i = 0; i < 30 && !(await app.js(`!!document.querySelector('#message-livetest1 .aiondx-voice-play-btn')`)); i++) await sleep(500);
+    await app.js(`(() => { window.__said = []; window.__aionDxVoice.synthesize = function (t) { window.__said.push(t); return Promise.reject(new Error('captured by the test')); }; return 0; })()`);
+    await app.js(`document.querySelector('#message-livetest1 .aiondx-voice-play-btn').click(); 0`);
+    for (let i = 0; i < 20 && !((await app.js('(window.__said || []).length')) > 0); i++) await sleep(250);
+    const said = await app.js('(window.__said || [])[0]');
+    check('the speaker sends what a reply shows, not its stylesheet, code, Copy label or hidden text',
+      said === 'Here is the fix. a snippet of js code. Ran 2 tools That is all.', JSON.stringify(said));
   } catch (e) {
     check('the test ran to the end', false, e && e.stack || e);
   } finally {
