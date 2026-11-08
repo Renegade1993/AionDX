@@ -14,7 +14,7 @@ A new crate, `aionui-mobile`, wired into `aionui-app`:
 
 **Off by default.** Nothing listens on the network until the user switches it on under Settings > Mobile.
 
-**Its own database.** Bridge state lives in `mobile-bridge.db` in the data dir, with its own migrations, never in
+**Its own database.** Bridge state lives in `aiondx-bridge.db` in the data dir, with its own migrations, never in
 `aionui-backend.db`. AionCore refuses to open a database that has a migration it doesn't know
 (`database.newer_than_app`). So a shared migration would lock every core without the bridge out of the user's chats.
 
@@ -23,7 +23,7 @@ A new crate, `aionui-mobile`, wired into `aionui-app`:
 | File | What |
 |---|---|
 | `settings.rs` | `MobileSettings`: enabled (off), port 47734, hostName, extraUrls (validated http(s) base URLs, at most 8), mdns (on), tasksWrite (on). Partial updates are applied all-or-nothing. |
-| `store.rs`, `migrations/0001_init.sql` | `mobile-bridge.db`: settings per Core user, paired devices, revocation tombstones. |
+| `store.rs`, `migrations/0001_init.sql` | `aiondx-bridge.db`: settings per Core user, paired devices, revocation tombstones. |
 | `host_key.rs` | The PC's identity `host.key` (S_h, hostId, dataKey) in `<data dir>\aiondx-mobile\`, sealed with DPAPI for the current Windows user. Created on first use. A corrupt file is an error, never a silently new identity. |
 | `peer_filter.rs` | Only loopback, RFC 1918, link-local, CGNAT `100.64/10`, IPv6 ULA and link-local peers may reach the listener. |
 | `listener.rs` | The LAN listener on `0.0.0.0:<port>`. It serves only `/api/mobile/v1/*` (this phase: `hello`); every other path is a plaintext 404. Non-private peers get a 403 before routing. |
@@ -89,3 +89,20 @@ A new crate, `aionui-mobile`, wired into `aionui-app`:
 - **5 vector tests**, unchanged.
 
 Contract rev 4.3 adds the complete outer error table (§4.4a).
+
+## Phase 1 addendum, 2026-11-07: file name and recovery (lead's requirements)
+
+- **Name:** the bridge database is `aiondx-bridge.db`, next to AionCore's own database (never `aionui-backend.db`).
+- **A database that won't open** is moved aside as `.corrupt-<ms>` and a fresh one created. The bridge starts
+  disabled, with no phones, and AionCore always boots.
+- **The host key:**
+  - present but not decryptable or decodable → moved aside, a new identity is created, and the old identity's
+    phones are forgotten;
+  - an **I/O error** reading it (antivirus or backup lock, permission) → no rotation, the file is kept, and the
+    bridge is "faulted" for that boot: status says why, there's no listener, and pairing is refused.
+- **`lastRecovery`:** every recovery is recorded in the admin status as `{kind, at, movedTo}`.
+  `POST /api/mobile/admin/recovery/dismiss` clears it. Stored in the bridge DB's new `mobile_meta` table
+  (`migrations/0002_meta.sql`).
+- **Tests:** 50 pass. New ones: garbage DB; garbage key (new identity, phones forgotten, recovery recorded); missing
+  DB; recovery shown until dismissed; **an unreadable key** (a directory in its place) gives no listener, no
+  pairing, an error in status, no rotation, and the file untouched.

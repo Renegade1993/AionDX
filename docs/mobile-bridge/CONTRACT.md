@@ -21,7 +21,7 @@
 - **Rev 4.3 (from implementing phase 1):** §4.4a lists every outer error code in one table. Four were missing
   from §4.2–4.4: `pair` → `401 auth_failed` and `409 unknown_host`, `rpc` → `401 auth_failed` and `400 replayed`, and
   `403 forbidden_peer` on any route.
-- **Rev 4.2 (implementation note, no wire change):** bridge state lives in its own `mobile-bridge.db` in the data
+- **Rev 4.2 (implementation note, no wire change):** bridge state lives in its own `aiondx-bridge.db` in the data
   dir, not in a migration of AionCore's `aionui-backend.db`. AionCore refuses to open a database that has a
   migration it doesn't know, so a shared migration would lock every core without the bridge out of the user's
   chats (§0 #4, §3.1).
@@ -51,7 +51,7 @@ wire is versioned (`v: 1`).
 | 1 | Crypto scheme | **Accept** the proposal (X25519, HKDF-SHA256, XChaCha20-Poly1305, QR + 6-digit SAS, KK-style handshake, single `rpc` tunnel), with nine amendments (§4.6). The most important ones: an authenticated revocation notice, per-PC phone keys, idempotent retries, and a QR offer that locks on first use. |
 | 2 | Paths, port, discovery | `/api/mobile/v1/{hello,pair,session,rpc}` on a **separate LAN listener** (default port 47734, configurable; the QR carries the real URL). The main AionCore API stays on 127.0.0.1. mDNS `_aiondx._tcp` is used only to re-find a PC that is already paired. |
 | 3 | Remote access | **LAN-only for v1.** Remote use works through the user's own Tailscale/WireGuard: extra URLs go into the QR. No hosted relay. Approved (§11 #2). |
-| 4 | Host key, revocation, multi-PC | Host static key in a DPAPI-protected file. Paired devices are stored in the bridge's own SQLite file (`mobile-bridge.db`), never in AionCore's database. **One phone keypair per PC.** Revoking on the PC deletes the device row and its sessions. "Forget PC" on the phone deletes that PC's keypair. |
+| 4 | Host key, revocation, multi-PC | Host static key in a DPAPI-protected file. Paired devices are stored in the bridge's own SQLite file (`aiondx-bridge.db`), never in AionCore's database. **One phone keypair per PC.** Revoking on the PC deletes the device row and its sessions. "Forget PC" on the phone deletes that PC's keypair. |
 | 5 | Session TTL | **12 h absolute, 30 min idle.** A handshake is one round trip, so short sessions cost little. |
 | 6 | API schema | A **mobile facade** (`/v1/...` inner paths, §6). It is an allowlist by construction, not a passthrough of AionCore's routes. Approved (§11 #1). |
 | 7 | Biometric / per-action confirmation | Enforced by the bridge, not just a client-side flag. A biometric-gated `confirmKey` HMACs each sensitive request. Required for approvals (allow), spawn, shutdown, force-remove and clear-context. Not required for chat send. Approved (§11 #3). |
@@ -115,9 +115,24 @@ earlier assumptions.
 |---|---|---|
 | `S_h`, the host static X25519 key, plus `hostId` (16 random bytes, b64u) | PC | `%APPDATA%\AionUi\aiondx-mobile\host.key`, DPAPI-protected (CurrentUser). The same blob holds `dataKey` (32 B), which encrypts per-device secrets in the DB. Rotating the key means a new `hostId`, and every phone must pair again. |
 | `S_c`, the phone static X25519 key, plus `deviceId`, **one per paired PC** | Phone | `expo-secure-store`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, excluded from backups. Keyed by `hostId`. |
-| `confirmKey` (32 B, per device per PC) | Both | Phone: secure store with `requireAuthentication: true` (biometric-gated). PC: a column in `mobile-bridge.db`, sealed with `dataKey`. |
+| `confirmKey` (32 B, per device per PC) | Both | Phone: secure store with `requireAuthentication: true` (biometric-gated). PC: a column in `aiondx-bridge.db`, sealed with `dataKey`. |
 | `pairingSecret` (32 B) | PC → QR | Memory only. Single use, expires after 5 min. |
 | Session keys `c2s`, `s2c`, `sid` | Both | Memory only. |
+
+**Bridge state on the PC.** Paired devices, revocation tombstones and settings live in `aiondx-bridge.db`, next to
+AionCore's database in the data dir. Confirm keys in it are sealed with `dataKey`. The PC's static private key is
+**never** in that file: it is only in the DPAPI-sealed `aiondx-mobile\host.key`.
+- **Deleting `aiondx-bridge.db` unpairs every phone.** Their next handshake gets a verified `device_revoked` notice
+  with `reason: unknown` (A1). The bridge also comes back switched off.
+- **A missing or corrupt file never blocks AionCore from starting.** A file that won't open is moved aside
+  (`.corrupt-<ms>`) and a fresh one created: the bridge is disabled, with no paired phones.
+- **A `host.key` that is present but won't decrypt or decode** is replaced with a new identity, and the phones
+  paired to the old one are forgotten. Phones see `unknown_host` and must pair again.
+- **A `host.key` that can't be *read*** (locked by antivirus or a backup, permission denied) is left alone. The
+  bridge stays off for that boot, with the reason in its status.
+- **Every recovery is recorded** in the admin status as `lastRecovery: {kind: "database"|"host_key", at,
+  movedTo}`, so the settings page can say "phones need re-pairing". `POST /api/mobile/admin/recovery/dismiss`
+  clears it.
 
 ### 3.2 Multi-PC: independent trust per PC
 

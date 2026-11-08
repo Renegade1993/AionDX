@@ -318,7 +318,7 @@ index e67514c7..fa92e91a 100644
          router
      } else {
 diff --git a/crates/aionui-app/src/services.rs b/crates/aionui-app/src/services.rs
-index 1c2ee34b..22df50a8 100644
+index 1c2ee34b..97d2122c 100644
 --- a/crates/aionui-app/src/services.rs
 +++ b/crates/aionui-app/src/services.rs
 @@ -70,6 +70,9 @@ pub struct AppServices {
@@ -360,37 +360,22 @@ index 1c2ee34b..22df50a8 100644
              dump_prompts,
              work_dir,
              local,
-@@ -475,6 +484,49 @@ impl AppServices {
+@@ -475,6 +484,34 @@ impl AppServices {
      }
  }
  
-+/// Opens the mobile bridge's own database and host key. Failure only disables
-+/// the bridge; it never stops AionCore from starting.
++/// Opens the mobile bridge's own database and host key, recovering from damage.
++/// A bridge fault only disables the bridge; it never stops AionCore from starting.
 +async fn build_mobile_bridge(
 +    data_dir: &std::path::Path,
 +    event_bus: Arc<BroadcastEventBus>,
 +) -> Option<Arc<aionui_mobile::MobileBridge>> {
-+    let store = match aionui_mobile::MobileStore::open(&aionui_mobile::MobileStore::path_in(data_dir)).await {
-+        Ok(store) => store,
-+        Err(error) => {
-+            tracing::error!(%error, "mobile bridge disabled: its database did not open");
-+            return None;
-+        }
-+    };
-+    let protector = aionui_mobile::platform_protector();
-+    let host_key =
-+        match aionui_mobile::HostKey::load_or_create(&aionui_mobile::HostKey::path_in(data_dir), protector.as_ref()) {
-+            Ok(key) => Arc::new(key),
-+            Err(error) => {
-+                tracing::error!(%error, "mobile bridge disabled: its host key could not be loaded");
-+                return None;
-+            }
-+        };
 +    let host_name = std::env::var("COMPUTERNAME")
 +        .or_else(|_| std::env::var("HOSTNAME"))
 +        .unwrap_or_else(|_| "AionDX".to_owned());
 +    let events: Arc<dyn aionui_mobile::BridgeEvents> = Arc::new(MobileBridgeEvents(event_bus));
-+    Some(aionui_mobile::MobileBridge::new(store, host_key, host_name, events))
++    let protector = aionui_mobile::platform_protector();
++    aionui_mobile::service::open_in(data_dir, protector.as_ref(), host_name, events).await
 +}
 +
 +/// Forwards the bridge's desktop notices (`mobile.pairingRequest`,
@@ -452,11 +437,11 @@ index 00000000..3adb2f16
 +tempfile.workspace = true
 diff --git a/crates/aionui-mobile/migrations/0001_init.sql b/crates/aionui-mobile/migrations/0001_init.sql
 new file mode 100644
-index 00000000..b9a86eb1
+index 00000000..614f7f49
 --- /dev/null
 +++ b/crates/aionui-mobile/migrations/0001_init.sql
 @@ -0,0 +1,30 @@
-+-- AionDX mobile bridge state. This lives in its own SQLite file (mobile-bridge.db
++-- AionDX mobile bridge state. This lives in its own SQLite file (aiondx-bridge.db
 +-- in the data dir), never in aionui-backend.db: a migration in AionCore's own chain
 +-- would make every core without the bridge refuse to open the user's database.
 +
@@ -486,12 +471,23 @@ index 00000000..b9a86eb1
 +    user_id    TEXT NOT NULL,
 +    revoked_at INTEGER NOT NULL
 +);
+diff --git a/crates/aionui-mobile/migrations/0002_meta.sql b/crates/aionui-mobile/migrations/0002_meta.sql
+new file mode 100644
+index 00000000..9fa826fd
+--- /dev/null
++++ b/crates/aionui-mobile/migrations/0002_meta.sql
+@@ -0,0 +1,5 @@
++-- Small key/value facts about the bridge itself, e.g. the last recovery from damage.
++CREATE TABLE IF NOT EXISTS mobile_meta (
++    key   TEXT PRIMARY KEY,
++    value TEXT NOT NULL
++);
 diff --git a/crates/aionui-mobile/src/admin_routes.rs b/crates/aionui-mobile/src/admin_routes.rs
 new file mode 100644
-index 00000000..23c3cac2
+index 00000000..6786df61
 --- /dev/null
 +++ b/crates/aionui-mobile/src/admin_routes.rs
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,384 @@
 +//! Desktop-only admin routes on AionCore's own 127.0.0.1 server (CONTRACT §3.4).
 +//!
 +//! Mounted behind the normal auth middleware (and CSRF in aionpro mode). They
@@ -532,6 +528,7 @@ index 00000000..23c3cac2
 +            post(approve_offer),
 +        )
 +        .route("/api/mobile/admin/pairing-offers/{offer_id}/reject", post(reject_offer))
++        .route("/api/mobile/admin/recovery/dismiss", post(dismiss_recovery))
 +        .route("/api/mobile/admin/devices", get(list_devices))
 +        .route(
 +            "/api/mobile/admin/devices/{device_id}",
@@ -657,6 +654,16 @@ index 00000000..23c3cac2
 +    Ok(Json(ApiResponse::success()))
 +}
 +
++async fn dismiss_recovery(
++    State(state): State<MobileAdminState>,
++    Extension(_user): Extension<CurrentUser>,
++    channel: Option<Extension<AuthChannel>>,
++) -> Result<Json<ApiResponse<()>>, ApiError> {
++    require_user_client(channel.as_deref())?;
++    state.bridge.dismiss_recovery().await.map_err(to_api_error)?;
++    Ok(Json(ApiResponse::success()))
++}
++
 +async fn list_devices(
 +    State(state): State<MobileAdminState>,
 +    Extension(user): Extension<CurrentUser>,
@@ -779,6 +786,7 @@ index 00000000..23c3cac2
 +                r#"{"sasConfirmed":true}"#,
 +            ),
 +            ("POST", "/api/mobile/admin/pairing-offers/x/reject", ""),
++            ("POST", "/api/mobile/admin/recovery/dismiss", ""),
 +            ("GET", "/api/mobile/admin/devices", ""),
 +            ("PATCH", "/api/mobile/admin/devices/d", r#"{"name":"x"}"#),
 +            ("DELETE", "/api/mobile/admin/devices/d", ""),
@@ -2620,10 +2628,10 @@ index 00000000..99db5c75
 +}
 diff --git a/crates/aionui-mobile/src/service.rs b/crates/aionui-mobile/src/service.rs
 new file mode 100644
-index 00000000..1f5a0c4a
+index 00000000..2528a155
 --- /dev/null
 +++ b/crates/aionui-mobile/src/service.rs
-@@ -0,0 +1,549 @@
+@@ -0,0 +1,838 @@
 +//! The bridge's lifecycle: settings, the host key, whether the LAN listener
 +//! runs, and the desktop's pairing and device actions. Business logic only;
 +//! the HTTP surfaces live in `listener.rs`/`outer.rs` (LAN) and
@@ -2642,7 +2650,7 @@ index 00000000..1f5a0c4a
 +use crate::listener::{self, ListenerHandle};
 +use crate::pairing::{AdminError, OfferView, pairing_uri};
 +use crate::settings::{MobileSettings, MobileSettingsPatch};
-+use crate::store::{DeviceRow, MobileStore};
++use crate::store::{DeviceRow, MobileStore, Recovery};
 +
 +/// What the desktop's Settings > Mobile page shows (CONTRACT §3.4).
 +#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -2657,6 +2665,8 @@ index 00000000..1f5a0c4a
 +    pub tasks_write: bool,
 +    pub listening: bool,
 +    pub error: Option<String>,
++    /// Set after the bridge recovered from a damaged database or host key, until dismissed.
++    pub last_recovery: Option<Recovery>,
 +}
 +
 +/// A new pairing offer for the desktop to draw as a QR code.
@@ -2711,6 +2721,9 @@ index 00000000..1f5a0c4a
 +    bind_ip: IpAddr,
 +    running: Mutex<Option<Running>>,
 +    last_error: Mutex<Option<String>>,
++    /// Set when this boot can't run the bridge (e.g. host.key unreadable): the
++    /// listener stays off and pairing is refused, but status still answers.
++    fault: Option<String>,
 +}
 +
 +impl MobileBridge {
@@ -2743,7 +2756,31 @@ index 00000000..1f5a0c4a
 +            bind_ip,
 +            running: Mutex::new(None),
 +            last_error: Mutex::new(None),
++            fault: None,
 +        })
++    }
++
++    /// A bridge that can't run this boot; `status` reports `reason`.
++    pub fn faulted(
++        store: MobileStore,
++        default_host_name: String,
++        events: Arc<dyn BridgeEvents>,
++        reason: String,
++    ) -> Option<Arc<Self>> {
++        let placeholder = Arc::new(HostKey::generate().ok()?); // in memory only, never saved
++        Some(Arc::new(Self {
++            core: BridgeCore::new(placeholder, store, default_host_name.clone(), events),
++            default_host_name,
++            bind_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
++            running: Mutex::new(None),
++            last_error: Mutex::new(None),
++            fault: Some(reason),
++        }))
++    }
++
++    /// Clears `lastRecovery` once the user has seen it.
++    pub async fn dismiss_recovery(&self) -> Result<(), MobileError> {
++        self.store().set_last_recovery(None).await
 +    }
 +
 +    pub fn core(&self) -> &Arc<BridgeCore> {
@@ -2816,6 +2853,9 @@ index 00000000..1f5a0c4a
 +    // ---- Pairing and devices (CONTRACT §3.4) -----------------------------------------------
 +
 +    pub async fn create_offer(&self, user_id: &str) -> Result<PairingOffer, MobileError> {
++        if let Some(fault) = &self.fault {
++            return Err(MobileError::Key(fault.clone()));
++        }
 +        let settings = self.settings_for(user_id).await?;
 +        let offer = self
 +            .core
@@ -2960,6 +3000,10 @@ index 00000000..1f5a0c4a
 +        if !settings.enabled {
 +            return;
 +        }
++        if let Some(fault) = &self.fault {
++            *self.last_error.lock().await = Some(fault.clone());
++            return;
++        }
 +        let router = listener::outer_router(self.core.clone());
 +        match listener::start(self.bind_ip, settings.port, router).await {
 +            Ok(handle) => {
@@ -2987,7 +3031,112 @@ index 00000000..1f5a0c4a
 +            mdns: settings.mdns,
 +            tasks_write: settings.tasks_write,
 +            listening,
-+            error: self.last_error.lock().await.clone(),
++            error: match &self.fault {
++                Some(fault) => Some(fault.clone()),
++                None => self.last_error.lock().await.clone(),
++            },
++            last_recovery: self.store().last_recovery().await.ok().flatten(),
++        }
++    }
++}
++
++/// Opens the bridge's state in `data_dir`, recovering from damage instead of
++/// failing. A bridge fault must never stop AionCore from starting:
++/// - a database that won't open is moved aside (`aiondx-bridge.db.corrupt-<ms>`)
++///   and a fresh one is created: the bridge comes up disabled, with no phones;
++/// - a host key that is present but won't decrypt or decode is moved aside and
++///   replaced; phones paired to the old identity can't work any more, so they are
++///   forgotten too;
++/// - a host key that can't be READ (locked by antivirus or a backup, permission
++///   denied) is left alone: the bridge is disabled for this boot, with the
++///   reason in its status.
++///
++/// Every recovery is recorded as `lastRecovery` in the status. `None` only if
++/// even a fresh database can't be created (e.g. the folder isn't writable).
++pub async fn open_in(
++    data_dir: &std::path::Path,
++    protector: &dyn crate::host_key::SecretProtector,
++    host_name: String,
++    events: Arc<dyn BridgeEvents>,
++) -> Option<Arc<MobileBridge>> {
++    let db_path = MobileStore::path_in(data_dir);
++    let mut recovery = None;
++    let store = match MobileStore::open(&db_path).await {
++        Ok(store) => store,
++        Err(error) => {
++            tracing::warn!(%error, "mobile bridge: its database did not open; starting with a fresh one");
++            let moved_to = quarantine(&db_path);
++            for suffix in ["-wal", "-shm"] {
++                quarantine(&std::path::PathBuf::from(format!("{}{suffix}", db_path.display())));
++            }
++            recovery = Some(Recovery {
++                kind: "database".into(),
++                at: aionui_common::now_ms(),
++                moved_to,
++            });
++            match MobileStore::open(&db_path).await {
++                Ok(store) => store,
++                Err(error) => {
++                    tracing::error!(%error, "mobile bridge disabled: a fresh database could not be created");
++                    return None;
++                }
++            }
++        }
++    };
++    let key_path = HostKey::path_in(data_dir);
++    let host_key = match HostKey::load_or_create(&key_path, protector) {
++        Ok(key) => key,
++        Err(MobileError::Io(error)) => {
++            let reason =
++                format!("The bridge's host key could not be read ({error}); the bridge is off until the next start");
++            tracing::error!(%error, "mobile bridge disabled for this boot: host.key unreadable, file kept");
++            if let Some(r) = &recovery {
++                let _ = store.set_last_recovery(Some(r)).await;
++            }
++            return MobileBridge::faulted(store, host_name, events, reason);
++        }
++        Err(error) => {
++            tracing::warn!(%error, "mobile bridge: host.key is damaged; creating a new identity, phones must pair again");
++            let moved_to = quarantine(&key_path);
++            match HostKey::load_or_create(&key_path, protector) {
++                Ok(key) => {
++                    if let Err(error) = store.clear_devices().await {
++                        tracing::error!(%error, "mobile bridge: could not forget phones of the old identity");
++                    }
++                    recovery = Some(Recovery {
++                        kind: "host_key".into(),
++                        at: aionui_common::now_ms(),
++                        moved_to,
++                    });
++                    key
++                }
++                Err(error) => {
++                    let reason = format!("A new host key could not be created ({error})");
++                    tracing::error!(%error, "mobile bridge disabled for this boot: no host key");
++                    return MobileBridge::faulted(store, host_name, events, reason);
++                }
++            }
++        }
++    };
++    if let Some(r) = &recovery {
++        if let Err(error) = store.set_last_recovery(Some(r)).await {
++            tracing::error!(%error, "mobile bridge: could not record the recovery");
++        }
++    }
++    Some(MobileBridge::new(store, Arc::new(host_key), host_name, events))
++}
++
++/// Moves a damaged file aside, keeping it for diagnosis. Returns where it went.
++fn quarantine(path: &std::path::Path) -> Option<String> {
++    if !path.exists() {
++        return None;
++    }
++    let aside = std::path::PathBuf::from(format!("{}.corrupt-{}", path.display(), aionui_common::now_ms()));
++    match std::fs::rename(path, &aside) {
++        Ok(()) => Some(aside.display().to_string()),
++        Err(error) => {
++            tracing::error!(%error, path = %path.display(), "mobile bridge: could not move a damaged file aside");
++            None
 +        }
 +    }
 +}
@@ -3171,6 +3320,154 @@ index 00000000..1f5a0c4a
 +        assert!(!sealed.windows(32).any(|w| w == key));
 +        assert_eq!(open_confirm_key(&data_key, &sealed), Some(key));
 +        assert_eq!(open_confirm_key(&[4u8; 32], &sealed), None);
++    }
++}
++
++#[cfg(test)]
++mod recovery_tests {
++    use super::*;
++    use crate::host_key::UnprotectedForTests;
++
++    #[tokio::test]
++    async fn a_corrupt_database_is_moved_aside_and_the_bridge_starts_disabled() {
++        let dir = tempfile::tempdir().unwrap();
++        std::fs::write(
++            MobileStore::path_in(dir.path()),
++            b"this is not a sqlite database at all",
++        )
++        .unwrap();
++        let bridge = open_in(
++            dir.path(),
++            &UnprotectedForTests,
++            "PC".into(),
++            Arc::new(crate::core::NoEvents),
++        )
++        .await
++        .expect("a bridge fault never stops startup");
++        let status = bridge.status("u1").await.unwrap();
++        assert!(!status.enabled);
++        assert!(bridge.devices("u1").await.unwrap().is_empty());
++        let aside = std::fs::read_dir(dir.path())
++            .unwrap()
++            .filter_map(|e| e.ok())
++            .any(|e| e.file_name().to_string_lossy().starts_with("aiondx-bridge.db.corrupt-"));
++        assert!(aside, "the damaged file is kept for diagnosis");
++    }
++
++    #[tokio::test]
++    async fn a_corrupt_host_key_gives_a_new_identity_and_forgets_phones() {
++        let dir = tempfile::tempdir().unwrap();
++        let first = open_in(
++            dir.path(),
++            &UnprotectedForTests,
++            "PC".into(),
++            Arc::new(crate::core::NoEvents),
++        )
++        .await
++        .unwrap();
++        let old_id = first.host_key().host_id.clone();
++        first
++            .store()
++            .insert_device(&DeviceRow {
++                device_id: "d1".into(),
++                user_id: "u1".into(),
++                device_pk: vec![1; 32],
++                name: "Phone".into(),
++                platform: "ios".into(),
++                app_version: "1".into(),
++                confirm_mode: "biometric".into(),
++                confirm_key_sealed: None,
++                require_confirm: true,
++                paired_at: 1,
++                last_seen_at: None,
++                last_address: None,
++            })
++            .await
++            .unwrap();
++        first.store().pool().close().await;
++        std::fs::write(HostKey::path_in(dir.path()), b"garbage").unwrap();
++
++        let second = open_in(
++            dir.path(),
++            &UnprotectedForTests,
++            "PC".into(),
++            Arc::new(crate::core::NoEvents),
++        )
++        .await
++        .unwrap();
++        assert_ne!(second.host_key().host_id, old_id);
++        assert!(second.devices("u1").await.unwrap().is_empty());
++        let recovery = second.status("u1").await.unwrap().last_recovery.unwrap();
++        assert_eq!(recovery.kind, "host_key");
++    }
++
++    #[tokio::test]
++    async fn recoveries_are_recorded_in_status_until_dismissed() {
++        let dir = tempfile::tempdir().unwrap();
++        std::fs::write(MobileStore::path_in(dir.path()), b"not sqlite").unwrap();
++        let bridge = open_in(
++            dir.path(),
++            &UnprotectedForTests,
++            "PC".into(),
++            Arc::new(crate::core::NoEvents),
++        )
++        .await
++        .unwrap();
++        let recovery = bridge.status("u1").await.unwrap().last_recovery.expect("recorded");
++        assert_eq!(recovery.kind, "database");
++        assert!(recovery.moved_to.unwrap().contains("aiondx-bridge.db.corrupt-"));
++        bridge.dismiss_recovery().await.unwrap();
++        assert!(bridge.status("u1").await.unwrap().last_recovery.is_none());
++    }
++
++    #[tokio::test]
++    async fn an_unreadable_host_key_disables_the_bridge_and_keeps_the_file() {
++        let dir = tempfile::tempdir().unwrap();
++        // A directory where the key file should be: reading it is an I/O error, not damage.
++        let key_path = HostKey::path_in(dir.path());
++        std::fs::create_dir_all(&key_path).unwrap();
++        let bridge = open_in(
++            dir.path(),
++            &UnprotectedForTests,
++            "PC".into(),
++            Arc::new(crate::core::NoEvents),
++        )
++        .await
++        .expect("still answers status");
++        let status = bridge
++            .update_settings(
++                "u1",
++                &MobileSettingsPatch {
++                    enabled: Some(true),
++                    ..Default::default()
++                },
++            )
++            .await
++            .unwrap();
++        assert!(!status.listening, "no listener this boot");
++        assert!(status.error.unwrap().contains("could not be read"));
++        assert!(status.last_recovery.is_none(), "no identity rotation");
++        assert!(bridge.create_offer("u1").await.is_err(), "no pairing while faulted");
++        assert!(key_path.is_dir(), "the key path is left untouched");
++        let moved = std::fs::read_dir(key_path.parent().unwrap())
++            .unwrap()
++            .filter_map(|e| e.ok())
++            .any(|e| e.file_name().to_string_lossy().contains("corrupt"));
++        assert!(!moved);
++    }
++
++    #[tokio::test]
++    async fn a_missing_database_is_simply_created() {
++        let dir = tempfile::tempdir().unwrap();
++        let bridge = open_in(
++            dir.path(),
++            &UnprotectedForTests,
++            "PC".into(),
++            Arc::new(crate::core::NoEvents),
++        )
++        .await;
++        assert!(bridge.is_some());
++        assert!(dir.path().join("aiondx-bridge.db").exists());
 +    }
 +}
 diff --git a/crates/aionui-mobile/src/session.rs b/crates/aionui-mobile/src/session.rs
@@ -3769,11 +4066,11 @@ index 00000000..fe2cbc5a
 +}
 diff --git a/crates/aionui-mobile/src/store.rs b/crates/aionui-mobile/src/store.rs
 new file mode 100644
-index 00000000..04a974e2
+index 00000000..10adff66
 --- /dev/null
 +++ b/crates/aionui-mobile/src/store.rs
-@@ -0,0 +1,330 @@
-+//! The bridge's own SQLite database, `mobile-bridge.db` in the data dir.
+@@ -0,0 +1,382 @@
++//! The bridge's own SQLite database, `aiondx-bridge.db` next to the main database.
 +//!
 +//! Deliberately not a migration in `aionui-backend.db`: AionCore refuses to open
 +//! a database that has a migration it does not know, so a shared migration would
@@ -3799,7 +4096,7 @@ index 00000000..04a974e2
 +
 +impl MobileStore {
 +    pub fn path_in(data_dir: &Path) -> PathBuf {
-+        data_dir.join("mobile-bridge.db")
++        data_dir.join("aiondx-bridge.db")
 +    }
 +
 +    pub async fn open(path: &Path) -> Result<Self, MobileError> {
@@ -3983,6 +4280,39 @@ index 00000000..04a974e2
 +        Ok(done.rows_affected() == 1)
 +    }
 +
++    pub async fn last_recovery(&self) -> Result<Option<Recovery>, MobileError> {
++        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM mobile_meta WHERE key = 'last_recovery'")
++            .fetch_optional(&self.pool)
++            .await?;
++        Ok(row.and_then(|(json,)| serde_json::from_str(&json).ok()))
++    }
++
++    pub async fn set_last_recovery(&self, recovery: Option<&Recovery>) -> Result<(), MobileError> {
++        match recovery {
++            Some(r) => {
++                sqlx::query(
++                    "INSERT INTO mobile_meta (key, value) VALUES ('last_recovery', ?) \
++                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
++                )
++                .bind(serde_json::to_string(r)?)
++                .execute(&self.pool)
++                .await?;
++            }
++            None => {
++                sqlx::query("DELETE FROM mobile_meta WHERE key = 'last_recovery'")
++                    .execute(&self.pool)
++                    .await?;
++            }
++        }
++        Ok(())
++    }
++
++    /// Forgets every paired phone (used when the host identity had to be replaced).
++    pub async fn clear_devices(&self) -> Result<(), MobileError> {
++        sqlx::query("DELETE FROM mobile_devices").execute(&self.pool).await?;
++        Ok(())
++    }
++
 +    pub async fn is_tombstoned(&self, device_id: &str) -> Result<bool, MobileError> {
 +        let row: Option<(String,)> =
 +            sqlx::query_as("SELECT device_id FROM mobile_device_tombstones WHERE device_id = ?")
@@ -3991,6 +4321,17 @@ index 00000000..04a974e2
 +                .await?;
 +        Ok(row.is_some())
 +    }
++}
++
++/// The bridge recovered from damage; the settings page tells the user phones need re-pairing.
++#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct Recovery {
++    /// `database` or `host_key`.
++    pub kind: String,
++    pub at: i64,
++    /// Where the damaged file was moved.
++    pub moved_to: Option<String>,
 +}
 +
 +#[derive(Debug, Clone, sqlx::FromRow)]
@@ -4100,7 +4441,15 @@ index 00000000..04a974e2
 +        .await
 +        .unwrap();
 +        let names: Vec<_> = tables.into_iter().map(|(n,)| n).collect();
-+        assert_eq!(names, ["mobile_device_tombstones", "mobile_devices", "mobile_settings"]);
++        assert_eq!(
++            names,
++            [
++                "mobile_device_tombstones",
++                "mobile_devices",
++                "mobile_meta",
++                "mobile_settings"
++            ]
++        );
 +    }
 +}
 diff --git a/crates/aionui-mobile/src/wire.rs b/crates/aionui-mobile/src/wire.rs
