@@ -46,22 +46,41 @@ function ownershipKeySets(texts) {
   return sets;
 }
 
+/**
+ * Whether the core holds `name` as a whole identifier, not as the start of a longer one: a plain substring search passed
+ * "aionui-session" because a core that uses aiondx-session also holds "aionui-session-title". Rust packs string literals back to
+ * back with no separator ("...failedaionui-csrf-token/api/...", "...BUSYAIONUI_STREAM_BROKENAIONUI_STATE..."), so only the
+ * character after the name can be checked: kebab names may not go on with - or _, UPPER_SNAKE names with _ or a digit. Crate
+ * source paths (crates\aionui-session\src) are not the name either.
+ */
+function coreHas(coreText, name) {
+  const goesOn = /[a-z]/.test(name) ? /[-_]/ : /[_0-9]/;
+  for (let i = coreText.indexOf(name); i !== -1; i = coreText.indexOf(name, i + 1)) {
+    const next = coreText[i + name.length] || '';
+    const before = coreText.slice(Math.max(0, i - 7), i);
+    if (goesOn.test(next) || before === 'crates\\' || before === 'crates/') continue;
+    return true;
+  }
+  return false;
+}
+
 function check(mainJs, coreBuf, pageTexts) {
   const problems = [];
   const found = {};
+  const coreText = coreBuf.toString('latin1');
   for (const name of CONSTANTS) {
     const all = [...mainJs.matchAll(new RegExp(`\\bconst ${name} = "([^"]+)"`, 'g'))];
     if (all.length !== 1) { problems.push(`${name}: expected one definition in out/main/index.js, found ${all.length}`); continue; }
     const value = all[0][1];
     found[name] = value;
-    if (!coreBuf.includes(Buffer.from(value, 'utf8'))) problems.push(`${name} is "${value}", which AionCore does not contain`);
+    if (!coreHas(coreText, value)) problems.push(`${name} is "${value}", which AionCore does not contain`);
   }
   const env = spawnEnvNames(mainJs);
   if (!env) problems.push('buildSpawnEnv: not found in out/main/index.js');
   else if (!env.length) problems.push('buildSpawnEnv: sets no variables any more (has its shape changed?)');
   else {
     found.env = env;
-    for (const name of env) if (!coreBuf.includes(Buffer.from(name, 'utf8'))) problems.push(`AionCore is started with ${name}, which it does not read`);
+    for (const name of env) if (!coreHas(coreText, name)) problems.push(`AionCore is started with ${name}, which it does not read`);
   }
   // The other direction: codes AionCore sends, looked up by name in the page's error catalog. Only the brand-prefixed ones are the
   // rename's business (the catalog also holds codes no AionCore version sends any more).
@@ -69,9 +88,9 @@ function check(mainJs, coreBuf, pageTexts) {
   const branded = [...catalogCodes(texts)].filter((c) => /^AION[A-Z]*_/.test(c)).sort();
   found.codes = branded;
   for (const code of branded) {
-    if (coreBuf.includes(Buffer.from(code, 'utf8'))) continue;
+    if (coreHas(coreText, code)) continue;
     const other = code.startsWith('AIONDX_') ? 'AIONUI_' + code.slice(7) : code.startsWith('AIONUI_') ? 'AIONDX_' + code.slice(7) : null;
-    problems.push(`the error catalog has ${code}, which AionCore never sends` + (other && coreBuf.includes(Buffer.from(other, 'utf8')) ? ` (it sends ${other})` : ''));
+    problems.push(`the error catalog has ${code}, which AionCore never sends` + (other && coreHas(coreText, other) ? ` (it sends ${other})` : ''));
   }
   const owners = ownershipKeySets(texts);
   found.ownership = [...owners];

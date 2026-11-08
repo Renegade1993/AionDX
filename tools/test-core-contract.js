@@ -82,6 +82,11 @@ const broken = check(main('aiondx-session', 'aiondx-csrf-token'), stockCore);
 ok('the 0.26.0 mismatch (renamed app, stock AionCore) is caught: both cookies and all three variables', broken.problems.length === 5, broken.problems.join(' | '));
 ok('a renamed app and a renamed AionCore agree', check(main('aiondx-session', 'aiondx-csrf-token'), renamedCore).problems.length === 0);
 ok('a stock-named app and a renamed AionCore are caught too', check(main('aionui-session', 'aionui-csrf-token'), renamedCore).problems.length === 5);
+// 2026-11-08: a renamed core still holds the old names inside longer ones; a substring search passed it.
+const decoyCore = Buffer.concat([renamedCore, Buffer.from('\0aionui-session-title\0crates\\aionui-session\\src\\a.rs\0crates/aionui-csrf-token/x\0AIONUI_CACHE_DIR_OVERRIDE\0AIONUI_WORK_DIR_X\0AIONUI_LOG_DIR2\0', 'latin1')]);
+ok('names that only start a longer name, or sit in a crate path, do not count', check(main('aionui-session', 'aionui-csrf-token'), decoyCore).problems.length === 5);
+const packedCore = Buffer.from('; Max-Age=\0aionui-sessionsec-websocket-protocolfailedaionui-csrf-token/api/authRK_DIRaionuiAIONUI_CACHE_DIRAIONUI_WORK_DIRAIONUI_LOG_DIR\0', 'latin1');
+ok('a name packed against the next string literal still counts', check(main('aionui-session', 'aionui-csrf-token'), packedCore).problems.length === 0);
 ok('a missing constant is reported, not passed', check('const CORE_CSRF_COOKIE = "aionui-csrf-token";\n' + spawnEnv('AIONUI'), stockCore).problems.length === 1);
 
 // The start-up variables (0.26.0-0.26.4: the cookies fixed, the folder variables still renamed in the app alone).
