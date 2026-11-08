@@ -272,10 +272,12 @@ index e8674b2d..973b22f2 100644
  mod member_runtime;
 diff --git a/crates/aionui-team/src/lifecycle_guard.rs b/crates/aionui-team/src/lifecycle_guard.rs
 new file mode 100644
-index 00000000..be7f0f16
+index 00000000..dcf67442
 --- /dev/null
 +++ b/crates/aionui-team/src/lifecycle_guard.rs
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,295 @@
++#![allow(clippy::disallowed_types)] // HTTP middleware: maps to ApiError at the boundary
++
 +//! AionDX core-0014: lead-only team lifecycle routes over HTTP.
 +//!
 +//! The MCP tools behind spawn, shutdown, interrupt, rename and clear-context
@@ -324,18 +326,18 @@ index 00000000..be7f0f16
 +    let mut parts = rest.split('/');
 +    let team_id = parts.next().filter(|id| !id.is_empty())?;
 +    let tail: Vec<&str> = parts.collect();
-+    let lifecycle = match (method, tail.as_slice()) {
-+        (&Method::DELETE, []) => true,
-+        (&Method::PATCH, ["name"]) => true,
-+        (&Method::POST, ["agents"]) => true,
-+        (&Method::DELETE, ["agents", _]) => true,
-+        (&Method::POST, ["agents", _, "replace"]) => true,
-+        (&Method::PATCH, ["agents", _, "name"]) => true,
-+        (&Method::POST, ["agents", _, "interrupt"]) => true,
-+        (&Method::POST, ["agents", _, "context", "reset"]) => true,
-+        (&Method::DELETE, ["session"]) => true,
-+        _ => false,
-+    };
++    let lifecycle = matches!(
++        (method, tail.as_slice()),
++        (&Method::DELETE, [])
++            | (&Method::PATCH, ["name"])
++            | (&Method::POST, ["agents"])
++            | (&Method::DELETE, ["agents", _])
++            | (&Method::POST, ["agents", _, "replace"])
++            | (&Method::PATCH, ["agents", _, "name"])
++            | (&Method::POST, ["agents", _, "interrupt"])
++            | (&Method::POST, ["agents", _, "context", "reset"])
++            | (&Method::DELETE, ["session"])
++    );
 +    lifecycle.then_some(team_id)
 +}
 +

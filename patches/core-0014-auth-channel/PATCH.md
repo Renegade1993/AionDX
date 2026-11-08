@@ -72,3 +72,5 @@ Run: `cargo test -p aionui-auth -p aionui-team --lib --tests` on 2026-11-07.
 
   They assert workspace paths contain `/conversations/` and fail on Windows paths. That's the same class core-0002's
   PATCH.md records, in code this patch doesn't touch.
+
+**2026-11-08:** clippy-clean. `lifecycle_guard.rs` allows `disallowed_types` per module because it is HTTP middleware (as upstream `routes.rs` does), and the route table is now a `matches!`. No change in behavior; the 14 lifecycle tests pass.

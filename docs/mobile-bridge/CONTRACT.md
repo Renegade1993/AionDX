@@ -1,6 +1,6 @@
 # AionDX Mobile Bridge: API Contract v1 (DRAFT)
 
-**Status:** revision 4.3, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
+**Status:** revision 4.4, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
 - **Rev 1:** first draft.
 - **Rev 2:** folds in the mobile team's review: the pairing rate-limit bug and questions 2-16. The answers are in
   §4.2-4.3 and A1/A8, §5.1-5.3, §6.1-6.8, and Appendix A (shared test vectors).
@@ -18,6 +18,11 @@
 - **Rev 4 (2026-11-07):** Nathan approved all nine §11 items as recommended. §11 is now a record of those decisions.
   The `[PENDING SIGN-OFF]` markers are removed, and `tasks.write` is on by default (§6.1, §6.7). The Claude
   "Allow Always" relabel wording is fixed in §6.5. §8 adds Private Party Net (WireGuard) as a to-verify item.
+- **Rev 4.4 (2026-11-08):**
+  - §6.5 approvals of kind `permission` may carry an optional, display-only `questions` (non-Claude agents that ask
+    questions through the permission channel). They're answered with `optionId` only, `freeText: false`.
+  - §3.1: "single use" means bound to one phone (re-fetchable until expiry); the `host.key` path is corrected.
+  - §6.1: `appVersion` is the AionDX app's version.
 - **Rev 4.3 (from implementing phase 1):** §4.4a lists every outer error code in one table. Four were missing
   from §4.2–4.4: `pair` → `401 auth_failed` and `409 unknown_host`, `rpc` → `401 auth_failed` and `400 replayed`, and
   `403 forbidden_peer` on any route.
@@ -113,10 +118,10 @@ earlier assumptions.
 
 | Key | Owner | Storage |
 |---|---|---|
-| `S_h`, the host static X25519 key, plus `hostId` (16 random bytes, b64u) | PC | `%APPDATA%\AionUi\aiondx-mobile\host.key`, DPAPI-protected (CurrentUser). The same blob holds `dataKey` (32 B), which encrypts per-device secrets in the DB. Rotating the key means a new `hostId`, and every phone must pair again. |
+| `S_h`, the host static X25519 key, plus `hostId` (16 random bytes, b64u) | PC | `<dataDir>\aionui\aiondx-mobile\host.key` (AionCore's data directory), DPAPI-protected (CurrentUser). The same blob holds `dataKey` (32 B), which encrypts per-device secrets in the DB. Rotating the key means a new `hostId`, and every phone must pair again. |
 | `S_c`, the phone static X25519 key, plus `deviceId`, **one per paired PC** | Phone | `expo-secure-store`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, excluded from backups. Keyed by `hostId`. |
 | `confirmKey` (32 B, per device per PC) | Both | Phone: secure store with `requireAuthentication: true` (biometric-gated). PC: a column in `aiondx-bridge.db`, sealed with `dataKey`. |
-| `pairingSecret` (32 B) | PC → QR | Memory only. Single use, expires after 5 min. |
+| `pairingSecret` (32 B) | PC → QR | Memory only. Expires after 5 min. **Single use means bound to one phone:** the first valid request locks the offer to that phone (A2). Until the offer expires, that phone (the holder of `k_pair`) can re-fetch the `approved` response with its `confirmKey`. This is deliberate: it recovers a lost response. |
 | Session keys `c2s`, `s2c`, `sid` | Both | Memory only. |
 
 **Bridge state on the PC.** Paired devices, revocation tombstones and settings live in `aiondx-bridge.db`, next to
@@ -780,7 +785,9 @@ interface Approval {
   options: ApprovalOption[];       // in the agent's order; empty for kind 'question'
   questions?: { question: string; header: string | null; multiSelect: boolean;
                 options: { label: string; description: string | null }[] }[];
-      // kind 'question' only. Normalized from AionCore's untyped `questions` JSON (Claude's AskUserQuestion shape:
+      // kind 'question': the questions to answer. Rev 4.4: an approval of kind 'permission' may also carry it, as
+      //   DISPLAY-ONLY context (a non-Claude agent asking through the permission channel; answer with optionId,
+      //   freeText false); omitted when absent. Normalized from AionCore's untyped `questions` JSON (Claude's AskUserQuestion shape:
       //   question, header, multiSelect, options[{label, description}]). Unknown fields are dropped.
   freeText: boolean;               // kind 'question' only (false otherwise): whether answers may carry text that is not
                                    //   one of the offered labels. See "Free-text answers" below.

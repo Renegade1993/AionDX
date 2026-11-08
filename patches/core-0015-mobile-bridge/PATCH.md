@@ -138,35 +138,56 @@ the newest row, minus 5 s. A poll re-reads AionCore's `after (floor-1, "~")`, wh
 - `error.messageId` on send_failed rows is null.
 - `runtime` comes from GET team's `context_reset.availability`, the only per-agent runtime view there.
 
-## Resume (checkpoint 2026-11-07, usage window reset)
+## Phase 3, 2026-11-08: write side, confirm proofs, re-key
+
+| File | What |
+|---|---|
+| `facade_write.rs` | The write routes (§6): `POST /v1/conversations` (new solo chat; the workspace must be one from `/v1/workspaces`; exactly one of `assistantId` or `backend`), `POST /v1/conversations/{cid}/messages` (team chats go to send-to-agent, or steer for `priority: "now"`; solo chats to the conversation send), `POST /v1/conversations/{cid}/read`, `POST`/`GET /v1/teams/{t}/broadcast[s]`, `POST /v1/teams/{t}/session`, `POST /v1/teams/{t}/agents` (spawn; the name defaults to the assistant's), `PATCH`/`DELETE /v1/teams/{t}/agents/{slot}`, `.../wake`, `.../stop`, `.../shutdown`, `.../clear-context`, `POST`/`PATCH /v1/teams/{t}/tasks[/{id}]`. The lead can't be removed, shut down, or stopped with a replacement (422). |
+| `outer.rs` | `confirm_check`: verifies the §5.4 HMAC (JCS body) for devices with `requireConfirm`. A missing proof on a §5.1 action gives 428 `confirm_required`; a bad one gives 403 `confirm_invalid`. `POST /v1/host/device/confirm-key` is the re-key (§5.3): at most 5 attempts, a proof bound to `sid` and the device, the new key sealed under `dataKey`, and `mobile.deviceChanged` "rekeyed". `appVersion` is now the app's version (QA fix b). |
+| `admin_routes.rs` | `POST /api/mobile/admin/devices/{id}/rekey-offers` → `aiondx://rekey?...` QR. |
+| `migrations/0003_broadcasts.sql` | `mobile_broadcasts`: the broadcast record. |
+| aionui-team `service/user_actions.rs` | User-originated task create/update (editable `subject`, `owner: null` unassigns, the owner gets a notice, completion unblocks downstream), spawn (model resolution as for the lead's spawn), and shutdown. |
+| aionui-team `session.rs` | `shutdown_agent_from_user`: a `shutdown_request` from "user" through the mailbox. It's the same path as the lead's, and the lead itself is refused. |
+| aionui-db `UpdateTaskParams` | `subject`, `clear_owner` (`owner = NULL`). |
+| aionui-app `mobile_backend.rs`, `routes.rs` | The write methods; the facade gets the bridge store; `set_app_version(services.app_version)`. |
+
+**Tests:** 111 in aionui-mobile (89 unit, 11 facade route, 6 protocol e2e, 5 vectors), plus the aionui-db test
+`update_task_subject_and_clear_owner`.
+- **New facade tests:** sends by conversation kind (team, steer, solo); a sensitive action with no proof (428), a
+  bad proof (403), and a good one; agent controls, including lead refusals and stop with no active turn; task writes,
+  owner unassign, and `capability_disabled`; broadcast and the new-solo-chat validation.
+- **e2e `confirm_proofs_and_rekey_through_the_tunnel`:** a real tunnel with real proofs, a re-key, and the old key
+  then rejected.
+- **Clippy** at `-D warnings` is clean in every file this patch and core-0014 touch. The pre-existing hits were the
+  `result_large_err` in outer.rs, `disallowed_types` in admin_routes, mobile_backend and lifecycle_guard (all HTTP
+  boundaries, allowed per module the way upstream `routes.rs` does it), and a collapsible `if` in cmd_server. What's
+  left is upstream baseline: aionui-team session.rs:142/613/1171 and aionui-app config.rs:95.
+- **Not covered by a service-level test:** the user-originated owner notice and the user shutdown request in
+  aionui-team. QA checks these live.
+
+## Resume (checkpoint 2026-11-08)
 
 **State.**
-- Dev tree `AionDX-impl\work-core`, branch `aiondx-dev`:
-  - `79d4e2e3` baseline (core-0001..0013)
-  - `c31a34e1` core-0014
-  - `ba9020a2` / `7875c279` / `32e2cc34` / `4e564e7e`: phase 0, phase 1, rename + recovery, the I/O fault mode
-  - **`874a0dab` phase 2**
-- The patch is exported from `c31a34e1..HEAD`.
-- Nothing is half-done: every file compiles and 66/66 tests pass.
+- Dev tree `AionDX-impl\work-core`, branch `aiondx-dev`. The history was rebased on 2026-11-08 to fold clippy
+  fixes into core-0014:
+  - `79d4e2e3` baseline
+  - `295bf2a6` core-0014
+  - `fe04d06e` / `7b802b74` / `f930cf77` / `83033d92`: phases 0 and 1
+  - `e18f1d91` phase 2
+  - `1b3606aa` Voice Core's phase 4 core (journal, approvals)
+  - **`96891b66` phase 3**
+- core-0014 is exported from `79d4e2e3..295bf2a6`; core-0015 from `295bf2a6..HEAD`.
 
-**Next: phase 3, the write side.** Add to `facade.rs` and `MobileBackend`:
-1. Sends: solo via the conversation send; team via send-to-agent; `priority: "now"` via steer; broadcast (fan out,
-   plus a broadcast table: migration `0003`).
-2. Read markers: `POST /v1/conversations/{cid}/read`, stored in client prefs as `aiondx.read.<cid>`.
-3. Agent controls: wake (`attach` plus an optional nudge); stop (child-turn cancel, or interrupt with a
-   replacement); shutdown (a user-originated `shutdown_request`, new code in aionui-team); force-remove; spawn;
-   rename; clear-context.
-4. Session start (`ensure_session`).
-5. Task writes: core changes for editable `subject` and clearing `owner`, plus the owner-notice mirror of
-   `maybe_notify_task_owner`.
-6. Confirm-proof verification: JCS + HMAC, §5.4, using `open_confirm_key`; 428/403 for the §5.1 actions.
-7. The re-key: `POST /api/mobile/admin/devices/{id}/rekey-offers` and `POST /v1/host/device/confirm-key`.
+**Next: phase 4 integration.** Wire `journal.rs` and `approvals.rs` to the event bus (message.stream
+permission/ask frames, confirmation.remove, turn.completed, team.*). Then:
+- `/v1/changes` (long-poll);
+- `/v1/approvals` and `/{id}/answer` (`map_answer`, the per-backend calls, delivering the deny message);
+- unread, `your_turn` and `needs_answer`;
+- shutdown requested/rejected/approved;
+- `sessionStatus`;
+- `Task.assignment`;
+- the send_failed `messageId`;
+- CONTRACT rev 4.4 `questions` (already written into §6.5).
 
-**Then phase 4:** cherry-pick Voice Core's `journal.rs` / `approvals.rs` (branch `phase4-core`), wire them to the
-event bus, `/v1/changes`, `/v1/approvals[/{id}/answer]`. Rev 4.4 adds `questions` on permission approvals
-(the lead's decision).
-
-**Then phase 5.**
-
-**Not yet rebuilt:** the release exe is still at `9257d6a`. Rebuild with `tools\build-aioncore.ps1 -Patched`, and
-don't tail its log.
+**Then phase 5** (PHASE5-NET-SPEC.md slices; IPv6; renderer Settings > Mobile; build-release; live tests through
+`tools\live-app.js` only).
