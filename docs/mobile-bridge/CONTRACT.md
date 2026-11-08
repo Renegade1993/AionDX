@@ -1,6 +1,6 @@
 # AionDX Mobile Bridge: API Contract v1 (DRAFT)
 
-**Status:** revision 4.2, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
+**Status:** revision 4.3, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
 - **Rev 1:** first draft.
 - **Rev 2:** folds in the mobile team's review: the pairing rate-limit bug and questions 2-16. The answers are in
   §4.2-4.3 and A1/A8, §5.1-5.3, §6.1-6.8, and Appendix A (shared test vectors).
@@ -18,6 +18,9 @@
 - **Rev 4 (2026-11-07):** Nathan approved all nine §11 items as recommended. §11 is now a record of those decisions.
   The `[PENDING SIGN-OFF]` markers are removed, and `tasks.write` is on by default (§6.1, §6.7). The Claude
   "Allow Always" relabel wording is fixed in §6.5. §8 adds Private Party Net (WireGuard) as a to-verify item.
+- **Rev 4.3 (from implementing phase 1):** §4.4a lists every outer error code in one table. Four were missing
+  from §4.2–4.4: `pair` → `401 auth_failed` and `409 unknown_host`, `rpc` → `401 auth_failed` and `400 replayed`, and
+  `403 forbidden_peer` on any route.
 - **Rev 4.2 (implementation note, no wire change):** bridge state lives in its own `mobile-bridge.db` in the data
   dir, not in a migration of AionCore's `aionui-backend.db`. AionCore refuses to open a database that has a
   migration it doesn't know, so a shared migration would lock every core without the bridge out of the user's
@@ -252,6 +255,28 @@ interface InnerRequest {
 }
 interface InnerResponse { status: number; body?: unknown; }
 ```
+
+### 4.4a Outer error codes, complete list (rev 4.3)
+
+Each of these is a plaintext `{"error": code, ...}` body. This is the complete set the bridge returns; the phone
+treats any other body as a transport error.
+
+| Route | Status | `error` | Meaning; what the phone does |
+|---|---|---|---|
+| any | 403 | `forbidden_peer` | The request came from a public, non-private address (§2). Unreachable from a LAN or tunnel; show "PC refused the connection". |
+| any | 404 | `not_found` | Not one of the four outer paths. |
+| any | 429 | `rate_limited` | A8 limit for this peer IP and route. Back off for a minute. |
+| any | 400 | `malformed` / `unsupported_version` | The body isn't valid JSON for this route, or `v` isn't 1. |
+| `pair`, `session` | 409 | `unknown_host` (+ `hostId`) | The `hostId` isn't this PC's (the host key was reset). Show "this PC was reset; pair again". Don't auto-delete the pairing. |
+| `pair`, `session` | 400 | `clock_skew` (+ `hostTime`) | `ts` is outside ±2 min. `hostTime` is unauthenticated, for the message only. |
+| `pair` | 410 | `pairing_expired` | No offer is waiting (expired, replaced, or never created). |
+| `pair` | 409 | `pairing_locked` | A2: the offer belongs to another phone. |
+| `pair` | 401 | `auth_failed` | The sealed request didn't open with this offer's `k_pair`: the phone didn't scan this QR, or the offer was replaced. |
+| `session` | 401 | `auth_failed` | The init didn't open, or its `epk` was already used (A3). |
+| `session` | 403 | `device_revoked` (+ `notice`) | A1. Delete the pairing only after the notice verifies. |
+| `rpc` | 401 | `unknown_session` / `session_expired` | Re-handshake and retry once with the same `rid` (§4.4). |
+| `rpc` | 401 | `auth_failed` | The envelope didn't open with this session's key (tampered, or wrong `seq` in the AAD). Re-handshake once; if it repeats, report an error. |
+| `rpc` | 400 | `replayed` | This `seq` was already used in this session with a different envelope. Phone-side bug or an attack: don't retry with that `seq`. |
 
 ### 4.5 Replay and idempotency
 
