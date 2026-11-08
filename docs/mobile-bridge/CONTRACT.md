@@ -24,6 +24,8 @@
   - §3.1: "single use" means bound to one phone (re-fetchable until expiry); the `host.key` path is corrected.
   - §6.1: `appVersion` is the AionDX app's version.
   - §7: the QR `u=` list may hold IPv6 ULA addresses, never link-local IPv6.
+  - §6.3: where the read marker sits, and what `unread` counts before the first marker.
+  - §6.7: when `Task.assignment` is filled.
 - **Rev 4.3 (from implementing phase 1):** §4.4a lists every outer error code in one table. Four were missing
   from §4.2–4.4: `pair` → `401 auth_failed` and `409 unknown_host`, `rpc` → `401 auth_failed` and `400 replayed`, and
   `403 forbidden_peer` on any route.
@@ -627,6 +629,10 @@ looks the same as an agent that finished. The best available signal for that is 
 
 **`unread`:** the count of messages with `role: 'agent'`, type `text`, not hidden, status `done`, newer than the read
 marker, capped at 99. Teammate messages and system notices in a member's chat are not counted.
+- **Where the marker sits (rev 4.4):** at its message's `createdAt` when that message is among the conversation's
+  newest 100; otherwise at the time the marker was set.
+- **No marker yet (rev 4.4):** unread counts from the user's own last message in that chat, so a freshly paired phone
+  doesn't open on a wall of 99s. A chat the user never wrote in counts every agent reply until it is marked read.
 
 ### 6.4 Conversations and messages
 
@@ -929,6 +935,8 @@ interface Task {
   assignment: null | { conversationId: string; messageId: string; createdAt: number };
       // The "📋 Task assigned to you (#id)" notice in the owner's chat (§6.4). It is the closest link from a task
       //   back to a message. null if the task was never assigned to a teammate, or the notice can't be found.
+      //   Rev 4.4: looked up on reads (GET tasks, GET task) among the owner's newest 200 messages. A `task` change
+      //   entry and a write's response carry null, because the notice is written just after the change.
   createdAt: number;
   updatedAt: number;
 }

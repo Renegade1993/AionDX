@@ -240,6 +240,138 @@ index 5846fbdd..9d00931b 100644
  aionui-project = { path = "crates/aionui-project" }
  aionui-sidebar = { path = "crates/aionui-sidebar" }
  aionui-cron = { path = "crates/aionui-cron" }
+diff --git a/crates/aionui-ai-agent/src/agent_task.rs b/crates/aionui-ai-agent/src/agent_task.rs
+index fc00c151..553769e1 100644
+--- a/crates/aionui-ai-agent/src/agent_task.rs
++++ b/crates/aionui-ai-agent/src/agent_task.rs
+@@ -378,6 +378,24 @@ impl AgentInstance {
+         }
+     }
+ 
++    /// AionDX core-0015: `confirm`, plus the user's reason when the answer is a deny. Claude (session) and aionrs
++    /// show it to the agent in place of their fixed refusal text; the other backends have no field for it and
++    /// ignore it.
++    pub fn confirm_with_message(
++        &self,
++        msg_id: &str,
++        call_id: &str,
++        data: serde_json::Value,
++        always_allow: bool,
++        deny_message: Option<String>,
++    ) -> Result<(), AgentError> {
++        match self {
++            Self::Aionrs(m) => m.confirm_with_message(msg_id, call_id, data, always_allow, deny_message),
++            Self::Session(m) => m.confirm_with_message(msg_id, call_id, data, always_allow, deny_message),
++            _ => self.confirm(msg_id, call_id, data, always_allow),
++        }
++    }
++
+     /// Answer a structured question card via the dedicated channel.
+     pub fn answer_ask(
+         &self,
+diff --git a/crates/aionui-ai-agent/src/manager/aionrs/agent.rs b/crates/aionui-ai-agent/src/manager/aionrs/agent.rs
+index 3291d92f..301be5d6 100644
+--- a/crates/aionui-ai-agent/src/manager/aionrs/agent.rs
++++ b/crates/aionui-ai-agent/src/manager/aionrs/agent.rs
+@@ -520,10 +520,30 @@ impl AionrsAgentManager {
+     }
+ }
+ 
++/// AionDX core-0015: the reason aionrs is told for a deny: the user's own words when given, else the fixed text.
++fn denial_reason(deny_message: Option<String>) -> String {
++    deny_message
++        .map(|m| m.trim().to_owned())
++        .filter(|m| !m.is_empty())
++        .unwrap_or_else(|| "User denied the tool request".into())
++}
++
+ /// Aionrs-specific operations reached through `AgentInstance::Aionrs(..)`
+ /// matches in the routes + services.
+ impl AionrsAgentManager {
+-    pub fn confirm(&self, _msg_id: &str, call_id: &str, data: Value, always_allow: bool) -> Result<(), AgentError> {
++    pub fn confirm(&self, msg_id: &str, call_id: &str, data: Value, always_allow: bool) -> Result<(), AgentError> {
++        self.confirm_with_message(msg_id, call_id, data, always_allow, None)
++    }
++
++    /// AionDX core-0015: `confirm` with the user's reason for a deny, sent as the denial `reason`.
++    pub fn confirm_with_message(
++        &self,
++        _msg_id: &str,
++        call_id: &str,
++        data: Value,
++        always_allow: bool,
++        deny_message: Option<String>,
++    ) -> Result<(), AgentError> {
+         if let Ok(mut confs) = self.confirmations.write() {
+             confs.retain(|c| c.call_id != call_id);
+         }
+@@ -544,7 +564,7 @@ impl AionrsAgentManager {
+             self.approval_manager.resolve(
+                 call_id,
+                 ToolApprovalResult::Denied {
+-                    reason: "User denied the tool request".into(),
++                    reason: denial_reason(deny_message),
+                 },
+             );
+         } else {
+@@ -661,3 +681,13 @@ fn parse_session_mode(s: &str) -> SessionMode {
+ #[cfg(test)]
+ #[path = "agent_test.rs"]
+ mod agent_test;
++
++#[cfg(test)]
++mod denial_tests {
++    #[test]
++    fn denial_reason_prefers_the_users_words() {
++        assert_eq!(super::denial_reason(Some("  not on main ".into())), "not on main");
++        assert_eq!(super::denial_reason(Some("  ".into())), "User denied the tool request");
++        assert_eq!(super::denial_reason(None), "User denied the tool request");
++    }
++}
+diff --git a/crates/aionui-ai-agent/src/session_agent.rs b/crates/aionui-ai-agent/src/session_agent.rs
+index 07d88ebb..c27cf0b3 100644
+--- a/crates/aionui-ai-agent/src/session_agent.rs
++++ b/crates/aionui-ai-agent/src/session_agent.rs
+@@ -838,11 +838,23 @@ impl SessionAgentTask {
+ 
+     /// `always_allow` (legacy flag) forces AllowAlways regardless.
+     pub fn confirm(
++        &self,
++        msg_id: &str,
++        call_id: &str,
++        data: serde_json::Value,
++        always_allow: bool,
++    ) -> Result<(), AgentError> {
++        self.confirm_with_message(msg_id, call_id, data, always_allow, None)
++    }
++
++    /// AionDX core-0015: `confirm` with the user's reason for a deny (ignored on an allow).
++    pub fn confirm_with_message(
+         &self,
+         _msg_id: &str,
+         call_id: &str,
+         data: serde_json::Value,
+         always_allow: bool,
++        deny_message: Option<String>,
+     ) -> Result<(), AgentError> {
+         use aionui_session::PermissionDecision;
+         let picked = confirm_option_id(&data);
+@@ -858,6 +870,7 @@ impl SessionAgentTask {
+                 Some(label) => (PermissionDecision::Approved, Some(label.to_owned())),
+             }
+         };
++        let deny_message = deny_message.filter(|_| decision == PermissionDecision::Denied);
+         let backend = self.backend.clone();
+         let request_id = call_id.to_string();
+         let conv_id = self.conversation_id.clone();
+@@ -874,6 +887,7 @@ impl SessionAgentTask {
+                     decision,
+                     selected,
+                     answers: Vec::new(),
++                    deny_message,
+                 })
+                 .await
+             {
 diff --git a/crates/aionui-app/Cargo.toml b/crates/aionui-app/Cargo.toml
 index f0fa6126..378fca87 100644
 --- a/crates/aionui-app/Cargo.toml
@@ -297,10 +429,10 @@ index 17526034..c23179e6 100644
          .into_future();
 diff --git a/crates/aionui-app/src/router/mobile_backend.rs b/crates/aionui-app/src/router/mobile_backend.rs
 new file mode 100644
-index 00000000..20582f27
+index 00000000..e55f10cb
 --- /dev/null
 +++ b/crates/aionui-app/src/router/mobile_backend.rs
-@@ -0,0 +1,379 @@
+@@ -0,0 +1,501 @@
 +#![allow(clippy::disallowed_types)] // maps domain errors through ApiError at this HTTP-facing boundary
 +
 +//! AionDX core-0015: the mobile facade's view of AionCore, over the team,
@@ -319,7 +451,8 @@ index 00000000..20582f27
 +use aionui_conversation::ConversationService;
 +use aionui_db::{ActivityCursor, PageDirection};
 +use aionui_mobile::{
-+    ActivityFilter, ActivityQuery, BackendError, MobileBackend, SendOutcome, SoloSpec, TaskCreate, TaskPatch,
++    ActivityFilter, ActivityQuery, ApprovalSource, BackendError, BackendKind, ConfirmCall, MobileBackend,
++    QuestionAnswer, SendOutcome, SoloSpec, TaskCreate, TaskPatch,
 +};
 +use aionui_team::service::{ActivityKind, TeamSessionService};
 +
@@ -340,6 +473,23 @@ index 00000000..20582f27
 +        .ok()
 +        .and_then(|v| v.as_str().map(str::to_owned))
 +        .unwrap_or_default()
++}
++
++/// Feeds AionCore's event bus to the mobile facade: the change journal and the approvals tracker (CONTRACT §6.2,
++/// §6.5). Runs for the life of the process; a lag makes the facade re-sweep approvals.
++pub async fn pump_events(
++    mut rx: tokio::sync::broadcast::Receiver<aionui_api_types::WebSocketMessage<serde_json::Value>>,
++    facade: Arc<aionui_mobile::Facade>,
++) {
++    use tokio::sync::broadcast::error::RecvError;
++    loop {
++        match rx.recv().await {
++            Ok(event) => facade.on_event(&event.name, &event.data).await,
++            Err(RecvError::Lagged(missed)) => facade.on_lagged(missed),
++            Err(RecvError::Closed) => break,
++        }
++    }
++    tracing::info!("mobile bridge: event pump stopped (bus closed)");
 +}
 +
 +fn map_err(e: impl Into<ApiError>) -> BackendError {
@@ -679,6 +829,110 @@ index 00000000..20582f27
 +            .await
 +            .map_err(|e| BackendError::Unavailable(e.to_string()))
 +    }
++
++    async fn approval_source(&self, user_id: &str, conversation_id: &str) -> Result<ApprovalSource, BackendError> {
++        let conv = serde_json::to_value(self.conversation.get(user_id, conversation_id).await.map_err(map_err)?)
++            .map_err(|e| BackendError::Unavailable(e.to_string()))?;
++        let extra = &conv["extra"];
++        let label = extra["backend"].as_str().unwrap_or_default();
++        // The answer mapping follows the agent that is running now; a conversation with no live agent can't hold
++        // approvals, and its kind stays undecided (Other) until one starts.
++        let backend = match self.task_manager.get_task(conversation_id) {
++            Some(aionui_ai_agent::AgentInstance::Acp(_)) => BackendKind::Acp,
++            Some(aionui_ai_agent::AgentInstance::Aionrs(_)) => BackendKind::Aionrs,
++            Some(aionui_ai_agent::AgentInstance::Session(_)) => match label {
++                "claude" => BackendKind::ClaudeSession,
++                "codex" => BackendKind::CodexSession,
++                _ => BackendKind::Other,
++            },
++            _ => BackendKind::Other,
++        };
++        let solo_name = extra["assistant_snapshot"]["name"]
++            .as_str()
++            .or(extra["agent_name"].as_str())
++            .filter(|n| !n.is_empty())
++            .unwrap_or(if label.is_empty() { "Agent" } else { label })
++            .to_owned();
++        let Some(team_id) = extra["teamId"].as_str().filter(|t| !t.is_empty()) else {
++            return Ok(ApprovalSource {
++                team_id: None,
++                slot_id: None,
++                agent_name: solo_name,
++                backend,
++            });
++        };
++        let team = self.team.get_team(user_id, team_id).await.map_err(map_err)?;
++        let member = team.assistants.iter().find(|a| a.conversation_id == conversation_id);
++        Ok(ApprovalSource {
++            team_id: Some(team_id.to_owned()),
++            slot_id: member.map(|a| a.slot_id.clone()),
++            agent_name: member.map(|a| a.name.clone()).unwrap_or(solo_name),
++            backend,
++        })
++    }
++
++    async fn live_conversations(&self, user_id: &str) -> Result<Vec<String>, BackendError> {
++        let mut out = Vec::new();
++        for cid in self.task_manager.active_conversation_ids() {
++            if self.conversation.get(user_id, &cid).await.is_ok() {
++                out.push(cid);
++            }
++        }
++        Ok(out)
++    }
++
++    async fn confirmations(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++    ) -> Result<Vec<serde_json::Value>, BackendError> {
++        let list = self
++            .conversation
++            .list_confirmations(user_id, conversation_id, &self.task_manager)
++            .await
++            .map_err(map_err)?;
++        Ok(list.iter().filter_map(|c| serde_json::to_value(c).ok()).collect())
++    }
++
++    async fn confirm(&self, user_id: &str, call: ConfirmCall) -> Result<(), BackendError> {
++        let req = from_json(serde_json::json!({
++            "msg_id": call.msg_id,
++            "data": call.data,
++            "always_allow": call.always_allow,
++        }))?;
++        self.conversation
++            .confirm_with_message(
++                user_id,
++                &call.conversation_id,
++                &call.call_id,
++                req,
++                call.deny_message,
++                &self.task_manager,
++            )
++            .await
++            .map_err(map_err)
++    }
++
++    async fn answer_ask(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        request_id: &str,
++        answers: Option<Vec<QuestionAnswer>>,
++    ) -> Result<(), BackendError> {
++        let answers = answers.map(|list| {
++            list.into_iter()
++                .map(|a| aionui_api_types::AskQuestionAnswer {
++                    question: a.question,
++                    labels: a.labels,
++                })
++                .collect()
++        });
++        self.conversation
++            .answer_ask(user_id, conversation_id, request_id, answers, &self.task_manager)
++            .await
++            .map_err(map_err)
++    }
 +}
 diff --git a/crates/aionui-app/src/router/mod.rs b/crates/aionui-app/src/router/mod.rs
 index 92017b94..f353c221 100644
@@ -693,10 +947,10 @@ index 92017b94..f353c221 100644
  mod runtime_team_tools;
  mod scm_monitor;
 diff --git a/crates/aionui-app/src/router/routes.rs b/crates/aionui-app/src/router/routes.rs
-index e67514c7..ecfda9bd 100644
+index e67514c7..d9cace97 100644
 --- a/crates/aionui-app/src/router/routes.rs
 +++ b/crates/aionui-app/src/router/routes.rs
-@@ -122,6 +122,21 @@ pub async fn create_router_with_runtime(services: &AppServices) -> Result<(Route
+@@ -122,6 +122,26 @@ pub async fn create_router_with_runtime(services: &AppServices) -> Result<(Route
      let team_service = states.team.service.clone();
      tracing::info!(elapsed_ms = boot.elapsed().as_millis(), "startup: module states built");
  
@@ -711,14 +965,19 @@ index e67514c7..ecfda9bd 100644
 +                services.database.pool().clone(),
 +            )),
 +        });
-+        bridge.set_facade(aionui_mobile::Facade::with_store(backend, bridge.store().clone()));
++        let facade = aionui_mobile::Facade::with_store(backend, bridge.store().clone());
++        tokio::spawn(super::mobile_backend::pump_events(
++            services.event_bus.subscribe(),
++            facade.clone(),
++        ));
++        bridge.set_facade(facade);
 +        bridge.set_app_version(&services.app_version);
 +    }
 +
      // Start channel orchestrator (message loop)
      tokio::spawn(
          channel_components
-@@ -425,6 +440,16 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
+@@ -425,6 +445,16 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
      #[cfg(feature = "weixin")]
      let router = router.merge(weixin_login_authenticated);
  
@@ -813,6 +1072,63 @@ index 1c2ee34b..97d2122c 100644
  struct ConversationServiceDeps<'a> {
      database: &'a Database,
      work_dir: PathBuf,
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index 49bbde7a..d45ea207 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -3700,6 +3700,20 @@ impl ConversationService {
+         call_id: &str,
+         req: ConfirmRequest,
+         task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) -> Result<(), ConversationError> {
++        self.confirm_with_message(user_id, conversation_id, call_id, req, None, task_manager)
++            .await
++    }
++
++    /// AionDX core-0015: `confirm` with the user's reason for a deny (the mobile bridge's refusal message).
++    pub async fn confirm_with_message(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        call_id: &str,
++        req: ConfirmRequest,
++        deny_message: Option<String>,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
+     ) -> Result<(), ConversationError> {
+         self.conversation_repo
+             .get(user_id, conversation_id)
+@@ -3720,7 +3734,7 @@ impl ConversationService {
+             .find(|c| c.call_id == call_id)
+             .map(|c| c.id.clone());
+ 
+-        agent.confirm(&req.msg_id, call_id, req.data, req.always_allow)?;
++        agent.confirm_with_message(&req.msg_id, call_id, req.data, req.always_allow, deny_message)?;
+ 
+         if let Some(conf_id) = conf_id {
+             let payload = serde_json::json!({
+@@ -4359,6 +4373,9 @@ impl ConversationService {
+                     "user_id": user_id,
+                     "conversation_id": conversation_id,
+                     "msg_id": &user_msg_id,
++                    // AionDX core-0015: the turn this send started, so a later send_failed row can be traced back
++                    // to this message (its failure frame carries the same turn_id).
++                    "turn_id": &turn_id,
+                     "content": &resolved.content,
+                     "position": "right",
+                     "status": "finish",
+diff --git a/crates/aionui-conversation/src/service_test.rs b/crates/aionui-conversation/src/service_test.rs
+index a6cf541d..30897b93 100644
+--- a/crates/aionui-conversation/src/service_test.rs
++++ b/crates/aionui-conversation/src/service_test.rs
+@@ -5901,6 +5901,8 @@ async fn send_message_broadcasts_user_created_event() {
+     assert_eq!(user_created.data["msg_id"], response.msg_id);
+     assert_eq!(user_created.data["content"], "Hello");
+     assert_eq!(user_created.data["position"], "right");
++    // AionDX core-0015: the turn the send started, for tracing a later send failure back to this message.
++    assert_eq!(user_created.data["turn_id"], response.turn_id);
+ }
+ 
+ #[tokio::test]
 diff --git a/crates/aionui-db/src/repository/sqlite_team.rs b/crates/aionui-db/src/repository/sqlite_team.rs
 index d148c02d..172b1350 100644
 --- a/crates/aionui-db/src/repository/sqlite_team.rs
@@ -1037,6 +1353,21 @@ index 00000000..f0fad82c
 +    deliveries     TEXT NOT NULL
 +);
 +CREATE INDEX IF NOT EXISTS mobile_broadcasts_team ON mobile_broadcasts (user_id, team_id, created_at);
+diff --git a/crates/aionui-mobile/migrations/0004_send_failures.sql b/crates/aionui-mobile/migrations/0004_send_failures.sql
+new file mode 100644
+index 00000000..816a594b
+--- /dev/null
++++ b/crates/aionui-mobile/migrations/0004_send_failures.sql
+@@ -0,0 +1,9 @@
++-- Which user message a send_failed row is about (CONTRACT §6.4 rev 3.1). AionCore's failure row carries no link;
++-- the bridge records one as the failure happens, so `error.messageId` survives restarts.
++CREATE TABLE IF NOT EXISTS mobile_send_failures (
++    failure_id      TEXT PRIMARY KEY,
++    conversation_id TEXT NOT NULL,
++    message_id      TEXT NOT NULL,
++    created_at      INTEGER NOT NULL
++);
++CREATE INDEX IF NOT EXISTS mobile_send_failures_conversation ON mobile_send_failures (conversation_id);
 diff --git a/crates/aionui-mobile/src/admin_routes.rs b/crates/aionui-mobile/src/admin_routes.rs
 new file mode 100644
 index 00000000..a8147977
@@ -1451,10 +1782,10 @@ index 00000000..a8147977
 +}
 diff --git a/crates/aionui-mobile/src/approvals.rs b/crates/aionui-mobile/src/approvals.rs
 new file mode 100644
-index 00000000..3605f6d9
+index 00000000..dcb63878
 --- /dev/null
 +++ b/crates/aionui-mobile/src/approvals.rs
-@@ -0,0 +1,1710 @@
+@@ -0,0 +1,1715 @@
 +//! The approvals tracker and the per-backend answer mapping behind `/v1/approvals` (CONTRACT §6.5,
 +//! PHASE4-CORE-SPEC §2).
 +//!
@@ -2021,6 +2352,11 @@ index 00000000..3605f6d9
 +
 +    pub fn get(&self, approval_id: &str) -> Option<TrackedApproval> {
 +        self.lock().by_id.get(approval_id).map(|e| e.tracked.clone())
++    }
++
++    /// Drops one approval (answered from the phone, or found resolved elsewhere). Returns its id if it was tracked.
++    pub fn take(&self, approval_id: &str) -> Option<String> {
++        self.lock().by_id.remove(approval_id).map(|_| approval_id.to_owned())
 +    }
 +}
 +
@@ -3167,16 +3503,19 @@ index 00000000..3605f6d9
 +}
 diff --git a/crates/aionui-mobile/src/backend.rs b/crates/aionui-mobile/src/backend.rs
 new file mode 100644
-index 00000000..c2bca955
+index 00000000..e99099f7
 --- /dev/null
 +++ b/crates/aionui-mobile/src/backend.rs
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,224 @@
 +//! The facade's view of AionCore (CONTRACT §6). `aionui-app` implements it over
 +//! the team, conversation and assistant services; this crate depends on no
 +//! domain crate. Every call acts as `user_id`, the Core user the phone was
 +//! paired to (the phone is the user, CONTRACT §3.3).
 +
 +use async_trait::async_trait;
++use serde_json::Value;
++
++use crate::approvals::{BackendKind, QuestionAnswer};
 +
 +use aionui_api_types::{
 +    AssistantResponse, ConversationListResponse, ConversationResponse, ListMessagesQuery, MessageListResponse,
@@ -3308,6 +3647,54 @@ index 00000000..c2bca955
 +    /// The user's client preference store (read markers live there, CONTRACT §6.4).
 +    async fn get_pref(&self, user_id: &str, key: &str) -> Result<Option<String>, BackendError>;
 +    async fn set_pref(&self, user_id: &str, key: &str, value: &str) -> Result<(), BackendError>;
++
++    // ---- approvals (phase 4). Defaults say "not available" so a backend without them still serves the rest.
++
++    /// Where a conversation's approvals come from: its team slot and agent name, and the backend kind of the agent
++    /// running it right now (the answer mapping depends on it, CONTRACT §6.5).
++    async fn approval_source(&self, _user_id: &str, _conversation_id: &str) -> Result<ApprovalSource, BackendError> {
++        Err(BackendError::Unavailable("approvals are not available".into()))
++    }
++    /// The user's conversations that have a live agent (only those can hold pending approvals).
++    async fn live_conversations(&self, _user_id: &str) -> Result<Vec<String>, BackendError> {
++        Ok(Vec::new())
++    }
++    /// AionCore's pending confirmations of one conversation (`Confirmation` objects as JSON).
++    async fn confirmations(&self, _user_id: &str, _conversation_id: &str) -> Result<Vec<Value>, BackendError> {
++        Ok(Vec::new())
++    }
++    /// AionCore's confirm, with the user's refusal reason for backends that take one natively.
++    async fn confirm(&self, _user_id: &str, _call: ConfirmCall) -> Result<(), BackendError> {
++        Err(BackendError::Unavailable("approvals are not available".into()))
++    }
++    /// AionCore's AskUserQuestion answer; `answers: None` declines.
++    async fn answer_ask(
++        &self,
++        _user_id: &str,
++        _conversation_id: &str,
++        _request_id: &str,
++        _answers: Option<Vec<QuestionAnswer>>,
++    ) -> Result<(), BackendError> {
++        Err(BackendError::Unavailable("approvals are not available".into()))
++    }
++}
++
++#[derive(Debug, Clone, PartialEq)]
++pub struct ApprovalSource {
++    pub team_id: Option<String>,
++    pub slot_id: Option<String>,
++    pub agent_name: String,
++    pub backend: BackendKind,
++}
++
++#[derive(Debug, Clone, PartialEq)]
++pub struct ConfirmCall {
++    pub conversation_id: String,
++    pub call_id: String,
++    pub msg_id: String,
++    pub data: Value,
++    pub always_allow: bool,
++    pub deny_message: Option<String>,
 +}
 +
 +/// How a send was delivered (CONTRACT §6.4).
@@ -3849,10 +4236,10 @@ index 00000000..77da66f5
 +}
 diff --git a/crates/aionui-mobile/src/facade.rs b/crates/aionui-mobile/src/facade.rs
 new file mode 100644
-index 00000000..f7e66367
+index 00000000..091725b7
 --- /dev/null
 +++ b/crates/aionui-mobile/src/facade.rs
-@@ -0,0 +1,643 @@
+@@ -0,0 +1,696 @@
 +//! The mobile facade (CONTRACT §6): the `/v1/...` routes inside the RPC tunnel.
 +//! An allowlist by construction (§11 #1): anything not matched here is
 +//! `no_such_route`. This file routes and pages; `shape.rs` builds the JSON.
@@ -3883,6 +4270,8 @@ index 00000000..f7e66367
 +    pub(crate) store: Option<crate::store::MobileStore>,
 +    /// Shutdown requests sent from a phone, by (team, slot): `Agent.shutdown` (§6.3).
 +    pub(crate) shutdowns: std::sync::Mutex<HashMap<(String, String), Value>>,
++    /// Phase 4: the change journal and the approvals tracker, fed by `on_event`.
++    pub(crate) live: crate::facade_live::Live,
 +}
 +
 +impl Facade {
@@ -3891,6 +4280,7 @@ index 00000000..f7e66367
 +            backend,
 +            store: None,
 +            shutdowns: Default::default(),
++            live: Default::default(),
 +        })
 +    }
 +
@@ -3899,6 +4289,7 @@ index 00000000..f7e66367
 +            backend,
 +            store: Some(store),
 +            shutdowns: Default::default(),
++            live: Default::default(),
 +        })
 +    }
 +}
@@ -4006,6 +4397,10 @@ index 00000000..f7e66367
 +        if let Some(resp) = self.handle_write(ctx, req, &segs, &q).await {
 +            return Some(resp);
 +        }
++        let body = req.body.clone().unwrap_or(Value::Null);
++        if let Some(resp) = self.handle_live(ctx, &req.method, &segs, &q, &body).await {
++            return Some(resp);
++        }
 +        let resp = match (req.method.as_str(), segs.as_slice()) {
 +            ("GET", ["v1", "teams"]) => self.teams(user).await,
 +            ("GET", ["v1", "teams", t, "run-state"]) => self.run_state(user, t).await,
@@ -4025,7 +4420,7 @@ index 00000000..f7e66367
 +}
 +
 +impl Facade {
-+    async fn extras_for(&self, user: &str, team: &Value) -> HashMap<String, AgentExtras> {
++    async fn extras_for(&self, user: &str, team: &Value, run: &Value) -> HashMap<String, AgentExtras> {
 +        let roster = shape::roster_index(team);
 +        let mut out = HashMap::new();
 +        for a in team["assistants"].as_array().into_iter().flatten() {
@@ -4039,12 +4434,23 @@ index 00000000..f7e66367
 +            };
 +            let team_id = team["id"].as_str().unwrap_or_default().to_owned();
 +            let shutdown = self.shutdowns.lock().unwrap().get(&(team_id, slot.to_owned())).cloned();
++            let read = self.read_state_of(user, conv, &roster, name).await;
++            // your_turn is for the lead only, once its turn is over (teammates report to the lead).
++            let idle = run["slot_work"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .find(|w| w["slot_id"] == slot)
++                .is_none_or(|w| w["state"] == "idle");
++            let your_turn = a["role"] == "lead" && idle && read.agent_spoke_last;
 +            out.insert(
 +                slot.to_owned(),
 +                AgentExtras {
 +                    last_message: last,
 +                    shutdown,
-+                    ..Default::default()
++                    unread: read.unread,
++                    your_turn,
++                    question_pending: self.question_pending(user, conv),
 +                },
 +            );
 +        }
@@ -4080,13 +4486,15 @@ index 00000000..f7e66367
 +
 +    pub(crate) async fn run_state(&self, user: &str, team_id: &str) -> Result<InnerResponse, BackendError> {
 +        let (team, run, tasks) = self.team_view(user, team_id).await?;
-+        let extras = self.extras_for(user, &team).await;
-+        Ok(InnerResponse::ok(shape::run_state(&team, &run, &tasks, &extras)))
++        let extras = self.extras_for(user, &team, &run).await;
++        let mut rs = shape::run_state(&team, &run, &tasks, &extras);
++        self.apply_session_status(team_id, &mut rs);
++        Ok(InnerResponse::ok(rs))
 +    }
 +
 +    pub(crate) async fn agent(&self, user: &str, team_id: &str, slot: &str) -> Result<InnerResponse, BackendError> {
 +        let (team, run, tasks) = self.team_view(user, team_id).await?;
-+        let extras = self.extras_for(user, &team).await;
++        let extras = self.extras_for(user, &team, &run).await;
 +        let rs = shape::run_state(&team, &run, &tasks, &extras);
 +        rs["agents"]
 +            .as_array()
@@ -4127,8 +4535,12 @@ index 00000000..f7e66367
 +            .filter(|t| q.get("owner").is_none_or(|o| t["owner"].as_str() == Some(o)))
 +            .collect();
 +        tasks.sort_by_key(|t| std::cmp::Reverse(t["updated_at"].as_i64().unwrap_or(0)));
++        let assigned = self.assignments(user, team_id, &tasks).await;
 +        Ok(InnerResponse::ok(Value::Array(
-+            tasks.iter().map(|t| shape::task(t, &names, None)).collect(),
++            tasks
++                .iter()
++                .map(|t| shape::task(t, &names, t["id"].as_str().and_then(|id| assigned.get(id)).cloned()))
++                .collect(),
 +        )))
 +    }
 +
@@ -4142,7 +4554,12 @@ index 00000000..f7e66367
 +            .map(to_value)
 +            .find(|t| t["id"] == task_id)
 +            .ok_or_else(|| BackendError::NotFound(format!("No task {task_id}")))?;
-+        Ok(InnerResponse::ok(shape::task(&task, &names, None)))
++        let assigned = self.assignments(user, team_id, std::slice::from_ref(&task)).await;
++        Ok(InnerResponse::ok(shape::task(
++            &task,
++            &names,
++            assigned.get(task_id).cloned(),
++        )))
 +    }
 +
 +    async fn activity(
@@ -4252,22 +4669,8 @@ index 00000000..f7e66367
 +                .iter()
 +                .filter(|c| c["extra"]["teamId"].as_str().is_none_or(str::is_empty))
 +            {
-+                let id = c["id"].as_str().unwrap_or_default();
-+                let last = match self.backend.latest_message(user, id).await {
-+                    Ok(Some(m)) => {
-+                        shape::message(&to_value(&m), &HashMap::new(), c["name"].as_str().unwrap_or_default())
-+                            .map(|m| shape::last_message(&m))
-+                    }
-+                    _ => None,
-+                };
-+                items.push(shape::conversation(
-+                    c,
-+                    None,
-+                    &AgentExtras {
-+                        last_message: last,
-+                        ..Default::default()
-+                    },
-+                ));
++                let extras = self.conversation_extras(user, c).await;
++                items.push(shape::conversation(c, None, &extras));
 +            }
 +            next = if page["has_more"] == true { last_id } else { None };
 +            if items.len() >= limit as usize || next.is_none() {
@@ -4280,19 +4683,55 @@ index 00000000..f7e66367
 +
 +    async fn conversation(&self, user: &str, id: &str) -> Result<InnerResponse, BackendError> {
 +        let c = to_value(&self.backend.conversation(user, id).await?);
++        let extras = self.conversation_extras(user, &c).await;
++        Ok(InnerResponse::ok(shape::conversation(&c, None, &extras)))
++    }
++
++    /// A conversation's last message, unread count and attention inputs.
++    async fn conversation_extras(&self, user: &str, c: &Value) -> AgentExtras {
++        let id = c["id"].as_str().unwrap_or_default();
++        let (roster, agent) = self.message_context(user, c).await;
 +        let last = match self.backend.latest_message(user, id).await {
-+            Ok(Some(m)) => shape::message(&to_value(&m), &HashMap::new(), c["name"].as_str().unwrap_or_default())
-+                .map(|m| shape::last_message(&m)),
++            Ok(Some(m)) => shape::message(&to_value(&m), &roster, &agent).map(|m| shape::last_message(&m)),
 +            _ => None,
 +        };
-+        Ok(InnerResponse::ok(shape::conversation(
-+            &c,
-+            None,
-+            &AgentExtras {
-+                last_message: last,
-+                ..Default::default()
++        let read = self.read_state_of(user, id, &roster, &agent).await;
++        let idle = c["runtime"]["state"].as_str().is_none_or(|s| s == "idle");
++        // your_turn: solo chats and a team's lead (teammates report to the lead, not to the user).
++        let eligible = match c["extra"]["teamId"].as_str().filter(|t| !t.is_empty()) {
++            None => true,
++            Some(team_id) => match self.backend.team(user, team_id).await {
++                Ok(team) => to_value(&team)["assistants"]
++                    .as_array()
++                    .into_iter()
++                    .flatten()
++                    .any(|a| a["conversation_id"] == id && a["role"] == "lead"),
++                Err(_) => false,
 +            },
-+        )))
++        };
++        AgentExtras {
++            last_message: last,
++            unread: read.unread,
++            your_turn: eligible && idle && read.agent_spoke_last,
++            question_pending: self.question_pending(user, id),
++            shutdown: None,
++        }
++    }
++
++    /// `error.messageId` on send_failed rows, from the links the event pump recorded.
++    async fn link_failures(&self, conversation_id: &str, items: &mut [Value]) {
++        if !items.iter().any(|m| m["error"]["source"] == "send_failed") {
++            return;
++        }
++        let Some(store) = &self.store else { return };
++        let Ok(links) = store.send_failures(conversation_id).await else {
++            return;
++        };
++        for m in items.iter_mut().filter(|m| m["error"]["source"] == "send_failed") {
++            if let Some(id) = m["messageId"].as_str().and_then(|id| links.get(id)) {
++                m["error"]["messageId"] = json!(id);
++            }
++        }
 +    }
 +
 +    /// Roster and agent name for shaping one conversation's messages.
@@ -4349,9 +4788,9 @@ index 00000000..f7e66367
 +            } else {
 +                Value::Null
 +            };
-+            return Ok(InnerResponse::ok(
-+                json!({ "items": shape_all(&rows), "before": before }),
-+            ));
++            let mut items = shape_all(&rows);
++            self.link_failures(id, &mut items).await;
++            return Ok(InnerResponse::ok(json!({ "items": items, "before": before })));
 +        }
 +
 +        let since = q.get("since");
@@ -4383,8 +4822,9 @@ index 00000000..f7e66367
 +        } else {
 +            next_floor(&rows, floor.unwrap_or_else(aionui_common::now_ms))
 +        };
-+        let mut body =
-+            json!({ "items": shape_all(&rows), "cursor": sync_cursor(next), "reset": reset, "hasMore": has_more });
++        let mut items = shape_all(&rows);
++        self.link_failures(id, &mut items).await;
++        let mut body = json!({ "items": items, "cursor": sync_cursor(next), "reset": reset, "hasMore": has_more });
 +        if floor.is_none() {
 +            body["before"] = if page["has_more_before"] == true {
 +                page["oldest_cursor"].clone()
@@ -4496,12 +4936,781 @@ index 00000000..f7e66367
 +        assert_eq!(v, json!({ "created_at": 4999, "id": "~" }));
 +    }
 +}
+diff --git a/crates/aionui-mobile/src/facade_live.rs b/crates/aionui-mobile/src/facade_live.rs
+new file mode 100644
+index 00000000..3d2c1ac7
+--- /dev/null
++++ b/crates/aionui-mobile/src/facade_live.rs
+@@ -0,0 +1,763 @@
++//! Phase 4: the live side of the facade (CONTRACT §6.2, §6.5).
++//!
++//! AionCore's event bus feeds `Facade::on_event`, which turns bus events into change-journal entries and keeps the
++//! approvals tracker current. The phone reads them through `GET /v1/changes` (long-poll), `GET /v1/approvals` and
++//! `POST /v1/approvals/{id}/answer`.
++
++use std::collections::{HashMap, HashSet};
++use std::sync::Mutex;
++use std::time::Duration;
++
++use serde_json::{Value, json};
++
++use crate::approvals::{
++    AnswerError, AnswerInput, ApprovalOrigin, ApprovalTracker, BackendCall, Decision, MessageDelivery, PermissionFrame,
++    QuestionAnswer, TrackedApproval, map_answer,
++};
++use crate::backend::{BackendError, ConfirmCall};
++use crate::core::InnerContext;
++use crate::facade::{Facade, backend_error, to_value};
++use crate::facade_write::confirm_gate;
++use crate::journal::{ChangeEntry, ChangeJournal, ConversationWhat, Resolution, TaskChange, TeamWhat};
++use crate::shape;
++use crate::wire::InnerResponse;
++
++/// CONTRACT §6.2: 24 h or 50,000 entries, whichever is smaller.
++const JOURNAL_MAX_ENTRIES: usize = 50_000;
++const JOURNAL_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
++/// CONTRACT §6.2: `wait` is 0..25 s; `more` past 500 entries.
++const MAX_WAIT_SECS: u64 = 25;
++const CHANGES_LIMIT: usize = 500;
++/// How many recent new-turn sends are remembered for linking a send failure to its message.
++const TURN_MEMORY: usize = 1000;
++
++/// What `on_event` learns and keeps between events.
++pub(crate) struct Live {
++    pub(crate) journal: ChangeJournal,
++    pub(crate) approvals: ApprovalTracker,
++    /// The user message each new-turn send created, by turn id (bounded; see `remember_turn`).
++    turn_messages: Mutex<std::collections::VecDeque<(String, String)>>,
++    /// Per conversation: the user message a failed mid-turn delivery just marked `error`.
++    errored: Mutex<HashMap<String, String>>,
++    /// The latest `team.sessionStatusChanged` status per team (`starting|ready|failed|stopped`).
++    session_status: Mutex<HashMap<String, String>>,
++    /// Per conversation: where its approvals come from, or None when it can't be resolved (not a live agent).
++    origins: Mutex<HashMap<String, Option<ApprovalOrigin>>>,
++    /// Users whose live conversations were reconciled since start (or since the bus lagged).
++    swept: Mutex<HashSet<String>>,
++}
++
++impl Default for Live {
++    fn default() -> Self {
++        Self {
++            journal: ChangeJournal::new(JOURNAL_MAX_ENTRIES, JOURNAL_MAX_AGE_MS),
++            approvals: ApprovalTracker::new(),
++            session_status: Mutex::new(HashMap::new()),
++            turn_messages: Mutex::new(std::collections::VecDeque::new()),
++            errored: Mutex::new(HashMap::new()),
++            origins: Mutex::new(HashMap::new()),
++            swept: Mutex::new(HashSet::new()),
++        }
++    }
++}
++
++fn s<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
++    v.get(key).and_then(Value::as_str).filter(|x| !x.is_empty())
++}
++
++fn now_ms() -> i64 {
++    aionui_common::now_ms()
++}
++
++/// Bus events that change a team's run state (slot work, turns, runtime, session).
++const RUN_STATE_EVENTS: &[&str] = &[
++    "team.agentStatusChanged",
++    "team.agentRuntimeStatusChanged",
++    "team.slotWorkChanged",
++    "team.sessionStatusChanged",
++    "team.sessionChanged",
++    "team.runAccepted",
++    "team.runStarted",
++    "team.runUpdated",
++    "team.runCompleted",
++    "team.runCancelled",
++    "team.runFailed",
++    "team.childTurnStarted",
++    "team.childTurnCompleted",
++    "team.childTurnCancelled",
++];
++
++/// The mailbox note AionCore writes to the lead when a teammate refuses a shutdown
++/// (`scheduler/crash_recovery.rs` `notify_shutdown_rejected`): `Teammate '<name>' declined shutdown: <reason>`.
++fn declined_shutdown_reason(content: &str) -> Option<&str> {
++    let rest = content.strip_prefix("Teammate '")?;
++    let (_, reason) = rest.split_once("' declined shutdown: ")?;
++    Some(reason.trim())
++}
++
++impl Facade {
++    fn record(&self, user: &str, entry: ChangeEntry) {
++        self.live.journal.record(user, entry, now_ms());
++    }
++
++    fn record_team(&self, user: &str, team_id: &str, what: &[TeamWhat]) {
++        self.record(
++            user,
++            ChangeEntry::Team {
++                team_id: team_id.to_owned(),
++                what: what.to_vec(),
++            },
++        );
++    }
++
++    /// The approval origin of a conversation, cached. None when AionCore can't say (no live agent, or gone).
++    async fn origin(&self, user: &str, conversation_id: &str) -> Option<ApprovalOrigin> {
++        if let Some(hit) = self.live.origins.lock().unwrap().get(conversation_id)
++            && (hit.is_none() || hit.as_ref().is_some_and(|o| o.user_id == user))
++        {
++            return hit.clone();
++        }
++        let found = match self.backend.approval_source(user, conversation_id).await {
++            Ok(src) => Some(ApprovalOrigin {
++                user_id: user.to_owned(),
++                conversation_id: conversation_id.to_owned(),
++                team_id: src.team_id,
++                slot_id: src.slot_id,
++                agent_name: src.agent_name,
++                backend: src.backend,
++            }),
++            Err(BackendError::NotFound(_)) => None,
++            // Not cached: a transient failure shouldn't hide a conversation's approvals for good.
++            Err(_) => return None,
++        };
++        // Nor an undecided backend (no live agent yet): the first permission frame must see the real one.
++        if found
++            .as_ref()
++            .is_some_and(|o| o.backend == crate::approvals::BackendKind::Other)
++        {
++            return found;
++        }
++        self.live
++            .origins
++            .lock()
++            .unwrap()
++            .insert(conversation_id.to_owned(), found.clone());
++        found
++    }
++
++    fn forget_origins_of_team(&self, team_id: &str) {
++        self.live
++            .origins
++            .lock()
++            .unwrap()
++            .retain(|_, o| o.as_ref().is_none_or(|o| o.team_id.as_deref() != Some(team_id)));
++    }
++
++    /// `RunState.sessionStatus` (§6.3): what `team.sessionStatusChanged` last said; until then, AionCore's own view
++    /// ("none" when no session has started).
++    pub(crate) fn apply_session_status(&self, team_id: &str, rs: &mut Value) {
++        if let Some(status) = self.live.session_status.lock().unwrap().get(team_id) {
++            rs["sessionStatus"] = json!(status);
++        }
++    }
++
++    /// The bus dropped events: anything cached may be stale, and approvals must be re-swept.
++    pub fn on_lagged(&self, missed: u64) {
++        tracing::warn!(missed, "mobile bridge: event bus lagged; approvals will be re-swept");
++        self.live.origins.lock().unwrap().clear();
++        self.live.swept.lock().unwrap().clear();
++    }
++
++    /// One AionCore bus event (`WebSocketMessage { name, data }`).
++    pub async fn on_event(&self, name: &str, data: &Value) {
++        let Some(user) = s(data, "user_id") else { return };
++        let team_id = s(data, "team_id");
++        match name {
++            "message.stream" => self.on_stream(user, data).await,
++            "message.statusChanged" => {
++                if s(data, "status") == Some("error")
++                    && let (Some(cid), Some(msg)) = (s(data, "conversation_id"), s(data, "msg_id"))
++                {
++                    self.live.errored.lock().unwrap().insert(cid.to_owned(), msg.to_owned());
++                }
++                self.on_conversation(user, data, &[ConversationWhat::Messages]).await
++            }
++            "message.userCreated" => {
++                if let (Some(turn), Some(msg)) = (s(data, "turn_id"), s(data, "msg_id")) {
++                    self.remember_turn(turn, msg);
++                }
++                self.on_conversation(user, data, &[ConversationWhat::Messages]).await
++            }
++            "conversation.nameUpdated" => self.on_conversation(user, data, &[ConversationWhat::Meta]).await,
++            "conversation.listChanged" => match s(data, "action") {
++                Some("deleted") => {
++                    if let Some(cid) = s(data, "conversation_id") {
++                        self.live.origins.lock().unwrap().remove(cid);
++                        self.record(
++                            user,
++                            ChangeEntry::ConversationRemoved {
++                                conversation_id: cid.to_owned(),
++                            },
++                        );
++                    }
++                }
++                _ => self.on_conversation(user, data, &[ConversationWhat::Meta]).await,
++            },
++            "confirmation.remove" => {
++                let (Some(cid), Some(id)) = (s(data, "conversation_id"), s(data, "id")) else {
++                    return;
++                };
++                if let Some(approval_id) = self.live.approvals.on_removed(cid, id) {
++                    self.approval_gone(user, cid, approval_id, Resolution::Answered).await;
++                }
++            }
++            "turn.completed" => {
++                let Some(cid) = s(data, "conversation_id") else { return };
++                for approval_id in self.live.approvals.on_turn_ended(cid) {
++                    self.approval_gone(user, cid, approval_id, Resolution::Cancelled).await;
++                }
++                self.on_conversation(user, data, &[ConversationWhat::Messages, ConversationWhat::State])
++                    .await;
++            }
++            "team.created" => {
++                if let Some(t) = team_id {
++                    self.record_team(user, t, &[TeamWhat::Meta, TeamWhat::Roster]);
++                }
++            }
++            "team.renamed" => {
++                if let Some(t) = team_id {
++                    self.record_team(user, t, &[TeamWhat::Meta]);
++                }
++            }
++            "team.removed" => {
++                if let Some(t) = team_id {
++                    self.forget_origins_of_team(t);
++                    self.shutdowns.lock().unwrap().retain(|(team, _), _| team != t);
++                    self.record(user, ChangeEntry::TeamRemoved { team_id: t.to_owned() });
++                }
++            }
++            "team.agentSpawned" | "team.agentRenamed" => {
++                if let Some(t) = team_id {
++                    self.forget_origins_of_team(t);
++                    self.record_team(user, t, &[TeamWhat::Roster]);
++                }
++            }
++            "team.agentRemoved" => {
++                if let Some(t) = team_id {
++                    self.forget_origins_of_team(t);
++                    if let Some(slot) = s(data, "slot_id") {
++                        self.shutdowns.lock().unwrap().remove(&(t.to_owned(), slot.to_owned()));
++                    }
++                    self.record_team(user, t, &[TeamWhat::Roster, TeamWhat::RunState]);
++                }
++            }
++            "team.sessionStatusChanged" => {
++                if let (Some(t), Some(status)) = (team_id, s(data, "status")) {
++                    self.live
++                        .session_status
++                        .lock()
++                        .unwrap()
++                        .insert(t.to_owned(), status.to_owned());
++                    self.record_team(user, t, &[TeamWhat::RunState]);
++                }
++            }
++            "team.taskChanged" => {
++                if let Some(t) = team_id {
++                    self.on_task(user, t, data).await;
++                }
++            }
++            "team.mailboxChanged" => {
++                if let Some(t) = team_id {
++                    self.on_mailbox(user, t, data);
++                }
++            }
++            n if RUN_STATE_EVENTS.contains(&n) => {
++                if let Some(t) = team_id {
++                    self.record_team(user, t, &[TeamWhat::RunState]);
++                }
++            }
++            _ => {}
++        }
++    }
++
++    async fn on_conversation(&self, user: &str, data: &Value, what: &[ConversationWhat]) {
++        let Some(cid) = s(data, "conversation_id") else { return };
++        let origin = self.origin(user, cid).await;
++        let (team_id, slot_id) = origin.map(|o| (o.team_id, o.slot_id)).unwrap_or_default();
++        if let Some(t) = &team_id
++            && what.contains(&ConversationWhat::State)
++        {
++            self.record_team(user, t, &[TeamWhat::RunState]);
++        }
++        self.record(
++            user,
++            ChangeEntry::Conversation {
++                conversation_id: cid.to_owned(),
++                team_id,
++                slot_id,
++                what: what.to_vec(),
++            },
++        );
++    }
++
++    async fn on_stream(&self, user: &str, data: &Value) {
++        let Some(cid) = s(data, "conversation_id") else { return };
++        let frame_type = s(data, "type").unwrap_or_default();
++        if frame_type == "tips" && data["data"]["source"] == "send_failed" {
++            self.link_send_failure(cid, data).await;
++        }
++        let mut what = vec![ConversationWhat::Messages];
++        if matches!(frame_type, "start" | "finish" | "error") {
++            what.push(ConversationWhat::State);
++        }
++        if matches!(frame_type, "acp_permission" | "permission" | "ask")
++            && let Some(origin) = self.origin(user, cid).await
++        {
++            let frame = PermissionFrame {
++                origin,
++                frame_type: frame_type.to_owned(),
++                msg_id: s(data, "msg_id").unwrap_or_default().to_owned(),
++                data: data.get("data").cloned().unwrap_or(Value::Null),
++                at_ms: now_ms(),
++            };
++            if let Some(approval) = self.live.approvals.on_frame(frame) {
++                self.record(
++                    user,
++                    ChangeEntry::ApprovalAdded {
++                        approval: to_value(&approval),
++                    },
++                );
++            }
++            what.push(ConversationWhat::State);
++        }
++        self.on_conversation(user, data, &what).await;
++    }
++
++    fn remember_turn(&self, turn_id: &str, message_id: &str) {
++        let mut turns = self.live.turn_messages.lock().unwrap();
++        turns.push_back((turn_id.to_owned(), message_id.to_owned()));
++        while turns.len() > TURN_MEMORY {
++            turns.pop_front();
++        }
++    }
++
++    /// CONTRACT §6.4 rev 3.1: a failed mid-turn delivery marked its own message `error` just before; otherwise the
++    /// failure frame's turn names the message that started it. Team chats have neither and stay unlinked.
++    async fn link_send_failure(&self, conversation_id: &str, frame: &Value) {
++        let Some(failure_id) = s(frame, "msg_id") else { return };
++        let mid_turn = self.live.errored.lock().unwrap().remove(conversation_id);
++        let message_id = mid_turn.or_else(|| {
++            let turn = s(frame, "turn_id")?;
++            let turns = self.live.turn_messages.lock().unwrap();
++            turns.iter().rev().find(|(t, _)| t == turn).map(|(_, m)| m.clone())
++        });
++        let (Some(message_id), Some(store)) = (message_id, &self.store) else {
++            return;
++        };
++        if let Err(e) = store
++            .insert_send_failure(failure_id, conversation_id, &message_id, now_ms())
++            .await
++        {
++            tracing::warn!(error = %e, "mobile bridge: could not record a send failure link");
++        }
++    }
++
++    async fn approval_gone(&self, user: &str, conversation_id: &str, approval_id: String, resolution: Resolution) {
++        let team_id = self.origin(user, conversation_id).await.and_then(|o| o.team_id);
++        if let Some(t) = &team_id {
++            self.record_team(user, t, &[TeamWhat::RunState]);
++        }
++        self.record(
++            user,
++            ChangeEntry::ApprovalRemoved {
++                approval_id,
++                conversation_id: conversation_id.to_owned(),
++                team_id,
++                resolution,
++            },
++        );
++    }
++
++    async fn on_task(&self, user: &str, team_id: &str, data: &Value) {
++        let task = &data["task"];
++        let change = match s(data, "change") {
++            Some("created") => TaskChange::Created,
++            _ => TaskChange::Updated,
++        };
++        let names = self.slot_names(user, team_id).await;
++        self.record(
++            user,
++            ChangeEntry::Task {
++                team_id: team_id.to_owned(),
++                task: shape::task(task, &names, None),
++                change,
++            },
++        );
++        // currentTask and openTaskCount derive from the board.
++        self.record_team(user, team_id, &[TeamWhat::RunState]);
++    }
++
++    /// A teammate's refusal of a phone-sent shutdown arrives as a mailbox note to the lead.
++    fn on_mailbox(&self, user: &str, team_id: &str, data: &Value) {
++        let msg = &data["message"];
++        if s(data, "change") != Some("created") {
++            return;
++        }
++        let (Some(from), Some(reason)) = (
++            s(msg, "from_agent_id"),
++            s(msg, "content").and_then(declined_shutdown_reason),
++        ) else {
++            return;
++        };
++        let key = (team_id.to_owned(), from.to_owned());
++        let mut shutdowns = self.shutdowns.lock().unwrap();
++        let Some(state) = shutdowns.get_mut(&key) else { return };
++        if state["state"] != "requested" {
++            return;
++        }
++        *state = json!({
++            "state": "rejected",
++            "requestedAt": state["requestedAt"],
++            "respondedAt": msg["created_at"].as_i64().unwrap_or_else(now_ms),
++            "rejectReason": reason,
++        });
++        drop(shutdowns);
++        self.record_team(user, team_id, &[TeamWhat::RunState]);
++    }
++
++    // ------------------------------------------------------------------ routes
++
++    pub(crate) async fn handle_live(
++        &self,
++        ctx: &InnerContext,
++        method: &str,
++        segs: &[&str],
++        q: &HashMap<String, String>,
++        body: &Value,
++    ) -> Option<InnerResponse> {
++        let user = ctx.user_id.as_str();
++        Some(match (method, segs) {
++            ("GET", ["v1", "changes"]) => self.changes(user, q).await,
++            ("GET", ["v1", "approvals"]) => self.approvals_list(user, q).await,
++            ("POST", ["v1", "approvals", id, "answer"]) => self.answer(ctx, id, body).await,
++            _ => return None,
++        })
++    }
++
++    async fn changes(&self, user: &str, q: &HashMap<String, String>) -> InnerResponse {
++        let wait = q
++            .get("wait")
++            .and_then(|w| w.parse::<u64>().ok())
++            .unwrap_or(0)
++            .min(MAX_WAIT_SECS);
++        let since = q.get("since").map(String::as_str).filter(|t| !t.is_empty());
++        let page = if wait == 0 {
++            self.live.journal.since(user, since, CHANGES_LIMIT, now_ms())
++        } else {
++            self.live
++                .journal
++                .wait_since(user, since, Duration::from_secs(wait), CHANGES_LIMIT)
++                .await
++        };
++        InnerResponse::ok(to_value(&page))
++    }
++
++    /// Reconciles one conversation against AionCore's pending confirmations.
++    async fn reconcile(&self, user: &str, conversation_id: &str) {
++        let Some(origin) = self.origin(user, conversation_id).await else {
++            return;
++        };
++        let listed = match self.backend.confirmations(user, conversation_id).await {
++            Ok(l) => l,
++            Err(e) => {
++                tracing::warn!(conversation_id, error = ?e, "mobile bridge: could not list confirmations");
++                return;
++            }
++        };
++        let (added, gone) = self.live.approvals.reconcile(&origin, &listed, now_ms());
++        for approval in added {
++            self.record(
++                user,
++                ChangeEntry::ApprovalAdded {
++                    approval: to_value(&approval),
++                },
++            );
++        }
++        for approval_id in gone {
++            self.approval_gone(user, conversation_id, approval_id, Resolution::Cancelled)
++                .await;
++        }
++    }
++
++    /// The first listing for a user (after start, or after the bus lagged) sweeps every live conversation; later
++    /// listings re-check only the conversations that hold tracked approvals.
++    async fn approvals_list(&self, user: &str, q: &HashMap<String, String>) -> InnerResponse {
++        let first = self.live.swept.lock().unwrap().insert(user.to_owned());
++        let mut convs: Vec<String> = self
++            .live
++            .approvals
++            .list(user, None)
++            .into_iter()
++            .map(|a| a.conversation_id)
++            .collect();
++        if first {
++            match self.backend.live_conversations(user).await {
++                Ok(live) => convs.extend(live),
++                Err(e) => {
++                    tracing::warn!(error = ?e, "mobile bridge: approvals sweep could not list live conversations");
++                    self.live.swept.lock().unwrap().remove(user);
++                }
++            }
++        }
++        convs.sort();
++        convs.dedup();
++        for cid in convs {
++            self.reconcile(user, &cid).await;
++        }
++        let team = q.get("teamId").map(String::as_str).filter(|t| !t.is_empty());
++        let items: Vec<Value> = self.live.approvals.list(user, team).iter().map(to_value).collect();
++        InnerResponse::ok(json!({ "items": items }))
++    }
++
++    async fn answer(&self, ctx: &InnerContext, approval_id: &str, body: &Value) -> InnerResponse {
++        let user = ctx.user_id.as_str();
++        let Some(tracked) = self
++            .live
++            .approvals
++            .get(approval_id)
++            .filter(|t| t.origin.user_id == user)
++        else {
++            return InnerResponse::error(404, "not_found", "No such pending approval");
++        };
++        let input = match answer_input(body) {
++            Ok(i) => i,
++            Err(r) => return r,
++        };
++        let mapped = match map_answer(&tracked, input) {
++            Ok(m) => m,
++            Err(AnswerError::InvalidRequest(why)) => return InnerResponse::error(400, "invalid_request", why),
++            Err(AnswerError::Ambiguous(options)) => {
++                let mut r = InnerResponse::error(
++                    422,
++                    "ambiguous_decision",
++                    "The decision doesn't map to exactly one option; pick one",
++                );
++                if let Some(b) = r.body.as_mut() {
++                    b["error"]["details"] = json!({ "options": options });
++                }
++                return r;
++            }
++        };
++        if mapped.sensitive
++            && let Some(denied) = confirm_gate(ctx)
++        {
++            return denied;
++        }
++        // Still pending in AionCore? (It may have been answered on the PC a moment ago.)
++        if let BackendCall::Confirm { call_id, .. } = &mapped.call
++            && let Ok(listed) = self.backend.confirmations(user, &tracked.origin.conversation_id).await
++            && !listed.iter().any(|c| c["call_id"] == call_id.as_str())
++        {
++            self.resolved_elsewhere(user, &tracked).await;
++            return already_resolved();
++        }
++        let native = mapped.delivery == Some(MessageDelivery::Native);
++        let result = match mapped.call.clone() {
++            BackendCall::Confirm {
++                conversation_id,
++                msg_id,
++                call_id,
++                data,
++                always_allow,
++            } => {
++                let call = ConfirmCall {
++                    conversation_id,
++                    call_id,
++                    msg_id,
++                    data,
++                    always_allow,
++                    deny_message: if native { mapped.deny_message.clone() } else { None },
++                };
++                self.backend.confirm(user, call).await
++            }
++            BackendCall::AskAnswer {
++                conversation_id,
++                request_id,
++                answers,
++            } => {
++                self.backend
++                    .answer_ask(user, &conversation_id, &request_id, Some(answers))
++                    .await
++            }
++            BackendCall::AskDecline {
++                conversation_id,
++                request_id,
++            } => self.backend.answer_ask(user, &conversation_id, &request_id, None).await,
++        };
++        match result {
++            Ok(()) => {}
++            Err(BackendError::NotFound(_)) => {
++                self.resolved_elsewhere(user, &tracked).await;
++                return already_resolved();
++            }
++            Err(e) => return backend_error(e),
++        }
++        // A question has no confirmation.remove of its own unless it was also listed as a confirmation; drop it here
++        // so the tracker doesn't wait for a turn end.
++        if let Some(id) = self
++            .live
++            .approvals
++            .on_removed(&tracked.origin.conversation_id, &tracked.confirmation_id)
++            .or_else(|| self.live.approvals.take(approval_id))
++        {
++            self.approval_gone(user, &tracked.origin.conversation_id, id, Resolution::Answered)
++                .await;
++        }
++        let (delivery, message_error) = match (mapped.delivery, mapped.deny_message) {
++            (Some(MessageDelivery::Native), Some(_)) => (json!("native"), None),
++            (Some(MessageDelivery::Followup), Some(message)) => match self.follow_up(user, &tracked, &message).await {
++                Ok(()) => (json!("followup"), None),
++                Err(e) => (Value::Null, Some(format!("{e:?}"))),
++            },
++            _ => (Value::Null, None),
++        };
++        let mut out = json!({ "resolved": true, "messageDelivery": delivery });
++        if let Some(err) = message_error {
++            out["details"] = json!({ "messageError": err });
++        }
++        InnerResponse::ok(out)
++    }
++
++    async fn resolved_elsewhere(&self, user: &str, tracked: &TrackedApproval) {
++        if let Some(id) = self.live.approvals.take(&tracked.approval.approval_id) {
++            self.approval_gone(user, &tracked.origin.conversation_id, id, Resolution::Answered)
++                .await;
++        }
++    }
++
++    /// CONTRACT §6.5 follow-up: `Denied <title or toolName>: <message>`, sent respond-now to the same conversation.
++    async fn follow_up(&self, user: &str, tracked: &TrackedApproval, message: &str) -> Result<(), BackendError> {
++        let what = tracked
++            .approval
++            .title
++            .as_deref()
++            .or(tracked.approval.tool_name.as_deref())
++            .unwrap_or("the request");
++        let text = format!("Denied {what}: {message}");
++        let o = &tracked.origin;
++        match (&o.team_id, &o.slot_id) {
++            (Some(team), Some(slot)) => self
++                .backend
++                .send_to_agent(user, team, slot, &text, true)
++                .await
++                .map(|_| ()),
++            _ => self
++                .backend
++                .send_solo(user, &o.conversation_id, &text)
++                .await
++                .map(|_| ()),
++        }
++    }
++}
++
++fn already_resolved() -> InnerResponse {
++    InnerResponse::error(
++        409,
++        "already_resolved",
++        "This was already answered on the PC or by another device",
++    )
++}
++
++/// The answer body (CONTRACT §6.5): exactly one of `optionId`, `decision`, `answers`, `decline`.
++fn answer_input(body: &Value) -> Result<AnswerInput, InnerResponse> {
++    let bad = |m: &str| InnerResponse::error(400, "invalid_request", m);
++    let message = match body.get("message") {
++        None | Some(Value::Null) => None,
++        Some(Value::String(m)) => Some(m.clone()),
++        Some(_) => return Err(bad("message must be a string")),
++    };
++    let present = ["optionId", "decision", "answers", "decline"]
++        .iter()
++        .filter(|k| body.get(**k).is_some_and(|v| !v.is_null()))
++        .count();
++    if present != 1 {
++        return Err(bad("exactly one of optionId, decision, answers or decline is required"));
++    }
++    if let Some(id) = body.get("optionId") {
++        let id = id.as_str().ok_or_else(|| bad("optionId must be a string"))?;
++        return Ok(AnswerInput::Option {
++            option_id: id.to_owned(),
++            message,
++        });
++    }
++    if let Some(d) = body.get("decision") {
++        let decision = match d.as_str() {
++            Some("allow_once") => Decision::AllowOnce,
++            Some("allow_always") => Decision::AllowAlways,
++            Some("deny") => Decision::Deny,
++            _ => return Err(bad("decision must be allow_once, allow_always or deny")),
++        };
++        return Ok(AnswerInput::Decision { decision, message });
++    }
++    if let Some(a) = body.get("answers") {
++        if message.is_some() {
++            return Err(bad("a message is only accepted on a refusal"));
++        }
++        let answers: Vec<QuestionAnswer> =
++            serde_json::from_value(a.clone()).map_err(|e| bad(&format!("Invalid answers: {e}")))?;
++        return Ok(AnswerInput::Answers { answers });
++    }
++    match body.get("decline") {
++        Some(Value::Bool(true)) => Ok(AnswerInput::Decline { message }),
++        _ => Err(bad("decline must be true")),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn reads_the_declined_shutdown_note() {
++        assert_eq!(
++            declined_shutdown_reason("Teammate 'Bob' declined shutdown: still running the migration"),
++            Some("still running the migration")
++        );
++        assert_eq!(declined_shutdown_reason("Teammate 'Bob' said hi"), None);
++        assert_eq!(declined_shutdown_reason("hello"), None);
++    }
++
++    #[test]
++    fn answer_bodies() {
++        assert!(matches!(
++            answer_input(&json!({ "optionId": "o1" })),
++            Ok(AnswerInput::Option { .. })
++        ));
++        assert!(matches!(
++            answer_input(&json!({ "decision": "deny", "message": "no" })),
++            Ok(AnswerInput::Decision {
++                decision: Decision::Deny,
++                message: Some(_)
++            })
++        ));
++        assert!(matches!(
++            answer_input(&json!({ "answers": [{ "question": "Q", "labels": ["A"] }] })),
++            Ok(AnswerInput::Answers { .. })
++        ));
++        assert!(matches!(
++            answer_input(&json!({ "decline": true })),
++            Ok(AnswerInput::Decline { message: None })
++        ));
++        for bad in [
++            json!({}),
++            json!({ "optionId": "o1", "decision": "deny" }),
++            json!({ "decision": "maybe" }),
++            json!({ "decline": false }),
++            json!({ "answers": [], "message": "x" }),
++            json!({ "optionId": 3 }),
++        ] {
++            let r = answer_input(&bad).expect_err("rejected");
++            assert_eq!(r.status, 400, "{bad}");
++        }
++    }
++}
 diff --git a/crates/aionui-mobile/src/facade_write.rs b/crates/aionui-mobile/src/facade_write.rs
 new file mode 100644
-index 00000000..fba21eb5
+index 00000000..8c8213f4
 --- /dev/null
 +++ b/crates/aionui-mobile/src/facade_write.rs
-@@ -0,0 +1,568 @@
+@@ -0,0 +1,587 @@
 +//! The facade's write side (CONTRACT §6.4, §6.6, §6.7): sends, read markers,
 +//! broadcasts, agent controls, session start, task writes. Sensitive actions
 +//! (§5.1) need a verified confirm proof unless the PC relaxed it for the phone.
@@ -4521,7 +5730,7 @@ index 00000000..fba21eb5
 +const MAX_CONTENT: usize = 100_000;
 +
 +/// §5: 428 without a proof, 403 with a wrong one.
-+fn confirm_gate(ctx: &InnerContext) -> Option<InnerResponse> {
++pub(crate) fn confirm_gate(ctx: &InnerContext) -> Option<InnerResponse> {
 +    match ctx.confirm {
 +        ConfirmCheck::NotRequired | ConfirmCheck::Verified => None,
 +        ConfirmCheck::Missing => Some(InnerResponse::error(
@@ -4714,9 +5923,20 @@ index 00000000..fba21eb5
 +        };
 +        let value = json!({ "messageId": up_to, "at": aionui_common::now_ms() }).to_string();
 +        let key = format!("aiondx.read.{conversation_id}");
-+        ok_or_error(self.backend.set_pref(user, &key, &value).await, |()| {
-+            InnerResponse::ok(json!({}))
-+        })
++        if let Err(e) = self.backend.set_pref(user, &key, &value).await {
++            return backend_error(e);
++        }
++        self.live.journal.record(
++            user,
++            crate::journal::ChangeEntry::Conversation {
++                conversation_id: conversation_id.to_owned(),
++                team_id: None,
++                slot_id: None,
++                what: vec![crate::journal::ConversationWhat::Read],
++            },
++            aionui_common::now_ms(),
++        );
++        InnerResponse::ok(json!({}))
 +    }
 +
 +    async fn broadcast(&self, ctx: &InnerContext, team_id: &str, body: &Value) -> InnerResponse {
@@ -4766,6 +5986,14 @@ index 00000000..fba21eb5
 +        {
 +            tracing::error!(error = %e, "mobile bridge: could not record a broadcast");
 +        }
++        self.live.journal.record(
++            user,
++            crate::journal::ChangeEntry::Broadcast {
++                team_id: team_id.to_owned(),
++                broadcast_id: row.broadcast_id.clone(),
++            },
++            row.created_at,
++        );
 +        InnerResponse::ok(broadcast_json(&row))
 +    }
 +
@@ -4970,7 +6198,7 @@ index 00000000..fba21eb5
 +        }
 +    }
 +
-+    async fn slot_names(&self, user: &str, team_id: &str) -> HashMap<String, String> {
++    pub(crate) async fn slot_names(&self, user: &str, team_id: &str) -> HashMap<String, String> {
 +        match self.backend.team(user, team_id).await {
 +            Ok(t) => to_value(&t)["assistants"]
 +                .as_array()
@@ -6135,10 +7363,10 @@ index 00000000..ab2491a9
 +}
 diff --git a/crates/aionui-mobile/src/lib.rs b/crates/aionui-mobile/src/lib.rs
 new file mode 100644
-index 00000000..a1a34d50
+index 00000000..0dd47d5b
 --- /dev/null
 +++ b/crates/aionui-mobile/src/lib.rs
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,40 @@
 +//! AionDX core-0015: the encrypted PC <-> phone bridge.
 +//! Contract: `docs/mobile-bridge/CONTRACT.md` in the AionDX repository.
 +
@@ -6149,6 +7377,7 @@ index 00000000..a1a34d50
 +pub mod crypto;
 +pub mod error;
 +pub mod facade;
++pub mod facade_live;
 +pub mod facade_write;
 +pub mod host_key;
 +pub mod journal;
@@ -6156,6 +7385,7 @@ index 00000000..a1a34d50
 +pub mod outer;
 +pub mod pairing;
 +pub mod peer_filter;
++pub mod read_state;
 +pub mod service;
 +pub mod session;
 +pub mod settings;
@@ -6164,8 +7394,10 @@ index 00000000..a1a34d50
 +pub mod wire;
 +
 +pub use admin_routes::{MobileAdminState, mobile_admin_routes};
++pub use approvals::{BackendKind, QuestionAnswer};
 +pub use backend::{
-+    ActivityFilter, ActivityQuery, BackendError, MobileBackend, SendOutcome, SoloSpec, TaskCreate, TaskPatch,
++    ActivityFilter, ActivityQuery, ApprovalSource, BackendError, ConfirmCall, MobileBackend, SendOutcome, SoloSpec,
++    TaskCreate, TaskPatch,
 +};
 +pub use core::{BridgeEvents, ConfirmCheck, InnerApi, InnerContext, NoEvents};
 +pub use error::MobileError;
@@ -7247,12 +8479,254 @@ index 00000000..99db5c75
 +        }
 +    }
 +}
+diff --git a/crates/aionui-mobile/src/read_state.rs b/crates/aionui-mobile/src/read_state.rs
+new file mode 100644
+index 00000000..72e5cfa8
+--- /dev/null
++++ b/crates/aionui-mobile/src/read_state.rs
+@@ -0,0 +1,236 @@
++//! Phase 4: `unread`, `your_turn` and `needs_answer` (CONTRACT §6.3 attention table, `unread`).
++//!
++//! AionCore has no unread tracking. The phone's read marker is a client preference, `aiondx.read.<cid>` =
++//! `{messageId, at}` (§6.4); the counts come from the conversation's newest messages.
++
++use std::collections::HashMap;
++
++use aionui_api_types::ListMessagesQuery;
++use serde_json::Value;
++
++use crate::approvals::ApprovalKind;
++use crate::facade::{Facade, to_value};
++use crate::shape;
++
++/// How far back the counts look. `unread` is capped at 99 anyway.
++const READ_WINDOW: u32 = 100;
++const UNREAD_CAP: u32 = 99;
++/// How far back an owner's chat is searched for a task's assignment notice.
++const ASSIGNMENT_WINDOW: u32 = 200;
++
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub(crate) struct ReadState {
++    pub unread: u32,
++    /// The newest agent message is newer than both the user's last message and the read marker. The caller adds the
++    /// rest of the rule (solo or lead only, turn completed and idle).
++    pub agent_spoke_last: bool,
++}
++
++/// `shaped` are §6.4 `Message`s in any order. `marker` is the stored `{messageId, at}`.
++///
++/// The marker's position is its message's `createdAt` when that message is in view, else the time it was set. With no
++/// marker at all, unread counts from the user's own last message, so a freshly paired phone doesn't open on 99s.
++pub(crate) fn read_state(shaped: &[Value], marker: Option<&Value>) -> ReadState {
++    let at = |m: &Value| m["createdAt"].as_i64().unwrap_or(0);
++    let marker_at = marker.map(|mk| {
++        let id = mk["messageId"].as_str().unwrap_or_default();
++        shaped
++            .iter()
++            .find(|m| !id.is_empty() && m["messageId"] == id)
++            .map(at)
++            .unwrap_or_else(|| mk["at"].as_i64().unwrap_or(0))
++    });
++    let last_user = shaped.iter().filter(|m| m["role"] == "user").map(at).max();
++    let floor = marker_at.or(last_user).unwrap_or(i64::MIN);
++    let unread = shaped
++        .iter()
++        .filter(|m| m["role"] == "agent" && m["type"] == "text" && m["status"] == "done" && at(m) > floor)
++        .count() as u32;
++    let newest_agent = shaped.iter().filter(|m| m["role"] == "agent").map(at).max();
++    let agent_spoke_last =
++        newest_agent.is_some_and(|a| a > last_user.unwrap_or(i64::MIN) && a > marker_at.unwrap_or(i64::MIN));
++    ReadState {
++        unread: unread.min(UNREAD_CAP),
++        agent_spoke_last,
++    }
++}
++
++impl Facade {
++    /// The read state of one conversation. Errors count as nothing unread: a badge must never block a listing.
++    pub(crate) async fn read_state_of(
++        &self,
++        user: &str,
++        conversation_id: &str,
++        roster: &HashMap<String, (String, String)>,
++        agent_name: &str,
++    ) -> ReadState {
++        let query = ListMessagesQuery {
++            limit: Some(READ_WINDOW),
++            before: None,
++            after: None,
++            anchor_message_id: None,
++            content_mode: Some("compact".into()),
++        };
++        let Ok(page) = self.backend.messages(user, conversation_id, query).await else {
++            return ReadState::default();
++        };
++        let page = to_value(&page);
++        let shaped: Vec<Value> = page["items"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .filter_map(|m| shape::message(m, roster, agent_name))
++            .collect();
++        let marker = match self
++            .backend
++            .get_pref(user, &format!("aiondx.read.{conversation_id}"))
++            .await
++        {
++            Ok(Some(raw)) => serde_json::from_str::<Value>(&raw).ok(),
++            _ => None,
++        };
++        read_state(&shaped, marker.as_ref())
++    }
++
++    /// `Task.assignment` (§6.7) for the given tasks: the newest "📋 Task assigned to you (#id)" notice in each owner's
++    /// chat. Only owners' chats are read, one page each; a notice that has scrolled out of it counts as not found.
++    pub(crate) async fn assignments(&self, user: &str, team_id: &str, tasks: &[Value]) -> HashMap<String, Value> {
++        let mut out: HashMap<String, Value> = HashMap::new();
++        let Ok(team) = self.backend.team(user, team_id).await else {
++            return out;
++        };
++        let team = to_value(&team);
++        let roster = shape::roster_index(&team);
++        let mut owners: Vec<&str> = tasks.iter().filter_map(|t| t["owner"].as_str()).collect();
++        owners.sort_unstable();
++        owners.dedup();
++        for owner in owners {
++            let Some(member) = team["assistants"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .find(|a| a["slot_id"] == owner)
++            else {
++                continue;
++            };
++            let (Some(cid), name) = (
++                member["conversation_id"].as_str(),
++                member["name"].as_str().unwrap_or_default(),
++            ) else {
++                continue;
++            };
++            let query = ListMessagesQuery {
++                limit: Some(ASSIGNMENT_WINDOW),
++                before: None,
++                after: None,
++                anchor_message_id: None,
++                content_mode: Some("compact".into()),
++            };
++            let Ok(page) = self.backend.messages(user, cid, query).await else {
++                continue;
++            };
++            for m in to_value(&page)["items"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .filter_map(|m| shape::message(m, &roster, name))
++            {
++                let Some(task_id) = m["notice"]["taskId"].as_str() else {
++                    continue;
++                };
++                let at = m["createdAt"].as_i64().unwrap_or(0);
++                let newer = out
++                    .get(task_id)
++                    .is_none_or(|prev| prev["createdAt"].as_i64().unwrap_or(0) <= at);
++                if newer {
++                    out.insert(
++                        task_id.to_owned(),
++                        serde_json::json!({ "conversationId": cid, "messageId": m["messageId"], "createdAt": at }),
++                    );
++                }
++            }
++        }
++        out
++    }
++
++    /// A pending approval of this conversation is a question (`needs_answer`).
++    pub(crate) fn question_pending(&self, user: &str, conversation_id: &str) -> bool {
++        self.live
++            .approvals
++            .list(user, None)
++            .iter()
++            .any(|a| a.conversation_id == conversation_id && a.kind == ApprovalKind::Question)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use serde_json::json;
++
++    use super::*;
++
++    fn m(id: &str, role: &str, kind: &str, at: i64) -> Value {
++        json!({ "messageId": id, "role": role, "type": kind, "status": "done", "createdAt": at })
++    }
++
++    #[test]
++    fn unread_counts_agent_text_after_the_marker() {
++        let rows = vec![
++            m("u1", "user", "text", 10),
++            m("a1", "agent", "text", 20),
++            m("a2", "agent", "tool_call", 30),
++            m("t1", "teammate", "text", 35),
++            m("a3", "agent", "text", 40),
++        ];
++        // Marker on a1, which is in view: only a3 is unread.
++        let rs = read_state(&rows, Some(&json!({ "messageId": "a1", "at": 999 })));
++        assert_eq!(
++            rs,
++            ReadState {
++                unread: 1,
++                agent_spoke_last: true
++            }
++        );
++        // Marker on a message out of view: the time it was set.
++        let rs = read_state(&rows, Some(&json!({ "messageId": "gone", "at": 25 })));
++        assert_eq!(rs.unread, 1);
++        // No marker: from the user's last message.
++        assert_eq!(read_state(&rows, None).unread, 2);
++        // Read up to the newest agent message: nothing unread, and not "your turn" any more.
++        let rs = read_state(&rows, Some(&json!({ "messageId": "a3", "at": 41 })));
++        assert_eq!(
++            rs,
++            ReadState {
++                unread: 0,
++                agent_spoke_last: false
++            }
++        );
++    }
++
++    #[test]
++    fn the_user_speaking_last_is_not_your_turn_and_streaming_rows_dont_count() {
++        let mut streaming = m("a2", "agent", "text", 30);
++        streaming["status"] = json!("streaming");
++        let rows = vec![
++            m("a1", "agent", "text", 20),
++            streaming.clone(),
++            m("u1", "user", "text", 40),
++        ];
++        assert_eq!(
++            read_state(&rows, None),
++            ReadState {
++                unread: 0,
++                agent_spoke_last: false
++            }
++        );
++        let rows = vec![m("u1", "user", "text", 10), m("a1", "agent", "text", 20), streaming];
++        assert_eq!(read_state(&rows, None).unread, 1);
++        assert_eq!(read_state(&[], None), ReadState::default());
++    }
++
++    #[test]
++    fn unread_is_capped() {
++        let rows: Vec<Value> = (0..120).map(|i| m(&format!("a{i}"), "agent", "text", i)).collect();
++        assert_eq!(read_state(&rows, None).unread, 99);
++    }
++}
 diff --git a/crates/aionui-mobile/src/service.rs b/crates/aionui-mobile/src/service.rs
 new file mode 100644
-index 00000000..5da12dd1
+index 00000000..8f11fcfe
 --- /dev/null
 +++ b/crates/aionui-mobile/src/service.rs
-@@ -0,0 +1,876 @@
+@@ -0,0 +1,888 @@
 +//! The bridge's lifecycle: settings, the host key, whether the LAN listener
 +//! runs, and the desktop's pairing and device actions. Business logic only;
 +//! the HTTP surfaces live in `listener.rs`/`outer.rs` (LAN) and
@@ -7725,9 +9199,9 @@ index 00000000..5da12dd1
 +        Ok(store) => store,
 +        Err(error) => {
 +            tracing::warn!(%error, "mobile bridge: its database did not open; starting with a fresh one");
-+            let moved_to = quarantine(&db_path);
++            let moved_to = quarantine(&db_path).await;
 +            for suffix in ["-wal", "-shm"] {
-+                quarantine(&std::path::PathBuf::from(format!("{}{suffix}", db_path.display())));
++                quarantine(&std::path::PathBuf::from(format!("{}{suffix}", db_path.display()))).await;
 +            }
 +            recovery = Some(Recovery {
 +                kind: "database".into(),
@@ -7757,7 +9231,7 @@ index 00000000..5da12dd1
 +        }
 +        Err(error) => {
 +            tracing::warn!(%error, "mobile bridge: host.key is damaged; creating a new identity, phones must pair again");
-+            let moved_to = quarantine(&key_path);
++            let moved_to = quarantine(&key_path).await;
 +            match HostKey::load_or_create(&key_path, protector) {
 +                Ok(key) => {
 +                    if let Err(error) = store.clear_devices().await {
@@ -7787,19 +9261,31 @@ index 00000000..5da12dd1
 +}
 +
 +/// Moves a damaged file aside, keeping it for diagnosis. Returns where it went.
-+fn quarantine(path: &std::path::Path) -> Option<String> {
++/// Moves a damaged file aside. On Windows a pool that just failed to open the file can hold it for a moment, so the
++/// move is retried briefly before giving up.
++async fn quarantine(path: &std::path::Path) -> Option<String> {
 +    if !path.exists() {
 +        return None;
 +    }
 +    let aside = std::path::PathBuf::from(format!("{}.corrupt-{}", path.display(), aionui_common::now_ms()));
-+    match std::fs::rename(path, &aside) {
-+        Ok(()) => Some(aside.display().to_string()),
-+        Err(error) => {
-+            tracing::error!(%error, path = %path.display(), "mobile bridge: could not move a damaged file aside");
-+            None
++    let mut attempt = 0;
++    loop {
++        match std::fs::rename(path, &aside) {
++            Ok(()) => return Some(aside.display().to_string()),
++            Err(error) if attempt < QUARANTINE_RETRIES => {
++                tracing::debug!(%error, attempt, "mobile bridge: damaged file still in use; retrying the move");
++                attempt += 1;
++                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
++            }
++            Err(error) => {
++                tracing::error!(%error, path = %path.display(), "mobile bridge: could not move a damaged file aside");
++                return None;
++            }
 +        }
 +    }
 +}
++
++const QUARANTINE_RETRIES: u32 = 20;
 +
 +fn admin_failure(e: AdminError) -> AdminFailure {
 +    match e {
@@ -9331,10 +10817,10 @@ index 00000000..f16132f0
 +}
 diff --git a/crates/aionui-mobile/src/store.rs b/crates/aionui-mobile/src/store.rs
 new file mode 100644
-index 00000000..d835633d
+index 00000000..17272b2c
 --- /dev/null
 +++ b/crates/aionui-mobile/src/store.rs
-@@ -0,0 +1,453 @@
+@@ -0,0 +1,488 @@
 +//! The bridge's own SQLite database, `aiondx-bridge.db` next to the main database.
 +//!
 +//! Deliberately not a migration in `aionui-backend.db`: AionCore refuses to open
@@ -9590,6 +11076,40 @@ index 00000000..d835633d
 +        Ok(())
 +    }
 +
++    /// Links a send_failed row to the user message whose send failed.
++    pub async fn insert_send_failure(
++        &self,
++        failure_id: &str,
++        conversation_id: &str,
++        message_id: &str,
++        created_at: i64,
++    ) -> Result<(), MobileError> {
++        sqlx::query(
++            "INSERT OR REPLACE INTO mobile_send_failures (failure_id, conversation_id, message_id, created_at) \
++             VALUES (?, ?, ?, ?)",
++        )
++        .bind(failure_id)
++        .bind(conversation_id)
++        .bind(message_id)
++        .bind(created_at)
++        .execute(&self.pool)
++        .await?;
++        Ok(())
++    }
++
++    /// The failed message of each send_failed row of one conversation, by failure row id.
++    pub async fn send_failures(
++        &self,
++        conversation_id: &str,
++    ) -> Result<std::collections::HashMap<String, String>, MobileError> {
++        let rows: Vec<(String, String)> =
++            sqlx::query_as("SELECT failure_id, message_id FROM mobile_send_failures WHERE conversation_id = ?")
++                .bind(conversation_id)
++                .fetch_all(&self.pool)
++                .await?;
++        Ok(rows.into_iter().collect())
++    }
++
 +    /// Newest first. `before`: `(created_at, broadcast_id)` of the last one already shown.
 +    pub async fn broadcasts(
 +        &self,
@@ -9783,6 +11303,7 @@ index 00000000..d835633d
 +                "mobile_device_tombstones",
 +                "mobile_devices",
 +                "mobile_meta",
++                "mobile_send_failures",
 +                "mobile_settings"
 +            ]
 +        );
@@ -9926,10 +11447,10 @@ index 00000000..9855cfc9
 +}
 diff --git a/crates/aionui-mobile/tests/facade_routes.rs b/crates/aionui-mobile/tests/facade_routes.rs
 new file mode 100644
-index 00000000..9be85be3
+index 00000000..d20298aa
 --- /dev/null
 +++ b/crates/aionui-mobile/tests/facade_routes.rs
-@@ -0,0 +1,721 @@
+@@ -0,0 +1,1301 @@
 +//! The phase 2 read routes through the real facade, over a fake AionCore
 +//! whose fixtures are AionCore's own JSON forms.
 +
@@ -9938,7 +11459,8 @@ index 00000000..9be85be3
 +use aionui_api_types::*;
 +use aionui_mobile::core::{ConfirmCheck, InnerApi, InnerContext};
 +use aionui_mobile::{
-+    ActivityQuery, BackendError, Facade, InnerRequest, MobileBackend, SendOutcome, SoloSpec, TaskCreate, TaskPatch,
++    ActivityQuery, ApprovalSource, BackendError, BackendKind, ConfirmCall, Facade, InnerRequest, MobileBackend,
++    QuestionAnswer, SendOutcome, SoloSpec, TaskCreate, TaskPatch,
 +};
 +use async_trait::async_trait;
 +use serde_json::{Value, json};
@@ -9951,6 +11473,11 @@ index 00000000..9be85be3
 +struct Fake {
 +    seen_message_queries: Mutex<Vec<(Option<String>, Option<String>)>>,
 +    calls: Mutex<Vec<String>>,
++    /// AionCore's pending confirmations (any conversation), for the approvals reconcile.
++    pending: Mutex<Vec<Value>>,
++    /// The backend kind of the live agents (Acp when unset).
++    kind: Mutex<Option<BackendKind>>,
++    prefs: Mutex<std::collections::HashMap<String, String>>,
 +}
 +
 +impl Fake {
@@ -10045,8 +11572,28 @@ index 00000000..9be85be3
 +            .lock()
 +            .unwrap()
 +            .push((q.after.clone(), q.before.clone()));
++        let mut items = vec![
++            msg("m1", id, 1000, "finish", "hello"),
++            msg("m2", id, 2000, "work", "typing"),
++        ];
++        if id == "c8" {
++            // Two failed sends: a new turn that never started, and a mid-turn delivery.
++            for (fid, at) in [("f1", 2100), ("f2", 2200)] {
++                items.push(json!({ "id": fid, "conversation_id": id, "msg_id": null, "type": "tips", "position": "center",
++                    "status": "error", "hidden": false, "created_at": at,
++                    "content": { "content": "claude CLI not found", "code": "agent_start_failed", "source": "send_failed" } }));
++            }
++        }
++        if id == "c2" {
++            // The assignment notice, as the lead's mailbox message projected into Bob's chat.
++            let mut notice = msg("mn", id, 500, "finish", "📋 Task assigned to you (#k1): Ship it");
++            notice["content"]["teammate_message"] = json!(true);
++            notice["content"]["sender_name"] = json!("Ann");
++            notice["content"]["sender_conversation_id"] = json!("c1");
++            items.insert(0, notice);
++        }
 +        Ok(from(json!({
-+            "items": [msg("m1", id, 1000, "finish", "hello"), msg("m2", id, 2000, "work", "typing")],
++            "items": items,
 +            "oldest_cursor": "v1.oldest", "newest_cursor": "v1.newest", "has_more_before": true, "has_more_after": false
 +        })))
 +    }
@@ -10054,7 +11601,10 @@ index 00000000..9be85be3
 +        Ok(Some(from(msg("mz", id, 3000, "finish", "last words"))))
 +    }
 +    async fn assistants(&self, _u: &str) -> Result<Vec<AssistantResponse>, BackendError> {
-+        Ok(vec![])
++        Ok(vec![from(json!({
++            "id": "a1", "source": "builtin", "name": "Helper", "enabled": true, "sort_order": 0, "agent_id": "claude",
++            "agent_status": "online", "team_selectable": true, "deletable": false
++        }))])
 +    }
 +
 +    async fn create_solo(&self, _u: &str, spec: SoloSpec) -> Result<ConversationResponse, BackendError> {
@@ -10149,12 +11699,58 @@ index 00000000..9be85be3
 +            json!({ "id": id, "team_id": t, "subject": "A", "description": null, "status": "pending", "owner": null, "blocked_by": [], "blocks": [], "created_at": 1, "updated_at": 2 }),
 +        ))
 +    }
-+    async fn get_pref(&self, _u: &str, _k: &str) -> Result<Option<String>, BackendError> {
-+        Ok(None)
++    async fn get_pref(&self, _u: &str, k: &str) -> Result<Option<String>, BackendError> {
++        Ok(self.prefs.lock().unwrap().get(k).cloned())
 +    }
 +    async fn set_pref(&self, _u: &str, k: &str, v: &str) -> Result<(), BackendError> {
++        self.prefs.lock().unwrap().insert(k.to_owned(), v.to_owned());
 +        let v: Value = serde_json::from_str(v).unwrap();
 +        self.log(format!("set_pref {k} {}", v["messageId"]));
++        Ok(())
++    }
++    async fn approval_source(&self, _u: &str, c: &str) -> Result<ApprovalSource, BackendError> {
++        let backend = self.kind.lock().unwrap().unwrap_or(BackendKind::Acp);
++        match c {
++            "c2" => Ok(ApprovalSource {
++                team_id: Some("t1".into()),
++                slot_id: Some("s2".into()),
++                agent_name: "Bob".into(),
++                backend,
++            }),
++            "c9" => Ok(ApprovalSource {
++                team_id: None,
++                slot_id: None,
++                agent_name: "Claude".into(),
++                backend,
++            }),
++            _ => Err(BackendError::NotFound(c.into())),
++        }
++    }
++    async fn live_conversations(&self, _u: &str) -> Result<Vec<String>, BackendError> {
++        Ok(vec!["c2".into()])
++    }
++    async fn confirmations(&self, _u: &str, _c: &str) -> Result<Vec<Value>, BackendError> {
++        Ok(self.pending.lock().unwrap().clone())
++    }
++    async fn confirm(&self, _u: &str, call: ConfirmCall) -> Result<(), BackendError> {
++        self.log(format!(
++            "confirm {} {} {} always={} deny={:?}",
++            call.conversation_id, call.call_id, call.data, call.always_allow, call.deny_message
++        ));
++        self.pending
++            .lock()
++            .unwrap()
++            .retain(|c| c["call_id"] != call.call_id.as_str());
++        Ok(())
++    }
++    async fn answer_ask(
++        &self,
++        _u: &str,
++        c: &str,
++        request: &str,
++        answers: Option<Vec<QuestionAnswer>>,
++    ) -> Result<(), BackendError> {
++        self.log(format!("answer_ask {c} {request} {answers:?}"));
 +        Ok(())
 +    }
 +}
@@ -10239,6 +11835,11 @@ index 00000000..9be85be3
 +    assert_eq!(pending.as_array().unwrap().len(), 1);
 +    let (_, one) = get(&f, "/v1/teams/t1/tasks/k1").await.unwrap();
 +    assert_eq!(one["subject"], "A");
++    // Task.assignment: the notice in the owner's chat; none for a task owned by the user.
++    let link = json!({ "conversationId": "c2", "messageId": "mn", "createdAt": 500 });
++    assert_eq!(one["assignment"], link);
++    assert_eq!(all[1]["assignment"], link);
++    assert_eq!(all[0]["assignment"], Value::Null);
 +}
 +
 +#[tokio::test]
@@ -10650,6 +12251,506 @@ index 00000000..9be85be3
 +    .await;
 +    assert_eq!((status, r["kind"].as_str()), (200, Some("solo")));
 +    assert!(fake.calls().iter().any(|c| c.starts_with("create_solo Some(\"a1\")")));
++}
++
++// ---------------------------------------------------------------- phase 4: the change feed and approvals
++
++async fn emit_as(facade: &Facade, user: &str, name: &str, mut data: Value) {
++    data["user_id"] = json!(user);
++    facade.on_event(name, &data).await;
++}
++
++async fn emit(facade: &Facade, name: &str, data: Value) {
++    emit_as(facade, "u1", name, data).await;
++}
++
++/// An ACP agent's permission request, as `message.stream` carries it.
++fn acp_frame(call: &str) -> Value {
++    json!({
++        "conversation_id": "c2", "msg_id": "m7", "turn_id": "t", "type": "acp_permission",
++        "data": {
++            "session_id": "s",
++            "tool_call": { "tool_call_id": call, "title": "Bash", "kind": "execute",
++                           "raw_input": { "command": "npx expo install x" } },
++            "options": [
++                { "option_id": "ok1", "name": "Allow", "kind": "allow_once" },
++                { "option_id": "ok2", "name": "Always", "kind": "allow_always" },
++                { "option_id": "no1", "name": "Reject", "kind": "reject_once" },
++                { "option_id": "no2", "name": "Never", "kind": "reject_always" }
++            ]
++        }
++    })
++}
++
++/// The same call as AionCore's `GET .../confirmations` lists it.
++fn listed(call: &str) -> Value {
++    json!({ "id": format!("conf-{call}"), "call_id": call, "title": "Bash", "description": "", "command_type": "execute",
++            "options": [ { "label": "Allow", "value": "ok1" }, { "label": "Reject", "value": "no1" } ] })
++}
++
++/// A Claude (session) agent's permission, confirmation form.
++fn claude_frame(call: &str) -> Value {
++    json!({
++        "conversation_id": "c2", "msg_id": "m8", "turn_id": "t", "type": "permission",
++        "data": { "id": format!("conf-{call}"), "call_id": call, "title": "Bash", "description": "", "command_type": "execute",
++                  "options": [
++                      { "label": "messages.confirmation.yesAllowOnce", "value": "allow" },
++                      { "label": "messages.confirmation.yesAllowAlways", "value": "allow_always" },
++                      { "label": "messages.confirmation.no", "value": "reject" } ] }
++    })
++}
++
++async fn changes_since(facade: &Facade, token: &str) -> (String, Vec<Value>) {
++    let (status, page) = get(facade, &format!("/v1/changes?since={token}")).await.unwrap();
++    assert_eq!(status, 200);
++    (
++        page["token"].as_str().unwrap().to_owned(),
++        page["changes"].as_array().unwrap().clone(),
++    )
++}
++
++/// The first call never holds, even with `wait`.
++async fn first_token(facade: &Facade) -> String {
++    let (_, page) = get(facade, "/v1/changes?wait=5").await.unwrap();
++    assert_eq!(page["changes"], json!([]));
++    assert_eq!(page["reset"], false);
++    page["token"].as_str().unwrap().to_owned()
++}
++
++fn of_kind<'a>(changes: &'a [Value], kind: &str) -> Vec<&'a Value> {
++    changes.iter().filter(|c| c["kind"] == kind).collect()
++}
++
++async fn approval_ids(f: &Facade) -> Vec<String> {
++    let (_, list) = get(f, "/v1/approvals").await.unwrap();
++    list["items"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|a| a["approvalId"].as_str().unwrap().to_owned())
++        .collect()
++}
++
++#[tokio::test]
++async fn approvals_flow_through_the_change_feed() {
++    let (fake, f) = facade();
++    let t0 = first_token(&f).await;
++
++    emit(&f, "message.stream", acp_frame("call-1")).await;
++    let (t1, changes) = changes_since(&f, &t0).await;
++    let added = of_kind(&changes, "approval_added");
++    assert_eq!(added.len(), 1);
++    let approval = &added[0]["approval"];
++    assert_eq!(approval["teamId"], "t1");
++    assert_eq!(approval["slotId"], "s2");
++    assert_eq!(approval["agentName"], "Bob");
++    assert_eq!(approval["inputSummary"], "npx expo install x");
++    assert_eq!(approval["options"].as_array().unwrap().len(), 4);
++    let conv = of_kind(&changes, "conversation");
++    assert_eq!(conv[0]["conversationId"], "c2");
++    assert_eq!(conv[0]["teamId"], "t1");
++    assert!(conv[0]["what"].as_array().unwrap().contains(&json!("state")));
++    assert!(
++        of_kind(&changes, "team")
++            .iter()
++            .any(|t| t["what"].as_array().unwrap().contains(&json!("run_state")))
++    );
++
++    *fake.pending.lock().unwrap() = vec![listed("call-1")];
++    let (_, list) = get(&f, "/v1/approvals").await.unwrap();
++    assert_eq!(list["items"].as_array().unwrap().len(), 1);
++    let id = list["items"][0]["approvalId"].as_str().unwrap().to_owned();
++    assert_eq!(
++        list["items"][0]["input"]["command"], "npx expo install x",
++        "the live frame's input is kept"
++    );
++    let (_, other) = get(&f, "/v1/approvals?teamId=t9").await.unwrap();
++    assert_eq!(other["items"], json!([]));
++
++    // A refusal is never gated; an ACP agent gets the reason as a follow-up message.
++    let (status, body) = call(
++        &f,
++        ConfirmCheck::Missing,
++        "POST",
++        &format!("/v1/approvals/{id}/answer"),
++        json!({ "decision": "deny", "message": "use pnpm" }),
++    )
++    .await;
++    assert_eq!(status, 200, "{body}");
++    assert_eq!(body, json!({ "resolved": true, "messageDelivery": "followup" }));
++    let calls = fake.calls();
++    assert!(
++        calls.contains(&r#"confirm c2 call-1 "no1" always=false deny=None"#.to_owned()),
++        "{calls:?}"
++    );
++    assert!(
++        calls.contains(&"send_to_agent t1 s2 Denied Bash: use pnpm now=true".to_owned()),
++        "{calls:?}"
++    );
++
++    let (_, changes) = changes_since(&f, &t1).await;
++    let removed = of_kind(&changes, "approval_removed");
++    assert_eq!(removed.len(), 1);
++    assert_eq!(removed[0]["approvalId"], id.as_str());
++    assert_eq!(removed[0]["resolution"], "answered");
++    assert!(approval_ids(&f).await.is_empty());
++}
++
++#[tokio::test]
++async fn allowing_needs_a_proof_and_a_vanished_approval_is_already_resolved() {
++    let (fake, f) = facade();
++    emit(&f, "message.stream", acp_frame("call-2")).await;
++    *fake.pending.lock().unwrap() = vec![listed("call-2")];
++    let id = approval_ids(&f).await.pop().unwrap();
++    let path = format!("/v1/approvals/{id}/answer");
++
++    let (status, body) = call(
++        &f,
++        ConfirmCheck::Missing,
++        "POST",
++        &path,
++        json!({ "decision": "allow_once" }),
++    )
++    .await;
++    assert_eq!(status, 428);
++    assert_eq!(body["error"]["code"], "confirm_required");
++    let (status, _) = call(&f, ConfirmCheck::Invalid, "POST", &path, json!({ "optionId": "ok1" })).await;
++    assert_eq!(status, 403);
++    let (status, _) = call(
++        &f,
++        ConfirmCheck::Verified,
++        "POST",
++        &path,
++        json!({ "optionId": "ok1", "message": "x" }),
++    )
++    .await;
++    assert_eq!(status, 400, "a message only goes with a refusal");
++    let (status, body) = call(&f, ConfirmCheck::Verified, "POST", &path, json!({ "optionId": "ok1" })).await;
++    assert_eq!(status, 200);
++    assert_eq!(body, json!({ "resolved": true, "messageDelivery": null }));
++    assert!(
++        fake.calls()
++            .contains(&r#"confirm c2 call-2 "ok1" always=false deny=None"#.to_owned())
++    );
++
++    // Answered on the PC in the meantime: AionCore no longer lists it by the time the phone answers.
++    emit(&f, "message.stream", acp_frame("call-3")).await;
++    *fake.pending.lock().unwrap() = vec![listed("call-3")];
++    let path3 = format!("/v1/approvals/{}/answer", approval_ids(&f).await.pop().unwrap());
++    fake.pending.lock().unwrap().clear();
++    let (status, body) = call(
++        &f,
++        ConfirmCheck::Verified,
++        "POST",
++        &path3,
++        json!({ "decision": "deny" }),
++    )
++    .await;
++    assert_eq!(status, 409);
++    assert_eq!(body["error"]["code"], "already_resolved");
++    assert!(
++        !fake.calls().iter().any(|c| c.contains("call-3")),
++        "nothing was sent for it"
++    );
++
++    let (status, _) = call(
++        &f,
++        ConfirmCheck::Verified,
++        "POST",
++        "/v1/approvals/nope/answer",
++        json!({ "decision": "deny" }),
++    )
++    .await;
++    assert_eq!(status, 404);
++}
++
++#[tokio::test]
++async fn claude_takes_the_reason_natively_and_turn_end_cancels() {
++    let (fake, f) = facade();
++    *fake.kind.lock().unwrap() = Some(BackendKind::ClaudeSession);
++    let t0 = first_token(&f).await;
++    emit(&f, "message.stream", claude_frame("call-5")).await;
++    *fake.pending.lock().unwrap() = vec![claude_frame("call-5")["data"].clone()];
++    let id = approval_ids(&f).await.pop().unwrap();
++    let (status, body) = call(
++        &f,
++        ConfirmCheck::Missing,
++        "POST",
++        &format!("/v1/approvals/{id}/answer"),
++        json!({ "decision": "deny", "message": "not on main" }),
++    )
++    .await;
++    assert_eq!(status, 200, "{body}");
++    assert_eq!(body["messageDelivery"], "native");
++    let calls = fake.calls();
++    assert!(
++        calls.contains(&r#"confirm c2 call-5 "reject" always=false deny=Some("not on main")"#.to_owned()),
++        "{calls:?}"
++    );
++    assert!(
++        !calls.iter().any(|c| c.starts_with("send_to_agent")),
++        "no follow-up message"
++    );
++
++    // A turn that ends takes its approvals with it; confirmation.remove means answered on the PC.
++    emit(&f, "message.stream", claude_frame("call-6")).await;
++    emit(&f, "message.stream", claude_frame("call-7")).await;
++    emit(
++        &f,
++        "confirmation.remove",
++        json!({ "conversation_id": "c2", "id": "conf-call-7" }),
++    )
++    .await;
++    emit(
++        &f,
++        "turn.completed",
++        json!({ "conversation_id": "c2", "turn_id": "t", "status": "finished" }),
++    )
++    .await;
++    let (_, changes) = changes_since(&f, &t0).await;
++    let removed: Vec<(String, String)> = of_kind(&changes, "approval_removed")
++        .iter()
++        .map(|r| {
++            (
++                r["approvalId"].as_str().unwrap().to_owned(),
++                r["resolution"].as_str().unwrap().to_owned(),
++            )
++        })
++        .collect();
++    assert_eq!(removed.len(), 3, "{removed:?}");
++    assert!(removed.iter().any(|(i, r)| i.as_str() == id && r == "answered"));
++    assert_eq!(removed.iter().filter(|(_, r)| r == "cancelled").count(), 1);
++    assert_eq!(removed.iter().filter(|(_, r)| r == "answered").count(), 2);
++    assert!(
++        of_kind(&changes, "approval_added").is_empty(),
++        "added then removed collapses to removed"
++    );
++}
++
++#[tokio::test]
++async fn a_refused_shutdown_shows_on_the_agent() {
++    let (_fake, f) = facade();
++    let (status, _) = call(
++        &f,
++        ConfirmCheck::Verified,
++        "POST",
++        "/v1/teams/t1/agents/s2/shutdown",
++        json!({ "reason": "done" }),
++    )
++    .await;
++    assert_eq!(status, 200);
++    let (_, agent) = get(&f, "/v1/teams/t1/agents/s2").await.unwrap();
++    assert_eq!(agent["shutdown"]["state"], "requested");
++
++    let t0 = first_token(&f).await;
++    emit(
++        &f,
++        "team.mailboxChanged",
++        json!({ "team_id": "t1", "change": "created",
++                "message": { "id": "mb1", "team_id": "t1", "from_agent_id": "s2", "to_agent_id": "lead",
++                             "msg_type": "message", "content": "Teammate 'Bob' declined shutdown: still migrating",
++                             "summary": null, "files": [], "read": false, "created_at": 99 } }),
++    )
++    .await;
++    let (_, agent) = get(&f, "/v1/teams/t1/agents/s2").await.unwrap();
++    assert_eq!(agent["shutdown"]["state"], "rejected");
++    assert_eq!(agent["shutdown"]["rejectReason"], "still migrating");
++    assert_eq!(agent["shutdown"]["respondedAt"], 99);
++    let (t1, changes) = changes_since(&f, &t0).await;
++    assert_eq!(
++        changes,
++        vec![json!({ "kind": "team", "teamId": "t1", "what": ["run_state"] })]
++    );
++
++    emit(&f, "team.agentRemoved", json!({ "team_id": "t1", "slot_id": "s2" })).await;
++    let (_, agent) = get(&f, "/v1/teams/t1/agents/s2").await.unwrap();
++    assert_eq!(agent["shutdown"], Value::Null);
++    let (_, changes) = changes_since(&f, &t1).await;
++    assert_eq!(
++        changes,
++        vec![json!({ "kind": "team", "teamId": "t1", "what": ["roster", "run_state"] })]
++    );
++}
++
++#[tokio::test]
++async fn the_feed_long_polls_per_user_and_resets_on_a_stranger_token() {
++    let (_fake, f) = facade();
++    let t0 = first_token(&f).await;
++
++    // Another user's change neither wakes nor reaches this one.
++    emit_as(&f, "u2", "team.renamed", json!({ "team_id": "t7" })).await;
++    let (_, changes) = changes_since(&f, &t0).await;
++    assert!(changes.is_empty());
++
++    let waiter = {
++        let f = f.clone();
++        let t0 = t0.clone();
++        tokio::spawn(async move {
++            let started = std::time::Instant::now();
++            let r = get(&f, &format!("/v1/changes?since={t0}&wait=10")).await.unwrap();
++            (started.elapsed(), r)
++        })
++    };
++    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
++    emit(
++        &f,
++        "team.taskChanged",
++        json!({ "team_id": "t1", "change": "created",
++                "task": { "id": "k1", "team_id": "t1", "subject": "Ship", "description": null, "status": "pending",
++                          "owner": "s2", "blocked_by": [], "blocks": [], "created_at": 1, "updated_at": 1 } }),
++    )
++    .await;
++    let (elapsed, (status, page)) = waiter.await.unwrap();
++    assert_eq!(status, 200);
++    assert!(elapsed < std::time::Duration::from_secs(5), "{elapsed:?}");
++    let tasks = of_kind(page["changes"].as_array().unwrap(), "task");
++    assert_eq!(tasks.len(), 1);
++    assert_eq!(tasks[0]["change"], "created");
++    assert_eq!(tasks[0]["task"]["subject"], "Ship");
++    assert_eq!(tasks[0]["task"]["ownerName"], "Bob");
++
++    let (_, page) = get(&f, "/v1/changes?since=old-epoch.3").await.unwrap();
++    assert_eq!(page["reset"], true);
++    assert_eq!(page["changes"], json!([]));
++}
++
++#[tokio::test]
++async fn unread_your_turn_needs_answer_and_session_status() {
++    let (fake, f) = facade();
++    // c9 is a solo chat whose newest finished agent reply (m1) nobody has read; m2 is still streaming.
++    let (_, c) = get(&f, "/v1/conversations/c9").await.unwrap();
++    assert_eq!(c["unread"], 1);
++    assert_eq!(c["attention"], "your_turn");
++    assert_eq!(c["waitingOnUser"], false);
++    let t0 = first_token(&f).await;
++    let (status, _) = call(
++        &f,
++        ConfirmCheck::NotRequired,
++        "POST",
++        "/v1/conversations/c9/read",
++        json!({ "upToMessageId": "m2" }),
++    )
++    .await;
++    assert_eq!(status, 200);
++    let (_, c) = get(&f, "/v1/conversations/c9").await.unwrap();
++    assert_eq!(c["unread"], 0);
++    assert_eq!(c["attention"], "none");
++    let (_, changes) = changes_since(&f, &t0).await;
++    assert_eq!(
++        changes,
++        vec![json!({ "kind": "conversation", "conversationId": "c9", "what": ["read"] })]
++    );
++
++    // In a team, only the lead gets your_turn; a pending question makes the teammate needs_answer.
++    *fake.kind.lock().unwrap() = Some(BackendKind::ClaudeSession);
++    emit(
++        &f,
++        "message.stream",
++        json!({ "conversation_id": "c2", "msg_id": "m9", "type": "ask",
++                "data": { "session_id": "s", "request_id": "req-1",
++                          "questions": [ { "question": "Which branch?", "multiSelect": false,
++                                           "options": [ { "label": "main" }, { "label": "dev" } ] } ] } }),
++    )
++    .await;
++    let (_, rs) = get(&f, "/v1/teams/t1/run-state").await.unwrap();
++    let agents = rs["agents"].as_array().unwrap();
++    let lead = agents.iter().find(|a| a["slotId"] == "lead").unwrap();
++    let bob = agents.iter().find(|a| a["slotId"] == "s2").unwrap();
++    assert_eq!(lead["unread"], 1);
++    assert_eq!(lead["attention"], "your_turn");
++    assert_eq!(bob["unread"], 1);
++    assert_eq!(bob["attention"], "needs_answer");
++    assert_eq!(bob["waitingOnUser"], true);
++    // A teammate's own chat never says your_turn, even when the agent spoke last.
++    let (_, c2) = get(&f, "/v1/conversations/c2").await.unwrap();
++    assert_eq!(c2["unread"], 1);
++    assert_ne!(c2["attention"], "your_turn");
++
++    let before = rs["sessionStatus"].clone();
++    emit(
++        &f,
++        "team.sessionStatusChanged",
++        json!({ "team_id": "t1", "status": "failed", "error": "claude CLI missing" }),
++    )
++    .await;
++    let (_, rs) = get(&f, "/v1/teams/t1/run-state").await.unwrap();
++    assert_ne!(before, json!("failed"));
++    assert_eq!(rs["sessionStatus"], "failed");
++}
++
++#[tokio::test]
++async fn send_failures_link_to_the_message_that_failed() {
++    let dir = tempfile::tempdir().unwrap();
++    let store = aionui_mobile::MobileStore::open(&dir.path().join("bridge.db"))
++        .await
++        .unwrap();
++    let fake = Arc::new(Fake::default());
++    let f = Facade::with_store(fake, store);
++
++    // A new-turn send: the failure frame carries the same turn id as the send.
++    emit(
++        &f,
++        "message.userCreated",
++        json!({ "conversation_id": "c8", "msg_id": "u7", "turn_id": "turn-1", "status": "finish" }),
++    )
++    .await;
++    emit(
++        &f,
++        "message.stream",
++        json!({ "conversation_id": "c8", "msg_id": "f1", "turn_id": "turn-1", "type": "tips",
++                "data": { "content": "claude CLI not found", "source": "send_failed" } }),
++    )
++    .await;
++    // A mid-turn delivery: its own message turns `error` first; the frame names the RUNNING turn, which must not win.
++    emit(
++        &f,
++        "message.userCreated",
++        json!({ "conversation_id": "c8", "msg_id": "u0", "turn_id": "turn-run", "status": "finish" }),
++    )
++    .await;
++    emit(
++        &f,
++        "message.statusChanged",
++        json!({ "conversation_id": "c8", "msg_id": "u8", "status": "error" }),
++    )
++    .await;
++    emit(
++        &f,
++        "message.stream",
++        json!({ "conversation_id": "c8", "msg_id": "f2", "turn_id": "turn-run", "type": "tips",
++                "data": { "content": "delivery failed", "source": "send_failed" } }),
++    )
++    .await;
++
++    let (status, page) = get(&f, "/v1/conversations/c8/messages").await.unwrap();
++    assert_eq!(status, 200);
++    let by_id = |id: &str| {
++        page["items"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|m| m["messageId"] == id)
++            .cloned()
++            .unwrap()
++    };
++    assert_eq!(by_id("f1")["error"]["source"], "send_failed");
++    assert_eq!(by_id("f1")["error"]["messageId"], "u7");
++    assert_eq!(by_id("f2")["error"]["messageId"], "u8");
++
++    // The links live in the bridge's own DB, so a new facade over the same store still sees them.
++    let store = aionui_mobile::MobileStore::open(&dir.path().join("bridge.db"))
++        .await
++        .unwrap();
++    let again = Facade::with_store(Arc::new(Fake::default()), store);
++    let (_, page) = get(&again, "/v1/conversations/c8/messages?before=v1.x").await.unwrap();
++    let f1 = page["items"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|m| m["messageId"] == "f1")
++        .cloned()
++        .unwrap();
++    assert_eq!(f1["error"]["messageId"], "u7");
 +}
 diff --git a/crates/aionui-mobile/tests/protocol_e2e.rs b/crates/aionui-mobile/tests/protocol_e2e.rs
 new file mode 100644
@@ -11607,6 +13708,258 @@ index 00000000..8b5d501f
 +    assert_eq!(input, h(&rk["macInput"]));
 +    assert_eq!(b64u(&hmac_sha256(&h(&rk["rekeySecret"]), &input)), s(&rk["proof"]));
 +}
+diff --git a/crates/aionui-session/src/backend/acp_conn.rs b/crates/aionui-session/src/backend/acp_conn.rs
+index 8303f676..6f083068 100644
+--- a/crates/aionui-session/src/backend/acp_conn.rs
++++ b/crates/aionui-session/src/backend/acp_conn.rs
+@@ -2367,6 +2367,7 @@ impl SessionBackend for AcpSessionBackend {
+                 decision,
+                 selected,
+                 answers: _, // ACP outcome is a single optionId; no per-question set
++                deny_message: _,
+             } => {
+                 // Write the reverse-RPC RESPONSE keyed by the request id we surfaced
+                 // as Permission.request_id. ACP `RequestPermissionResponse.outcome` is
+@@ -3547,6 +3548,7 @@ mod tests {
+                 decision: PermissionDecision::AllowAlways,
+                 selected: None,
+                 answers: Vec::new(),
++                deny_message: None,
+             })
+             .await
+             .expect("AnswerPermission(AllowAlways) accepted");
+diff --git a/crates/aionui-session/src/backend/antigravity/conn.rs b/crates/aionui-session/src/backend/antigravity/conn.rs
+index fe6fd6ac..e234cb44 100644
+--- a/crates/aionui-session/src/backend/antigravity/conn.rs
++++ b/crates/aionui-session/src/backend/antigravity/conn.rs
+@@ -1291,6 +1291,7 @@ mod tests {
+             decision: PermissionDecision::Approved,
+             selected: None,
+             answers: Vec::new(),
++            deny_message: None,
+         })
+         .await
+         .expect("answer accepted");
+@@ -1364,6 +1365,7 @@ mod tests {
+                             decision: PermissionDecision::Approved,
+                             selected: None,
+                             answers: Vec::new(),
++                            deny_message: None,
+                         })
+                         .await;
+                     return;
+@@ -1708,6 +1710,7 @@ mod tests {
+             decision: PermissionDecision::Approved,
+             selected: None,
+             answers: Vec::new(),
++            deny_message: None,
+         })
+         .await
+         .expect("a resolved-twice answer must not surface an error");
+diff --git a/crates/aionui-session/src/backend/claude_conn.rs b/crates/aionui-session/src/backend/claude_conn.rs
+index b751aa3d..d976b05e 100644
+--- a/crates/aionui-session/src/backend/claude_conn.rs
++++ b/crates/aionui-session/src/backend/claude_conn.rs
+@@ -1090,6 +1090,7 @@ impl ClaudeSessionBackend {
+         decision: super::types::PermissionDecision,
+         selected: Option<&str>,
+         answers: &[super::types::QuestionAnswer],
++        deny_message: Option<&str>,
+     ) -> Result<CommandReceipt, BackendError> {
+         use std::sync::atomic::Ordering;
+         let pending = self
+@@ -1102,7 +1103,8 @@ impl ClaudeSessionBackend {
+                 "no pending permission for request_id {request_id}"
+             )));
+         };
+-        let response = build_control_response(request_id, &pending, decision, selected, answers);
++        let mut response = build_control_response(request_id, &pending, decision, selected, answers);
++        with_deny_message(&mut response, deny_message);
+         {
+             let mut guard = self.stdin.lock().await;
+             let stdin = guard
+@@ -1529,6 +1531,19 @@ fn build_control_response(
+     })
+ }
+ 
++/// AionDX core-0015: put the user's refusal reason in a deny response's `message`, the field
++/// `build_control_response` otherwise fills with a fixed "User rejected the request.".
++/// An allow response, or a blank reason, is left alone.
++fn with_deny_message(response: &mut serde_json::Value, deny_message: Option<&str>) {
++    let Some(reason) = deny_message.map(str::trim).filter(|m| !m.is_empty()) else {
++        return;
++    };
++    let result = &mut response["response"]["response"];
++    if result["behavior"] == "deny" {
++        result["message"] = serde_json::Value::String(reason.to_owned());
++    }
++}
++
+ /// Build the `updatedInput.answers` object claude's AskUserQuestion reads (live
+ /// wire 2.1.178, keyed by question TEXT; multi-select value = JSON array of labels
+ /// which claude joins with ", "). Two sources, in order:
+@@ -3443,9 +3458,16 @@ impl SessionBackend for ClaudeSessionBackend {
+                 decision,
+                 selected,
+                 answers,
++                deny_message,
+             } => {
+-                self.answer_permission(&request_id, decision, selected.as_deref(), &answers)
+-                    .await
++                self.answer_permission(
++                    &request_id,
++                    decision,
++                    selected.as_deref(),
++                    &answers,
++                    deny_message.as_deref(),
++                )
++                .await
+             }
+             // AnswerAsk: the structured-question twin (wire = same can_use_tool
+             // control_response; b-side event = AskResolved on its own counter).
+@@ -4971,6 +4993,7 @@ mod tests {
+                 decision: super::super::types::PermissionDecision::Approved,
+                 selected: None,
+                 answers: Vec::new(),
++                deny_message: None,
+             })
+             .await
+             .expect("answer accepted");
+@@ -5074,6 +5097,7 @@ mod tests {
+                 decision: super::super::types::PermissionDecision::Approved,
+                 selected: None,
+                 answers: Vec::new(),
++                deny_message: None,
+             })
+             .await
+             .expect("answer accepted");
+@@ -5135,6 +5159,7 @@ mod tests {
+                 decision: super::super::types::PermissionDecision::Denied,
+                 selected: None,
+                 answers: Vec::new(),
++                deny_message: None,
+             })
+             .await
+             .expect_err("no pending → reject (not silent-accept)");
+@@ -5196,6 +5221,7 @@ mod tests {
+                 decision: super::super::types::PermissionDecision::Approved,
+                 selected: None,
+                 answers: Vec::new(),
++                deny_message: None,
+             })
+             .await
+             .expect_err("retracted req-1 → no pending → reject");
+@@ -5211,6 +5237,7 @@ mod tests {
+                 decision: super::super::types::PermissionDecision::Approved,
+                 selected: None,
+                 answers: Vec::new(),
++                deny_message: None,
+             })
+             .await
+             .expect("un-retracted req-2 still answerable (retract was not a blanket wipe)");
+@@ -6089,6 +6116,28 @@ mod tests {
+     /// This was the coverage blind spot: the only permission test exercised
+     /// AskUserQuestion (which always carries updatedInput), so the plain-tool path
+     /// shipped untested. Echo the original input unchanged.
++    #[test]
++    fn deny_message_replaces_the_fixed_refusal_text_only_on_a_deny() {
++        use super::super::types::PermissionDecision;
++        let pending = PendingPerm {
++            tool_use_id: "toolu-d".into(),
++            tool_name: "Bash".into(),
++            input: serde_json::json!({ "command": "rm -rf build" }),
++        };
++        let mut deny = build_control_response("req-d", &pending, PermissionDecision::Denied, None, &[]);
++        with_deny_message(&mut deny, Some("  use the clean script instead "));
++        assert_eq!(deny["response"]["response"]["behavior"], "deny");
++        assert_eq!(deny["response"]["response"]["message"], "use the clean script instead");
++
++        let mut blank = build_control_response("req-d", &pending, PermissionDecision::Denied, None, &[]);
++        with_deny_message(&mut blank, Some("   "));
++        assert_eq!(blank["response"]["response"]["message"], "User rejected the request.");
++
++        let mut allow = build_control_response("req-d", &pending, PermissionDecision::Approved, None, &[]);
++        with_deny_message(&mut allow, Some("ignored"));
++        assert!(allow["response"]["response"].get("message").is_none());
++    }
++
+     #[test]
+     fn build_control_response_plain_tool_allow_carries_updated_input() {
+         use super::super::types::PermissionDecision;
+diff --git a/crates/aionui-session/src/backend/codex_conn.rs b/crates/aionui-session/src/backend/codex_conn.rs
+index d249e2d6..b97ead38 100644
+--- a/crates/aionui-session/src/backend/codex_conn.rs
++++ b/crates/aionui-session/src/backend/codex_conn.rs
+@@ -4432,6 +4432,7 @@ impl SessionBackend for CodexSessionBackend {
+                 decision,
+                 selected: _, // codex approval is accept/decline; no pick-one label
+                 answers: _,  // codex has no AskUserQuestion; per-question answers N/A
++                deny_message: _,
+             } => {
+                 let approved = matches!(
+                     decision,
+@@ -5291,6 +5292,7 @@ mod tests {
+                 decision: crate::PermissionDecision::Approved,
+                 selected: None,
+                 answers: Vec::new(),
++                deny_message: None,
+             })
+             .await
+             .expect("AnswerPermission accepted");
+@@ -5669,6 +5671,7 @@ mod tests {
+                     decision,
+                     selected: None,
+                     answers: vec![],
++                    deny_message: None,
+                 })
+                 .await
+                 .expect("accepted");
+@@ -6439,6 +6442,7 @@ mod tests {
+                 decision: super::super::types::PermissionDecision::Approved,
+                 selected: None,
+                 answers: vec![],
++                deny_message: None,
+             })
+             .await
+             .expect("accepted");
+diff --git a/crates/aionui-session/src/backend/conversation_session.rs b/crates/aionui-session/src/backend/conversation_session.rs
+index 127dd2d2..cb11c35c 100644
+--- a/crates/aionui-session/src/backend/conversation_session.rs
++++ b/crates/aionui-session/src/backend/conversation_session.rs
+@@ -400,6 +400,7 @@ impl ConversationSession {
+                 decision,
+                 selected,
+                 answers,
++                deny_message: None,
+             })
+             .await
+     }
+diff --git a/crates/aionui-session/src/backend/types.rs b/crates/aionui-session/src/backend/types.rs
+index 3c33b5c0..1c79857c 100644
+--- a/crates/aionui-session/src/backend/types.rs
++++ b/crates/aionui-session/src/backend/types.rs
+@@ -64,6 +64,9 @@ pub enum Command {
+         decision: PermissionDecision,
+         selected: Option<String>,
+         answers: Vec<QuestionAnswer>,
++        /// AionDX core-0015: on a deny, the user's reason, shown to the agent in place of the fixed refusal text.
++        /// Only the claude adapter carries it; the others ignore it.
++        deny_message: Option<String>,
+     },
+     /// Answer an `Ask{request_id}` (structured question card — its own command,
+     /// NOT AnswerPermission: asking is not authorizing, 2026-08-04 ruling).
+diff --git a/crates/aionui-session/src/testing.rs b/crates/aionui-session/src/testing.rs
+index d7c935f9..c7d9ffc2 100644
+--- a/crates/aionui-session/src/testing.rs
++++ b/crates/aionui-session/src/testing.rs
+@@ -572,6 +572,7 @@ pub mod invariants {
+                     decision: PermissionDecision::Denied,
+                     selected: None,
+                     answers: Vec::new(),
++                    deny_message: None,
+                 },
+                 |c| c.supported_commands.answer_permission,
+             ),
 diff --git a/crates/aionui-team/src/mcp/server.rs b/crates/aionui-team/src/mcp/server.rs
 index ffd47ab8..9b63feae 100644
 --- a/crates/aionui-team/src/mcp/server.rs
