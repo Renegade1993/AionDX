@@ -1,0 +1,2568 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index b05f590b..ff7a5049 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -413,6 +413,7 @@ dependencies = [
+  "aionui-extension",
+  "aionui-file",
+  "aionui-mcp",
++ "aionui-mobile",
+  "aionui-office",
+  "aionui-process",
+  "aionui-project",
+@@ -743,6 +744,34 @@ dependencies = [
+  "tracing-subscriber",
+ ]
+ 
++[[package]]
++name = "aionui-mobile"
++version = "0.2.2"
++dependencies = [
++ "aionui-api-types",
++ "aionui-auth",
++ "aionui-common",
++ "async-trait",
++ "axum",
++ "base64",
++ "chacha20poly1305",
++ "getrandom 0.2.17",
++ "hex",
++ "hkdf",
++ "hmac 0.12.1",
++ "serde",
++ "serde_json",
++ "sha2 0.10.9",
++ "sqlx",
++ "tempfile",
++ "thiserror 2.0.18",
++ "tokio",
++ "tower",
++ "tracing",
++ "windows-sys 0.61.2",
++ "x25519-dalek",
++]
++
+ [[package]]
+ name = "aionui-office"
+ version = "0.2.2"
+@@ -1103,7 +1132,7 @@ version = "1.1.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
+ dependencies = [
+- "windows-sys 0.60.2",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -1114,7 +1143,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
+ dependencies = [
+  "anstyle",
+  "once_cell_polyfill",
+- "windows-sys 0.60.2",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -1953,6 +1982,30 @@ version = "0.2.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+ 
++[[package]]
++name = "chacha20"
++version = "0.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c3613f74bd2eac03dad61bd53dbe620703d4371614fe0bc3b9f04dd36fe4e818"
++dependencies = [
++ "cfg-if",
++ "cipher",
++ "cpufeatures 0.2.17",
++]
++
++[[package]]
++name = "chacha20poly1305"
++version = "0.10.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "10cd79432192d1c0f4e1a0fef9527696cc039165d729fb41b3f4f4f354c2dc35"
++dependencies = [
++ "aead",
++ "chacha20",
++ "cipher",
++ "poly1305",
++ "zeroize",
++]
++
+ [[package]]
+ name = "chrono"
+ version = "0.4.44"
+@@ -1985,6 +2038,7 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
+ dependencies = [
+  "crypto-common 0.1.7",
+  "inout",
++ "zeroize",
+ ]
+ 
+ [[package]]
+@@ -2519,7 +2573,7 @@ dependencies = [
+  "libc",
+  "option-ext",
+  "redox_users",
+- "windows-sys 0.60.2",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -2664,7 +2718,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -3599,7 +3653,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+ dependencies = [
+  "hermit-abi",
+  "libc",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -3694,7 +3748,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "8cfc352a66ba903c23239ef51e809508b6fc2b0f90e3476ac7a9ff47e863ae95"
+ dependencies = [
+  "scopeguard",
+- "windows-sys 0.60.2",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -3979,7 +4033,7 @@ version = "0.50.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+ dependencies = [
+- "windows-sys 0.60.2",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -4399,6 +4453,17 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "poly1305"
++version = "0.8.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8159bd90725d2df49889a078b54f4f79e87f1f8a8444194cdca81d38f5393abf"
++dependencies = [
++ "cpufeatures 0.2.17",
++ "opaque-debug",
++ "universal-hash",
++]
++
+ [[package]]
+ name = "polyval"
+ version = "0.6.2"
+@@ -4966,7 +5031,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -5440,7 +5505,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
+ dependencies = [
+  "libc",
+- "windows-sys 0.60.2",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -5779,7 +5844,7 @@ dependencies = [
+  "getrandom 0.4.2",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -6667,7 +6732,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.48.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -7188,6 +7253,18 @@ version = "0.13.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
+ 
++[[package]]
++name = "x25519-dalek"
++version = "2.0.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
++dependencies = [
++ "curve25519-dalek",
++ "rand_core 0.6.4",
++ "serde",
++ "zeroize",
++]
++
+ [[package]]
+ name = "xattr"
+ version = "1.6.1"
+diff --git a/Cargo.toml b/Cargo.toml
+index 5846fbdd..9d00931b 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -23,6 +23,7 @@ members = [
+     "crates/aionui-channel",
+     "crates/aionui-team-prompts",
+     "crates/aionui-team",
++    "crates/aionui-mobile",
+     "crates/aionui-project",
+     "crates/aionui-sidebar",
+     "crates/aionui-cron",
+@@ -59,6 +60,7 @@ aionui-extension = { path = "crates/aionui-extension" }
+ aionui-channel = { path = "crates/aionui-channel" }
+ aionui-team-prompts = { path = "crates/aionui-team-prompts" }
+ aionui-team = { path = "crates/aionui-team" }
++aionui-mobile = { path = "crates/aionui-mobile" }
+ aionui-project = { path = "crates/aionui-project" }
+ aionui-sidebar = { path = "crates/aionui-sidebar" }
+ aionui-cron = { path = "crates/aionui-cron" }
+diff --git a/crates/aionui-app/Cargo.toml b/crates/aionui-app/Cargo.toml
+index f0fa6126..378fca87 100644
+--- a/crates/aionui-app/Cargo.toml
++++ b/crates/aionui-app/Cargo.toml
+@@ -37,6 +37,7 @@ aionui-conversation.workspace = true
+ aionui-extension.workspace = true
+ aionui-channel.workspace = true
+ aionui-team.workspace = true
++aionui-mobile.workspace = true
+ aionui-team-prompts.workspace = true
+ aionui-cron.workspace = true
+ aionui-project.workspace = true
+diff --git a/crates/aionui-app/src/commands/cmd_server.rs b/crates/aionui-app/src/commands/cmd_server.rs
+index 17526034..512657b8 100644
+--- a/crates/aionui-app/src/commands/cmd_server.rs
++++ b/crates/aionui-app/src/commands/cmd_server.rs
+@@ -348,6 +348,11 @@ pub(crate) async fn run_server(
+     emit_ready_event();
+     info!("startup: server ready, emitted AIONCORE_READY");
+ 
++    // AionDX core-0015: bring the mobile bridge's LAN listener up if the user left it on.
++    if let Some(bridge) = services.mobile_bridge.clone() {
++        tokio::spawn(async move { bridge.start_if_enabled().await });
++    }
++
+     // Last-resort bound on the whole shutdown tail (AIONUI-16): armed when the
+     // shutdown signal fires, disarmed once the tail below completes. See
+     // `bootstrap::shutdown_watchdog` for rationale.
+@@ -357,6 +362,7 @@ pub(crate) async fn run_server(
+     // callback, i.e. the moment axum's connection drain becomes the only thing
+     // between us and process exit.
+     let drain_started = shutdown_tx.subscribe();
++    let mobile_bridge_for_shutdown = services.mobile_bridge.clone();
+ 
+     let serve_future = axum::serve(listener, router)
+         .with_graceful_shutdown(async move {
+@@ -434,6 +440,19 @@ pub(crate) async fn run_server(
+                     "keep-awake release timed out; abandoning keep-awake child reap",
+                 ),
+             }
++            // AionDX core-0015: close the mobile bridge's LAN listener.
++            if let Some(bridge) = mobile_bridge_for_shutdown {
++                if tokio::time::timeout(std::time::Duration::from_secs(3), bridge.stop())
++                    .await
++                    .is_err()
++                {
++                    warn_stage_timeout(
++                        "shutdown.mobile_bridge",
++                        std::time::Duration::from_secs(3),
++                        "mobile bridge listener stop timed out",
++                    );
++                }
++            }
+             let _ = shutdown_tx.send(true);
+         })
+         .into_future();
+diff --git a/crates/aionui-app/src/router/routes.rs b/crates/aionui-app/src/router/routes.rs
+index e67514c7..fa92e91a 100644
+--- a/crates/aionui-app/src/router/routes.rs
++++ b/crates/aionui-app/src/router/routes.rs
+@@ -425,6 +425,16 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
+     #[cfg(feature = "weixin")]
+     let router = router.merge(weixin_login_authenticated);
+ 
++    // AionDX core-0015: the mobile bridge's desktop admin routes, behind the
++    // normal auth middleware and (non-local) CSRF like every other user route.
++    let router = match services.mobile_bridge.clone() {
++        Some(bridge) => router.merge(
++            aionui_mobile::mobile_admin_routes(aionui_mobile::MobileAdminState { bridge })
++                .route_layer(from_fn_with_state(auth_mw_state.clone(), auth_middleware)),
++        ),
++        None => router,
++    };
++
+     let router = if services.identity_mode.is_local() {
+         router
+     } else {
+diff --git a/crates/aionui-app/src/services.rs b/crates/aionui-app/src/services.rs
+index 1c2ee34b..c43dfc3d 100644
+--- a/crates/aionui-app/src/services.rs
++++ b/crates/aionui-app/src/services.rs
+@@ -70,6 +70,9 @@ pub struct AppServices {
+     /// by `jwt_service`, so signing can rotate without changing the key.
+     pub encryption_secret_raw: String,
+     pub data_dir: PathBuf,
++    /// AionDX core-0015: the mobile bridge. `None` when it could not start
++    /// (its own database or host key failed); AionCore runs on without it.
++    pub mobile_bridge: Option<Arc<aionui_mobile::MobileBridge>>,
+     pub dump_prompts: bool,
+     pub work_dir: PathBuf,
+     /// When `true`, skip JWT authentication and use a fixed default user.
+@@ -265,7 +268,10 @@ impl AppServices {
+         // state back into the agent factory's composition.
+         let oauth_token_repo: Arc<dyn aionui_db::IOAuthTokenRepository> =
+             Arc::new(aionui_db::SqliteOAuthTokenRepository::new(database.pool().clone()));
+-        let oauth_service = Arc::new(aionui_mcp::McpOAuthService::new(oauth_token_repo, reqwest::Client::new()));
++        let oauth_service = Arc::new(aionui_mcp::McpOAuthService::new(
++            oauth_token_repo,
++            reqwest::Client::new(),
++        ));
+ 
+         let agent_metadata_repo: Arc<dyn IAgentMetadataRepository> =
+             Arc::new(SqliteAgentMetadataRepository::new(database.pool().clone()));
+@@ -435,6 +441,8 @@ impl AppServices {
+         conversation_service
+             .with_turn_cancelled_hook(Arc::new(QueueClearingCancelHook::new(session_message_queue.clone())));
+ 
++        let mobile_bridge = build_mobile_bridge(&data_dir).await;
++
+         Ok(Self {
+             database,
+             jwt_service: Arc::new(JwtService::new(secret.clone())),
+@@ -460,6 +468,7 @@ impl AppServices {
+             acp_session_sync: acp_agent_service,
+             encryption_secret_raw: encryption_secret,
+             data_dir,
++            mobile_bridge,
+             dump_prompts,
+             work_dir,
+             local,
+@@ -475,6 +484,31 @@ impl AppServices {
+     }
+ }
+ 
++/// Opens the mobile bridge's own database and host key. Failure only disables
++/// the bridge; it never stops AionCore from starting.
++async fn build_mobile_bridge(data_dir: &std::path::Path) -> Option<Arc<aionui_mobile::MobileBridge>> {
++    let store = match aionui_mobile::MobileStore::open(&aionui_mobile::MobileStore::path_in(data_dir)).await {
++        Ok(store) => store,
++        Err(error) => {
++            tracing::error!(%error, "mobile bridge disabled: its database did not open");
++            return None;
++        }
++    };
++    let protector = aionui_mobile::platform_protector();
++    let host_key =
++        match aionui_mobile::HostKey::load_or_create(&aionui_mobile::HostKey::path_in(data_dir), protector.as_ref()) {
++            Ok(key) => Arc::new(key),
++            Err(error) => {
++                tracing::error!(%error, "mobile bridge disabled: its host key could not be loaded");
++                return None;
++            }
++        };
++    let host_name = std::env::var("COMPUTERNAME")
++        .or_else(|_| std::env::var("HOSTNAME"))
++        .unwrap_or_else(|_| "AionDX".to_owned());
++    Some(aionui_mobile::MobileBridge::new(store, host_key, host_name))
++}
++
+ struct ConversationServiceDeps<'a> {
+     database: &'a Database,
+     work_dir: PathBuf,
+diff --git a/crates/aionui-mobile/Cargo.toml b/crates/aionui-mobile/Cargo.toml
+new file mode 100644
+index 00000000..3adb2f16
+--- /dev/null
++++ b/crates/aionui-mobile/Cargo.toml
+@@ -0,0 +1,34 @@
++[package]
++name = "aionui-mobile"
++version.workspace = true
++edition.workspace = true
++
++# AionDX core-0015: the encrypted PC <-> phone bridge (docs/mobile-bridge/CONTRACT.md).
++
++[dependencies]
++aionui-common.workspace = true
++aionui-auth.workspace = true
++aionui-api-types.workspace = true
++axum.workspace = true
++tokio.workspace = true
++serde.workspace = true
++serde_json.workspace = true
++sqlx = { workspace = true, features = ["migrate"] }
++async-trait.workspace = true
++thiserror.workspace = true
++tracing.workspace = true
++base64.workspace = true
++getrandom.workspace = true
++x25519-dalek = { version = "2", features = ["static_secrets"] }
++chacha20poly1305 = "0.10"
++hkdf = "0.12"
++hmac = "0.12"
++sha2.workspace = true
++
++[target.'cfg(windows)'.dependencies]
++windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
++
++[dev-dependencies]
++hex.workspace = true
++tower.workspace = true
++tempfile.workspace = true
+diff --git a/crates/aionui-mobile/migrations/0001_init.sql b/crates/aionui-mobile/migrations/0001_init.sql
+new file mode 100644
+index 00000000..b9a86eb1
+--- /dev/null
++++ b/crates/aionui-mobile/migrations/0001_init.sql
+@@ -0,0 +1,30 @@
++-- AionDX mobile bridge state. This lives in its own SQLite file (mobile-bridge.db
++-- in the data dir), never in aionui-backend.db: a migration in AionCore's own chain
++-- would make every core without the bridge refuse to open the user's database.
++
++CREATE TABLE IF NOT EXISTS mobile_settings (
++    user_id       TEXT PRIMARY KEY,
++    settings_json TEXT NOT NULL,
++    updated_at    INTEGER NOT NULL
++);
++
++CREATE TABLE IF NOT EXISTS mobile_devices (
++    device_id          TEXT PRIMARY KEY,
++    user_id            TEXT NOT NULL,
++    device_pk          BLOB NOT NULL,
++    name               TEXT NOT NULL,
++    platform           TEXT NOT NULL,
++    app_version        TEXT NOT NULL,
++    confirm_mode       TEXT NOT NULL,
++    confirm_key_sealed BLOB,
++    require_confirm    INTEGER NOT NULL DEFAULT 1,
++    paired_at          INTEGER NOT NULL,
++    last_seen_at       INTEGER,
++    last_address       TEXT
++);
++
++CREATE TABLE IF NOT EXISTS mobile_device_tombstones (
++    device_id  TEXT PRIMARY KEY,
++    user_id    TEXT NOT NULL,
++    revoked_at INTEGER NOT NULL
++);
+diff --git a/crates/aionui-mobile/src/admin_routes.rs b/crates/aionui-mobile/src/admin_routes.rs
+new file mode 100644
+index 00000000..2779a3d1
+--- /dev/null
++++ b/crates/aionui-mobile/src/admin_routes.rs
+@@ -0,0 +1,198 @@
++//! Desktop-only admin routes on AionCore's own 127.0.0.1 server (CONTRACT §3.4).
++//!
++//! Mounted behind the normal auth middleware (and CSRF in aionpro mode). They
++//! also refuse the runtime-token channel: an agent subprocess authenticates as
++//! the full user, and must never be able to switch the bridge on or approve a
++//! phone. Later phases add pairing offers and devices here.
++
++use std::sync::Arc;
++
++use axum::Router;
++use axum::extract::rejection::JsonRejection;
++use axum::extract::{Extension, Json, State};
++use axum::routing::{get, put};
++
++use aionui_api_types::ApiResponse;
++use aionui_auth::{AuthChannel, CurrentUser};
++use aionui_common::ApiError;
++
++use crate::error::MobileError;
++use crate::service::{MobileBridge, MobileStatus};
++use crate::settings::MobileSettingsPatch;
++
++#[derive(Clone)]
++pub struct MobileAdminState {
++    pub bridge: Arc<MobileBridge>,
++}
++
++pub fn mobile_admin_routes(state: MobileAdminState) -> Router {
++    Router::new()
++        .route("/api/mobile/admin/status", get(status))
++        .route("/api/mobile/admin/settings", put(update_settings))
++        .with_state(state)
++}
++
++/// The user's own clients only: a session, or local mode.
++fn require_user_client(channel: Option<&AuthChannel>) -> Result<(), ApiError> {
++    match channel {
++        Some(AuthChannel::Session | AuthChannel::Local) => Ok(()),
++        _ => Err(ApiError::Forbidden(
++            "Mobile bridge settings are for the desktop app only".into(),
++        )),
++    }
++}
++
++fn to_api_error(err: MobileError) -> ApiError {
++    match err {
++        MobileError::InvalidSetting(msg) => ApiError::BadRequest(msg),
++        other => {
++            tracing::error!(error = %other, "mobile bridge admin request failed");
++            ApiError::Internal("Mobile bridge request failed".into())
++        }
++    }
++}
++
++async fn status(
++    State(state): State<MobileAdminState>,
++    Extension(user): Extension<CurrentUser>,
++    channel: Option<Extension<AuthChannel>>,
++) -> Result<Json<ApiResponse<MobileStatus>>, ApiError> {
++    require_user_client(channel.as_deref())?;
++    let status = state.bridge.status(&user.id).await.map_err(to_api_error)?;
++    Ok(Json(ApiResponse::ok(status)))
++}
++
++async fn update_settings(
++    State(state): State<MobileAdminState>,
++    Extension(user): Extension<CurrentUser>,
++    channel: Option<Extension<AuthChannel>>,
++    body: Result<Json<MobileSettingsPatch>, JsonRejection>,
++) -> Result<Json<ApiResponse<MobileStatus>>, ApiError> {
++    require_user_client(channel.as_deref())?;
++    let Json(patch) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
++    let status = state
++        .bridge
++        .update_settings(&user.id, &patch)
++        .await
++        .map_err(to_api_error)?;
++    tracing::info!(user_id = %user.id, enabled = status.enabled, listening = status.listening, "mobile bridge settings changed");
++    Ok(Json(ApiResponse::ok(status)))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use axum::body::Body;
++    use axum::extract::Request;
++    use axum::http::StatusCode;
++    use axum::middleware::Next;
++    use tower::ServiceExt;
++
++    use crate::host_key::HostKey;
++    use crate::store::MobileStore;
++
++    async fn app(channel: Option<AuthChannel>) -> Router {
++        let store = MobileStore::open_memory().await.unwrap();
++        let bridge = MobileBridge::new(store, Arc::new(HostKey::generate().unwrap()), "Test PC".into());
++        mobile_admin_routes(MobileAdminState { bridge }).layer(axum::middleware::from_fn(
++            move |mut req: Request, next: Next| {
++                let channel = channel.clone();
++                async move {
++                    req.extensions_mut().insert(CurrentUser::local_default());
++                    if let Some(channel) = channel {
++                        req.extensions_mut().insert(channel);
++                    }
++                    next.run(req).await
++                }
++            },
++        ))
++    }
++
++    async fn call(app: Router, method: &str, uri: &str, body: &str) -> (StatusCode, serde_json::Value) {
++        let req = Request::builder()
++            .method(method)
++            .uri(uri)
++            .header("content-type", "application/json")
++            .body(Body::from(body.to_owned()))
++            .unwrap();
++        let resp = app.oneshot(req).await.unwrap();
++        let status = resp.status();
++        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
++        (
++            status,
++            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
++        )
++    }
++
++    #[tokio::test]
++    async fn session_reads_status() {
++        let (status, body) = call(
++            app(Some(AuthChannel::Session)).await,
++            "GET",
++            "/api/mobile/admin/status",
++            "",
++        )
++        .await;
++        assert_eq!(status, StatusCode::OK);
++        assert_eq!(body["data"]["enabled"], false);
++        assert_eq!(body["data"]["port"], 47734);
++        assert_eq!(body["data"]["listening"], false);
++    }
++
++    #[tokio::test]
++    async fn runtime_token_and_unmarked_callers_are_refused() {
++        for channel in [
++            Some(AuthChannel::RuntimeToken {
++                conversation_id: "c1".into(),
++            }),
++            None,
++        ] {
++            let (s1, _) = call(app(channel.clone()).await, "GET", "/api/mobile/admin/status", "").await;
++            let (s2, _) = call(
++                app(channel).await,
++                "PUT",
++                "/api/mobile/admin/settings",
++                r#"{"enabled":true}"#,
++            )
++            .await;
++            assert_eq!(s1, StatusCode::FORBIDDEN);
++            assert_eq!(s2, StatusCode::FORBIDDEN);
++        }
++    }
++
++    #[tokio::test]
++    async fn invalid_settings_are_a_400_with_the_reason() {
++        let (status, body) = call(
++            app(Some(AuthChannel::Local)).await,
++            "PUT",
++            "/api/mobile/admin/settings",
++            r#"{"port":80}"#,
++        )
++        .await;
++        assert_eq!(status, StatusCode::BAD_REQUEST);
++        assert!(body.to_string().contains("1024"), "{body}");
++        let (status, _) = call(
++            app(Some(AuthChannel::Local)).await,
++            "PUT",
++            "/api/mobile/admin/settings",
++            r#"{"nope":1}"#,
++        )
++        .await;
++        assert_eq!(status, StatusCode::BAD_REQUEST);
++    }
++
++    #[tokio::test]
++    async fn settings_update_is_returned_as_status() {
++        let (status, body) = call(
++            app(Some(AuthChannel::Session)).await,
++            "PUT",
++            "/api/mobile/admin/settings",
++            r#"{"hostName":"Desk","tasksWrite":false}"#,
++        )
++        .await;
++        assert_eq!(status, StatusCode::OK);
++        assert_eq!(body["data"]["hostName"], "Desk");
++        assert_eq!(body["data"]["tasksWrite"], false);
++        assert_eq!(body["data"]["enabled"], false);
++    }
++}
+diff --git a/crates/aionui-mobile/src/crypto.rs b/crates/aionui-mobile/src/crypto.rs
+new file mode 100644
+index 00000000..37e04edc
+--- /dev/null
++++ b/crates/aionui-mobile/src/crypto.rs
+@@ -0,0 +1,308 @@
++//! Primitives and derivations of protocol v1 (CONTRACT §4, §5, Appendix A).
++//! Pure functions only: no I/O, no clocks, no state. Every derivation here is
++//! checked byte for byte against `tests/vectors.json`, the same file the
++//! phone's TypeScript implementation is tested against.
++
++use base64::Engine;
++use base64::engine::general_purpose::URL_SAFE_NO_PAD;
++use chacha20poly1305::aead::{Aead, KeyInit, Payload};
++use chacha20poly1305::{XChaCha20Poly1305, XNonce};
++use hkdf::Hkdf;
++use hmac::{Hmac, Mac};
++use sha2::{Digest, Sha256};
++
++pub const LABEL_PAIR: &str = "aiondx/v1/pair";
++pub const LABEL_PAIR_REQ: &str = "aiondx/v1/pair-req";
++pub const LABEL_PAIR_RES: &str = "aiondx/v1/pair-res";
++pub const LABEL_SAS: &str = "aiondx/v1/sas";
++pub const LABEL_HS_INIT: &str = "aiondx/v1/hs-init";
++pub const LABEL_SESSION: &str = "aiondx/v1/session";
++pub const LABEL_SESSION_KEYS: &str = "aiondx/v1/session-keys";
++pub const LABEL_RPC_REQ: &str = "aiondx/v1/rpc-req";
++pub const LABEL_RPC_RES: &str = "aiondx/v1/rpc-res";
++pub const LABEL_REVOKED: &str = "aiondx/v1/revoked";
++pub const LABEL_CONFIRM: &str = "aiondx/v1/confirm";
++pub const LABEL_REKEY: &str = "aiondx/v1/rekey";
++
++pub const KEY_LEN: usize = 32;
++pub const NONCE_LEN: usize = 24;
++pub const SID_LEN: usize = 16;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct CryptoError;
++
++pub fn b64u(bytes: &[u8]) -> String {
++    URL_SAFE_NO_PAD.encode(bytes)
++}
++
++/// Strict base64url without padding; non-canonical input is rejected.
++pub fn from_b64u(s: &str) -> Result<Vec<u8>, CryptoError> {
++    URL_SAFE_NO_PAD.decode(s).map_err(|_| CryptoError)
++}
++
++pub fn key_from_b64u(s: &str) -> Result<[u8; KEY_LEN], CryptoError> {
++    from_b64u(s)?.try_into().map_err(|_| CryptoError)
++}
++
++pub fn sha256(parts: &[&[u8]]) -> [u8; 32] {
++    let mut h = Sha256::new();
++    for p in parts {
++        h.update(p);
++    }
++    h.finalize().into()
++}
++
++/// HKDF-SHA256. An empty salt is a zero-length salt (RFC 5869 then uses 32 zero bytes).
++pub fn hkdf(ikm: &[u8], salt: &[u8], info: &[u8], out: &mut [u8]) {
++    Hkdf::<Sha256>::new(Some(salt), ikm)
++        .expand(info, out)
++        .expect("HKDF output length is within limits");
++}
++
++pub fn hkdf32(ikm: &[u8], salt: &[u8], info: &[u8]) -> [u8; 32] {
++    let mut out = [0u8; 32];
++    hkdf(ikm, salt, info, &mut out);
++    out
++}
++
++pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
++    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC takes any key length");
++    mac.update(data);
++    mac.finalize().into_bytes().into()
++}
++
++/// Constant-time comparison of two MACs.
++pub fn mac_eq(a: &[u8], b: &[u8]) -> bool {
++    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
++}
++
++/// XChaCha20-Poly1305 seal; returns ciphertext ‖ 16-byte tag.
++pub fn seal(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], plaintext: &[u8], aad: &[u8]) -> Vec<u8> {
++    XChaCha20Poly1305::new(key.into())
++        .encrypt(XNonce::from_slice(nonce), Payload { msg: plaintext, aad })
++        .expect("XChaCha20-Poly1305 encryption cannot fail for in-memory buffers")
++}
++
++pub fn open(key: &[u8; KEY_LEN], nonce: &[u8], sealed: &[u8], aad: &[u8]) -> Result<Vec<u8>, CryptoError> {
++    if nonce.len() != NONCE_LEN {
++        return Err(CryptoError);
++    }
++    XChaCha20Poly1305::new(key.into())
++        .decrypt(XNonce::from_slice(nonce), Payload { msg: sealed, aad })
++        .map_err(|_| CryptoError)
++}
++
++pub fn x25519(secret: &[u8; 32], public: &[u8; 32]) -> [u8; 32] {
++    x25519_dalek::x25519(*secret, *public)
++}
++
++pub fn x25519_public(secret: &[u8; 32]) -> [u8; 32] {
++    x25519_dalek::x25519(*secret, x25519_dalek::X25519_BASEPOINT_BYTES)
++}
++
++pub fn u64be(n: u64) -> [u8; 8] {
++    n.to_be_bytes()
++}
++
++// ---- Pairing (CONTRACT §4.2) -----------------------------------------------------------------
++
++pub fn pairing_key(
++    dh_device_host: &[u8; 32],
++    pairing_secret: &[u8],
++    host_pk: &[u8; 32],
++    device_pk: &[u8; 32],
++) -> [u8; 32] {
++    let info = [LABEL_PAIR.as_bytes(), host_pk, device_pk].concat();
++    hkdf32(dh_device_host, pairing_secret, &info)
++}
++
++pub fn pair_req_aad(host_id: &str, device_id: &str) -> Vec<u8> {
++    format!("{LABEL_PAIR_REQ}|{host_id}|{device_id}").into_bytes()
++}
++
++pub fn pair_res_aad(host_id: &str, device_id: &str) -> Vec<u8> {
++    format!("{LABEL_PAIR_RES}|{host_id}|{device_id}").into_bytes()
++}
++
++/// The six-digit short authentication string, formatted `ddd ddd`.
++pub fn short_auth_string(pairing_key: &[u8; 32]) -> String {
++    let mut bytes = [0u8; 4];
++    hkdf(pairing_key, &[], LABEL_SAS.as_bytes(), &mut bytes);
++    let digits = format!("{:06}", u32::from_be_bytes(bytes) % 1_000_000);
++    format!("{} {}", &digits[..3], &digits[3..])
++}
++
++// ---- Session handshake (CONTRACT §4.3) -------------------------------------------------------
++
++pub fn handshake_init_key(
++    dh_eph_static: &[u8; 32],
++    dh_static_static: &[u8; 32],
++    device_id: &str,
++    device_pk: &[u8; 32],
++    host_pk: &[u8; 32],
++    client_epk: &[u8; 32],
++) -> [u8; 32] {
++    let prefix = format!("{LABEL_HS_INIT}|{device_id}|");
++    let salt = sha256(&[prefix.as_bytes(), device_pk, host_pk, client_epk]);
++    hkdf32(
++        &[dh_eph_static.as_slice(), dh_static_static].concat(),
++        &salt,
++        LABEL_HS_INIT.as_bytes(),
++    )
++}
++
++pub fn handshake_init_aad(host_id: &str, device_id: &str, client_epk: &[u8; 32]) -> Vec<u8> {
++    [format!("{LABEL_HS_INIT}|{host_id}|{device_id}|").as_bytes(), client_epk].concat()
++}
++
++pub fn session_transcript(
++    device_id: &str,
++    device_pk: &[u8; 32],
++    host_pk: &[u8; 32],
++    client_epk: &[u8; 32],
++    host_epk: &[u8; 32],
++) -> [u8; 32] {
++    let prefix = format!("{LABEL_SESSION}|{device_id}|");
++    sha256(&[prefix.as_bytes(), device_pk, host_pk, client_epk, host_epk])
++}
++
++pub struct SessionKeys {
++    pub c2s: [u8; 32],
++    pub s2c: [u8; 32],
++    pub sid: [u8; SID_LEN],
++}
++
++/// `dhs` in the order DH(e_c,S_h), DH(S_c,S_h), DH(e_c,e_h), DH(S_c,e_h).
++pub fn session_keys(dhs: [&[u8; 32]; 4], transcript: &[u8; 32]) -> SessionKeys {
++    let ikm = [dhs[0].as_slice(), dhs[1], dhs[2], dhs[3]].concat();
++    let mut okm = [0u8; 80];
++    hkdf(&ikm, transcript, LABEL_SESSION_KEYS.as_bytes(), &mut okm);
++    let mut keys = SessionKeys {
++        c2s: [0; 32],
++        s2c: [0; 32],
++        sid: [0; SID_LEN],
++    };
++    keys.c2s.copy_from_slice(&okm[..32]);
++    keys.s2c.copy_from_slice(&okm[32..64]);
++    keys.sid.copy_from_slice(&okm[64..80]);
++    keys
++}
++
++// ---- RPC (CONTRACT §4.4) ---------------------------------------------------------------------
++
++pub fn rpc_aad(response: bool, sid: &[u8; SID_LEN], seq: u64) -> Vec<u8> {
++    let label = if response { LABEL_RPC_RES } else { LABEL_RPC_REQ };
++    [label.as_bytes(), sid, &u64be(seq)].concat()
++}
++
++// ---- Revocation notice (A1) ------------------------------------------------------------------
++
++pub fn revocation_key(dh_host_eph: &[u8; 32], host_id: &str, device_id: &str, client_epk: &[u8; 32]) -> [u8; 32] {
++    let aad = revocation_aad(host_id, device_id, client_epk);
++    hkdf32(dh_host_eph, &sha256(&[&aad]), LABEL_REVOKED.as_bytes())
++}
++
++pub fn revocation_aad(host_id: &str, device_id: &str, client_epk: &[u8; 32]) -> Vec<u8> {
++    [format!("{LABEL_REVOKED}|{host_id}|{device_id}|").as_bytes(), client_epk].concat()
++}
++
++// ---- Confirm and re-key proofs (§5, §5.3, §5.4) ----------------------------------------------
++
++pub fn confirm_mac_input(
++    sid: &[u8; SID_LEN],
++    seq: u64,
++    method: &str,
++    path: &str,
++    body_jcs: &str,
++    rid: &str,
++) -> Vec<u8> {
++    let body_hash = sha256(&[body_jcs.as_bytes()]);
++    [
++        LABEL_CONFIRM.as_bytes(),
++        sid,
++        &u64be(seq),
++        method.as_bytes(),
++        &[0],
++        path.as_bytes(),
++        &[0],
++        &body_hash,
++        rid.as_bytes(),
++    ]
++    .concat()
++}
++
++pub fn rekey_mac_input(sid: &[u8; SID_LEN], device_id: &str) -> Vec<u8> {
++    [LABEL_REKEY.as_bytes(), sid, device_id.as_bytes()].concat()
++}
++
++/// RFC 8785 canonical JSON for the value types sensitive bodies use. Floats are
++/// refused: the contract keeps them off the wire.
++pub fn jcs(value: &serde_json::Value) -> Result<String, CryptoError> {
++    use serde_json::Value;
++    Ok(match value {
++        Value::Null => "null".into(),
++        Value::Bool(b) => b.to_string(),
++        Value::Number(n) => {
++            let i = n.as_i64().ok_or(CryptoError)?;
++            if i.unsigned_abs() > (1u64 << 53) - 1 {
++                return Err(CryptoError);
++            }
++            i.to_string()
++        }
++        Value::String(s) => serde_json::to_string(s).map_err(|_| CryptoError)?,
++        Value::Array(items) => {
++            let parts: Result<Vec<_>, _> = items.iter().map(jcs).collect();
++            format!("[{}]", parts?.join(","))
++        }
++        Value::Object(map) => {
++            // RFC 8785 sorts keys by UTF-16 code units.
++            let mut keys: Vec<&String> = map.keys().collect();
++            keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
++            let mut parts = Vec::with_capacity(keys.len());
++            for k in keys {
++                parts.push(format!(
++                    "{}:{}",
++                    serde_json::to_string(k).map_err(|_| CryptoError)?,
++                    jcs(&map[k])?
++                ));
++            }
++            format!("{{{}}}", parts.join(","))
++        }
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn b64u_rejects_non_canonical_and_padded_input() {
++        assert_eq!(from_b64u("AA").unwrap(), vec![0]);
++        assert!(from_b64u("AB").is_err(), "non-zero trailing bits");
++        assert!(from_b64u("AA==").is_err(), "padding");
++        assert!(from_b64u("A+/=").is_err(), "standard alphabet");
++    }
++
++    #[test]
++    fn open_rejects_tampering() {
++        let key = [7u8; 32];
++        let nonce = [9u8; 24];
++        let sealed = seal(&key, &nonce, b"hello", b"aad");
++        assert_eq!(open(&key, &nonce, &sealed, b"aad").unwrap(), b"hello");
++        assert!(open(&key, &nonce, &sealed, b"other").is_err());
++        let mut bad = sealed.clone();
++        bad[0] ^= 1;
++        assert!(open(&key, &nonce, &bad, b"aad").is_err());
++        assert!(open(&key, &nonce[..23], &sealed, b"aad").is_err());
++    }
++
++    #[test]
++    fn jcs_refuses_floats_and_unsafe_integers() {
++        assert!(jcs(&serde_json::json!(1.5)).is_err());
++        assert!(jcs(&serde_json::json!(9007199254740992_i64)).is_err());
++        assert_eq!(
++            jcs(&serde_json::json!({"b":1,"a":[true,null]})).unwrap(),
++            r#"{"a":[true,null],"b":1}"#
++        );
++    }
++}
+diff --git a/crates/aionui-mobile/src/error.rs b/crates/aionui-mobile/src/error.rs
+new file mode 100644
+index 00000000..77da66f5
+--- /dev/null
++++ b/crates/aionui-mobile/src/error.rs
+@@ -0,0 +1,19 @@
++use thiserror::Error;
++
++#[derive(Debug, Error)]
++pub enum MobileError {
++    #[error("mobile bridge storage error: {0}")]
++    Store(#[from] sqlx::Error),
++    #[error("mobile bridge migration error: {0}")]
++    Migrate(#[from] sqlx::migrate::MigrateError),
++    #[error("mobile bridge key error: {0}")]
++    Key(String),
++    #[error("mobile bridge listener error: {0}")]
++    Listener(String),
++    #[error("invalid mobile bridge setting: {0}")]
++    InvalidSetting(String),
++    #[error("mobile bridge I/O error: {0}")]
++    Io(#[from] std::io::Error),
++    #[error("mobile bridge serialization error: {0}")]
++    Json(#[from] serde_json::Error),
++}
+diff --git a/crates/aionui-mobile/src/host_key.rs b/crates/aionui-mobile/src/host_key.rs
+new file mode 100644
+index 00000000..1538b4c9
+--- /dev/null
++++ b/crates/aionui-mobile/src/host_key.rs
+@@ -0,0 +1,283 @@
++//! The PC's long-term identity for the bridge (CONTRACT §3.1): the static
++//! X25519 key `S_h`, the random `hostId`, and `dataKey`, which seals per-device
++//! secrets. One file, `host.key`, sealed with the OS's per-user protection
++//! (DPAPI on Windows). Rotating it means a new `hostId`, so every phone pairs
++//! again.
++
++use std::path::{Path, PathBuf};
++
++use base64::Engine;
++use base64::engine::general_purpose::URL_SAFE_NO_PAD;
++use serde::{Deserialize, Serialize};
++use x25519_dalek::{PublicKey, StaticSecret};
++
++use crate::error::MobileError;
++
++/// Seals and unseals bytes at rest.
++pub trait SecretProtector: Send + Sync {
++    fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, MobileError>;
++    fn unprotect(&self, sealed: &[u8]) -> Result<Vec<u8>, MobileError>;
++}
++
++/// The current Windows user's DPAPI key: only this user on this PC can unseal.
++#[cfg(windows)]
++pub struct DpapiProtector;
++
++#[cfg(windows)]
++impl SecretProtector for DpapiProtector {
++    fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, MobileError> {
++        dpapi::run(plain, true)
++    }
++
++    fn unprotect(&self, sealed: &[u8]) -> Result<Vec<u8>, MobileError> {
++        dpapi::run(sealed, false)
++    }
++}
++
++#[cfg(windows)]
++mod dpapi {
++    use windows_sys::Win32::Foundation::{HLOCAL, LocalFree};
++    use windows_sys::Win32::Security::Cryptography::{
++        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
++    };
++
++    use crate::error::MobileError;
++
++    pub(super) fn run(input: &[u8], protect: bool) -> Result<Vec<u8>, MobileError> {
++        let len = u32::try_from(input.len()).map_err(|_| MobileError::Key("secret too large".into()))?;
++        let data_in = CRYPT_INTEGER_BLOB {
++            cbData: len,
++            pbData: input.as_ptr() as *mut u8,
++        };
++        let mut data_out = CRYPT_INTEGER_BLOB {
++            cbData: 0,
++            pbData: std::ptr::null_mut(),
++        };
++        // SAFETY: every pointer is valid for the call; the output buffer is
++        // allocated by the OS and released with LocalFree below.
++        let ok = unsafe {
++            if protect {
++                CryptProtectData(
++                    &data_in,
++                    std::ptr::null(),
++                    std::ptr::null(),
++                    std::ptr::null(),
++                    std::ptr::null(),
++                    CRYPTPROTECT_UI_FORBIDDEN,
++                    &mut data_out,
++                )
++            } else {
++                CryptUnprotectData(
++                    &data_in,
++                    std::ptr::null_mut(),
++                    std::ptr::null(),
++                    std::ptr::null(),
++                    std::ptr::null(),
++                    CRYPTPROTECT_UI_FORBIDDEN,
++                    &mut data_out,
++                )
++            }
++        };
++        if ok == 0 || data_out.pbData.is_null() {
++            let op = if protect {
++                "CryptProtectData"
++            } else {
++                "CryptUnprotectData"
++            };
++            return Err(MobileError::Key(format!(
++                "{op} failed: {}",
++                std::io::Error::last_os_error()
++            )));
++        }
++        // SAFETY: the OS returned cbData valid bytes at pbData.
++        let out = unsafe { std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize).to_vec() };
++        // SAFETY: pbData was allocated by the OS for this call.
++        unsafe { LocalFree(data_out.pbData as HLOCAL) };
++        Ok(out)
++    }
++}
++
++/// Stores bytes as they are. Tests and non-Windows development only.
++pub struct UnprotectedForTests;
++
++impl SecretProtector for UnprotectedForTests {
++    fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, MobileError> {
++        Ok(plain.to_vec())
++    }
++
++    fn unprotect(&self, sealed: &[u8]) -> Result<Vec<u8>, MobileError> {
++        Ok(sealed.to_vec())
++    }
++}
++
++/// The protector for this platform.
++pub fn platform_protector() -> Box<dyn SecretProtector> {
++    #[cfg(windows)]
++    {
++        Box::new(DpapiProtector)
++    }
++    #[cfg(not(windows))]
++    {
++        tracing::warn!("mobile bridge: no OS secret protection on this platform; host.key is stored unsealed");
++        Box::new(UnprotectedForTests)
++    }
++}
++
++#[derive(Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++struct HostKeyFile {
++    v: u8,
++    host_id: String,
++    s_h: String,
++    data_key: String,
++}
++
++pub struct HostKey {
++    pub host_id: String,
++    secret: StaticSecret,
++    pub public: PublicKey,
++    data_key: [u8; 32],
++}
++
++impl std::fmt::Debug for HostKey {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("HostKey")
++            .field("host_id", &self.host_id)
++            .finish_non_exhaustive()
++    }
++}
++
++impl HostKey {
++    pub fn path_in(data_dir: &Path) -> PathBuf {
++        data_dir.join("aiondx-mobile").join("host.key")
++    }
++
++    /// Loads `host.key`, creating it on first use.
++    pub fn load_or_create(path: &Path, protector: &dyn SecretProtector) -> Result<Self, MobileError> {
++        if path.exists() {
++            let sealed = std::fs::read(path)?;
++            let plain = protector.unprotect(&sealed)?;
++            let file: HostKeyFile = serde_json::from_slice(&plain)?;
++            return Self::from_file(file);
++        }
++        let key = Self::generate()?;
++        if let Some(dir) = path.parent() {
++            std::fs::create_dir_all(dir)?;
++        }
++        let plain = serde_json::to_vec(&key.to_file())?;
++        let sealed = protector.protect(&plain)?;
++        let tmp = path.with_extension("key.tmp");
++        std::fs::write(&tmp, sealed)?;
++        std::fs::rename(&tmp, path)?;
++        tracing::info!(host_id = %key.host_id, "mobile bridge: created host key");
++        Ok(key)
++    }
++
++    pub fn generate() -> Result<Self, MobileError> {
++        let host_id = URL_SAFE_NO_PAD.encode(random_bytes::<16>()?);
++        let secret = StaticSecret::from(random_bytes::<32>()?);
++        let public = PublicKey::from(&secret);
++        Ok(Self {
++            host_id,
++            secret,
++            public,
++            data_key: random_bytes::<32>()?,
++        })
++    }
++
++    /// X25519 with the host static key.
++    pub fn diffie_hellman(&self, peer: &PublicKey) -> [u8; 32] {
++        self.secret.diffie_hellman(peer).to_bytes()
++    }
++
++    pub fn data_key(&self) -> &[u8; 32] {
++        &self.data_key
++    }
++
++    fn to_file(&self) -> HostKeyFile {
++        HostKeyFile {
++            v: 1,
++            host_id: self.host_id.clone(),
++            s_h: URL_SAFE_NO_PAD.encode(self.secret.to_bytes()),
++            data_key: URL_SAFE_NO_PAD.encode(self.data_key),
++        }
++    }
++
++    fn from_file(file: HostKeyFile) -> Result<Self, MobileError> {
++        if file.v != 1 {
++            return Err(MobileError::Key(format!("unsupported host.key version {}", file.v)));
++        }
++        let secret = StaticSecret::from(decode_32(&file.s_h)?);
++        let public = PublicKey::from(&secret);
++        Ok(Self {
++            host_id: file.host_id,
++            secret,
++            public,
++            data_key: decode_32(&file.data_key)?,
++        })
++    }
++}
++
++pub(crate) fn random_bytes<const N: usize>() -> Result<[u8; N], MobileError> {
++    let mut buf = [0u8; N];
++    getrandom::getrandom(&mut buf).map_err(|e| MobileError::Key(format!("OS random source failed: {e}")))?;
++    Ok(buf)
++}
++
++fn decode_32(b64u: &str) -> Result<[u8; 32], MobileError> {
++    URL_SAFE_NO_PAD
++        .decode(b64u)
++        .ok()
++        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
++        .ok_or_else(|| MobileError::Key("host.key holds a malformed key".into()))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn create_then_reload_gives_the_same_identity() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = HostKey::path_in(dir.path());
++        let first = HostKey::load_or_create(&path, &UnprotectedForTests).unwrap();
++        let again = HostKey::load_or_create(&path, &UnprotectedForTests).unwrap();
++        assert_eq!(first.host_id, again.host_id);
++        assert_eq!(first.public.as_bytes(), again.public.as_bytes());
++        assert_eq!(first.data_key(), again.data_key());
++        assert_eq!(URL_SAFE_NO_PAD.decode(&first.host_id).unwrap().len(), 16);
++    }
++
++    #[test]
++    fn a_corrupt_file_is_an_error_not_a_new_identity() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = HostKey::path_in(dir.path());
++        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
++        std::fs::write(&path, b"not json").unwrap();
++        assert!(HostKey::load_or_create(&path, &UnprotectedForTests).is_err());
++    }
++
++    #[test]
++    fn debug_output_never_shows_secrets() {
++        let key = HostKey::generate().unwrap();
++        let shown = format!("{key:?}");
++        assert!(shown.contains(&key.host_id));
++        assert!(!shown.contains(&URL_SAFE_NO_PAD.encode(key.data_key())));
++    }
++
++    #[cfg(windows)]
++    #[test]
++    fn dpapi_round_trips_and_does_not_store_plaintext() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = HostKey::path_in(dir.path());
++        let first = HostKey::load_or_create(&path, &DpapiProtector).unwrap();
++        let on_disk = std::fs::read(&path).unwrap();
++        assert!(
++            !String::from_utf8_lossy(&on_disk).contains(&first.host_id),
++            "host.key must be sealed"
++        );
++        let again = HostKey::load_or_create(&path, &DpapiProtector).unwrap();
++        assert_eq!(first.host_id, again.host_id);
++        assert_eq!(first.public.as_bytes(), again.public.as_bytes());
++    }
++}
+diff --git a/crates/aionui-mobile/src/lib.rs b/crates/aionui-mobile/src/lib.rs
+new file mode 100644
+index 00000000..7e8b644b
+--- /dev/null
++++ b/crates/aionui-mobile/src/lib.rs
+@@ -0,0 +1,19 @@
++//! AionDX core-0015: the encrypted PC <-> phone bridge.
++//! Contract: `docs/mobile-bridge/CONTRACT.md` in the AionDX repository.
++
++pub mod admin_routes;
++pub mod crypto;
++pub mod error;
++pub mod host_key;
++pub mod listener;
++pub mod peer_filter;
++pub mod service;
++pub mod settings;
++pub mod store;
++
++pub use admin_routes::{MobileAdminState, mobile_admin_routes};
++pub use error::MobileError;
++pub use host_key::{HostKey, SecretProtector, platform_protector};
++pub use service::{MobileBridge, MobileStatus};
++pub use settings::{MobileSettings, MobileSettingsPatch};
++pub use store::MobileStore;
+diff --git a/crates/aionui-mobile/src/listener.rs b/crates/aionui-mobile/src/listener.rs
+new file mode 100644
+index 00000000..5185381e
+--- /dev/null
++++ b/crates/aionui-mobile/src/listener.rs
+@@ -0,0 +1,171 @@
++//! The LAN listener (CONTRACT §2, §4). It is separate from AionCore's own
++//! 127.0.0.1 server and serves only `/api/mobile/v1/*`. Every request from a
++//! peer outside the private ranges is refused before routing.
++
++use std::net::SocketAddr;
++use std::sync::Arc;
++
++use axum::Json;
++use axum::Router;
++use axum::extract::{ConnectInfo, Request, State};
++use axum::http::StatusCode;
++use axum::middleware::Next;
++use axum::response::{IntoResponse, Response};
++use axum::routing::get;
++use serde_json::json;
++use tokio::net::TcpListener;
++use tokio::sync::oneshot;
++use tokio::task::JoinHandle;
++
++use crate::error::MobileError;
++use crate::peer_filter::is_private_peer;
++
++/// Shared state for the outer (unauthenticated, plaintext) routes.
++#[derive(Clone)]
++pub struct OuterState {
++    pub host_id: Arc<str>,
++}
++
++/// The outer routes. Later phases add `pair`, `session` and `rpc` here.
++pub fn outer_router(state: OuterState) -> Router {
++    Router::new()
++        .route("/api/mobile/v1/hello", get(hello))
++        .fallback(not_found)
++        .with_state(state)
++        .layer(axum::middleware::from_fn(private_peers_only))
++}
++
++async fn hello(State(state): State<OuterState>) -> Json<serde_json::Value> {
++    Json(json!({ "v": [1], "hostId": &*state.host_id }))
++}
++
++async fn not_found() -> Response {
++    (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response()
++}
++
++async fn private_peers_only(request: Request, next: Next) -> Response {
++    let peer = request.extensions().get::<ConnectInfo<SocketAddr>>().map(|info| info.0);
++    match peer {
++        Some(addr) if is_private_peer(addr.ip()) => next.run(request).await,
++        _ => {
++            tracing::warn!(peer = ?peer, "mobile bridge: refused a request from a non-private address");
++            (StatusCode::FORBIDDEN, Json(json!({ "error": "forbidden_peer" }))).into_response()
++        }
++    }
++}
++
++/// A running listener. Dropping it does not stop it; call [`ListenerHandle::stop`].
++pub struct ListenerHandle {
++    pub addr: SocketAddr,
++    shutdown: Option<oneshot::Sender<()>>,
++    task: JoinHandle<()>,
++}
++
++impl ListenerHandle {
++    pub async fn stop(mut self) {
++        if let Some(tx) = self.shutdown.take() {
++            let _ = tx.send(());
++        }
++        let _ = self.task.await;
++        tracing::info!(addr = %self.addr, "mobile bridge: listener stopped");
++    }
++}
++
++/// Binds `bind_ip:port` and serves `router` until stopped.
++pub async fn start(bind_ip: std::net::IpAddr, port: u16, router: Router) -> Result<ListenerHandle, MobileError> {
++    let listener = TcpListener::bind(SocketAddr::new(bind_ip, port))
++        .await
++        .map_err(|e| MobileError::Listener(format!("could not listen on port {port}: {e}")))?;
++    let addr = listener
++        .local_addr()
++        .map_err(|e| MobileError::Listener(e.to_string()))?;
++    let (tx, rx) = oneshot::channel::<()>();
++    let service = router.into_make_service_with_connect_info::<SocketAddr>();
++    let task = tokio::spawn(async move {
++        let result = axum::serve(listener, service)
++            .with_graceful_shutdown(async move {
++                let _ = rx.await;
++            })
++            .await;
++        if let Err(e) = result {
++            tracing::error!(error = %e, "mobile bridge: listener failed");
++        }
++    });
++    tracing::info!(%addr, "mobile bridge: listener started");
++    Ok(ListenerHandle {
++        addr,
++        shutdown: Some(tx),
++        task,
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::net::{IpAddr, Ipv4Addr};
++
++    async fn get_json(addr: SocketAddr, path: &str) -> (u16, serde_json::Value) {
++        use tokio::io::{AsyncReadExt, AsyncWriteExt};
++        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
++        let req = format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
++        stream.write_all(req.as_bytes()).await.unwrap();
++        let mut raw = String::new();
++        stream.read_to_string(&mut raw).await.unwrap();
++        let status: u16 = raw[9..12].parse().unwrap();
++        let body = raw.split("\r\n\r\n").nth(1).unwrap_or("");
++        // axum may answer with chunked encoding; take the JSON object out of it.
++        let start = body.find('{').unwrap();
++        let end = body.rfind('}').unwrap();
++        (status, serde_json::from_str(&body[start..=end]).unwrap())
++    }
++
++    fn router() -> Router {
++        outer_router(OuterState {
++            host_id: Arc::from("host-123"),
++        })
++    }
++
++    #[tokio::test]
++    async fn hello_answers_with_version_and_host_id_and_stops_cleanly() {
++        let handle = start(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, router()).await.unwrap();
++        let (status, body) = get_json(handle.addr, "/api/mobile/v1/hello").await;
++        assert_eq!(status, 200);
++        assert_eq!(body, json!({ "v": [1], "hostId": "host-123" }));
++        let addr = handle.addr;
++        handle.stop().await;
++        assert!(
++            tokio::net::TcpStream::connect(addr).await.is_err(),
++            "port is released after stop"
++        );
++    }
++
++    #[tokio::test]
++    async fn only_bridge_routes_are_served() {
++        let handle = start(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, router()).await.unwrap();
++        for path in ["/api/teams", "/api/conversations", "/", "/api/mobile/admin/status"] {
++            let (status, body) = get_json(handle.addr, path).await;
++            assert_eq!(status, 404, "{path}");
++            assert_eq!(body, json!({ "error": "not_found" }));
++        }
++        handle.stop().await;
++    }
++
++    #[tokio::test]
++    async fn non_private_peers_are_refused() {
++        use tower::ServiceExt;
++        let request = axum::http::Request::get("/api/mobile/v1/hello")
++            .extension(ConnectInfo(SocketAddr::from(([8, 8, 8, 8], 5555))))
++            .body(axum::body::Body::empty())
++            .unwrap();
++        let response = router().oneshot(request).await.unwrap();
++        assert_eq!(response.status(), StatusCode::FORBIDDEN);
++    }
++
++    #[tokio::test]
++    async fn a_taken_port_is_reported_not_panicked() {
++        let first = start(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, router()).await.unwrap();
++        let err = start(IpAddr::V4(Ipv4Addr::LOCALHOST), first.addr.port(), router()).await;
++        assert!(matches!(err, Err(MobileError::Listener(_))));
++        first.stop().await;
++    }
++}
+diff --git a/crates/aionui-mobile/src/peer_filter.rs b/crates/aionui-mobile/src/peer_filter.rs
+new file mode 100644
+index 00000000..99db5c75
+--- /dev/null
++++ b/crates/aionui-mobile/src/peer_filter.rs
+@@ -0,0 +1,77 @@
++//! Which peers may reach the LAN listener (CONTRACT §2): private and
++//! link-local ranges, CGNAT (Tailscale) and loopback. Everything else is
++//! refused before any protocol handling.
++
++use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
++
++pub fn is_private_peer(ip: IpAddr) -> bool {
++    match ip {
++        IpAddr::V4(v4) => is_private_v4(v4),
++        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
++            Some(v4) => is_private_v4(v4),
++            None => is_private_v6(v6),
++        },
++    }
++}
++
++fn is_private_v4(ip: Ipv4Addr) -> bool {
++    let [a, b, ..] = ip.octets();
++    ip.is_loopback()
++        || ip.is_private() // 10/8, 172.16/12, 192.168/16
++        || ip.is_link_local() // 169.254/16
++        || (a == 100 && (64..=127).contains(&b)) // 100.64/10, CGNAT (Tailscale)
++}
++
++fn is_private_v6(ip: Ipv6Addr) -> bool {
++    let first = ip.segments()[0];
++    ip.is_loopback()
++        || (first & 0xfe00) == 0xfc00 // fc00::/7, unique local
++        || (first & 0xffc0) == 0xfe80 // fe80::/10, link-local
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn ip(s: &str) -> IpAddr {
++        s.parse().unwrap()
++    }
++
++    #[test]
++    fn private_ranges_are_accepted() {
++        for a in [
++            "127.0.0.1",
++            "10.0.0.5",
++            "172.16.0.1",
++            "172.31.255.255",
++            "192.168.1.20",
++            "169.254.3.4",
++            "100.64.0.1",
++            "100.127.255.254",
++            "::1",
++            "fd12:3456::1",
++            "fe80::1",
++            "::ffff:192.168.1.2",
++        ] {
++            assert!(is_private_peer(ip(a)), "{a}");
++        }
++    }
++
++    #[test]
++    fn public_and_edge_ranges_are_refused() {
++        for a in [
++            "8.8.8.8",
++            "172.32.0.1",
++            "172.15.255.255",
++            "100.63.255.255",
++            "100.128.0.1",
++            "192.169.0.1",
++            "1.1.1.1",
++            "2001:4860::8888",
++            "::ffff:8.8.8.8",
++            "0.0.0.0",
++        ] {
++            assert!(!is_private_peer(ip(a)), "{a}");
++        }
++    }
++}
+diff --git a/crates/aionui-mobile/src/service.rs b/crates/aionui-mobile/src/service.rs
+new file mode 100644
+index 00000000..6ed7d963
+--- /dev/null
++++ b/crates/aionui-mobile/src/service.rs
+@@ -0,0 +1,317 @@
++//! The bridge's lifecycle: settings, the host key, and whether the LAN
++//! listener runs. Business logic only; the HTTP surfaces live in
++//! `listener.rs` (LAN) and `admin_routes.rs` (desktop).
++
++use std::net::{IpAddr, Ipv4Addr, UdpSocket};
++use std::sync::Arc;
++
++use serde::Serialize;
++use tokio::sync::Mutex;
++
++use crate::error::MobileError;
++use crate::host_key::HostKey;
++use crate::listener::{self, ListenerHandle, OuterState};
++use crate::settings::{MobileSettings, MobileSettingsPatch};
++use crate::store::MobileStore;
++
++/// What the desktop's Settings > Mobile page shows (CONTRACT §3.4).
++#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "camelCase")]
++pub struct MobileStatus {
++    pub enabled: bool,
++    pub port: u16,
++    pub urls: Vec<String>,
++    pub host_id: String,
++    pub host_name: String,
++    pub mdns: bool,
++    pub tasks_write: bool,
++    pub listening: bool,
++    pub error: Option<String>,
++}
++
++struct Running {
++    user_id: String,
++    port: u16,
++    handle: ListenerHandle,
++}
++
++pub struct MobileBridge {
++    store: MobileStore,
++    host_key: Arc<HostKey>,
++    default_host_name: String,
++    bind_ip: IpAddr,
++    running: Mutex<Option<Running>>,
++    last_error: Mutex<Option<String>>,
++}
++
++impl MobileBridge {
++    pub fn new(store: MobileStore, host_key: Arc<HostKey>, default_host_name: String) -> Arc<Self> {
++        Self::with_bind_ip(store, host_key, default_host_name, IpAddr::V4(Ipv4Addr::UNSPECIFIED))
++    }
++
++    /// `bind_ip` is `0.0.0.0` in production; tests use loopback.
++    pub fn with_bind_ip(
++        store: MobileStore,
++        host_key: Arc<HostKey>,
++        default_host_name: String,
++        bind_ip: IpAddr,
++    ) -> Arc<Self> {
++        Arc::new(Self {
++            store,
++            host_key,
++            default_host_name,
++            bind_ip,
++            running: Mutex::new(None),
++            last_error: Mutex::new(None),
++        })
++    }
++
++    pub fn host_key(&self) -> &Arc<HostKey> {
++        &self.host_key
++    }
++
++    pub fn store(&self) -> &MobileStore {
++        &self.store
++    }
++
++    async fn settings_for(&self, user_id: &str) -> Result<MobileSettings, MobileError> {
++        Ok(self
++            .store
++            .load_settings(user_id)
++            .await?
++            .unwrap_or_else(|| MobileSettings::defaults(self.default_host_name.clone())))
++    }
++
++    /// Starts the listener at boot for the user who left the bridge on.
++    pub async fn start_if_enabled(&self) {
++        match self.store.enabled_users().await {
++            Ok(users) => {
++                if users.len() > 1 {
++                    tracing::warn!(
++                        count = users.len(),
++                        "mobile bridge: enabled for several users; using the most recent"
++                    );
++                }
++                if let Some((user_id, settings)) = users.into_iter().next() {
++                    self.reconcile(&user_id, &settings).await;
++                }
++            }
++            Err(e) => tracing::error!(error = %e, "mobile bridge: could not read settings at startup"),
++        }
++    }
++
++    pub async fn status(&self, user_id: &str) -> Result<MobileStatus, MobileError> {
++        let settings = self.settings_for(user_id).await?;
++        Ok(self.status_from(user_id, &settings).await)
++    }
++
++    pub async fn update_settings(
++        &self,
++        user_id: &str,
++        patch: &MobileSettingsPatch,
++    ) -> Result<MobileStatus, MobileError> {
++        let mut settings = self.settings_for(user_id).await?;
++        settings.apply(patch)?;
++        self.store.save_settings(user_id, &settings).await?;
++        self.reconcile(user_id, &settings).await;
++        Ok(self.status_from(user_id, &settings).await)
++    }
++
++    /// Stops the listener, e.g. at shutdown.
++    pub async fn stop(&self) {
++        if let Some(running) = self.running.lock().await.take() {
++            running.handle.stop().await;
++        }
++    }
++
++    /// Makes the listener match `settings` for `user_id`.
++    async fn reconcile(&self, user_id: &str, settings: &MobileSettings) {
++        let mut running = self.running.lock().await;
++        let keep = matches!(&*running, Some(r) if settings.enabled && r.user_id == user_id && r.port == settings.port);
++        if keep {
++            return;
++        }
++        let other_user = matches!(&*running, Some(r) if r.user_id != user_id);
++        if other_user && !settings.enabled {
++            return; // someone else's bridge; this user switching off changes nothing
++        }
++        if let Some(old) = running.take() {
++            old.handle.stop().await;
++        }
++        *self.last_error.lock().await = None;
++        if !settings.enabled {
++            return;
++        }
++        let router = listener::outer_router(OuterState {
++            host_id: Arc::from(self.host_key.host_id.as_str()),
++        });
++        match listener::start(self.bind_ip, settings.port, router).await {
++            Ok(handle) => {
++                *running = Some(Running {
++                    user_id: user_id.to_owned(),
++                    port: settings.port,
++                    handle,
++                });
++            }
++            Err(e) => {
++                tracing::error!(error = %e, port = settings.port, "mobile bridge: listener did not start");
++                *self.last_error.lock().await = Some(e.to_string());
++            }
++        }
++    }
++
++    async fn status_from(&self, user_id: &str, settings: &MobileSettings) -> MobileStatus {
++        let listening = matches!(&*self.running.lock().await, Some(r) if r.user_id == user_id);
++        MobileStatus {
++            enabled: settings.enabled,
++            port: settings.port,
++            urls: pairing_urls(settings),
++            host_id: self.host_key.host_id.clone(),
++            host_name: settings.host_name.clone(),
++            mdns: settings.mdns,
++            tasks_write: settings.tasks_write,
++            listening,
++            error: self.last_error.lock().await.clone(),
++        }
++    }
++}
++
++/// The base URLs that go into the pairing QR: this PC's primary LAN address,
++/// then the user's extra URLs. Phase 5 replaces the primary-address probe with
++/// a full interface enumeration.
++fn pairing_urls(settings: &MobileSettings) -> Vec<String> {
++    let mut urls = Vec::new();
++    if let Some(ip) = primary_lan_ip() {
++        urls.push(format!("http://{ip}:{}", settings.port));
++    }
++    for url in &settings.extra_urls {
++        if !urls.contains(url) {
++            urls.push(url.clone());
++        }
++    }
++    urls
++}
++
++/// The address the OS would use for outbound traffic. Connecting a UDP socket
++/// sends nothing; it only selects a route.
++fn primary_lan_ip() -> Option<IpAddr> {
++    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
++    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
++    let ip = socket.local_addr().ok()?.ip();
++    crate::peer_filter::is_private_peer(ip)
++        .then_some(ip)
++        .filter(|ip| !ip.is_loopback())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    async fn bridge() -> Arc<MobileBridge> {
++        let store = MobileStore::open_memory().await.unwrap();
++        let key = Arc::new(HostKey::generate().unwrap());
++        MobileBridge::with_bind_ip(store, key, "Test PC".into(), IpAddr::V4(Ipv4Addr::LOCALHOST))
++    }
++
++    fn free_port() -> u16 {
++        std::net::TcpListener::bind("127.0.0.1:0")
++            .unwrap()
++            .local_addr()
++            .unwrap()
++            .port()
++    }
++
++    #[tokio::test]
++    async fn off_by_default_and_not_listening() {
++        let b = bridge().await;
++        let status = b.status("u1").await.unwrap();
++        assert!(!status.enabled);
++        assert!(!status.listening);
++        assert_eq!(status.port, 47734);
++        assert_eq!(status.host_name, "Test PC");
++        assert!(status.tasks_write);
++    }
++
++    #[tokio::test]
++    async fn enabling_starts_the_listener_and_disabling_stops_it() {
++        let b = bridge().await;
++        let port = free_port();
++        let on = b
++            .update_settings(
++                "u1",
++                &MobileSettingsPatch {
++                    enabled: Some(true),
++                    port: Some(port),
++                    ..Default::default()
++                },
++            )
++            .await
++            .unwrap();
++        assert!(on.listening, "{on:?}");
++        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok());
++
++        let off = b
++            .update_settings(
++                "u1",
++                &MobileSettingsPatch {
++                    enabled: Some(false),
++                    ..Default::default()
++                },
++            )
++            .await
++            .unwrap();
++        assert!(!off.listening);
++        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err());
++    }
++
++    #[tokio::test]
++    async fn a_taken_port_is_reported_in_status() {
++        let b = bridge().await;
++        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++        let port = taken.local_addr().unwrap().port();
++        let status = b
++            .update_settings(
++                "u1",
++                &MobileSettingsPatch {
++                    enabled: Some(true),
++                    port: Some(port),
++                    ..Default::default()
++                },
++            )
++            .await
++            .unwrap();
++        assert!(status.enabled);
++        assert!(!status.listening);
++        assert!(status.error.unwrap().contains(&port.to_string()));
++    }
++
++    #[tokio::test]
++    async fn start_if_enabled_restores_the_listener() {
++        let b = bridge().await;
++        let port = free_port();
++        let mut s = MobileSettings::defaults("Test PC");
++        s.enabled = true;
++        s.port = port;
++        b.store().save_settings("u1", &s).await.unwrap();
++        b.start_if_enabled().await;
++        assert!(b.status("u1").await.unwrap().listening);
++        b.stop().await;
++        assert!(!b.status("u1").await.unwrap().listening);
++    }
++
++    #[tokio::test]
++    async fn extra_urls_follow_the_primary_address() {
++        let b = bridge().await;
++        let status = b
++            .update_settings(
++                "u1",
++                &MobileSettingsPatch {
++                    extra_urls: Some(vec!["http://100.64.0.9:47734".into()]),
++                    ..Default::default()
++                },
++            )
++            .await
++            .unwrap();
++        assert_eq!(status.urls.last().unwrap(), "http://100.64.0.9:47734");
++    }
++}
+diff --git a/crates/aionui-mobile/src/settings.rs b/crates/aionui-mobile/src/settings.rs
+new file mode 100644
+index 00000000..fe2cbc5a
+--- /dev/null
++++ b/crates/aionui-mobile/src/settings.rs
+@@ -0,0 +1,176 @@
++//! Bridge settings (CONTRACT §3.4, §7). Stored per Core user in the bridge's own database.
++
++use serde::{Deserialize, Serialize};
++
++use crate::error::MobileError;
++
++/// Default LAN port (CONTRACT §7, decision §11 #6).
++pub const DEFAULT_PORT: u16 = 47734;
++const MAX_EXTRA_URLS: usize = 8;
++const MAX_HOST_NAME_CHARS: usize = 64;
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct MobileSettings {
++    /// The LAN listener runs only while this is on. Off by default.
++    pub enabled: bool,
++    pub port: u16,
++    /// Shown on the phone; defaults to the PC's name.
++    pub host_name: String,
++    /// Extra base URLs put into the pairing QR, e.g. a Tailscale address.
++    pub extra_urls: Vec<String>,
++    /// Advertise `_aiondx._tcp` while enabled (§11 #6: on by default).
++    pub mdns: bool,
++    /// Task writes from the phone (§11 #4: on by default).
++    pub tasks_write: bool,
++}
++
++impl MobileSettings {
++    pub fn defaults(host_name: impl Into<String>) -> Self {
++        Self {
++            enabled: false,
++            port: DEFAULT_PORT,
++            host_name: host_name.into(),
++            extra_urls: Vec::new(),
++            mdns: true,
++            tasks_write: true,
++        }
++    }
++
++    /// Applies a partial update. On any invalid field nothing changes.
++    pub fn apply(&mut self, patch: &MobileSettingsPatch) -> Result<(), MobileError> {
++        let mut next = self.clone();
++        if let Some(enabled) = patch.enabled {
++            next.enabled = enabled;
++        }
++        if let Some(port) = patch.port {
++            if port < 1024 {
++                return Err(MobileError::InvalidSetting("port must be 1024 or higher".into()));
++            }
++            next.port = port;
++        }
++        if let Some(name) = &patch.host_name {
++            let name = name.trim();
++            if name.is_empty() || name.chars().count() > MAX_HOST_NAME_CHARS {
++                return Err(MobileError::InvalidSetting(format!(
++                    "hostName must be 1 to {MAX_HOST_NAME_CHARS} characters"
++                )));
++            }
++            next.host_name = name.to_owned();
++        }
++        if let Some(urls) = &patch.extra_urls {
++            if urls.len() > MAX_EXTRA_URLS {
++                return Err(MobileError::InvalidSetting(format!(
++                    "at most {MAX_EXTRA_URLS} extraUrls"
++                )));
++            }
++            next.extra_urls = urls
++                .iter()
++                .map(|url| validate_base_url(url))
++                .collect::<Result<_, _>>()?;
++        }
++        if let Some(mdns) = patch.mdns {
++            next.mdns = mdns;
++        }
++        if let Some(tasks_write) = patch.tasks_write {
++            next.tasks_write = tasks_write;
++        }
++        *self = next;
++        Ok(())
++    }
++}
++
++/// A partial update from `PUT /api/mobile/admin/settings`.
++#[derive(Debug, Clone, Default, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct MobileSettingsPatch {
++    pub enabled: Option<bool>,
++    pub port: Option<u16>,
++    pub host_name: Option<String>,
++    pub extra_urls: Option<Vec<String>>,
++    pub mdns: Option<bool>,
++    pub tasks_write: Option<bool>,
++}
++
++/// `http://host[:port]` or `https://...`, with no path, query or credentials.
++fn validate_base_url(raw: &str) -> Result<String, MobileError> {
++    let url = raw.trim().trim_end_matches('/');
++    let invalid = || MobileError::InvalidSetting(format!("extraUrls entry is not an http(s) base URL: {raw}"));
++    let rest = url
++        .strip_prefix("http://")
++        .or_else(|| url.strip_prefix("https://"))
++        .ok_or_else(invalid)?;
++    if rest.is_empty() || rest.contains(['/', '?', '#', '@', ' ']) {
++        return Err(invalid());
++    }
++    Ok(url.to_owned())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn defaults_follow_the_decisions_record() {
++        let s = MobileSettings::defaults("PC");
++        assert!(!s.enabled, "the bridge is off until the user enables it");
++        assert_eq!(s.port, 47734);
++        assert!(s.mdns);
++        assert!(s.tasks_write);
++    }
++
++    #[test]
++    fn patch_applies_only_given_fields() {
++        let mut s = MobileSettings::defaults("PC");
++        s.apply(&MobileSettingsPatch {
++            enabled: Some(true),
++            extra_urls: Some(vec!["http://100.64.1.2:47734/".into()]),
++            ..Default::default()
++        })
++        .unwrap();
++        assert!(s.enabled);
++        assert_eq!(s.extra_urls, vec!["http://100.64.1.2:47734".to_string()]);
++        assert_eq!(s.port, 47734);
++    }
++
++    #[test]
++    fn invalid_values_are_rejected_and_leave_settings_unchanged() {
++        let mut s = MobileSettings::defaults("PC");
++        let before = s.clone();
++        for patch in [
++            MobileSettingsPatch {
++                port: Some(80),
++                ..Default::default()
++            },
++            MobileSettingsPatch {
++                host_name: Some("  ".into()),
++                ..Default::default()
++            },
++            MobileSettingsPatch {
++                extra_urls: Some(vec!["ftp://x".into()]),
++                ..Default::default()
++            },
++            MobileSettingsPatch {
++                extra_urls: Some(vec!["http://x/path".into()]),
++                ..Default::default()
++            },
++            MobileSettingsPatch {
++                extra_urls: Some(vec!["http://u:p@x".into()]),
++                ..Default::default()
++            },
++            MobileSettingsPatch {
++                enabled: Some(true),
++                port: Some(1),
++                ..Default::default()
++            },
++        ] {
++            assert!(matches!(s.apply(&patch), Err(MobileError::InvalidSetting(_))));
++            assert_eq!(s, before);
++        }
++    }
++
++    #[test]
++    fn unknown_fields_are_rejected() {
++        assert!(serde_json::from_str::<MobileSettingsPatch>(r#"{"enabled":true,"bogus":1}"#).is_err());
++    }
++}
+diff --git a/crates/aionui-mobile/src/store.rs b/crates/aionui-mobile/src/store.rs
+new file mode 100644
+index 00000000..816dfa99
+--- /dev/null
++++ b/crates/aionui-mobile/src/store.rs
+@@ -0,0 +1,140 @@
++//! The bridge's own SQLite database, `mobile-bridge.db` in the data dir.
++//!
++//! Deliberately not a migration in `aionui-backend.db`: AionCore refuses to open
++//! a database that has a migration it does not know, so a shared migration would
++//! lock every core without the bridge out of the user's chats.
++
++use std::path::{Path, PathBuf};
++use std::str::FromStr;
++use std::time::Duration;
++
++use sqlx::SqlitePool;
++use sqlx::migrate::Migrator;
++use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
++
++use crate::error::MobileError;
++use crate::settings::MobileSettings;
++
++static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
++
++#[derive(Clone, Debug)]
++pub struct MobileStore {
++    pool: SqlitePool,
++}
++
++impl MobileStore {
++    pub fn path_in(data_dir: &Path) -> PathBuf {
++        data_dir.join("mobile-bridge.db")
++    }
++
++    pub async fn open(path: &Path) -> Result<Self, MobileError> {
++        let opts = SqliteConnectOptions::new()
++            .filename(path)
++            .create_if_missing(true)
++            .journal_mode(SqliteJournalMode::Wal)
++            .foreign_keys(true)
++            .busy_timeout(Duration::from_secs(5));
++        Self::connect(opts, 4).await
++    }
++
++    pub async fn open_memory() -> Result<Self, MobileError> {
++        let opts = SqliteConnectOptions::from_str("sqlite::memory:")?.foreign_keys(true);
++        // One connection: each in-memory connection would be a separate database.
++        Self::connect(opts, 1).await
++    }
++
++    async fn connect(opts: SqliteConnectOptions, max: u32) -> Result<Self, MobileError> {
++        let pool = SqlitePoolOptions::new().max_connections(max).connect_with(opts).await?;
++        MIGRATOR.run(&pool).await?;
++        Ok(Self { pool })
++    }
++
++    pub fn pool(&self) -> &SqlitePool {
++        &self.pool
++    }
++
++    pub async fn load_settings(&self, user_id: &str) -> Result<Option<MobileSettings>, MobileError> {
++        let row: Option<(String,)> = sqlx::query_as("SELECT settings_json FROM mobile_settings WHERE user_id = ?")
++            .bind(user_id)
++            .fetch_optional(&self.pool)
++            .await?;
++        row.map(|(json,)| serde_json::from_str(&json).map_err(MobileError::from))
++            .transpose()
++    }
++
++    pub async fn save_settings(&self, user_id: &str, settings: &MobileSettings) -> Result<(), MobileError> {
++        sqlx::query(
++            "INSERT INTO mobile_settings (user_id, settings_json, updated_at) VALUES (?, ?, ?) \
++             ON CONFLICT(user_id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at",
++        )
++        .bind(user_id)
++        .bind(serde_json::to_string(settings)?)
++        .bind(aionui_common::now_ms())
++        .execute(&self.pool)
++        .await?;
++        Ok(())
++    }
++
++    /// Users whose bridge is switched on (normally zero or one).
++    pub async fn enabled_users(&self) -> Result<Vec<(String, MobileSettings)>, MobileError> {
++        let rows: Vec<(String, String)> =
++            sqlx::query_as("SELECT user_id, settings_json FROM mobile_settings ORDER BY updated_at DESC")
++                .fetch_all(&self.pool)
++                .await?;
++        let mut out = Vec::new();
++        for (user_id, json) in rows {
++            let settings: MobileSettings = serde_json::from_str(&json)?;
++            if settings.enabled {
++                out.push((user_id, settings));
++            }
++        }
++        Ok(out)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[tokio::test]
++    async fn settings_round_trip_per_user() {
++        let store = MobileStore::open_memory().await.unwrap();
++        assert!(store.load_settings("u1").await.unwrap().is_none());
++        let mut s = MobileSettings::defaults("PC");
++        s.enabled = true;
++        store.save_settings("u1", &s).await.unwrap();
++        store
++            .save_settings("u2", &MobileSettings::defaults("PC"))
++            .await
++            .unwrap();
++        assert_eq!(store.load_settings("u1").await.unwrap(), Some(s.clone()));
++        let enabled = store.enabled_users().await.unwrap();
++        assert_eq!(enabled.len(), 1);
++        assert_eq!(enabled[0].0, "u1");
++    }
++
++    #[tokio::test]
++    async fn file_database_is_created_and_reopened() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = MobileStore::path_in(dir.path());
++        {
++            let store = MobileStore::open(&path).await.unwrap();
++            store
++                .save_settings("u1", &MobileSettings::defaults("PC"))
++                .await
++                .unwrap();
++            store.pool().close().await;
++        }
++        let store = MobileStore::open(&path).await.unwrap();
++        assert!(store.load_settings("u1").await.unwrap().is_some());
++        // The bridge's tables are present; nothing is written to AionCore's own database.
++        let tables: Vec<(String,)> = sqlx::query_as(
++            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'mobile_%' ORDER BY name",
++        )
++        .fetch_all(store.pool())
++        .await
++        .unwrap();
++        let names: Vec<_> = tables.into_iter().map(|(n,)| n).collect();
++        assert_eq!(names, ["mobile_device_tombstones", "mobile_devices", "mobile_settings"]);
++    }
++}
+diff --git a/crates/aionui-mobile/tests/vectors.json b/crates/aionui-mobile/tests/vectors.json
+new file mode 100644
+index 00000000..ce3314a5
+--- /dev/null
++++ b/crates/aionui-mobile/tests/vectors.json
+@@ -0,0 +1,155 @@
++{
++  "version": 1,
++  "conventions": "See header of gen-vectors.js and CONTRACT.md Appendix A.",
++  "inputs": {
++    "S_h": {
++      "priv": "77c7a6834512767fdaa2098e05104b29288a9dded68965e9c24cdd1e8fe0d8a3",
++      "pub": "4de5eaedf7b2948e6a1cc7a3c1f7db3ab511c7a8c088a5a70a83cc2917393901",
++      "pubB64u": "TeXq7feylI5qHMejwffbOrURx6jAiKWnCoPMKRc5OQE"
++    },
++    "S_c": {
++      "priv": "a7cc053797bb5461b732a0521573a033c48500e1fb2bfa21f1900d819361cf2f",
++      "pub": "77272ea395081d2788a3665a99aad09d8808cdd412e05feb6354a72b9bed8806",
++      "pubB64u": "dycuo5UIHSeIo2ZamarQnYgIzdQS4F_rY1SnK5vtiAY"
++    },
++    "e_c": {
++      "priv": "d0c979500739405d92e38e3efb2d05ab89346fcddb8f6ddb1a1aa5b721ecd088",
++      "pub": "2405ab92a162f61388c609b77e4adb94eab0274d2a749d1c4a60634841765511",
++      "pubB64u": "JAWrkqFi9hOIxgm3fkrblOqwJ00qdJ0cSmBjSEF2VRE"
++    },
++    "e_h": {
++      "priv": "9a5b0b1011117002c38184c997c5678eea95f1d54fa1b6919141a0c436ef18ca",
++      "pub": "98c5fac96d75eaac943145c8e205200123c57e0db1cc35d5fb7396578e8a133c",
++      "pubB64u": "mMX6yW116qyUMUXI4gUgASPFfg2xzDXV-3OWV46KEzw"
++    },
++    "hostId": "5ilY6IgiyJtyu2xIg0xJGQ",
++    "deviceId": "ei0ohvJ3gKjjutsuzEKl4g",
++    "pairingSecret": "5e95a12a665f830a5183f41f4859498b31ea3248b4deea10ab0e9fcd19099396",
++    "ts": 1794023000000
++  },
++  "pairing": {
++    "dh_Sc_Sh": "d9dc21d7220ba640ad8a43b4ae7d698347f87f43ce9c51e193ee3ba09b88bf75",
++    "k_pair": "278c295fc7faf9998de4596d8f6ed82a6cf21076757aa3e780f4d52b324afe9c",
++    "sasBytes": "c2d89240",
++    "sas": "973 120",
++    "request": {
++      "plaintext": "{\"deviceName\":\"Test Phone\",\"platform\":\"ios\",\"appVersion\":\"1.0.0\",\"ts\":1794023000000,\"confirmMode\":\"biometric\",\"wait\":false}",
++      "aad": "61696f6e64782f76312f706169722d7265717c35696c5936496769794a7479753278496730784a47517c6569306f68764a33674b6a6a757473757a454b6c3467",
++      "nonce": "DplRPuZm8iJ5qAmKkDgoBVHY_w7Bqfh4",
++      "ct": "ZRNGKfVY-9w4VaOgX5r1lQunvtMmXYdCpi7Tc8TerXWN5NvlaPU609zS8v0fi31DkMKOaW2vcvAzJEAQqOIh7tAo_Mc4MtfJyAtGtmO0EaG6BwedjBZWRiEyyN6UnMtRo8RP436z8GvWNAdN_IirzQSMz8kiuFNkxEAainDMfbPFg87tPopdroUiRw"
++    },
++    "response": {
++      "plaintext": "{\"status\":\"approved\",\"hostId\":\"5ilY6IgiyJtyu2xIg0xJGQ\",\"hostName\":\"Test PC\",\"ts\":1794023001000,\"reqTs\":1794023000000,\"confirmKey\":\"UuUoSPKtbocH8Q1E20-B-bHKxVhCOELoAPGdfIL1dmo\"}",
++      "aad": "61696f6e64782f76312f706169722d7265737c35696c5936496769794a7479753278496730784a47517c6569306f68764a33674b6a6a757473757a454b6c3467",
++      "nonce": "4v9epQ1iY3HdJI8Gjmx-qT5urfFiWAhn",
++      "ct": "G66Su2GLd6zSv39j-41JkEnRq0BLzpQhy0BSrVw5ukEB6k-LDNKqjxji-OxKGnuRJJg31w5SdY04ZcZA-GKBqKI9DzOIeSzzf9qkwSz-DkechYteNzrDX8b1L2aFjvtFKJFN4eHGS8mDfJiH7BR5QO-SHNBhWsWu0PsCT1m6aQ-vmlJpLwWQXqTn2rHP-TrLm839BA63OtUDQSIurtZQ1IYtu7ei90KmSjKQjpGfGvFcvyAUamvbrYliAveHD4tW"
++    },
++    "confirmKey": "52e52848f2ad6e8707f10d44db4f81f9b1cac558423842e800f19d7c82f5766a"
++  },
++  "handshake": {
++    "dh_ec_Sh": "493b3152b165f2167a5618109e1ab028b43bb842e06ee2a5000931271d2fc747",
++    "dh_Sc_Sh": "d9dc21d7220ba640ad8a43b4ae7d698347f87f43ce9c51e193ee3ba09b88bf75",
++    "dh_ec_eh": "9e3d172de99b01f131ecd719f9867aa1eb1a581ec95aa5ba933ba6684121e752",
++    "dh_Sc_eh": "aecfdee34c286147f0b8d5ceef82ea7459f33df6a58ba3b3ff9f68369b11fe76",
++    "initSalt": "98940aee42ee7d8d8285f26c252e17d5abeae0f0f44e3c129040884f9b9e40f0",
++    "k_init": "e48f526bd72c80d115480dc40bc85f5f7af37cd3060229a501304ee42e03c566",
++    "init": {
++      "plaintext": "{\"ts\":1794023000000}",
++      "aad": "61696f6e64782f76312f68732d696e69747c35696c5936496769794a7479753278496730784a47517c6569306f68764a33674b6a6a757473757a454b6c34677c2405ab92a162f61388c609b77e4adb94eab0274d2a749d1c4a60634841765511",
++      "nonce": "0rxlQC_uHcDzVM6IYq0raNR8VkiEmW2v",
++      "ct": "EJNZ2dNKlGDurpL-wsX1e092Hyv6yJGLygJ3E9wGntV0vqe2"
++    },
++    "transcript": "8b6614f8a6e12e4525a5592d898f83dc2b69a813539b6db52499424b9dce32a7",
++    "okm": "c017b8fcc06bc85190ba675c94681f3bbdb4a9763c62b569ea17edce7cda47d66399831f8b8421765185267f9d1fc803931f71f0d0e35ad0153366d6860cd5d851e6656b1d4f32582e415ebbd36027ef",
++    "c2s": "c017b8fcc06bc85190ba675c94681f3bbdb4a9763c62b569ea17edce7cda47d6",
++    "s2c": "6399831f8b8421765185267f9d1fc803931f71f0d0e35ad0153366d6860cd5d8",
++    "sid": "51e6656b1d4f32582e415ebbd36027ef",
++    "sidB64u": "UeZlax1PMlguQV6702An7w",
++    "response": {
++      "plaintext": "{\"expiresAt\":1794066200000,\"idleTimeoutMs\":1800000}",
++      "aad": "8b6614f8a6e12e4525a5592d898f83dc2b69a813539b6db52499424b9dce32a7",
++      "nonce": "VOyktW0zUrjh89qur-z9NS8BSfD727M2",
++      "ct": "NsPVUZD01QtYkFHgjEK0Qn8DmsoTr6dB2YE67LgtBrjK5NkP1GwrW7PeG_Ie6CDe77t-K2Qd4R15UIBGJQwzSgjIlA"
++    }
++  },
++  "rpc": {
++    "seq": 1,
++    "request": {
++      "plaintext": "{\"method\":\"GET\",\"path\":\"/v1/teams\",\"rid\":\"00000000-0000-4000-8000-000000000001\"}",
++      "aad": "61696f6e64782f76312f7270632d72657151e6656b1d4f32582e415ebbd36027ef0000000000000001",
++      "nonce": "xUrEXHUEcv7myE4Sl9p4g2nfFQiAm5SK",
++      "ct": "V3U-_CTAgQF-7JPaEadAiGgdMfDI6pR6Xgh3QMt_aNtxOHEr4cCWu3IaiHDAp6qwHzOrdjwDg68EA7RrK3e13l09WjXU-YLFyel0wysOEf2xTOzyoEzuBQ3fR8xK0g8T"
++    },
++    "response": {
++      "plaintext": "{\"status\":200,\"body\":[]}",
++      "aad": "61696f6e64782f76312f7270632d72657351e6656b1d4f32582e415ebbd36027ef0000000000000001",
++      "nonce": "NfjTOedmZ2hdoO6aJHbOriMn3pwppKo1",
++      "ct": "1rz4VQ8lWSEvBwhn1tAjP0_7n3roMo3xJr_PNblNyA7zatJzyMhgOw"
++    }
++  },
++  "revocation": {
++    "dh_Sh_ec": "493b3152b165f2167a5618109e1ab028b43bb842e06ee2a5000931271d2fc747",
++    "salt": "f304520b33c9dde5461c33cccbb975629a18e8243bee1549f1250f84832982fd",
++    "k_rev": "2047aa5dc2721875c86efcc55b524da53815cdd9eb753d067d3f717533030a2d",
++    "notice": {
++      "plaintext": "{\"deviceId\":\"ei0ohvJ3gKjjutsuzEKl4g\",\"ts\":1794023000000,\"reason\":\"revoked\"}",
++      "aad": "61696f6e64782f76312f7265766f6b65647c35696c5936496769794a7479753278496730784a47517c6569306f68764a33674b6a6a757473757a454b6c34677c2405ab92a162f61388c609b77e4adb94eab0274d2a749d1c4a60634841765511",
++      "nonce": "aUknd0b_sgbp-aOsWjhlSGb6QbiKQkFm",
++      "ct": "CH7iNgE6qqV6ySOZGa2juNqO99J0IL6E5xuew-83ZX92g3ZVMkSNwk2UjeknHOErOwjgDGJlYPdyvYZTvrkf3kycslW8TeoHsouWiHLxt8bllH3TgQwTF2-A4Q"
++    }
++  },
++  "confirm": [
++    {
++      "method": "POST",
++      "path": "/v1/approvals/YWJjZDEyMzQ6Y2FsbC0x/answer",
++      "rid": "00000000-0000-4000-8000-000000000002",
++      "seq": 7,
++      "body": {
++        "decision": "allow_once"
++      },
++      "jcs": "{\"decision\":\"allow_once\"}",
++      "jcsHex": "7b226465636973696f6e223a22616c6c6f775f6f6e6365227d",
++      "bodySha256": "ec61fad1ffee573da5294fa8129f8110d6b6fd5de21a7f2a86b0b78ac9330b70",
++      "macInput": "61696f6e64782f76312f636f6e6669726d51e6656b1d4f32582e415ebbd36027ef0000000000000007504f5354002f76312f617070726f76616c732f59574a6a5a4445794d7a513659324673624330782f616e7377657200ec61fad1ffee573da5294fa8129f8110d6b6fd5de21a7f2a86b0b78ac9330b7030303030303030302d303030302d343030302d383030302d303030303030303030303032",
++      "confirm": "Ft38sDQLFZ6y5lautY1dVAx7prxLWRVSVeNA3pOrul4"
++    },
++    {
++      "method": "POST",
++      "path": "/v1/teams/t1/agents",
++      "rid": "00000000-0000-4000-8000-000000000003",
++      "seq": 8,
++      "body": {
++        "name": "Reviewer é中",
++        "assistantId": "asst-1",
++        "model": null,
++        "flags": [
++          true,
++          2
++        ]
++      },
++      "jcs": "{\"assistantId\":\"asst-1\",\"flags\":[true,2],\"model\":null,\"name\":\"Reviewer é中\"}",
++      "jcsHex": "7b22617373697374616e744964223a22617373742d31222c22666c616773223a5b747275652c325d2c226d6f64656c223a6e756c6c2c226e616d65223a22526576696577657220c3a9e4b8ad227d",
++      "bodySha256": "65a12c76fdc06b72fc1ab9d2e3922629bfc079ec96a8d07c2336b4ff9796edb5",
++      "macInput": "61696f6e64782f76312f636f6e6669726d51e6656b1d4f32582e415ebbd36027ef0000000000000008504f5354002f76312f7465616d732f74312f6167656e74730065a12c76fdc06b72fc1ab9d2e3922629bfc079ec96a8d07c2336b4ff9796edb530303030303030302d303030302d343030302d383030302d303030303030303030303033",
++      "confirm": "-2De3meoCTcartmUP9w4Oit5uUf289VbTi72CAQ8IVg"
++    },
++    {
++      "method": "DELETE",
++      "path": "/v1/teams/t1/agents/slot-9",
++      "rid": "00000000-0000-4000-8000-000000000004",
++      "seq": 9,
++      "body": "(absent)",
++      "jcs": "null",
++      "jcsHex": "6e756c6c",
++      "bodySha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
++      "macInput": "61696f6e64782f76312f636f6e6669726d51e6656b1d4f32582e415ebbd36027ef000000000000000944454c455445002f76312f7465616d732f74312f6167656e74732f736c6f742d390074234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b30303030303030302d303030302d343030302d383030302d303030303030303030303034",
++      "confirm": "R-2llu3jRKSFtlytl2wpRUMpzu0jMhlV9HWOod4CWzs"
++    }
++  ],
++  "rekey": {
++    "rekeySecret": "dbb09977c924936433bdca4079150972f78d217092c2b9faa50ce2fa49a01c17",
++    "rekeySecretB64u": "27CZd8kkk2QzvcpAeRUJcveNIXCSwrn6pQzi-kmgHBc",
++    "macInput": "61696f6e64782f76312f72656b657951e6656b1d4f32582e415ebbd36027ef6569306f68764a33674b6a6a757473757a454b6c3467",
++    "proof": "wZNouRaVUApm4tri6v47vpQVAZiXkPQvGwg2Yhxk3M4"
++  }
++}
+diff --git a/crates/aionui-mobile/tests/vectors.rs b/crates/aionui-mobile/tests/vectors.rs
+new file mode 100644
+index 00000000..8b5d501f
+--- /dev/null
++++ b/crates/aionui-mobile/tests/vectors.rs
+@@ -0,0 +1,163 @@
++//! Byte-for-byte check of protocol v1 against the shared test vectors
++//! (`vectors.json`, generated by AionDX's docs/mobile-bridge/vectors/gen-vectors.js;
++//! the phone's TypeScript suite runs against the same file).
++
++use aionui_mobile::crypto::*;
++use serde_json::Value;
++
++fn vectors() -> Value {
++    serde_json::from_str(include_str!("vectors.json")).unwrap()
++}
++
++fn h(v: &Value) -> Vec<u8> {
++    hex::decode(v.as_str().unwrap()).unwrap()
++}
++
++fn h32(v: &Value) -> [u8; 32] {
++    h(v).try_into().unwrap()
++}
++
++fn s(v: &Value) -> &str {
++    v.as_str().unwrap()
++}
++
++fn check_box(key: &[u8; 32], bx: &Value) {
++    let nonce: [u8; 24] = from_b64u(s(&bx["nonce"])).unwrap().try_into().unwrap();
++    let aad = h(&bx["aad"]);
++    let ct = from_b64u(s(&bx["ct"])).unwrap();
++    assert_eq!(seal(key, &nonce, s(&bx["plaintext"]).as_bytes(), &aad), ct, "seal");
++    assert_eq!(
++        open(key, &nonce, &ct, &aad).unwrap(),
++        s(&bx["plaintext"]).as_bytes(),
++        "open"
++    );
++}
++
++#[test]
++fn keys_derive_from_the_fixed_private_keys() {
++    let v = vectors();
++    for k in ["S_h", "S_c", "e_c", "e_h"] {
++        let key = &v["inputs"][k];
++        assert_eq!(x25519_public(&h32(&key["priv"])).to_vec(), h(&key["pub"]), "{k}");
++        assert_eq!(b64u(&h(&key["pub"])), s(&key["pubB64u"]), "{k}");
++    }
++}
++
++#[test]
++fn pairing_vectors() {
++    let v = vectors();
++    let i = &v["inputs"];
++    let p = &v["pairing"];
++    let (sh, sc) = (h32(&i["S_h"]["priv"]), h32(&i["S_c"]["priv"]));
++    let (sh_pub, sc_pub) = (h32(&i["S_h"]["pub"]), h32(&i["S_c"]["pub"]));
++    let dh = x25519(&sc, &sh_pub);
++    assert_eq!(dh, x25519(&sh, &sc_pub));
++    assert_eq!(dh, h32(&p["dh_Sc_Sh"]));
++    let k_pair = pairing_key(&dh, &h(&i["pairingSecret"]), &sh_pub, &sc_pub);
++    assert_eq!(k_pair, h32(&p["k_pair"]));
++    assert_eq!(short_auth_string(&k_pair), s(&p["sas"]));
++    let (host_id, device_id) = (s(&i["hostId"]), s(&i["deviceId"]));
++    assert_eq!(pair_req_aad(host_id, device_id), h(&p["request"]["aad"]));
++    assert_eq!(pair_res_aad(host_id, device_id), h(&p["response"]["aad"]));
++    check_box(&k_pair, &p["request"]);
++    check_box(&k_pair, &p["response"]);
++}
++
++#[test]
++fn handshake_and_rpc_vectors() {
++    let v = vectors();
++    let i = &v["inputs"];
++    let hs = &v["handshake"];
++    let (host_id, device_id) = (s(&i["hostId"]), s(&i["deviceId"]));
++    let (sh, sc, ec, eh) = (
++        h32(&i["S_h"]["priv"]),
++        h32(&i["S_c"]["priv"]),
++        h32(&i["e_c"]["priv"]),
++        h32(&i["e_h"]["priv"]),
++    );
++    let (sh_pub, sc_pub, ec_pub, eh_pub) = (
++        h32(&i["S_h"]["pub"]),
++        h32(&i["S_c"]["pub"]),
++        h32(&i["e_c"]["pub"]),
++        h32(&i["e_h"]["pub"]),
++    );
++
++    // The host derives everything from its own secrets plus the phone's public keys.
++    let d1 = x25519(&sh, &ec_pub);
++    let d2 = x25519(&sh, &sc_pub);
++    let d3 = x25519(&eh, &ec_pub);
++    let d4 = x25519(&eh, &sc_pub);
++    assert_eq!(d1, x25519(&ec, &sh_pub));
++    assert_eq!(d4, x25519(&sc, &eh_pub));
++    assert_eq!(d1, h32(&hs["dh_ec_Sh"]));
++    assert_eq!(d2, h32(&hs["dh_Sc_Sh"]));
++    assert_eq!(d3, h32(&hs["dh_ec_eh"]));
++    assert_eq!(d4, h32(&hs["dh_Sc_eh"]));
++
++    let k_init = handshake_init_key(&d1, &d2, device_id, &sc_pub, &sh_pub, &ec_pub);
++    assert_eq!(k_init, h32(&hs["k_init"]));
++    assert_eq!(handshake_init_aad(host_id, device_id, &ec_pub), h(&hs["init"]["aad"]));
++    check_box(&k_init, &hs["init"]);
++
++    let t = session_transcript(device_id, &sc_pub, &sh_pub, &ec_pub, &eh_pub);
++    assert_eq!(t, h32(&hs["transcript"]));
++    let keys = session_keys([&d1, &d2, &d3, &d4], &t);
++    assert_eq!(keys.c2s, h32(&hs["c2s"]));
++    assert_eq!(keys.s2c, h32(&hs["s2c"]));
++    assert_eq!(keys.sid.to_vec(), h(&hs["sid"]));
++    assert_eq!(b64u(&keys.sid), s(&hs["sidB64u"]));
++    check_box(&keys.s2c, &hs["response"]);
++
++    let rpc = &v["rpc"];
++    let seq = rpc["seq"].as_u64().unwrap();
++    assert_eq!(rpc_aad(false, &keys.sid, seq), h(&rpc["request"]["aad"]));
++    assert_eq!(rpc_aad(true, &keys.sid, seq), h(&rpc["response"]["aad"]));
++    check_box(&keys.c2s, &rpc["request"]);
++    check_box(&keys.s2c, &rpc["response"]);
++}
++
++#[test]
++fn revocation_vector() {
++    let v = vectors();
++    let i = &v["inputs"];
++    let r = &v["revocation"];
++    let (host_id, device_id) = (s(&i["hostId"]), s(&i["deviceId"]));
++    let ec_pub = h32(&i["e_c"]["pub"]);
++    let dh = x25519(&h32(&i["S_h"]["priv"]), &ec_pub);
++    assert_eq!(dh, h32(&r["dh_Sh_ec"]));
++    let k_rev = revocation_key(&dh, host_id, device_id, &ec_pub);
++    assert_eq!(k_rev, h32(&r["k_rev"]));
++    assert_eq!(revocation_aad(host_id, device_id, &ec_pub), h(&r["notice"]["aad"]));
++    check_box(&k_rev, &r["notice"]);
++}
++
++#[test]
++fn confirm_and_rekey_vectors() {
++    let v = vectors();
++    let sid: [u8; 16] = h(&v["handshake"]["sid"]).try_into().unwrap();
++    let confirm_key = h(&v["pairing"]["confirmKey"]);
++    for c in v["confirm"].as_array().unwrap() {
++        let body = if c["body"] == "(absent)" {
++            Value::Null
++        } else {
++            c["body"].clone()
++        };
++        let canon = jcs(&body).unwrap();
++        assert_eq!(canon, s(&c["jcs"]));
++        assert_eq!(sha256(&[canon.as_bytes()]).to_vec(), h(&c["bodySha256"]));
++        let input = confirm_mac_input(
++            &sid,
++            c["seq"].as_u64().unwrap(),
++            s(&c["method"]),
++            s(&c["path"]),
++            &canon,
++            s(&c["rid"]),
++        );
++        assert_eq!(input, h(&c["macInput"]));
++        assert_eq!(b64u(&hmac_sha256(&confirm_key, &input)), s(&c["confirm"]));
++    }
++    let rk = &v["rekey"];
++    let input = rekey_mac_input(&sid, s(&v["inputs"]["deviceId"]));
++    assert_eq!(input, h(&rk["macInput"]));
++    assert_eq!(b64u(&hmac_sha256(&h(&rk["rekeySecret"]), &input)), s(&rk["proof"]));
++}

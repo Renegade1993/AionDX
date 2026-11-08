@@ -1,6 +1,6 @@
 # AionDX Mobile Bridge: API Contract v1 (DRAFT)
 
-**Status:** revision 4.1, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
+**Status:** revision 4.2, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
 - **Rev 1:** first draft.
 - **Rev 2:** folds in the mobile team's review: the pairing rate-limit bug and questions 2-16. The answers are in
   §4.2-4.3 and A1/A8, §5.1-5.3, §6.1-6.8, and Appendix A (shared test vectors).
@@ -18,6 +18,10 @@
 - **Rev 4 (2026-11-07):** Nathan approved all nine §11 items as recommended. §11 is now a record of those decisions.
   The `[PENDING SIGN-OFF]` markers are removed, and `tasks.write` is on by default (§6.1, §6.7). The Claude
   "Allow Always" relabel wording is fixed in §6.5. §8 adds Private Party Net (WireGuard) as a to-verify item.
+- **Rev 4.2 (implementation note, no wire change):** bridge state lives in its own `mobile-bridge.db` in the data
+  dir, not in a migration of AionCore's `aionui-backend.db`. AionCore refuses to open a database that has a
+  migration it doesn't know, so a shared migration would lock every core without the bridge out of the user's
+  chats (§0 #4, §3.1).
 - **Rev 4.1:** three gaps closed:
   - the first `before` cursor for backward paging (§6.4);
   - `GET /v1/changes` with no `since` (§6.2);
@@ -44,7 +48,7 @@ wire is versioned (`v: 1`).
 | 1 | Crypto scheme | **Accept** the proposal (X25519, HKDF-SHA256, XChaCha20-Poly1305, QR + 6-digit SAS, KK-style handshake, single `rpc` tunnel), with nine amendments (§4.6). The most important ones: an authenticated revocation notice, per-PC phone keys, idempotent retries, and a QR offer that locks on first use. |
 | 2 | Paths, port, discovery | `/api/mobile/v1/{hello,pair,session,rpc}` on a **separate LAN listener** (default port 47734, configurable; the QR carries the real URL). The main AionCore API stays on 127.0.0.1. mDNS `_aiondx._tcp` is used only to re-find a PC that is already paired. |
 | 3 | Remote access | **LAN-only for v1.** Remote use works through the user's own Tailscale/WireGuard: extra URLs go into the QR. No hosted relay. Approved (§11 #2). |
-| 4 | Host key, revocation, multi-PC | Host static key in a DPAPI-protected file. Paired devices are stored in AionCore's DB. **One phone keypair per PC.** Revoking on the PC deletes the device row and its sessions. "Forget PC" on the phone deletes that PC's keypair. |
+| 4 | Host key, revocation, multi-PC | Host static key in a DPAPI-protected file. Paired devices are stored in the bridge's own SQLite file (`mobile-bridge.db`), never in AionCore's database. **One phone keypair per PC.** Revoking on the PC deletes the device row and its sessions. "Forget PC" on the phone deletes that PC's keypair. |
 | 5 | Session TTL | **12 h absolute, 30 min idle.** A handshake is one round trip, so short sessions cost little. |
 | 6 | API schema | A **mobile facade** (`/v1/...` inner paths, §6). It is an allowlist by construction, not a passthrough of AionCore's routes. Approved (§11 #1). |
 | 7 | Biometric / per-action confirmation | Enforced by the bridge, not just a client-side flag. A biometric-gated `confirmKey` HMACs each sensitive request. Required for approvals (allow), spawn, shutdown, force-remove and clear-context. Not required for chat send. Approved (§11 #3). |
@@ -108,7 +112,7 @@ earlier assumptions.
 |---|---|---|
 | `S_h`, the host static X25519 key, plus `hostId` (16 random bytes, b64u) | PC | `%APPDATA%\AionUi\aiondx-mobile\host.key`, DPAPI-protected (CurrentUser). The same blob holds `dataKey` (32 B), which encrypts per-device secrets in the DB. Rotating the key means a new `hostId`, and every phone must pair again. |
 | `S_c`, the phone static X25519 key, plus `deviceId`, **one per paired PC** | Phone | `expo-secure-store`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, excluded from backups. Keyed by `hostId`. |
-| `confirmKey` (32 B, per device per PC) | Both | Phone: secure store with `requireAuthentication: true` (biometric-gated). PC: DB column, sealed with `dataKey`. |
+| `confirmKey` (32 B, per device per PC) | Both | Phone: secure store with `requireAuthentication: true` (biometric-gated). PC: a column in `mobile-bridge.db`, sealed with `dataKey`. |
 | `pairingSecret` (32 B) | PC → QR | Memory only. Single use, expires after 5 min. |
 | Session keys `c2s`, `s2c`, `sid` | Both | Memory only. |
 
@@ -985,7 +989,7 @@ Nothing is decided here yet.
 - **K2:** the WebUI "allow remote" proxy forwards all `/api/*` routes to the LAN over plain HTTP. They are still
   JWT-gated in aionpro mode. It is unrelated to this bridge, and the bridge doesn't use it. The existing public AionUi
   Expo app (`aionui/mobile`) uses that path and is not a model for this work.
-- **K3:** the JWT secret is stored in plain text in `aionui-backend.db`. The bridge keeps its own secrets out of the DB
+- **K3:** the JWT secret is stored in plain text in `aionui-backend.db`. The bridge keeps its own secrets out of AionCore's DB
   (sealed with a DPAPI-protected `dataKey`).
 - **Out of scope for v1:** push notifications (they would need a relay or APNs/FCM, which is the same sign-off as §8),
   attachments from the phone, multiple Core users per PC, and manual-code pairing.
