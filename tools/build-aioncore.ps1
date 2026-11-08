@@ -117,7 +117,7 @@ try {
   $channel = [regex]::Match($pin, 'channel\s*=\s*"([^"]+)"').Groups[1].Value
   $comps = [regex]::Matches([regex]::Match($pin, 'components\s*=\s*\[([^\]]*)\]').Groups[1].Value, '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value }
   Say "toolchain $channel, components $($comps -join ', ')"
-  $args3 = @('toolchain', 'install', $channel, '--profile', 'minimal', '--target', $target)
+  $args3 = @('toolchain', 'install', $channel, '--profile', 'minimal', '--target', $target, '--no-self-update')
   foreach ($cp in $comps) { $args3 += @('--component', $cp) }
   $c = Run $rustup $args3 $wt $null
   if ($c -ne 0) { throw "rustup toolchain install exit $c" }
