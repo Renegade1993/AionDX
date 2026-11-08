@@ -210,7 +210,8 @@ The core-0015 patch is exported from `295bf2a6..HEAD`. Release exe 2133501c = ph
 - aionui-mobile was 123/123 green before the last edit.
 - NOT YET VERIFIED:
   1. The last edit (lead `your_turn` on `GET /v1/conversations/{cid}` in `facade.rs` `conversation_extras`, plus the teammate assertion in the `unread_your_turn_needs_answer_and_session_status` test) is uncompiled. Run `cargo test -p aionui-mobile`.
-  2. The wider run `cargo test -p aionui-session -p aionui-conversation -p aionui-ai-agent -p aionui-app` was in flight. Its log is `%LOCALAPPDATA%\aiondx-build\p4-wide-tests.log`, ending in "cargo exit N". Check it; rerun if it didn't finish.
+  2. The wider run finished: aionui-ai-agent lib 983 passed, 1 failed. The failure is `terminal::tests::default_cwd_applies_when_agent_sends_none`, an upstream test that runs `pwd` against a canonicalized Windows path; it isn't in any file I changed. Cargo stopped there, so **the session, conversation and app suites did NOT run**. Rerun them with `--no-fail-fast`, and confirm that terminal test also fails on baseline 79d4e2e3. The old note follows:
+     the wider run `cargo test -p aionui-session -p aionui-conversation -p aionui-ai-agent -p aionui-app` was in flight. Its log is `%LOCALAPPDATA%\aiondx-build\p4-wide-tests.log`, ending in "cargo exit N". Check it; rerun if it didn't finish.
 
 **QA SD2a ("declined shutdown stays requested").** That run used exe 2133501c (phase 3), which has NO event pump; rejected tracking arrived in 4b. QA's guess is that the scheduler's Mailbox has no emitter. Checked against the code, that looks wrong:
 - `session.rs:196` builds the mailbox `.with_events(emitter)`;
