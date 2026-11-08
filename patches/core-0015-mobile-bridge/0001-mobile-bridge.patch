@@ -296,11 +296,177 @@ index 17526034..512657b8 100644
              let _ = shutdown_tx.send(true);
          })
          .into_future();
+diff --git a/crates/aionui-app/src/router/mobile_backend.rs b/crates/aionui-app/src/router/mobile_backend.rs
+new file mode 100644
+index 00000000..8a738ed3
+--- /dev/null
++++ b/crates/aionui-app/src/router/mobile_backend.rs
+@@ -0,0 +1,130 @@
++//! AionDX core-0015: the mobile facade's view of AionCore, over the team,
++//! conversation and assistant services. Every call acts as the paired user.
++
++use std::sync::Arc;
++
++use async_trait::async_trait;
++
++use aionui_api_types::{
++    AssistantResponse, ConversationListResponse, ConversationResponse, ListConversationsQuery, ListMessagesQuery,
++    MessageListResponse, MessageResponse, TeamActivityPageResponse, TeamResponse, TeamRunStateResponse,
++    TeamTaskResponse,
++};
++use aionui_common::ApiError;
++use aionui_conversation::ConversationService;
++use aionui_db::{ActivityCursor, PageDirection};
++use aionui_mobile::{ActivityFilter, ActivityQuery, BackendError, MobileBackend};
++use aionui_team::service::{ActivityKind, TeamSessionService};
++
++pub struct AppMobileBackend {
++    pub team: Arc<TeamSessionService>,
++    pub conversation: ConversationService,
++    pub assistant: Arc<aionui_assistant::AssistantService>,
++}
++
++fn map_err(e: impl Into<ApiError>) -> BackendError {
++    let e: ApiError = e.into();
++    match e.status_code().as_u16() {
++        404 => BackendError::NotFound(e.to_string()),
++        400 | 409 | 422 => BackendError::Invalid(e.to_string()),
++        _ => BackendError::Unavailable(e.to_string()),
++    }
++}
++
++#[async_trait]
++impl MobileBackend for AppMobileBackend {
++    async fn teams(&self, user_id: &str) -> Result<Vec<TeamResponse>, BackendError> {
++        self.team.list_teams(user_id).await.map_err(map_err)
++    }
++
++    async fn team(&self, user_id: &str, team_id: &str) -> Result<TeamResponse, BackendError> {
++        self.team.get_team(user_id, team_id).await.map_err(map_err)
++    }
++
++    async fn run_state(&self, user_id: &str, team_id: &str) -> Result<TeamRunStateResponse, BackendError> {
++        self.team.get_run_state(user_id, team_id).await.map_err(map_err)
++    }
++
++    async fn tasks(&self, user_id: &str, team_id: &str) -> Result<Vec<TeamTaskResponse>, BackendError> {
++        self.team.list_team_tasks(user_id, team_id, 500).await.map_err(map_err)
++    }
++
++    async fn activity(
++        &self,
++        user_id: &str,
++        team_id: &str,
++        query: ActivityQuery,
++    ) -> Result<TeamActivityPageResponse, BackendError> {
++        let cursor = query.cursor.map(|(created_at, id)| ActivityCursor { created_at, id });
++        let direction = if query.ascending {
++            PageDirection::Asc
++        } else {
++            PageDirection::Desc
++        };
++        let kind = match query.filter {
++            ActivityFilter::All => ActivityKind::All,
++            ActivityFilter::Messages => ActivityKind::Message,
++            ActivityFilter::Tasks => ActivityKind::Task,
++        };
++        self.team
++            .list_team_activity(user_id, team_id, cursor, direction, kind, query.limit)
++            .await
++            .map_err(map_err)
++    }
++
++    async fn conversations(
++        &self,
++        user_id: &str,
++        cursor: Option<String>,
++        limit: u32,
++    ) -> Result<ConversationListResponse, BackendError> {
++        let query = ListConversationsQuery {
++            cursor,
++            limit: Some(limit),
++            source: None,
++            cron_job_id: None,
++            pinned: None,
++        };
++        self.conversation.list(user_id, query).await.map_err(map_err)
++    }
++
++    async fn conversation(&self, user_id: &str, conversation_id: &str) -> Result<ConversationResponse, BackendError> {
++        self.conversation.get(user_id, conversation_id).await.map_err(map_err)
++    }
++
++    async fn messages(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        query: ListMessagesQuery,
++    ) -> Result<MessageListResponse, BackendError> {
++        self.conversation
++            .list_messages(user_id, conversation_id, query)
++            .await
++            .map_err(map_err)
++    }
++
++    async fn latest_message(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++    ) -> Result<Option<MessageResponse>, BackendError> {
++        let query = ListMessagesQuery {
++            limit: Some(1),
++            before: None,
++            after: None,
++            anchor_message_id: None,
++            content_mode: Some("compact".into()),
++        };
++        let page = self
++            .conversation
++            .list_messages(user_id, conversation_id, query)
++            .await
++            .map_err(map_err)?;
++        Ok(page.items.into_iter().last())
++    }
++
++    async fn assistants(&self, user_id: &str) -> Result<Vec<AssistantResponse>, BackendError> {
++        self.assistant.list_for_user(user_id).await.map_err(map_err)
++    }
++}
+diff --git a/crates/aionui-app/src/router/mod.rs b/crates/aionui-app/src/router/mod.rs
+index 92017b94..f353c221 100644
+--- a/crates/aionui-app/src/router/mod.rs
++++ b/crates/aionui-app/src/router/mod.rs
+@@ -5,6 +5,7 @@ mod clipboard_writer;
+ mod fs_monitor;
+ mod health;
+ mod item_revealer;
++mod mobile_backend;
+ mod routes;
+ mod runtime_team_tools;
+ mod scm_monitor;
 diff --git a/crates/aionui-app/src/router/routes.rs b/crates/aionui-app/src/router/routes.rs
-index e67514c7..fa92e91a 100644
+index e67514c7..133e668a 100644
 --- a/crates/aionui-app/src/router/routes.rs
 +++ b/crates/aionui-app/src/router/routes.rs
-@@ -425,6 +425,16 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
+@@ -122,6 +122,17 @@ pub async fn create_router_with_runtime(services: &AppServices) -> Result<(Route
+     let team_service = states.team.service.clone();
+     tracing::info!(elapsed_ms = boot.elapsed().as_millis(), "startup: module states built");
+ 
++    // AionDX core-0015: give the mobile bridge its facade over these services.
++    if let Some(bridge) = &services.mobile_bridge {
++        bridge.set_facade(aionui_mobile::Facade::new(Arc::new(
++            super::mobile_backend::AppMobileBackend {
++                team: states.team.service.clone(),
++                conversation: services.conversation_service.clone(),
++                assistant: states.assistant.service.clone(),
++            },
++        )));
++    }
++
+     // Start channel orchestrator (message loop)
+     tokio::spawn(
+         channel_components
+@@ -425,6 +436,16 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
      #[cfg(feature = "weixin")]
      let router = router.merge(weixin_login_authenticated);
  
@@ -872,6 +1038,83 @@ index 00000000..6786df61
 +        assert_eq!(status, StatusCode::NOT_FOUND);
 +    }
 +}
+diff --git a/crates/aionui-mobile/src/backend.rs b/crates/aionui-mobile/src/backend.rs
+new file mode 100644
+index 00000000..bfc6fa66
+--- /dev/null
++++ b/crates/aionui-mobile/src/backend.rs
+@@ -0,0 +1,71 @@
++//! The facade's view of AionCore (CONTRACT §6). `aionui-app` implements it over
++//! the team, conversation and assistant services; this crate depends on no
++//! domain crate. Every call acts as `user_id`, the Core user the phone was
++//! paired to (the phone is the user, CONTRACT §3.3).
++
++use async_trait::async_trait;
++
++use aionui_api_types::{
++    AssistantResponse, ConversationListResponse, ConversationResponse, ListMessagesQuery, MessageListResponse,
++    MessageResponse, TeamActivityPageResponse, TeamResponse, TeamRunStateResponse, TeamTaskResponse,
++};
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum BackendError {
++    NotFound(String),
++    Invalid(String),
++    Unavailable(String),
++}
++
++/// Which slice of team activity to read.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum ActivityFilter {
++    All,
++    Messages,
++    Tasks,
++}
++
++#[derive(Debug, Clone)]
++pub struct ActivityQuery {
++    /// `(created_at, id)` of the last item already seen.
++    pub cursor: Option<(i64, String)>,
++    /// Newest first when false.
++    pub ascending: bool,
++    pub filter: ActivityFilter,
++    pub limit: i64,
++}
++
++#[async_trait]
++pub trait MobileBackend: Send + Sync {
++    async fn teams(&self, user_id: &str) -> Result<Vec<TeamResponse>, BackendError>;
++    async fn team(&self, user_id: &str, team_id: &str) -> Result<TeamResponse, BackendError>;
++    async fn run_state(&self, user_id: &str, team_id: &str) -> Result<TeamRunStateResponse, BackendError>;
++    async fn tasks(&self, user_id: &str, team_id: &str) -> Result<Vec<TeamTaskResponse>, BackendError>;
++    async fn activity(
++        &self,
++        user_id: &str,
++        team_id: &str,
++        query: ActivityQuery,
++    ) -> Result<TeamActivityPageResponse, BackendError>;
++    async fn conversations(
++        &self,
++        user_id: &str,
++        cursor: Option<String>,
++        limit: u32,
++    ) -> Result<ConversationListResponse, BackendError>;
++    /// The detail view (with `runtime`).
++    async fn conversation(&self, user_id: &str, conversation_id: &str) -> Result<ConversationResponse, BackendError>;
++    async fn messages(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        query: ListMessagesQuery,
++    ) -> Result<MessageListResponse, BackendError>;
++    /// The newest message, any type.
++    async fn latest_message(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++    ) -> Result<Option<MessageResponse>, BackendError>;
++    async fn assistants(&self, user_id: &str) -> Result<Vec<AssistantResponse>, BackendError>;
++}
 diff --git a/crates/aionui-mobile/src/core.rs b/crates/aionui-mobile/src/core.rs
 new file mode 100644
 index 00000000..ba6699eb
@@ -1338,6 +1581,633 @@ index 00000000..77da66f5
 +    #[error("mobile bridge serialization error: {0}")]
 +    Json(#[from] serde_json::Error),
 +}
+diff --git a/crates/aionui-mobile/src/facade.rs b/crates/aionui-mobile/src/facade.rs
+new file mode 100644
+index 00000000..048eab42
+--- /dev/null
++++ b/crates/aionui-mobile/src/facade.rs
+@@ -0,0 +1,621 @@
++//! The mobile facade (CONTRACT §6): the `/v1/...` routes inside the RPC tunnel.
++//! An allowlist by construction (§11 #1): anything not matched here is
++//! `no_such_route`. This file routes and pages; `shape.rs` builds the JSON.
++
++use std::collections::HashMap;
++use std::sync::Arc;
++
++use async_trait::async_trait;
++use base64::Engine;
++use base64::engine::general_purpose::URL_SAFE_NO_PAD;
++use serde_json::{Value, json};
++
++use aionui_api_types::ListMessagesQuery;
++
++use crate::backend::{ActivityFilter, ActivityQuery, BackendError, MobileBackend};
++use crate::core::{InnerApi, InnerContext};
++use crate::shape::{self, AgentExtras};
++use crate::wire::{InnerRequest, InnerResponse};
++
++/// How far behind the oldest still-streaming row a sync cursor starts (§6.4).
++const SYNC_FLOOR_MARGIN_MS: i64 = 5_000;
++const DEFAULT_PAGE: u32 = 50;
++const MAX_PAGE: u32 = 200;
++
++pub struct Facade {
++    backend: Arc<dyn MobileBackend>,
++}
++
++impl Facade {
++    pub fn new(backend: Arc<dyn MobileBackend>) -> Arc<Self> {
++        Arc::new(Self { backend })
++    }
++}
++
++fn backend_error(e: BackendError) -> InnerResponse {
++    match e {
++        BackendError::NotFound(m) => InnerResponse::error(404, "not_found", m),
++        BackendError::Invalid(m) => InnerResponse::error(400, "invalid_request", m),
++        BackendError::Unavailable(m) => InnerResponse::error(503, "backend_unavailable", m),
++    }
++}
++
++fn to_value<T: serde::Serialize>(v: &T) -> Value {
++    serde_json::to_value(v).unwrap_or(Value::Null)
++}
++
++/// `path?a=1&b=2` → segments and decoded query pairs.
++fn split(path: &str) -> (Vec<String>, HashMap<String, String>) {
++    let (p, q) = path.split_once('?').unwrap_or((path, ""));
++    let segs = p.trim_matches('/').split('/').map(percent_decode).collect();
++    let query = q
++        .split('&')
++        .filter(|kv| !kv.is_empty())
++        .map(|kv| {
++            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
++            (percent_decode(k), percent_decode(&v.replace('+', " ")))
++        })
++        .collect();
++    (segs, query)
++}
++
++fn percent_decode(s: &str) -> String {
++    let bytes = s.as_bytes();
++    let mut out = Vec::with_capacity(bytes.len());
++    let mut i = 0;
++    while i < bytes.len() {
++        if bytes[i] == b'%'
++            && i + 2 < bytes.len()
++            && let Ok(b) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
++        {
++            out.push(b);
++            i += 3;
++            continue;
++        }
++        out.push(bytes[i]);
++        i += 1;
++    }
++    String::from_utf8_lossy(&out).into_owned()
++}
++
++fn page_limit(q: &HashMap<String, String>) -> u32 {
++    q.get("limit")
++        .and_then(|l| l.parse().ok())
++        .filter(|l| *l > 0)
++        .unwrap_or(DEFAULT_PAGE)
++        .min(MAX_PAGE)
++}
++
++fn opaque(v: &Value) -> String {
++    URL_SAFE_NO_PAD.encode(v.to_string())
++}
++
++fn from_opaque(s: &str) -> Option<Value> {
++    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(s).ok()?).ok()
++}
++
++/// A sync cursor: `s1.` + b64u({"f": floor}).
++fn sync_cursor(floor: i64) -> String {
++    format!("s1.{}", opaque(&json!({ "f": floor })))
++}
++
++fn parse_sync_cursor(s: &str) -> Option<i64> {
++    from_opaque(s.strip_prefix("s1.")?)?.get("f")?.as_i64()
++}
++
++/// AionCore's own `after` cursor, positioned just before `floor`.
++fn aioncore_after(floor: i64) -> String {
++    // id "~" sorts after every real id, so `after (floor-1, "~")` means `created_at >= floor`.
++    format!(
++        "v1.{}",
++        URL_SAFE_NO_PAD.encode(json!({ "created_at": floor - 1, "id": "~" }).to_string())
++    )
++}
++
++/// The floor for the next sync: the oldest row still being written, else the newest row.
++fn next_floor(rows: &[Value], fallback: i64) -> i64 {
++    let streaming = rows
++        .iter()
++        .filter(|m| matches!(m["status"].as_str(), Some("work") | Some("pending")))
++        .filter_map(|m| m["created_at"].as_i64())
++        .min();
++    let newest = rows.iter().filter_map(|m| m["created_at"].as_i64()).max();
++    streaming
++        .or(newest)
++        .map(|t| t - SYNC_FLOOR_MARGIN_MS)
++        .unwrap_or(fallback)
++}
++
++#[async_trait]
++impl InnerApi for Facade {
++    async fn handle(&self, ctx: &InnerContext, req: &InnerRequest) -> Option<InnerResponse> {
++        let (segs, q) = split(&req.path);
++        let segs: Vec<&str> = segs.iter().map(String::as_str).collect();
++        let user = ctx.user_id.as_str();
++        let resp = match (req.method.as_str(), segs.as_slice()) {
++            ("GET", ["v1", "teams"]) => self.teams(user).await,
++            ("GET", ["v1", "teams", t, "run-state"]) => self.run_state(user, t).await,
++            ("GET", ["v1", "teams", t, "agents", slot]) => self.agent(user, t, slot).await,
++            ("GET", ["v1", "teams", t, "tasks"]) => self.tasks(user, t, &q).await,
++            ("GET", ["v1", "teams", t, "tasks", id]) => self.task(user, t, id).await,
++            ("GET", ["v1", "teams", t, "activity"]) => self.activity(user, t, &q).await,
++            ("GET", ["v1", "conversations"]) => self.conversations(user, &q).await,
++            ("GET", ["v1", "conversations", c]) => self.conversation(user, c).await,
++            ("GET", ["v1", "conversations", c, "messages"]) => self.messages(user, c, &q).await,
++            ("GET", ["v1", "workspaces"]) => self.workspaces(user).await,
++            ("GET", ["v1", "assistants"]) => self.assistants(user).await,
++            _ => return None,
++        };
++        Some(resp.unwrap_or_else(backend_error))
++    }
++}
++
++impl Facade {
++    async fn extras_for(&self, user: &str, team: &Value) -> HashMap<String, AgentExtras> {
++        let roster = shape::roster_index(team);
++        let mut out = HashMap::new();
++        for a in team["assistants"].as_array().into_iter().flatten() {
++            let (Some(slot), Some(conv)) = (a["slot_id"].as_str(), a["conversation_id"].as_str()) else {
++                continue;
++            };
++            let name = a["name"].as_str().unwrap_or_default();
++            let last = match self.backend.latest_message(user, conv).await {
++                Ok(Some(m)) => shape::message(&to_value(&m), &roster, name).map(|m| shape::last_message(&m)),
++                _ => None,
++            };
++            out.insert(
++                slot.to_owned(),
++                AgentExtras {
++                    last_message: last,
++                    ..Default::default()
++                },
++            );
++        }
++        out
++    }
++
++    async fn team_view(&self, user: &str, team_id: &str) -> Result<(Value, Value, Vec<Value>), BackendError> {
++        let team = to_value(&self.backend.team(user, team_id).await?);
++        let run = to_value(&self.backend.run_state(user, team_id).await?);
++        let tasks = self.backend.tasks(user, team_id).await?.iter().map(to_value).collect();
++        Ok((team, run, tasks))
++    }
++
++    async fn teams(&self, user: &str) -> Result<InnerResponse, BackendError> {
++        let mut out = Vec::new();
++        for t in self.backend.teams(user).await? {
++            let team = to_value(&t);
++            let team_id = team["id"].as_str().unwrap_or_default().to_owned();
++            let run = self
++                .backend
++                .run_state(user, &team_id)
++                .await
++                .map(|r| to_value(&r))
++                .unwrap_or(Value::Null);
++            let rs = shape::run_state(&team, &run, &[], &HashMap::new());
++            out.push(shape::team_summary(
++                &team,
++                rs["agents"].as_array().map(Vec::as_slice).unwrap_or(&[]),
++            ));
++        }
++        Ok(InnerResponse::ok(Value::Array(out)))
++    }
++
++    async fn run_state(&self, user: &str, team_id: &str) -> Result<InnerResponse, BackendError> {
++        let (team, run, tasks) = self.team_view(user, team_id).await?;
++        let extras = self.extras_for(user, &team).await;
++        Ok(InnerResponse::ok(shape::run_state(&team, &run, &tasks, &extras)))
++    }
++
++    async fn agent(&self, user: &str, team_id: &str, slot: &str) -> Result<InnerResponse, BackendError> {
++        let (team, run, tasks) = self.team_view(user, team_id).await?;
++        let extras = self.extras_for(user, &team).await;
++        let rs = shape::run_state(&team, &run, &tasks, &extras);
++        rs["agents"]
++            .as_array()
++            .and_then(|agents| agents.iter().find(|a| a["slotId"] == slot))
++            .map(|a| InnerResponse::ok(a.clone()))
++            .ok_or_else(|| BackendError::NotFound(format!("No agent {slot} in this team")))
++    }
++
++    async fn names(&self, user: &str, team_id: &str) -> Result<HashMap<String, String>, BackendError> {
++        let team = to_value(&self.backend.team(user, team_id).await?);
++        Ok(team["assistants"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .filter_map(|a| Some((a["slot_id"].as_str()?.to_owned(), a["name"].as_str()?.to_owned())))
++            .collect())
++    }
++
++    async fn tasks(
++        &self,
++        user: &str,
++        team_id: &str,
++        q: &HashMap<String, String>,
++    ) -> Result<InnerResponse, BackendError> {
++        let names = self.names(user, team_id).await?;
++        let statuses: Option<Vec<&str>> = q.get("status").map(|s| s.split(',').map(str::trim).collect());
++        let mut tasks: Vec<Value> = self
++            .backend
++            .tasks(user, team_id)
++            .await?
++            .iter()
++            .map(to_value)
++            .filter(|t| {
++                statuses
++                    .as_ref()
++                    .is_none_or(|st| st.contains(&t["status"].as_str().unwrap_or_default()))
++            })
++            .filter(|t| q.get("owner").is_none_or(|o| t["owner"].as_str() == Some(o)))
++            .collect();
++        tasks.sort_by_key(|t| std::cmp::Reverse(t["updated_at"].as_i64().unwrap_or(0)));
++        Ok(InnerResponse::ok(Value::Array(
++            tasks.iter().map(|t| shape::task(t, &names, None)).collect(),
++        )))
++    }
++
++    async fn task(&self, user: &str, team_id: &str, task_id: &str) -> Result<InnerResponse, BackendError> {
++        let names = self.names(user, team_id).await?;
++        let task = self
++            .backend
++            .tasks(user, team_id)
++            .await?
++            .iter()
++            .map(to_value)
++            .find(|t| t["id"] == task_id)
++            .ok_or_else(|| BackendError::NotFound(format!("No task {task_id}")))?;
++        Ok(InnerResponse::ok(shape::task(&task, &names, None)))
++    }
++
++    async fn activity(
++        &self,
++        user: &str,
++        team_id: &str,
++        q: &HashMap<String, String>,
++    ) -> Result<InnerResponse, BackendError> {
++        let names = self.names(user, team_id).await?;
++        let filter = match q.get("kind").map(String::as_str) {
++            Some("message") => ActivityFilter::Messages,
++            Some("task") => ActivityFilter::Tasks,
++            _ => ActivityFilter::All,
++        };
++        let limit = page_limit(q) as i64;
++        let slot = q.get("slotId").cloned();
++        let keep = |item: &Value| match &slot {
++            None => true,
++            Some(slot) => {
++                let m = &item["message"];
++                m["from_agent_id"].as_str() == Some(slot) || m["to_agent_id"].as_str() == Some(slot)
++            }
++        };
++
++        if let Some(task_id) = q.get("aroundTask") {
++            let task = self
++                .backend
++                .tasks(user, team_id)
++                .await?
++                .iter()
++                .map(to_value)
++                .find(|t| t["id"] == task_id.as_str())
++                .ok_or_else(|| BackendError::NotFound(format!("No task {task_id}")))?;
++            let at = task["created_at"].as_i64().unwrap_or(0);
++            let around = |ascending| ActivityQuery {
++                cursor: Some((at, if ascending { String::new() } else { "~".into() })),
++                ascending,
++                filter,
++                limit: 10,
++            };
++            let mut items: Vec<Value> = Vec::new();
++            for ascending in [false, true] {
++                let page = to_value(&self.backend.activity(user, team_id, around(ascending)).await?);
++                items.extend(page["items"].as_array().cloned().unwrap_or_default());
++            }
++            items.sort_by_key(|i| std::cmp::Reverse(i["created_at"].as_i64().unwrap_or(0)));
++            items.dedup_by(|a, b| a["id"] == b["id"]);
++            let shaped: Vec<Value> = items
++                .iter()
++                .filter(|i| keep(i))
++                .map(|i| shape::activity(i, &names))
++                .collect();
++            return Ok(InnerResponse::ok(
++                json!({ "items": shaped, "nextCursor": null, "hasMore": false }),
++            ));
++        }
++
++        let cursor = q
++            .get("cursor")
++            .and_then(|c| from_opaque(c))
++            .and_then(|v| Some((v["ts"].as_i64()?, v["id"].as_str()?.to_owned())));
++        let page = to_value(
++            &self
++                .backend
++                .activity(
++                    user,
++                    team_id,
++                    ActivityQuery {
++                        cursor,
++                        ascending: false,
++                        filter,
++                        limit,
++                    },
++                )
++                .await?,
++        );
++        let items: Vec<Value> = page["items"].as_array().cloned().unwrap_or_default();
++        let shaped: Vec<Value> = items
++            .iter()
++            .filter(|i| keep(i))
++            .map(|i| shape::activity(i, &names))
++            .collect();
++        let next = page["next_cursor"]
++            .as_object()
++            .map(|c| opaque(&json!({ "ts": c.get("ts"), "id": c.get("id") })));
++        Ok(InnerResponse::ok(
++            json!({ "items": shaped, "nextCursor": next, "hasMore": page["has_more"] }),
++        ))
++    }
++
++    async fn conversations(&self, user: &str, q: &HashMap<String, String>) -> Result<InnerResponse, BackendError> {
++        if q.get("kind").is_some_and(|k| k != "solo") {
++            return Err(BackendError::Invalid(
++                "kind must be solo; team chats come from the roster".into(),
++            ));
++        }
++        let limit = page_limit(q);
++        let mut cursor = q.get("cursor").cloned();
++        let mut items = Vec::new();
++        let mut next = None;
++        // Team chats are filtered out, so keep reading until a page is full or the list ends.
++        for _ in 0..5 {
++            let page = to_value(&self.backend.conversations(user, cursor.clone(), limit).await?);
++            let rows = page["items"].as_array().cloned().unwrap_or_default();
++            let last_id = rows.last().and_then(|c| c["id"].as_str()).map(str::to_owned);
++            for c in rows
++                .iter()
++                .filter(|c| c["extra"]["teamId"].as_str().is_none_or(str::is_empty))
++            {
++                let id = c["id"].as_str().unwrap_or_default();
++                let last = match self.backend.latest_message(user, id).await {
++                    Ok(Some(m)) => {
++                        shape::message(&to_value(&m), &HashMap::new(), c["name"].as_str().unwrap_or_default())
++                            .map(|m| shape::last_message(&m))
++                    }
++                    _ => None,
++                };
++                items.push(shape::conversation(
++                    c,
++                    None,
++                    &AgentExtras {
++                        last_message: last,
++                        ..Default::default()
++                    },
++                ));
++            }
++            next = if page["has_more"] == true { last_id } else { None };
++            if items.len() >= limit as usize || next.is_none() {
++                break;
++            }
++            cursor = next.clone();
++        }
++        Ok(InnerResponse::ok(json!({ "items": items, "nextCursor": next })))
++    }
++
++    async fn conversation(&self, user: &str, id: &str) -> Result<InnerResponse, BackendError> {
++        let c = to_value(&self.backend.conversation(user, id).await?);
++        let last = match self.backend.latest_message(user, id).await {
++            Ok(Some(m)) => shape::message(&to_value(&m), &HashMap::new(), c["name"].as_str().unwrap_or_default())
++                .map(|m| shape::last_message(&m)),
++            _ => None,
++        };
++        Ok(InnerResponse::ok(shape::conversation(
++            &c,
++            None,
++            &AgentExtras {
++                last_message: last,
++                ..Default::default()
++            },
++        )))
++    }
++
++    /// Roster and agent name for shaping one conversation's messages.
++    async fn message_context(&self, user: &str, conversation: &Value) -> (HashMap<String, (String, String)>, String) {
++        let name = conversation["name"].as_str().unwrap_or_default().to_owned();
++        match conversation["extra"]["teamId"].as_str().filter(|t| !t.is_empty()) {
++            Some(team_id) => match self.backend.team(user, team_id).await {
++                Ok(team) => {
++                    let team = to_value(&team);
++                    let roster = shape::roster_index(&team);
++                    let agent = conversation["id"]
++                        .as_str()
++                        .and_then(|c| roster.get(c))
++                        .map(|(_, n)| n.clone())
++                        .unwrap_or(name);
++                    (roster, agent)
++                }
++                Err(_) => (HashMap::new(), name),
++            },
++            None => (HashMap::new(), name),
++        }
++    }
++
++    async fn messages(&self, user: &str, id: &str, q: &HashMap<String, String>) -> Result<InnerResponse, BackendError> {
++        let conversation = to_value(&self.backend.conversation(user, id).await?);
++        let (roster, agent) = self.message_context(user, &conversation).await;
++        let limit = page_limit(q);
++        let shape_all = |rows: &[Value]| {
++            rows.iter()
++                .filter_map(|m| shape::message(m, &roster, &agent))
++                .collect::<Vec<_>>()
++        };
++
++        if let Some(before) = q.get("before") {
++            let page = to_value(
++                &self
++                    .backend
++                    .messages(
++                        user,
++                        id,
++                        ListMessagesQuery {
++                            limit: Some(limit),
++                            before: Some(before.clone()),
++                            after: None,
++                            anchor_message_id: None,
++                            content_mode: Some("compact".into()),
++                        },
++                    )
++                    .await?,
++            );
++            let rows = page["items"].as_array().cloned().unwrap_or_default();
++            let before = if page["has_more_before"] == true {
++                page["oldest_cursor"].clone()
++            } else {
++                Value::Null
++            };
++            return Ok(InnerResponse::ok(
++                json!({ "items": shape_all(&rows), "before": before }),
++            ));
++        }
++
++        let since = q.get("since");
++        let floor = since.and_then(|c| parse_sync_cursor(c));
++        let reset = since.is_some() && floor.is_none();
++        let query = match floor {
++            Some(f) => ListMessagesQuery {
++                limit: Some(MAX_PAGE),
++                before: None,
++                after: Some(aioncore_after(f)),
++                anchor_message_id: None,
++                content_mode: Some("compact".into()),
++            },
++            None => ListMessagesQuery {
++                limit: Some(limit),
++                before: None,
++                after: None,
++                anchor_message_id: None,
++                content_mode: Some("compact".into()),
++            },
++        };
++        let page = to_value(&self.backend.messages(user, id, query).await?);
++        let rows = page["items"].as_array().cloned().unwrap_or_default();
++        let has_more = floor.is_some() && page["has_more_after"] == true;
++        let next = if has_more {
++            rows.last()
++                .and_then(|m| m["created_at"].as_i64())
++                .unwrap_or(floor.unwrap_or(0))
++        } else {
++            next_floor(&rows, floor.unwrap_or_else(aionui_common::now_ms))
++        };
++        let mut body =
++            json!({ "items": shape_all(&rows), "cursor": sync_cursor(next), "reset": reset, "hasMore": has_more });
++        if floor.is_none() {
++            body["before"] = if page["has_more_before"] == true {
++                page["oldest_cursor"].clone()
++            } else {
++                Value::Null
++            };
++        }
++        Ok(InnerResponse::ok(body))
++    }
++
++    async fn workspaces(&self, user: &str) -> Result<InnerResponse, BackendError> {
++        let mut seen: HashMap<String, (String, i64)> = HashMap::new();
++        let mut note = |path: Option<&str>, label: &str, at: i64| {
++            if let Some(p) = path.filter(|p| !p.is_empty()) {
++                let e = seen.entry(p.to_owned()).or_insert((label.to_owned(), at));
++                if at > e.1 {
++                    *e = (label.to_owned(), at);
++                }
++            }
++        };
++        for t in self.backend.teams(user).await? {
++            let t = to_value(&t);
++            note(
++                t["workspace"].as_str(),
++                t["name"].as_str().unwrap_or_default(),
++                t["updated_at"].as_i64().unwrap_or(0),
++            );
++        }
++        let page = to_value(&self.backend.conversations(user, None, MAX_PAGE).await?);
++        for c in page["items"].as_array().into_iter().flatten() {
++            note(
++                c["extra"]["workspace"].as_str(),
++                c["name"].as_str().unwrap_or_default(),
++                c["modified_at"].as_i64().unwrap_or(0),
++            );
++        }
++        let mut list: Vec<(String, (String, i64))> = seen.into_iter().collect();
++        list.sort_by_key(|(_, (_, at))| std::cmp::Reverse(*at));
++        let out: Vec<Value> = list
++            .into_iter()
++            .map(|(path, (label, at))| json!({ "path": path, "label": label, "lastUsedAt": at }))
++            .collect();
++        Ok(InnerResponse::ok(Value::Array(out)))
++    }
++
++    async fn assistants(&self, user: &str) -> Result<InnerResponse, BackendError> {
++        let out: Vec<Value> = self
++            .backend
++            .assistants(user)
++            .await?
++            .iter()
++            .map(to_value)
++            .filter(|a| a["enabled"] != false)
++            .map(|a| {
++                json!({
++                    "assistantId": a["id"],
++                    "name": a["name"],
++                    "backend": a["agent"].get("backend").cloned().or_else(|| a.get("agent_id").cloned()).unwrap_or(Value::Null),
++                    "icon": a.get("avatar").cloned().unwrap_or(Value::Null),
++                    "description": a.get("description").cloned().unwrap_or(Value::Null),
++                })
++            })
++            .collect();
++        Ok(InnerResponse::ok(Value::Array(out)))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn paths_and_queries_split_and_decode() {
++        let (segs, q) = split("/v1/teams/t%201/tasks?status=pending,in_progress&owner=s%202&x=a+b");
++        assert_eq!(segs, ["v1", "teams", "t 1", "tasks"]);
++        assert_eq!(q["status"], "pending,in_progress");
++        assert_eq!(q["owner"], "s 2");
++        assert_eq!(q["x"], "a b");
++    }
++
++    #[test]
++    fn sync_cursor_round_trips_and_rejects_garbage() {
++        assert_eq!(parse_sync_cursor(&sync_cursor(12345)), Some(12345));
++        assert_eq!(parse_sync_cursor("v1.abc"), None);
++        assert_eq!(parse_sync_cursor("s1.%%%"), None);
++    }
++
++    #[test]
++    fn the_floor_follows_the_oldest_streaming_row() {
++        let rows = vec![
++            json!({ "created_at": 1000, "status": "finish" }),
++            json!({ "created_at": 2000, "status": "work" }),
++            json!({ "created_at": 3000, "status": "finish" }),
++        ];
++        assert_eq!(next_floor(&rows, 0), 2000 - SYNC_FLOOR_MARGIN_MS);
++        let done = vec![
++            json!({ "created_at": 1000, "status": "finish" }),
++            json!({ "created_at": 3000, "status": "finish" }),
++        ];
++        assert_eq!(next_floor(&done, 0), 3000 - SYNC_FLOOR_MARGIN_MS);
++        assert_eq!(next_floor(&[], 777), 777);
++    }
++
++    #[test]
++    fn the_aioncore_after_cursor_is_in_its_v1_format() {
++        let c = aioncore_after(5000);
++        let body = URL_SAFE_NO_PAD.decode(c.strip_prefix("v1.").unwrap()).unwrap();
++        let v: Value = serde_json::from_slice(&body).unwrap();
++        assert_eq!(v, json!({ "created_at": 4999, "id": "~" }));
++    }
++}
 diff --git a/crates/aionui-mobile/src/host_key.rs b/crates/aionui-mobile/src/host_key.rs
 new file mode 100644
 index 00000000..1538b4c9
@@ -1629,17 +2499,19 @@ index 00000000..1538b4c9
 +}
 diff --git a/crates/aionui-mobile/src/lib.rs b/crates/aionui-mobile/src/lib.rs
 new file mode 100644
-index 00000000..eb6a1196
+index 00000000..1c6baafe
 --- /dev/null
 +++ b/crates/aionui-mobile/src/lib.rs
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,31 @@
 +//! AionDX core-0015: the encrypted PC <-> phone bridge.
 +//! Contract: `docs/mobile-bridge/CONTRACT.md` in the AionDX repository.
 +
 +pub mod admin_routes;
++pub mod backend;
 +pub mod core;
 +pub mod crypto;
 +pub mod error;
++pub mod facade;
 +pub mod host_key;
 +pub mod listener;
 +pub mod outer;
@@ -1648,12 +2520,15 @@ index 00000000..eb6a1196
 +pub mod service;
 +pub mod session;
 +pub mod settings;
++pub mod shape;
 +pub mod store;
 +pub mod wire;
 +
 +pub use admin_routes::{MobileAdminState, mobile_admin_routes};
++pub use backend::{ActivityFilter, ActivityQuery, BackendError, MobileBackend};
 +pub use core::{BridgeEvents, InnerApi, InnerContext, NoEvents};
 +pub use error::MobileError;
++pub use facade::Facade;
 +pub use host_key::{HostKey, SecretProtector, platform_protector};
 +pub use service::{MobileBridge, MobileStatus};
 +pub use settings::{MobileSettings, MobileSettingsPatch};
@@ -4064,6 +4939,612 @@ index 00000000..fe2cbc5a
 +        assert!(serde_json::from_str::<MobileSettingsPatch>(r#"{"enabled":true,"bogus":1}"#).is_err());
 +    }
 +}
+diff --git a/crates/aionui-mobile/src/shape.rs b/crates/aionui-mobile/src/shape.rs
+new file mode 100644
+index 00000000..f16132f0
+--- /dev/null
++++ b/crates/aionui-mobile/src/shape.rs
+@@ -0,0 +1,600 @@
++//! AionCore's JSON → the contract's JSON (CONTRACT §6.3, §6.4, §6.7, §6.8).
++//! Pure functions over the *serialized* AionCore types, so they depend only on
++//! the wire forms verified in AionCore v0.2.2, not on Rust enum internals.
++
++use std::collections::HashMap;
++
++use serde_json::{Map, Value, json};
++
++fn s<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
++    v.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
++}
++
++// ---- Roster -----------------------------------------------------------------------------------
++
++/// conversation id → (slot id, display name), for resolving teammate senders.
++pub fn roster_index(team: &Value) -> HashMap<String, (String, String)> {
++    team["assistants"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .filter_map(|a| {
++            Some((
++                s(a, "conversation_id")?.to_owned(),
++                (s(a, "slot_id")?.to_owned(), s(a, "name")?.to_owned()),
++            ))
++        })
++        .collect()
++}
++
++/// `runtime` (§6.3) from AionCore's `context_reset.availability`, the only per-agent runtime view in GET team.
++fn runtime_of(agent: &Value) -> &'static str {
++    match s(&agent["context_reset"], "availability") {
++        Some("dormant") => "dormant",
++        Some("initializing") => "pending",
++        Some("failed") => "failed",
++        _ => "ready",
++    }
++}
++
++/// Live per-agent signals the facade adds on top of AionCore's views.
++#[derive(Debug, Clone, Default)]
++pub struct AgentExtras {
++    pub last_message: Option<Value>,
++    pub unread: u32,
++    pub your_turn: bool,
++    /// A pending approval is a question (needs_answer) rather than a permission.
++    pub question_pending: bool,
++    pub shutdown: Option<Value>,
++}
++
++pub fn attention(
++    pending_approvals: u64,
++    question_pending: bool,
++    runtime: &str,
++    blocked: Option<&str>,
++    your_turn: bool,
++) -> &'static str {
++    if pending_approvals > 0 && question_pending {
++        "needs_answer"
++    } else if pending_approvals > 0 {
++        "needs_approval"
++    } else if runtime == "failed" || blocked == Some("runtime_failed") {
++        "error"
++    } else if your_turn {
++        "your_turn"
++    } else {
++        "none"
++    }
++}
++
++/// One `Agent` (§6.3).
++pub fn agent(agent: &Value, slot_work: Option<&Value>, tasks: &[Value], extras: &AgentExtras) -> Value {
++    let slot_id = s(agent, "slot_id").unwrap_or_default();
++    let runtime = runtime_of(agent);
++    let work = slot_work.cloned().unwrap_or(Value::Null);
++    let blocked = s(&work, "blocked_reason");
++    let pending = agent["pending_confirmations"].as_u64().unwrap_or(0);
++    let turn = match s(&work, "active_turn_id") {
++        Some(turn_id) => json!({
++            "turnId": turn_id,
++            "startedAt": work["active_turn_started_at_ms"],
++            "elapsedMs": work["active_turn_elapsed_ms"],
++            "slow": work["active_turn_slow"].as_bool().unwrap_or(false),
++            "slowThresholdMs": work["active_turn_slow_threshold_ms"],
++        }),
++        None => Value::Null,
++    };
++    let mine: Vec<&Value> = tasks.iter().filter(|t| s(t, "owner") == Some(slot_id)).collect();
++    let current_task = mine
++        .iter()
++        .filter(|t| s(t, "status") == Some("in_progress"))
++        .max_by_key(|t| t["updated_at"].as_i64().unwrap_or(0))
++        .map(|t| json!({ "taskId": t["id"], "subject": t["subject"] }))
++        .unwrap_or(Value::Null);
++    let open_tasks = mine
++        .iter()
++        .filter(|t| matches!(s(t, "status"), Some("pending") | Some("in_progress")))
++        .count();
++    let attention = attention(pending, extras.question_pending, runtime, blocked, extras.your_turn);
++    let last_activity = extras
++        .last_message
++        .as_ref()
++        .and_then(|m| m["createdAt"].as_i64())
++        .or_else(|| work["active_turn_started_at_ms"].as_i64())
++        .unwrap_or(0);
++    json!({
++        "slotId": slot_id,
++        "name": agent["name"],
++        "role": if s(agent, "role") == Some("lead") { "lead" } else { "teammate" },
++        "conversationId": agent["conversation_id"],
++        "backend": agent["backend"],
++        "model": agent["model"],
++        "icon": agent.get("icon").cloned().unwrap_or(Value::Null),
++        "state": s(&work, "state").unwrap_or("idle"),
++        "blockedReason": blocked,
++        "runtime": runtime,
++        "turn": turn,
++        "queue": {
++            "foreground": work["queued_foreground_count"].as_u64().unwrap_or(0),
++            "background": work["queued_background_count"].as_u64().unwrap_or(0),
++            "foregroundMessageIds": work.get("queued_foreground_message_ids").cloned().unwrap_or_else(|| json!([])),
++        },
++        "pendingApprovals": pending,
++        "attention": attention,
++        "waitingOnUser": matches!(attention, "needs_answer" | "needs_approval"),
++        "unread": extras.unread.min(99),
++        "shutdown": extras.shutdown.clone().unwrap_or(Value::Null),
++        "currentTask": current_task,
++        "openTaskCount": open_tasks,
++        "lastMessage": extras.last_message.clone().unwrap_or(Value::Null),
++        "lastActivityAt": last_activity,
++    })
++}
++
++/// `RunState` (§6.3). `extras` is keyed by slot id.
++pub fn run_state(team: &Value, run: &Value, tasks: &[Value], extras: &HashMap<String, AgentExtras>) -> Value {
++    let work_by_slot: HashMap<&str, &Value> = run["slot_work"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .filter_map(|w| Some((s(w, "slot_id")?, w)))
++        .collect();
++    let mut agents: Vec<&Value> = team["assistants"].as_array().into_iter().flatten().collect();
++    agents.sort_by_key(|a| if s(a, "role") == Some("lead") { 0 } else { 1 });
++    let empty = AgentExtras::default();
++    let agents: Vec<Value> = agents
++        .into_iter()
++        .map(|a| {
++            let slot = s(a, "slot_id").unwrap_or_default();
++            agent(
++                a,
++                work_by_slot.get(slot).copied(),
++                tasks,
++                extras.get(slot).unwrap_or(&empty),
++            )
++        })
++        .collect();
++    let active_run = match &run["active_run"] {
++        Value::Object(r) => json!({
++            "runId": r.get("team_run_id"),
++            "status": r.get("status"),
++            "targetSlotId": r.get("target_slot_id"),
++            "source": r.get("source"),
++        }),
++        _ => Value::Null,
++    };
++    let session_status = if run["session_generation"].is_null() && work_by_slot.is_empty() {
++        "none"
++    } else {
++        "ready"
++    };
++    json!({
++        "teamId": team["id"],
++        "sessionStatus": session_status,
++        "activeRun": active_run,
++        "agents": agents,
++    })
++}
++
++/// `TeamSummary` (§6.3), from the shaped agents of the same team.
++pub fn team_summary(team: &Value, agents: &[Value]) -> Value {
++    let rank = |a: &str| match a {
++        "needs_answer" => 4,
++        "needs_approval" => 3,
++        "error" => 2,
++        "your_turn" => 1,
++        _ => 0,
++    };
++    let attention = agents
++        .iter()
++        .filter_map(|a| a["attention"].as_str())
++        .max_by_key(|a| rank(a))
++        .unwrap_or("none");
++    let unread: u64 = agents.iter().filter_map(|a| a["unread"].as_u64()).sum();
++    json!({
++        "teamId": team["id"],
++        "name": team["name"],
++        "workspace": team["workspace"],
++        "leadSlotId": team.get("leader_assistant_id").cloned().unwrap_or(Value::Null),
++        "agentCount": team["assistants"].as_array().map_or(0, Vec::len),
++        "attention": attention,
++        "waitingOnUser": agents.iter().any(|a| a["waitingOnUser"] == true),
++        "unread": unread.min(99),
++        "updatedAt": team["updated_at"],
++    })
++}
++
++// ---- Tasks and activity -----------------------------------------------------------------------
++
++/// `Task` (§6.7). `names` maps slot ids to display names.
++pub fn task(t: &Value, names: &HashMap<String, String>, assignment: Option<Value>) -> Value {
++    let owner = s(t, "owner");
++    let owner_name = match owner {
++        Some("user") => Some("You".to_owned()),
++        Some(slot) => names.get(slot).cloned(),
++        None => None,
++    };
++    json!({
++        "taskId": t["id"],
++        "teamId": t["team_id"],
++        "subject": t["subject"],
++        "description": t.get("description").cloned().unwrap_or(Value::Null),
++        "status": t["status"],
++        "owner": owner,
++        "ownerName": owner_name,
++        "blockedBy": t.get("blocked_by").cloned().unwrap_or_else(|| json!([])),
++        "blocks": t.get("blocks").cloned().unwrap_or_else(|| json!([])),
++        "assignment": assignment.unwrap_or(Value::Null),
++        "createdAt": t["created_at"],
++        "updatedAt": t["updated_at"],
++    })
++}
++
++/// `taskId` from a "📋 Task assigned to you (#<id>): ..." notice.
++pub fn task_assigned_id(text: &str) -> Option<String> {
++    let rest = text.trim_start().strip_prefix("📋 Task assigned to you (#")?;
++    let end = rest.find(')')?;
++    let id = &rest[..end];
++    (!id.is_empty()).then(|| id.to_owned())
++}
++
++fn party(id: &str, names: &HashMap<String, String>) -> Value {
++    match id {
++        "user" => json!({ "slotId": null, "name": "You", "isUser": true }),
++        "*" => json!({ "slotId": null, "name": "everyone", "isUser": false }),
++        slot => {
++            json!({ "slotId": slot, "name": names.get(slot).cloned().unwrap_or_else(|| slot.to_owned()), "isUser": false })
++        }
++    }
++}
++
++/// `Activity` (§6.8).
++pub fn activity(item: &Value, names: &HashMap<String, String>) -> Value {
++    if let Some(m) = item.get("message").filter(|m| m.is_object()) {
++        let content = s(m, "content").unwrap_or_default();
++        let mut message = json!({
++            "messageId": m["id"],
++            "from": party(s(m, "from_agent_id").unwrap_or_default(), names),
++            "to": party(s(m, "to_agent_id").unwrap_or_default(), names),
++            "msgType": m["msg_type"],
++            "content": content,
++            "summary": m.get("summary").cloned().unwrap_or(Value::Null),
++            "read": m["read"],
++        });
++        if let Some(task_id) = task_assigned_id(content) {
++            message["notice"] = json!({ "kind": "task_assigned", "taskId": task_id });
++        }
++        json!({ "kind": "message", "activityId": item["id"], "createdAt": item["created_at"], "message": message })
++    } else {
++        let task = task(&item["task"], names, None);
++        json!({ "kind": "task", "activityId": item["id"], "createdAt": item["created_at"], "task": task })
++    }
++}
++
++// ---- Conversations and messages ---------------------------------------------------------------
++
++/// `role` and `sender` (§6.4) from an AionCore message row.
++fn role_and_sender(m: &Value, roster: &HashMap<String, (String, String)>, agent_name: &str) -> (&'static str, Value) {
++    let content = &m["content"];
++    match s(m, "position") {
++        Some("right") => ("user", json!({ "kind": "user" })),
++        Some("left") if content["teammate_message"] == true => {
++            if s(content, "sender_name") == Some("team_system") {
++                ("system", json!({ "kind": "team_system" }))
++            } else {
++                let conv = s(content, "sender_conversation_id");
++                let slot = conv.and_then(|c| roster.get(c)).map(|(slot, _)| slot.clone());
++                (
++                    "teammate",
++                    json!({ "kind": "teammate", "name": content["sender_name"], "slotId": slot, "conversationId": conv }),
++                )
++            }
++        }
++        Some("left") => ("agent", json!({ "kind": "agent", "name": agent_name })),
++        _ => ("system", json!({ "kind": "app" })),
++    }
++}
++
++fn message_type(t: &str) -> &'static str {
++    match t {
++        "text" => "text",
++        "thinking" => "thinking",
++        "tool_call" | "acp_tool_call" | "tool_group" => "tool_call",
++        "plan" => "plan",
++        "tips" => "tips",
++        "agent_status" => "agent_status",
++        _ => "other",
++    }
++}
++
++fn message_status(st: Option<&str>) -> &'static str {
++    match st {
++        Some("work") => "streaming",
++        Some("error") => "error",
++        Some("pending") => "pending",
++        _ => "done",
++    }
++}
++
++/// One `Message` (§6.4), or `None` for hidden rows.
++pub fn message(m: &Value, roster: &HashMap<String, (String, String)>, agent_name: &str) -> Option<Value> {
++    if m["hidden"] == true {
++        return None;
++    }
++    let (role, sender) = role_and_sender(m, roster, agent_name);
++    let raw_type = s(m, "type").unwrap_or("other");
++    let kind = message_type(raw_type);
++    let status = message_status(s(m, "status"));
++    let content = &m["content"];
++    let mut out = Map::new();
++    out.insert("messageId".into(), m["id"].clone());
++    out.insert("conversationId".into(), m["conversation_id"].clone());
++    if let Some(turn) = s(m, "backend_turn_id") {
++        out.insert("turnId".into(), json!(turn));
++    }
++    out.insert("role".into(), json!(role));
++    out.insert("sender".into(), sender);
++    out.insert("type".into(), json!(kind));
++    out.insert("status".into(), json!(status));
++
++    let mut text = content.get("content").and_then(Value::as_str).map(str::to_owned);
++    if s(content, "sender_name") == Some("team_system")
++        && let Some(t) = &text
++        && serde_json::from_str::<Value>(t)
++            .ok()
++            .is_some_and(|v| v["kind"] == "context_reset")
++    {
++        out.insert("notice".into(), json!({ "kind": "context_reset" }));
++        text = Some("Context cleared".into());
++    }
++    if let Some(t) = &text
++        && let Some(task_id) = task_assigned_id(t)
++    {
++        out.insert("notice".into(), json!({ "kind": "task_assigned", "taskId": task_id }));
++    }
++    if matches!(kind, "text" | "thinking" | "tips")
++        && let Some(t) = text
++    {
++        out.insert("text".into(), json!(t));
++    }
++    if kind == "tool_call" {
++        let name = s(content, "name")
++            .or_else(|| s(content, "title"))
++            .or_else(|| s(content, "toolName"))
++            .unwrap_or("tool");
++        out.insert(
++            "tool".into(),
++            json!({ "name": name, "title": content.get("title"), "status": content.get("status") }),
++        );
++    }
++    if status == "error" {
++        let source = if s(content, "source") == Some("send_failed") {
++            "send_failed"
++        } else {
++            "agent"
++        };
++        let mut error = json!({
++            "source": source,
++            "code": content.get("code").cloned().unwrap_or(Value::Null),
++            "message": s(content, "content").unwrap_or("Error"),
++        });
++        if source == "send_failed" {
++            error["messageId"] = Value::Null; // linked by the change journal (phase 4)
++        }
++        out.insert("error".into(), error);
++    }
++    out.insert("raw".into(), content.clone());
++    out.insert("createdAt".into(), m["created_at"].clone());
++    Some(Value::Object(out))
++}
++
++/// `LastMessage` (§6.3) from a shaped message.
++pub fn last_message(msg: &Value) -> Value {
++    let name = msg["sender"].get("name").cloned().unwrap_or(Value::Null);
++    let text = match msg["type"].as_str() {
++        Some("tool_call") => format!("Used {}", msg["tool"]["name"].as_str().unwrap_or("a tool")),
++        _ => msg["text"].as_str().unwrap_or_default().chars().take(200).collect(),
++    };
++    json!({ "messageId": msg["messageId"], "role": msg["role"], "senderName": name, "text": text, "createdAt": msg["createdAt"] })
++}
++
++/// `Conversation` (§6.4).
++pub fn conversation(c: &Value, team_name_of_slot: Option<(&str, &str)>, extras: &AgentExtras) -> Value {
++    let extra = &c["extra"];
++    let team_id = s(extra, "teamId");
++    let runtime = &c["runtime"];
++    let state = s(runtime, "state").unwrap_or("idle");
++    let pending = runtime["pending_confirmations"].as_u64().unwrap_or(0);
++    let attention = attention(pending, extras.question_pending, "ready", None, extras.your_turn);
++    let mut out = json!({
++        "conversationId": c["id"],
++        "name": c["name"],
++        "kind": if team_id.is_some() { "team_member" } else { "solo" },
++        "backend": s(extra, "backend").map(Value::from).unwrap_or_else(|| c["type"].clone()),
++        "state": state,
++        "attention": attention,
++        "waitingOnUser": matches!(attention, "needs_answer" | "needs_approval"),
++        "unread": extras.unread.min(99),
++        "lastMessage": extras.last_message.clone().unwrap_or(Value::Null),
++        "updatedAt": c["modified_at"],
++    });
++    if let Some(t) = team_id {
++        out["teamId"] = json!(t);
++        out["slotId"] = json!(team_name_of_slot.map(|(slot, _)| slot).or_else(|| s(extra, "slot_id")));
++    }
++    if let Some(model) = c["model"]
++        .get("use_model")
++        .and_then(Value::as_str)
++        .or_else(|| s(extra, "current_model_id"))
++    {
++        out["model"] = json!(model);
++    }
++    if let Some(ws) = s(extra, "workspace") {
++        out["workspace"] = json!(ws);
++    }
++    out
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn team() -> Value {
++        json!({
++            "id": "t1", "name": "Dev", "workspace": "C:/w", "leader_assistant_id": "lead", "updated_at": 5,
++            "assistants": [
++                { "slot_id": "s2", "name": "Bob", "role": "teammate", "conversation_id": "c2", "backend": "claude",
++                  "model": "m", "pending_confirmations": 1, "context_reset": { "supported": true, "availability": "ready" } },
++                { "slot_id": "lead", "name": "Ann", "role": "lead", "conversation_id": "c1", "backend": "claude",
++                  "model": "m", "pending_confirmations": 0, "context_reset": { "supported": true, "availability": "failed" } },
++            ]
++        })
++    }
++
++    #[test]
++    fn run_state_puts_the_lead_first_and_maps_every_field() {
++        let run = json!({
++            "session_generation": "g1", "active_run": null,
++            "slot_work": [ { "slot_id": "s2", "state": "running", "queued_foreground_count": 2, "queued_background_count": 1,
++                "active_turn_id": "turn_1", "active_turn_started_at_ms": 100, "active_turn_elapsed_ms": 50,
++                "active_turn_slow": false, "active_turn_slow_threshold_ms": 600000, "blocked_reason": null } ]
++        });
++        let tasks = vec![
++            json!({ "id": "k1", "subject": "A", "status": "in_progress", "owner": "s2", "updated_at": 3 }),
++            json!({ "id": "k2", "subject": "B", "status": "pending", "owner": "s2", "updated_at": 9 }),
++        ];
++        let rs = run_state(&team(), &run, &tasks, &HashMap::new());
++        assert_eq!(rs["sessionStatus"], "ready");
++        let agents = rs["agents"].as_array().unwrap();
++        assert_eq!(agents[0]["slotId"], "lead");
++        assert_eq!(agents[0]["runtime"], "failed");
++        assert_eq!(agents[0]["attention"], "error");
++        let bob = &agents[1];
++        assert_eq!(bob["state"], "running");
++        assert_eq!(bob["turn"]["turnId"], "turn_1");
++        assert_eq!(bob["queue"]["foreground"], 2);
++        assert_eq!(bob["attention"], "needs_approval");
++        assert_eq!(bob["waitingOnUser"], true);
++        assert_eq!(bob["currentTask"], json!({ "taskId": "k1", "subject": "A" }));
++        assert_eq!(bob["openTaskCount"], 2);
++        let summary = team_summary(&team(), agents);
++        assert_eq!(summary["attention"], "needs_approval");
++        assert_eq!(summary["waitingOnUser"], true);
++        assert_eq!(summary["leadSlotId"], "lead");
++        assert_eq!(summary["agentCount"], 2);
++    }
++
++    #[test]
++    fn no_session_is_session_status_none_and_idle_agents() {
++        let run = json!({ "session_generation": null, "active_run": null, "slot_work": [] });
++        let rs = run_state(&team(), &run, &[], &HashMap::new());
++        assert_eq!(rs["sessionStatus"], "none");
++        assert_eq!(rs["agents"][1]["state"], "idle");
++        assert_eq!(rs["agents"][1]["turn"], Value::Null);
++    }
++
++    #[test]
++    fn messages_map_roles_senders_notices_and_errors() {
++        let roster = roster_index(&team());
++        let user = json!({ "id": "m1", "conversation_id": "c2", "type": "text", "position": "right", "status": "pending",
++                           "hidden": false, "created_at": 1, "content": { "content": "hi" } });
++        let u = message(&user, &roster, "Bob").unwrap();
++        assert_eq!(
++            (u["role"].as_str(), u["status"].as_str(), u["text"].as_str()),
++            (Some("user"), Some("pending"), Some("hi"))
++        );
++
++        let notice = json!({ "id": "m2", "conversation_id": "c2", "type": "text", "position": "left", "status": "finish",
++            "hidden": false, "created_at": 2,
++            "content": { "content": "📋 Task assigned to you (#k1): A", "teammate_message": true, "sender_name": "Ann", "sender_conversation_id": "c1" } });
++        let n = message(&notice, &roster, "Bob").unwrap();
++        assert_eq!(n["role"], "teammate");
++        assert_eq!(
++            n["sender"],
++            json!({ "kind": "teammate", "name": "Ann", "slotId": "lead", "conversationId": "c1" })
++        );
++        assert_eq!(n["notice"], json!({ "kind": "task_assigned", "taskId": "k1" }));
++
++        let reset = json!({ "id": "m3", "conversation_id": "c2", "type": "text", "position": "left", "status": "finish",
++            "hidden": false, "created_at": 3,
++            "content": { "content": "{\"kind\":\"context_reset\",\"member_name\":\"Bob\"}", "teammate_message": true, "sender_name": "team_system" } });
++        let r = message(&reset, &roster, "Bob").unwrap();
++        assert_eq!(
++            (r["role"].as_str(), r["text"].as_str()),
++            (Some("system"), Some("Context cleared"))
++        );
++        assert_eq!(r["notice"]["kind"], "context_reset");
++
++        let failed = json!({ "id": "m4", "conversation_id": "c2", "type": "tips", "position": "center", "status": "error",
++            "hidden": false, "created_at": 4, "content": { "content": "CLI missing", "type": "error", "source": "send_failed", "code": "X" } });
++        let f = message(&failed, &roster, "Bob").unwrap();
++        assert_eq!(f["role"], "system");
++        assert_eq!(
++            f["error"],
++            json!({ "source": "send_failed", "code": "X", "message": "CLI missing", "messageId": null })
++        );
++
++        let agent_err = json!({ "id": "m5", "conversation_id": "c2", "type": "tips", "position": "left", "status": "error",
++            "hidden": false, "created_at": 5, "content": { "content": "boom", "type": "error" } });
++        assert_eq!(message(&agent_err, &roster, "Bob").unwrap()["error"]["source"], "agent");
++
++        let streaming = json!({ "id": "m6", "conversation_id": "c2", "type": "text", "position": "left", "status": "work",
++            "hidden": false, "created_at": 6, "content": { "content": "partial" } });
++        let st = message(&streaming, &roster, "Bob").unwrap();
++        assert_eq!(
++            (st["role"].as_str(), st["status"].as_str()),
++            (Some("agent"), Some("streaming"))
++        );
++        assert_eq!(last_message(&st)["text"], "partial");
++
++        let hidden = json!({ "id": "m7", "hidden": true });
++        assert!(message(&hidden, &roster, "Bob").is_none());
++    }
++
++    #[test]
++    fn task_assigned_prefix_parsing() {
++        assert_eq!(
++            task_assigned_id("📋 Task assigned to you (#01ab): Do it"),
++            Some("01ab".into())
++        );
++        assert_eq!(task_assigned_id("Task assigned to you (#01ab)"), None);
++        assert_eq!(task_assigned_id("📋 Task assigned to you (#)"), None);
++    }
++
++    #[test]
++    fn conversations_know_solo_from_team_member() {
++        let solo = json!({ "id": "c9", "name": "Chat", "type": "acp", "modified_at": 7, "model": null,
++            "runtime": { "state": "waiting_confirmation", "pending_confirmations": 1 }, "extra": { "backend": "claude", "workspace": "C:/x" } });
++        let c = conversation(&solo, None, &AgentExtras::default());
++        assert_eq!(c["kind"], "solo");
++        assert_eq!(c["state"], "waiting_confirmation");
++        assert_eq!(c["attention"], "needs_approval");
++        assert_eq!(c["workspace"], "C:/x");
++        assert!(c.get("teamId").is_none());
++        let member = json!({ "id": "c2", "name": "Bob", "type": "acp", "modified_at": 7, "extra": { "teamId": "t1", "slot_id": "s2" } });
++        let m = conversation(&member, None, &AgentExtras::default());
++        assert_eq!(
++            (m["kind"].as_str(), m["teamId"].as_str(), m["slotId"].as_str()),
++            (Some("team_member"), Some("t1"), Some("s2"))
++        );
++    }
++
++    #[test]
++    fn activity_maps_parties_and_notices() {
++        let names: HashMap<String, String> = [("s2".to_owned(), "Bob".to_owned())].into();
++        let item = json!({ "kind": "message", "id": "a1", "created_at": 9, "message": {
++            "id": "mb1", "from_agent_id": "user", "to_agent_id": "s2", "msg_type": "message",
++            "content": "📋 Task assigned to you (#k9): X", "summary": null, "read": false } });
++        let a = activity(&item, &names);
++        assert_eq!(
++            a["message"]["from"],
++            json!({ "slotId": null, "name": "You", "isUser": true })
++        );
++        assert_eq!(a["message"]["to"]["name"], "Bob");
++        assert_eq!(a["message"]["notice"]["taskId"], "k9");
++        let t = json!({ "kind": "task", "id": "a2", "created_at": 9, "task": { "id": "k1", "team_id": "t1", "subject": "S",
++            "status": "pending", "owner": "user", "blocked_by": [], "blocks": [], "created_at": 1, "updated_at": 2 } });
++        assert_eq!(activity(&t, &names)["task"]["ownerName"], "You");
++    }
++}
 diff --git a/crates/aionui-mobile/src/store.rs b/crates/aionui-mobile/src/store.rs
 new file mode 100644
 index 00000000..10adff66
@@ -4587,6 +6068,286 @@ index 00000000..9855cfc9
 +
 +pub fn is_fresh(ts: i64, now: i64) -> bool {
 +    (now - ts).abs() <= MAX_CLOCK_SKEW_MS
++}
+diff --git a/crates/aionui-mobile/tests/facade_routes.rs b/crates/aionui-mobile/tests/facade_routes.rs
+new file mode 100644
+index 00000000..9c1a6d55
+--- /dev/null
++++ b/crates/aionui-mobile/tests/facade_routes.rs
+@@ -0,0 +1,274 @@
++//! The phase 2 read routes through the real facade, over a fake AionCore
++//! whose fixtures are AionCore's own JSON forms.
++
++use std::sync::{Arc, Mutex};
++
++use aionui_api_types::*;
++use aionui_mobile::core::{InnerApi, InnerContext};
++use aionui_mobile::{ActivityQuery, BackendError, Facade, InnerRequest, MobileBackend};
++use async_trait::async_trait;
++use serde_json::{Value, json};
++
++fn from<T: serde::de::DeserializeOwned>(v: Value) -> T {
++    serde_json::from_value(v).unwrap()
++}
++
++#[derive(Default)]
++struct Fake {
++    seen_message_queries: Mutex<Vec<(Option<String>, Option<String>)>>,
++}
++
++fn team_json() -> Value {
++    json!({
++        "id": "t1", "name": "Dev", "workspace": "C:/w", "leader_assistant_id": "lead", "created_at": 1, "updated_at": 5,
++        "assistants": [
++            { "slot_id": "lead", "assistant_name": "Ann", "name": "Ann", "role": "lead", "conversation_id": "c1",
++              "assistant_backend": "claude", "backend": "claude", "model": "m", "pending_confirmations": 0,
++              "context_reset": { "supported": true, "availability": "ready" } },
++            { "slot_id": "s2", "assistant_name": "Bob", "name": "Bob", "role": "teammate", "conversation_id": "c2",
++              "assistant_backend": "claude", "backend": "claude", "model": "m", "pending_confirmations": 2,
++              "context_reset": { "supported": true, "availability": "ready" } }
++        ]
++    })
++}
++
++fn conv(id: &str, team: Option<&str>, modified: i64) -> Value {
++    let mut extra = json!({ "backend": "claude", "workspace": format!("C:/ws/{id}") });
++    if let Some(t) = team {
++        extra["teamId"] = json!(t);
++    }
++    json!({ "id": id, "name": format!("Chat {id}"), "type": "acp", "status": "finished", "pinned": false,
++            "created_at": 1, "modified_at": modified, "extra": extra })
++}
++
++fn msg(id: &str, conv: &str, at: i64, status: &str, text: &str) -> Value {
++    json!({ "id": id, "conversation_id": conv, "msg_id": id, "type": "text", "content": { "content": text },
++            "position": "left", "status": status, "hidden": false, "created_at": at })
++}
++
++#[async_trait]
++impl MobileBackend for Fake {
++    async fn teams(&self, _u: &str) -> Result<Vec<TeamResponse>, BackendError> {
++        Ok(vec![from(team_json())])
++    }
++    async fn team(&self, _u: &str, t: &str) -> Result<TeamResponse, BackendError> {
++        if t == "t1" {
++            Ok(from(team_json()))
++        } else {
++            Err(BackendError::NotFound("team".into()))
++        }
++    }
++    async fn run_state(&self, _u: &str, _t: &str) -> Result<TeamRunStateResponse, BackendError> {
++        Ok(from(
++            json!({ "session_generation": "g", "active_run": null, "slot_work": [
++            { "slot_id": "s2", "role": "teammate", "state": "running", "queued_foreground_count": 0, "queued_background_count": 0,
++              "active_turn_id": "turn_9", "active_turn_started_at_ms": 10, "active_turn_elapsed_ms": 5, "active_turn_slow": false,
++              "active_turn_slow_threshold_ms": 600000, "blocked_reason": null, "team_run_id": null } ] }),
++        ))
++    }
++    async fn tasks(&self, _u: &str, _t: &str) -> Result<Vec<TeamTaskResponse>, BackendError> {
++        Ok(vec![
++            from(
++                json!({ "id": "k1", "team_id": "t1", "subject": "A", "description": null, "status": "pending", "owner": "s2", "blocked_by": [], "blocks": [], "created_at": 1, "updated_at": 2 }),
++            ),
++            from(
++                json!({ "id": "k2", "team_id": "t1", "subject": "B", "description": "d", "status": "completed", "owner": "user", "blocked_by": [], "blocks": [], "created_at": 1, "updated_at": 9 }),
++            ),
++        ])
++    }
++    async fn activity(&self, _u: &str, _t: &str, _q: ActivityQuery) -> Result<TeamActivityPageResponse, BackendError> {
++        Ok(from(json!({ "items": [], "has_more": false })))
++    }
++    async fn conversations(
++        &self,
++        _u: &str,
++        cursor: Option<String>,
++        _l: u32,
++    ) -> Result<ConversationListResponse, BackendError> {
++        Ok(match cursor.as_deref() {
++            None => {
++                from(json!({ "items": [conv("c1", Some("t1"), 9), conv("c9", None, 8)], "total": 3, "has_more": true }))
++            }
++            Some(_) => from(json!({ "items": [conv("c8", None, 7)], "total": 3, "has_more": false })),
++        })
++    }
++    async fn conversation(&self, _u: &str, id: &str) -> Result<ConversationResponse, BackendError> {
++        Ok(from(conv(id, (id == "c2").then_some("t1"), 8)))
++    }
++    async fn messages(&self, _u: &str, id: &str, q: ListMessagesQuery) -> Result<MessageListResponse, BackendError> {
++        self.seen_message_queries
++            .lock()
++            .unwrap()
++            .push((q.after.clone(), q.before.clone()));
++        Ok(from(json!({
++            "items": [msg("m1", id, 1000, "finish", "hello"), msg("m2", id, 2000, "work", "typing")],
++            "oldest_cursor": "v1.oldest", "newest_cursor": "v1.newest", "has_more_before": true, "has_more_after": false
++        })))
++    }
++    async fn latest_message(&self, _u: &str, id: &str) -> Result<Option<MessageResponse>, BackendError> {
++        Ok(Some(from(msg("mz", id, 3000, "finish", "last words"))))
++    }
++    async fn assistants(&self, _u: &str) -> Result<Vec<AssistantResponse>, BackendError> {
++        Ok(vec![])
++    }
++}
++
++fn ctx() -> InnerContext {
++    InnerContext {
++        user_id: "u1".into(),
++        device_id: "d1".into(),
++        sid: [0; 16],
++        seq: 1,
++    }
++}
++
++async fn get(facade: &Facade, path: &str) -> Option<(u16, Value)> {
++    let req = InnerRequest {
++        method: "GET".into(),
++        path: path.into(),
++        body: None,
++        rid: "r".into(),
++        confirm: None,
++    };
++    facade
++        .handle(&ctx(), &req)
++        .await
++        .map(|r| (r.status, r.body.unwrap_or(Value::Null)))
++}
++
++fn facade() -> (Arc<Fake>, Arc<Facade>) {
++    let fake = Arc::new(Fake::default());
++    (fake.clone(), Facade::new(fake))
++}
++
++#[tokio::test]
++async fn teams_and_run_state() {
++    let (_, f) = facade();
++    let (status, teams) = get(&f, "/v1/teams").await.unwrap();
++    assert_eq!(status, 200);
++    assert_eq!(teams[0]["teamId"], "t1");
++    assert_eq!(teams[0]["attention"], "needs_approval");
++    assert_eq!(teams[0]["agentCount"], 2);
++
++    let (_, rs) = get(&f, "/v1/teams/t1/run-state").await.unwrap();
++    assert_eq!(rs["agents"][0]["slotId"], "lead");
++    let bob = &rs["agents"][1];
++    assert_eq!(bob["state"], "running");
++    assert_eq!(bob["turn"]["turnId"], "turn_9");
++    assert_eq!(bob["openTaskCount"], 1);
++    assert_eq!(bob["lastMessage"]["text"], "last words");
++
++    let (_, agent) = get(&f, "/v1/teams/t1/agents/s2").await.unwrap();
++    assert_eq!(agent["name"], "Bob");
++    let (status, err) = get(&f, "/v1/teams/nope/run-state").await.unwrap();
++    assert_eq!(status, 404);
++    assert_eq!(err["error"]["code"], "not_found");
++}
++
++#[tokio::test]
++async fn tasks_filter_and_owner_names() {
++    let (_, f) = facade();
++    let (_, all) = get(&f, "/v1/teams/t1/tasks").await.unwrap();
++    assert_eq!(all[0]["taskId"], "k2", "most recently updated first");
++    assert_eq!(all[0]["ownerName"], "You");
++    assert_eq!(all[1]["ownerName"], "Bob");
++    let (_, pending) = get(&f, "/v1/teams/t1/tasks?status=pending").await.unwrap();
++    assert_eq!(pending.as_array().unwrap().len(), 1);
++    let (_, one) = get(&f, "/v1/teams/t1/tasks/k1").await.unwrap();
++    assert_eq!(one["subject"], "A");
++}
++
++#[tokio::test]
++async fn solo_conversations_skip_team_chats_and_page() {
++    let (_, f) = facade();
++    let (_, page) = get(&f, "/v1/conversations?kind=solo&limit=2").await.unwrap();
++    let ids: Vec<&str> = page["items"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|c| c["conversationId"].as_str().unwrap())
++        .collect();
++    assert_eq!(
++        ids,
++        ["c9", "c8"],
++        "the team chat c1 is not listed; the facade read on to fill the page"
++    );
++    assert_eq!(page["items"][0]["kind"], "solo");
++    assert_eq!(page["items"][0]["lastMessage"]["text"], "last words");
++    let (status, _) = get(&f, "/v1/conversations?kind=team").await.unwrap();
++    assert_eq!(status, 400);
++}
++
++#[tokio::test]
++async fn message_sync_cursor_and_backward_paging() {
++    let (fake, f) = facade();
++    let (_, first) = get(&f, "/v1/conversations/c9/messages").await.unwrap();
++    assert_eq!(first["items"].as_array().unwrap().len(), 2);
++    assert_eq!(first["items"][1]["status"], "streaming");
++    assert_eq!(first["reset"], false);
++    assert_eq!(first["before"], "v1.oldest", "where backward paging starts (rev 4.1)");
++    let cursor = first["cursor"].as_str().unwrap().to_owned();
++
++    let (_, next) = get(&f, &format!("/v1/conversations/c9/messages?since={cursor}"))
++        .await
++        .unwrap();
++    assert_eq!(next["reset"], false);
++    assert!(next.get("before").is_none(), "no before on since-polls");
++    let after = fake
++        .seen_message_queries
++        .lock()
++        .unwrap()
++        .last()
++        .unwrap()
++        .0
++        .clone()
++        .unwrap();
++    // The poll re-reads from 5 s before the oldest row that was still streaming (m2 at 2000).
++    let decoded: Value = serde_json::from_slice(
++        &base64::Engine::decode(
++            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
++            after.strip_prefix("v1.").unwrap(),
++        )
++        .unwrap(),
++    )
++    .unwrap();
++    assert_eq!(decoded, json!({ "created_at": 2000 - 5000 - 1, "id": "~" }));
++
++    let (_, garbage) = get(&f, "/v1/conversations/c9/messages?since=nonsense").await.unwrap();
++    assert_eq!(garbage["reset"], true);
++
++    let (_, older) = get(&f, "/v1/conversations/c9/messages?before=v1.oldest").await.unwrap();
++    assert_eq!(older["before"], "v1.oldest");
++    assert_eq!(
++        fake.seen_message_queries.lock().unwrap().last().unwrap().1.as_deref(),
++        Some("v1.oldest")
++    );
++}
++
++#[tokio::test]
++async fn workspaces_are_deduplicated_newest_first() {
++    let (_, f) = facade();
++    let (_, ws) = get(&f, "/v1/workspaces").await.unwrap();
++    let paths: Vec<&str> = ws
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|w| w["path"].as_str().unwrap())
++        .collect();
++    assert_eq!(paths, ["C:/ws/c1", "C:/ws/c9", "C:/w"]);
++}
++
++#[tokio::test]
++async fn anything_else_is_not_the_facades() {
++    let (_, f) = facade();
++    assert!(get(&f, "/v1/settings").await.is_none());
++    assert!(get(&f, "/api/teams").await.is_none());
++    let req = InnerRequest {
++        method: "DELETE".into(),
++        path: "/v1/teams".into(),
++        body: None,
++        rid: "r".into(),
++        confirm: None,
++    };
++    assert!(f.handle(&ctx(), &req).await.is_none());
 +}
 diff --git a/crates/aionui-mobile/tests/protocol_e2e.rs b/crates/aionui-mobile/tests/protocol_e2e.rs
 new file mode 100644

@@ -106,3 +106,67 @@ Contract rev 4.3 adds the complete outer error table (§4.4a).
 - **Tests:** 50 pass. New ones: garbage DB; garbage key (new identity, phones forgotten, recovery recorded); missing
   DB; recovery shown until dismissed; **an unreadable key** (a directory in its place) gives no listener, no
   pairing, an error in status, no rotation, and the file untouched.
+
+## Phase 2, 2026-11-07: facade read routes
+
+| File | What |
+|---|---|
+| `backend.rs` | The `MobileBackend` port: the facade's view of AionCore (teams, run-state, tasks, activity, conversations, messages, latest message, assistants). This crate depends on no domain crate. |
+| `shape.rs` | Pure mapping from AionCore's serialized JSON to the contract's JSON: `Agent`, `RunState`, `TeamSummary` (§6.3); `Task` (§6.7); `Activity` (§6.8); `Conversation` and `Message` (§6.4), including the role/sender table, the task-assigned and context-reset notices, and `error` on send_failed and agent tips. |
+| `facade.rs` | The `/v1` routes inside the tunnel (an allowlist; anything else is `no_such_route`): `GET /v1/teams`, `/v1/teams/{t}/run-state`, `/v1/teams/{t}/agents/{slot}`, `/v1/teams/{t}/tasks[/{id}]` (status/owner filters), `/v1/teams/{t}/activity` (slotId, kind, cursor, aroundTask), `/v1/conversations?kind=solo` (team chats filtered out, pages refilled), `/v1/conversations/{cid}`, `/v1/conversations/{cid}/messages` (latest page + `before`, `?before=` paging, `?since=` **sync cursor**), `/v1/workspaces`, `/v1/assistants`. |
+| `aionui-app/src/router/mobile_backend.rs` | `AppMobileBackend` over `TeamSessionService`, `ConversationService` and `AssistantService`. Installed on the bridge when the router is built. |
+
+**The sync cursor (§6.4):** `s1.` + b64u({"f": floor}). The floor is the oldest row still streaming or pending, else
+the newest row, minus 5 s. A poll re-reads AionCore's `after (floor-1, "~")`, which means every row with
+`created_at >= floor`, so in-place edits and late-start rows are caught. A garbage cursor gives `reset: true`.
+
+**Tests:** 66 pass.
+- **14 new shape unit tests:** run-state mapping and lead-first ordering; the no-session state; the message
+  role/sender/notice/error table; task-assigned parsing; solo vs team conversations; activity parties.
+- **6 facade route tests** (`tests/facade_routes.rs`), with a fake AionCore whose fixtures are AionCore's own JSON
+  forms: teams and run-state with lastMessage; tasks filter and owner names; solo listing that skips team chats and
+  refills the page; the sync cursor (the after-cursor sent is checked exactly) plus `before` paging and a garbage
+  reset; workspaces dedupe; non-facade paths fall through.
+- `cargo check -p aionui-app` is clean.
+
+**Phase 2 limits, filled by phase 4 (the journal, the tracker, read markers):**
+- `unread` is 0; `your_turn` is never set.
+- `needs_answer` isn't told apart from `needs_approval`.
+- `shutdown` is null.
+- `sessionStatus` is only `none` or `ready`.
+- `Task.assignment` is null.
+- `error.messageId` on send_failed rows is null.
+- `runtime` comes from GET team's `context_reset.availability`, the only per-agent runtime view there.
+
+## Resume (checkpoint 2026-11-07, usage window reset)
+
+**State.**
+- Dev tree `AionDX-impl\work-core`, branch `aiondx-dev`:
+  - `79d4e2e3` baseline (core-0001..0013)
+  - `c31a34e1` core-0014
+  - `ba9020a2` / `7875c279` / `32e2cc34` / `4e564e7e`: phase 0, phase 1, rename + recovery, the I/O fault mode
+  - **`874a0dab` phase 2**
+- The patch is exported from `c31a34e1..HEAD`.
+- Nothing is half-done: every file compiles and 66/66 tests pass.
+
+**Next: phase 3, the write side.** Add to `facade.rs` and `MobileBackend`:
+1. Sends: solo via the conversation send; team via send-to-agent; `priority: "now"` via steer; broadcast (fan out,
+   plus a broadcast table: migration `0003`).
+2. Read markers: `POST /v1/conversations/{cid}/read`, stored in client prefs as `aiondx.read.<cid>`.
+3. Agent controls: wake (`attach` plus an optional nudge); stop (child-turn cancel, or interrupt with a
+   replacement); shutdown (a user-originated `shutdown_request`, new code in aionui-team); force-remove; spawn;
+   rename; clear-context.
+4. Session start (`ensure_session`).
+5. Task writes: core changes for editable `subject` and clearing `owner`, plus the owner-notice mirror of
+   `maybe_notify_task_owner`.
+6. Confirm-proof verification: JCS + HMAC, §5.4, using `open_confirm_key`; 428/403 for the §5.1 actions.
+7. The re-key: `POST /api/mobile/admin/devices/{id}/rekey-offers` and `POST /v1/host/device/confirm-key`.
+
+**Then phase 4:** cherry-pick Voice Core's `journal.rs` / `approvals.rs` (branch `phase4-core`), wire them to the
+event bus, `/v1/changes`, `/v1/approvals[/{id}/answer]`. Rev 4.4 adds `questions` on permission approvals
+(the lead's decision).
+
+**Then phase 5.**
+
+**Not yet rebuilt:** the release exe is still at `9257d6a`. Rebuild with `tools\build-aioncore.ps1 -Patched`, and
+don't tail its log.
