@@ -23,6 +23,7 @@
     questions through the permission channel). They're answered with `optionId` only, `freeText: false`.
   - §3.1: "single use" means bound to one phone (re-fetchable until expiry); the `host.key` path is corrected.
   - §6.1: `appVersion` is the AionDX app's version.
+  - §7: the QR `u=` list may hold IPv6 ULA addresses, never link-local IPv6.
 - **Rev 4.3 (from implementing phase 1):** §4.4a lists every outer error code in one table. Four were missing
   from §4.2–4.4: `pair` → `401 auth_failed` and `409 unknown_host`, `rpc` → `401 auth_failed` and `400 replayed`, and
   `403 forbidden_peer` on any route.
@@ -995,8 +996,10 @@ type Activity =
 - **Port:** default **47734**, configurable in Settings > Mobile. It is fixed rather than dynamic, so URLs stored on
   the phone stay valid. If the port is taken, the PC UI says so. (Before freezing: check it is IANA-unassigned and
   not on browser bad-port lists.)
-- **QR `u=` parameters:** every private IPv4 the PC has, plus any `extraUrls` (for example the PC's Tailscale
-  `100.x` address or MagicDNS name).
+- **QR `u=` parameters:** every private address the PC has, plus any `extraUrls` (for example the PC's Tailscale
+  `100.x` address or MagicDNS name). Adapters with a default gateway come first, so a virtual switch (WSL, Hyper-V)
+  doesn't outrank the real LAN. Rev 4.4: IPv6 ULA addresses may appear (as `http://[fd..]:port`); **link-local IPv6 never
+  does**, because its zone id means nothing to the phone. Public addresses never appear.
 - **mDNS:** `_aiondx._tcp.local`, instance `AionDX-<4 hex>`, TXT `v=1`, `hid=<first 8 b64u chars of
   SHA256(hostId)>`. It is advertised only while the bridge is enabled. The phone uses it only when every stored URL
   for a paired PC fails, matching on `hid`. Spoofing at worst causes a failed handshake.
