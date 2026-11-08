@@ -16,14 +16,18 @@ users must not have to install other software.
 
 Bounded: -DeadlineMinutes (default 120) and the stop file %TEMP%\aiondx-aioncore-build.STOP end it, killing the
 tree it started. Windowless when started hidden. Log: %TEMP%\aiondx-aioncore-build.log; the last line is
-"DONE <exit code>". Result: vendor\aioncore-src\target\x86_64-pc-windows-msvc\release\aioncore.exe.
+"DONE <exit code>". Result: <TargetDir>\x86_64-pc-windows-msvc\release\aioncore.exe (see -TargetDir).
 #>
 param(
   [string]$Tag = 'v0.2.2',
   [switch]$Patched,
   # Delete the build folder first: C code built earlier (SQLite and others) keeps the paths it was built with.
   [switch]$Clean,
-  [int]$DeadlineMinutes = 120
+  [int]$DeadlineMinutes = 120,
+  # Where cargo builds. Default: vendor\aioncore-src\target, unless that path is long enough to push build outputs past
+  # Windows' 260-character limit (link.exe is not long-path aware, so a deep checkout fails with LNK1104); then a short
+  # folder under %LOCALAPPDATA%\aiondx-build is used. The finished exe is copied to vendor\aioncore as before.
+  [string]$TargetDir = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -36,6 +40,10 @@ $cargoHome = Join-Path $env:USERPROFILE '.cargo'
 $rustup = Join-Path $cargoHome 'bin\rustup.exe'
 $cargo = Join-Path $cargoHome 'bin\cargo.exe'
 $target = 'x86_64-pc-windows-msvc'
+if (-not $TargetDir) {
+  $TargetDir = Join-Path $wt 'target'
+  if ($TargetDir.Length -gt 80) { $TargetDir = Join-Path $env:LOCALAPPDATA 'aiondx-build\target' }
+}
 
 Set-Content -LiteralPath $log -Value ('{0}  AionCore build: tag {1}, patched {2}, deadline {3:HH:mm}' -f (Get-Date -Format 'HH:mm:ss'), $Tag, [bool]$Patched, $deadline) -Encoding utf8
 if (Test-Path $stop) { Remove-Item -LiteralPath $stop -Force }
@@ -149,11 +157,12 @@ try {
     "--remap-path-prefix=$cargoHome=C:\cargo", "--remap-path-prefix=$rustupHome=C:\rustup", "--remap-path-prefix=$wt=C:\aioncore",
     "--remap-path-prefix=$env:USERPROFILE=C:\user", '-C', 'link-arg=/PDBALTPATH:%_PDB%')
   # The C code the crates compile (cl.exe) writes its source paths into the binary through __FILE__: /d1trimfile drops the user folder from them.
-  if ($Clean -and (Test-Path (Join-Path $wt 'target'))) { Say 'clean build: removing target'; Remove-Item -LiteralPath (Join-Path $wt 'target') -Recurse -Force }
+  if ($Clean -and (Test-Path $TargetDir)) { Say "clean build: removing $TargetDir"; Remove-Item -LiteralPath $TargetDir -Recurse -Force }
+  Say "cargo target dir: $TargetDir"
   $trim = "/d1trimfile:$($env:USERPROFILE)\"
-  $c = Run $cargo @('build', '--release', '--target', $target, '-p', $pkg) $wt @{ CARGO_ENCODED_RUSTFLAGS = ($flags -join [string][char]0x1f); RUSTFLAGS = $null; CL = $trim; CARGO_TERM_COLOR = 'never' }
+  $c = Run $cargo @('build', '--release', '--target', $target, '-p', $pkg) $wt @{ CARGO_ENCODED_RUSTFLAGS = ($flags -join [string][char]0x1f); RUSTFLAGS = $null; CL = $trim; CARGO_TERM_COLOR = 'never'; CARGO_TARGET_DIR = $TargetDir }
   if ($c -ne 0) { throw "cargo build exit $c" }
-  $exe = Join-Path $wt "target\$target\release\aioncore.exe"
+  $exe = Join-Path $TargetDir "$target\release\aioncore.exe"
   $h = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
   Say ('built {0}, {1} bytes, sha256 {2}' -f $exe, (Get-Item $exe).Length, $h)
   $ver = ((& $exe --version 2>&1 | Select-Object -First 1) -join '').Trim()
