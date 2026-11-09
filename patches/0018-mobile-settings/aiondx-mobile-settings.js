@@ -134,6 +134,7 @@
       '.aiondx-mobile-banner{background:rgba(var(--warning-6),.14);border:1px solid rgba(var(--warning-6),.5);border-radius:8px;padding:10px 12px;margin:8px 0;font-size:13px;display:flex;gap:12px;align-items:flex-start;justify-content:space-between}',
       '.aiondx-mobile-banner .aiondx-mobile-hint{margin-top:4px;word-break:break-all}',
       '.aiondx-mobile-section{margin-top:12px;font-size:13px;font-weight:500}',
+      '.aiondx-mobile-note{font-size:12px;color:rgb(var(--success-6));padding:4px 0}',
       '.aiondx-mobile-device{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;padding:10px 0;border-top:1px solid var(--color-border-2)}',
       '.aiondx-mobile-device-main{min-width:0;flex:1}',
       '.aiondx-mobile-device-name{font-size:14px;background:transparent;border:1px solid transparent;border-radius:4px;color:var(--color-text-1);padding:1px 4px;margin-left:-5px;width:100%;max-width:280px}',
@@ -205,6 +206,11 @@
     pr.appendChild(ui.pair);
     c.appendChild(pr);
 
+    ui.note = el('div', 'aiondx-mobile-note');
+    ui.note.setAttribute('data-testid', 'aiondx-mobile-note');
+    ui.note.setAttribute('role', 'status');
+    ui.note.hidden = true;
+    c.appendChild(ui.note);
     c.appendChild(el('div', 'aiondx-mobile-section', 'Paired phones'));
     ui.devices = el('div');
     ui.devices.setAttribute('data-testid', 'aiondx-mobile-devices');
@@ -253,6 +259,15 @@
     sr.appendChild(ui.saved); sr.appendChild(save);
     d.appendChild(sr);
     return d;
+  }
+
+  var noteTimer = null;
+  /** A short confirmation under the controls, gone after a few seconds. */
+  function note(text) {
+    ui.note.textContent = text;
+    ui.note.hidden = false;
+    if (noteTimer) clearTimeout(noteTimer);
+    noteTimer = setTimeout(function () { ui.note.hidden = true; }, 8000);
   }
 
   function showError(text) {
@@ -542,16 +557,51 @@
     body.appendChild(el('p', null, 'Creating a code...'));
     api('POST', '/api/mobile/admin/devices/' + encodeURIComponent(dev.deviceId) + '/rekey-offers', {}).then(function (o) {
       if (dialog !== d) return;
+      var offerId = o.offerId || dev.deviceId;
+      d.box.setAttribute('data-state', 'pending');
       body.textContent = '';
       body.appendChild(el('p', null, 'On "' + (dev.name || 'the phone') + '", scan this with the AionDX app. It sets up a new key for confirming sensitive actions.'));
       body.appendChild(qrCanvas(o.uri));
       var cd = el('div', 'aiondx-mobile-countdown');
       body.appendChild(cd);
-      countdown(d, cd, o.expiresAt, function () { body.appendChild(el('p', null, 'The code expired. Close this and try again if the phone did not finish.')); });
+      var msg = el('p', 'aiondx-mobile-error');
+      msg.setAttribute('data-testid', 'aiondx-mobile-rekey-message');
+      msg.hidden = true;
+      body.appendChild(msg);
+      var finished = false;
+      function end(state, text) {
+        finished = true;
+        d.box.setAttribute('data-state', state);
+        cd.textContent = '';
+        msg.textContent = text;
+        msg.hidden = false;
+      }
+      countdown(d, cd, o.expiresAt, function () { if (!finished) end('expired', 'The code expired before the phone used it. Close this and try again.'); });
       var b = el('div', 'aiondx-mobile-buttons');
       b.appendChild(button('Done', 'primary', function () { closeDialog(true); refreshDevices(); }));
       body.appendChild(b);
-      d.timers.push(setInterval(refreshDevices, DEVICES_MS));
+      // The bridge says when the phone has finished (GET rekey-offers/{id}); an older core without that route answers 404, and
+      // then the list is just polled while the dialog is open, as before.
+      var busy = false, legacy = false;
+      d.timers.push(setInterval(function () {
+        if (dialog !== d || finished || busy) return;
+        if (legacy) { refreshDevices(); return; }
+        busy = true;
+        api('GET', '/api/mobile/admin/rekey-offers/' + encodeURIComponent(offerId)).then(function (st) {
+          busy = false;
+          if (dialog !== d || finished || !st) return;
+          if (st.state === 'completed') {
+            finished = true;
+            closeDialog(true);
+            refreshDevices();
+            note('Confirmation key reset for "' + (dev.name || 'the phone') + '".');
+          } else if (st.state === 'failed') end('failed', 'The phone could not reset its key. Close this and try again.');
+          else if (st.state === 'expired') end('expired', 'The code expired before the phone used it. Close this and try again.');
+        }, function (e) {
+          busy = false;
+          if (e.status === 404 || e.status === 405) legacy = true;
+        });
+      }, OFFER_MS));
     }, function (e) {
       body.textContent = '';
       body.appendChild(el('p', 'aiondx-mobile-error', 'Could not create the code: ' + e.message));
@@ -574,6 +624,13 @@
     if (!f) return;
     box.textContent = '';
     box.appendChild(el('div', 'aiondx-mobile-section', 'Windows Firewall'));
+    if (f.firewallEnabled === false) {   // null or true: not known to be off, so the rule still matters
+      var off = el('div', 'aiondx-mobile-hint', 'Windows Firewall is off on this PC — no rule is needed.');
+      off.setAttribute('data-testid', 'aiondx-mobile-firewall-state');
+      off.setAttribute('data-rule', 'firewall-off');
+      box.appendChild(off);
+      return;
+    }
     var text = f.rule === 'present' ? 'Phones are allowed through Windows Firewall on Private networks.'
       : f.rule === 'absent' ? 'Windows Firewall may block phones from reaching this PC.'
       : 'Could not tell whether Windows Firewall allows phones.';

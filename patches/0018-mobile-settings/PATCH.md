@@ -20,8 +20,10 @@ release build.
   the list; `rejected`/`aborted`/`expired` show a message and "Try again". Closing the dialog while waiting rejects the offer.
 - **Paired phones**: name (edit in place, Enter or leaving the field saves, Escape cancels), platform, app version, paired date,
   last seen (relative) and from where, a green dot while `activeSessions > 0`; "Confirm sensitive actions on the phone"
-  (`PATCH {requireConfirm}`); **Reset confirmation key** (a QR of the `aiondx://rekey` URI, no SAS step, the list polled while
-  it shows); **Revoke** after a confirm dialog (`DELETE`).
+  (`PATCH {requireConfirm}`); **Reset confirmation key** (a QR of the `aiondx://rekey` URI, no SAS step; `GET
+  rekey-offers/{id}` is polled every second while the dialog is open: `completed` closes it, refreshes the list and shows
+  "Confirmation key reset for ..."; `failed` or `expired` keep it open with a plain message; Done closes it by hand; a core
+  without that route (404) gets the list polled instead); **Revoke** after a confirm dialog (`DELETE`).
 - **Advanced** (collapsed): port, PC name (shown on the phone), extra addresses (one per line), mDNS, "Allow phones to edit
   tasks". The switches save at once; the text fields with Save.
 - **Windows Firewall** row, shown only when `GET /api/mobile/admin/firewall` answers (phase 5; a 404 hides it): the rule's state;
@@ -67,18 +69,20 @@ calls on one channel); and the inserted main block run in a sandbox whose `spawn
 missing elevate.exe or a busy handler runs nothing; a cancelled prompt answers not ok. `apply.js` was also dry-run in memory on
 the real built bundles: one anchor after 0010, 0010's `aiondxUpdate` kept, both files still parse.
 
-Check (`test-live-mobile.js`, 33 checks): a real app with a bridge-capable core through `tools\live-app.js` (a throwaway profile,
-made-up APPDATA/LOCALAPPDATA/cache/work/log folders, `AIONUI_E2E_TEST=1`, `AIONDX_NO_ACTIVATE=1`), with the two scripts evaluated
+Check (`test-live-mobile.js`, 43 checks): a real app with a bridge-capable core through `tools\live-app.js` (a throwaway profile,
+made-up APPDATA/LOCALAPPDATA/cache/work/log folders, `AIONUI_E2E_TEST=1`, `AIONDX_NO_ACTIVATE=1`, `AIONDX_MOBILE_BIND=127.0.0.1`
+so the bridge listens on loopback only), with the two scripts evaluated
 into the page so the stage needs no rebuild. QA's phone client (`qa-k1-bridge\pair.js`, the CONTRACT §4 crypto) plays the phone:
 it reads the URI the QR encodes, sends a pairing request, and checks the SAS it computes against the one on screen; the PC side
 is driven only through the UI. The firewall route and `window.aiondxMobile` are stubbed in the page (it checks the page passes the
 port and nothing else, shows a refusal, and offers the command when the handler is missing). No rule was ever added or removed
-on the test PC; a real run needs Nathan's approval.
+on the test PC; a real run needs Nathan's approval. Also: a real re-key end to end (a second phone with a session from QA's
+client; the dialog opened in the UI; the phone sends `confirm-key` with the proof from the QR's secret; the dialog closes by
+itself with its note), a forced `failed` (a message, the dialog stays, Done closes it), the saved extra addresses back from
+`status.extraUrls` after a page reload, and `firewallEnabled: false` (stubbed until the route has it): "Windows Firewall is off
+on this PC - no rule is needed." and no button; `null` brings the button back.
 
-## Open points (spec gaps, for the Bridge/API Engineer; the UI keeps a fallback until they land)
+The firewall row also reads `firewallEnabled` from the route: `false` replaces the button with "Windows Firewall is off on this
+PC - no rule is needed." (Nathan keeps his firewall off); `null` or `true` keep the behaviour above.
 
-- **Re-key has no completion signal.** There is no `GET` for a re-key offer's state, so the dialog cannot tell when the phone
-  finished; it polls the device list and has a Done button.
-- **`extraUrls` is not in `status`.** The status shape has `urls` but not the saved `extraUrls`, so the field cannot show what
-  was saved after a restart (it shows them if a later core adds them to status).
-- Placement as above: a card on Settings > Remote with a sidebar entry, not a page of its own.
+Placement: a card on Settings > Remote with a sidebar entry, not a page of its own (approved).

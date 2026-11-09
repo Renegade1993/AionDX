@@ -52,7 +52,8 @@ function phone(uri, bport, deviceName) {
   const FAKE = path.join(WORK, 'fake');
   for (const d of ['Roaming', 'Local', 'cache', 'work', 'logs']) fs.mkdirSync(path.join(FAKE, d), { recursive: true });
   const env = { APPDATA: path.join(FAKE, 'Roaming'), LOCALAPPDATA: path.join(FAKE, 'Local'), AIONUI_E2E_TEST: '1', AIONDX_NO_ACTIVATE: '1',
-    AIONDX_CACHE_DIR: path.join(FAKE, 'cache'), AIONDX_WORK_DIR: path.join(FAKE, 'work'), AIONDX_LOG_DIR: path.join(FAKE, 'logs') };
+    AIONDX_CACHE_DIR: path.join(FAKE, 'cache'), AIONDX_WORK_DIR: path.join(FAKE, 'work'), AIONDX_LOG_DIR: path.join(FAKE, 'logs'),
+    AIONDX_MOBILE_BIND: '127.0.0.1' };   // the bridge listens on loopback only: nothing on the LAN during the test
   const app = await launch({ stage: STAGE, port: 9572, profile: path.join(WORK, 'profile'), env, deadlineMs: 600000 });
   const shot = async (name) => {
     const r = await app.send('Page.captureScreenshot', { format: 'png' });
@@ -69,14 +70,16 @@ function phone(uri, bport, deviceName) {
     if (!(await waitFor('!!(window.__coreCsrfToken && window.__backendPort)', 240, 500))) throw new Error('the core session never became ready');
     await sleep(3000);
     await app.js(`(() => { const b = [...document.querySelectorAll('button,a,span')].find((e) => e.textContent.trim() === 'Not now'); if (b) b.click(); return 0; })()`);   // the welcome dialog
-    // Stubs: the phase-5 firewall route (not built yet) and the elevate runner. The real status route is wrapped only to add a
-    // recovery notice for one step.
+    // Stubs (installed again after a reload): the firewall route and the main-process handler. The real status route is wrapped
+    // only to add a recovery notice for one step, the real re-key route only to force a "failed" for one step.
+    const setup = async () => {
     await app.js(`(() => {
       window.__fw = { rule: 'absent', plan: { program: 'C:\\\\Windows\\\\System32\\\\netsh.exe', args: ['advfirewall', 'firewall', 'add', 'rule', 'name=AionDX mobile bridge', 'dir=in', 'action=allow', 'protocol=TCP', 'localport=47734', 'profile=private', 'program=C:\\\\Program Files\\\\AionDX\\\\aioncore.exe', 'enable=yes'] } };
       window.__fakeRecovery = null; window.__elevateCalls = [];
       const of = window.fetch;
       window.fetch = function (u, o) {
         const s = String(u);
+        if (window.__rekeyOverride && /\\/api\\/mobile\\/admin\\/rekey-offers\\/[^/]+$/.test(s)) return Promise.resolve(new Response(JSON.stringify({ success: true, data: { state: window.__rekeyOverride } }), { status: 200 }));
         if (/\\/api\\/mobile\\/admin\\/firewall$/.test(s)) return Promise.resolve(new Response(JSON.stringify({ success: true, data: window.__fw }), { status: 200 }));
         if (window.__fakeRecovery && /\\/api\\/mobile\\/admin\\/status$/.test(s)) return of.apply(this, arguments).then(async (r) => { const j = await r.json(); j.data.lastRecovery = window.__fakeRecovery; return new Response(JSON.stringify(j), { status: 200 }); });
         if (window.__fakeRecovery && /\\/api\\/mobile\\/admin\\/recovery\\/dismiss$/.test(s)) window.__fakeRecovery = null;
@@ -91,6 +94,8 @@ function phone(uri, bport, deviceName) {
       window.__fwPlan = window.__fw.plan;
       return 0; })()`);
     for (const f of ['qrcodegen.js', 'aiondx-mobile-settings.js']) await app.js(fs.readFileSync(path.join(HERE, f), 'utf8') + '\n;0');
+    };
+    await setup();
 
     // ---- the sidebar entry and the card ----
     await app.js(`location.hash = '#/settings/agent'; 0`);
@@ -103,7 +108,8 @@ function phone(uri, bport, deviceName) {
     // ---- advanced: a free loopback-chosen port, then turn it on ----
     const bport = await freePort();
     await app.js(`(() => { document.querySelector('.aiondx-mobile-adv').open = true; const p = document.querySelector('[data-testid="aiondx-mobile-port"]'); p.value = '${bport}';
-      document.querySelector('[data-testid="aiondx-mobile-hostname"]').value = 'UI Test PC'; return 0; })()`);
+      document.querySelector('[data-testid="aiondx-mobile-hostname"]').value = 'UI Test PC';
+      document.querySelector('[data-testid="aiondx-mobile-extraurls"]').value = 'http://100.64.1.2:47734\\nhttp://my-pc.tail1234.ts.net:47734'; return 0; })()`);
     await click('[data-testid="aiondx-mobile-save"]');
     check('advanced settings save (port, PC name)', await waitFor(`(window.__aionDxMobile.state().status || {}).port === ${bport} && (window.__aionDxMobile.state().status || {}).hostName === 'UI Test PC'`, 40),
       JSON.stringify(await app.js('window.__aionDxMobile.state().status')));
@@ -171,6 +177,36 @@ function phone(uri, bport, deviceName) {
     await shot('7-rekey');
     await app.js(`(() => { [...document.querySelectorAll('[data-testid="aiondx-mobile-rekey"] button')].find((b) => b.textContent === 'Done').click(); return 0; })()`);
 
+    // ---- re-key end to end: a phone with a session (QA's pair.js, paired through the admin route), the dialog opened in the UI,
+    // the phone sends confirm-key with the proof from the QR's secret (CONTRACT §5.3), and the dialog closes by itself ----
+    const S = async (m, p, b) => { const r = await admin(m, p, b); return { status: r.status, text: JSON.stringify(r.data), json: r.data, data: r.data }; };
+    const qa = require(PAIR_JS);
+    const sp = await qa({ S, bport, rec: () => {}, sleep, hello: { text: '' } });
+    check('(setup) a second phone with an open session, from QA\'s client', !!(sp && sp.rpc && sp.sk && sp.deviceId), sp && Object.keys(sp).join(','));
+    await app.js('window.__aionDxMobile.refresh()');
+    await waitFor(`!!document.querySelector('[data-device-id=${JSON.stringify(sp.deviceId)}]')`, 40);
+    await click(`[data-device-id=${JSON.stringify(sp.deviceId)}] [data-testid="aiondx-mobile-device-rekey"]`);
+    await waitFor(`!!document.querySelector('[data-testid="aiondx-mobile-rekey"] .aiondx-mobile-qr')`, 40);
+    const rkUri = await q('[data-testid="aiondx-mobile-rekey"] .aiondx-mobile-qr', `e.getAttribute('data-uri')`);
+    const rkSecret = Buffer.from(new URLSearchParams(rkUri.split('?')[1]).get('s') || '', 'base64url');
+    await sleep(1500);
+    check('the re-key dialog waits while the phone has not finished', (await q('[data-testid="aiondx-mobile-rekey"]', `e.getAttribute('data-state')`)) === 'pending');
+    const ck = await sp.rpc('POST', '/v1/host/device/confirm-key', { proof: qa.rekeyProof(rkSecret, sp.sk.sid, sp.deviceId), confirmMode: 'biometric' });
+    check('(the phone re-keys: a new confirm key)', ck.status === 200 && ck.body && ck.body.confirmKey, ck.status + ' ' + JSON.stringify(ck.body).slice(0, 120));
+    check('the dialog closes by itself once the bridge says completed, with a short note', await waitFor(`!document.querySelector('[data-testid="aiondx-mobile-rekey"]') && /Confirmation key reset for "Test-Phone|Confirmation key reset for/.test((document.querySelector('[data-testid="aiondx-mobile-note"]') || {}).textContent || '') && !document.querySelector('[data-testid="aiondx-mobile-note"]').hidden`, 40),
+      await q('[data-testid="aiondx-mobile-note"]', 'e.textContent'));
+    await shot('7b-rekey-done');
+    // A failed re-key (forced for this step: a real one needs a phone that gets the proof wrong at the right moment).
+    await click(`[data-device-id=${JSON.stringify(sp.deviceId)}] [data-testid="aiondx-mobile-device-rekey"]`);
+    await waitFor(`!!document.querySelector('[data-testid="aiondx-mobile-rekey"] .aiondx-mobile-qr')`, 40);
+    await app.js(`window.__rekeyOverride = 'failed'; 0`);
+    check('a failed re-key shows a clear message and keeps the dialog open', await waitFor(`(() => { const d = document.querySelector('[data-testid="aiondx-mobile-rekey"]'); const m = document.querySelector('[data-testid="aiondx-mobile-rekey-message"]'); return !!d && d.getAttribute('data-state') === 'failed' && !!m && !m.hidden && /could not reset its key/.test(m.textContent); })()`, 20));
+    await shot('7c-rekey-failed');
+    await app.js(`window.__rekeyOverride = null; [...document.querySelectorAll('[data-testid="aiondx-mobile-rekey"] button')].find((b) => b.textContent === 'Done').click(); 0`);
+    check('"Done" still closes it by hand', await waitFor(`!document.querySelector('[data-testid="aiondx-mobile-rekey"]')`, 20));
+    await admin('DELETE', '/api/mobile/admin/devices/' + encodeURIComponent(sp.deviceId));
+    await app.js('window.__aionDxMobile.refresh()');
+
     // ---- firewall row (stubbed route and runner) ----
     await app.js('window.__aionDxMobile.refresh()');
     check('the firewall row shows the rule is absent, with the allow button', await waitFor(`(document.querySelector('[data-testid="aiondx-mobile-firewall-state"]') || {}).getAttribute && document.querySelector('[data-testid="aiondx-mobile-firewall-state"]').getAttribute('data-rule') === 'absent' && !!document.querySelector('[data-testid="aiondx-mobile-firewall-allow"]')`, 40));
@@ -201,6 +237,26 @@ function phone(uri, bport, deviceName) {
     await shot('10-recovery');
     await app.js(`[...document.querySelectorAll('[data-testid="aiondx-mobile-recovery"] button')][0].click(); 0`);
     check('Dismiss hides it', await waitFor(`document.querySelector('[data-testid="aiondx-mobile-recovery"]').hidden === true`, 20));
+
+    // ---- the firewall is off on this PC (Nathan's case): plain text, no button ----
+    await app.js(`window.__fw = { rule: 'absent', plan: window.__fwPlan, firewallEnabled: false }; window.__aionDxMobile.refresh(); 0`);
+    check('with Windows Firewall off, the row says no rule is needed and offers no button', await waitFor(`(() => { const s = document.querySelector('[data-testid="aiondx-mobile-firewall-state"]'); return !!s && s.getAttribute('data-rule') === 'firewall-off' && /Windows Firewall is off on this PC .* no rule is needed\\./.test(s.textContent) && !document.querySelector('[data-testid="aiondx-mobile-firewall-allow"]'); })()`, 40),
+      await q('[data-testid="aiondx-mobile-firewall"]', 'e.textContent'));
+    await shot('8b-firewall-off');
+    await app.js(`window.__fw = { rule: 'absent', plan: window.__fwPlan, firewallEnabled: null }; window.__aionDxMobile.refresh(); 0`);
+    check('with firewallEnabled null the button comes back', await waitFor(`!!document.querySelector('[data-testid="aiondx-mobile-firewall-allow"]')`, 40));
+
+    // ---- the saved extra addresses come back from status after a reload ----
+    await app.js('location.reload(); 0');
+    await sleep(2500);
+    await waitFor('!!(window.__coreCsrfToken && window.__backendPort)', 120, 500);
+    await setup();
+    await app.js(`location.hash = '#/settings/webui'; 0`);
+    await waitFor(`!!document.getElementById('aiondx-mobile') && (window.__aionDxMobile.state().status || {}).enabled === true`, 60);
+    const extra = await app.js(`(window.__aionDxMobile.state().status || {}).extraUrls`);
+    check('after a reload, status returns the saved extra addresses', JSON.stringify(extra) === JSON.stringify(['http://100.64.1.2:47734', 'http://my-pc.tail1234.ts.net:47734']), JSON.stringify(extra));
+    check('and the Advanced field shows them again, one per line', await waitFor(`document.querySelector('[data-testid="aiondx-mobile-extraurls"]').value === 'http://100.64.1.2:47734\\nhttp://my-pc.tail1234.ts.net:47734'`, 20),
+      JSON.stringify(await q('[data-testid="aiondx-mobile-extraurls"]', 'e.value')));
 
     // ---- revoke, then turn it off ----
     await click(`[data-device-id=${JSON.stringify(ph.deviceId)}] [data-testid="aiondx-mobile-device-revoke"]`);
