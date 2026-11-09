@@ -27,7 +27,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.pacifictiertech.aiondx"
+      "package": "com.aiondx.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -62,6 +62,12 @@
     "scheme": "aiondx",
     "experiments": {
       "typedRoutes": true
+    },
+    "owner": "nateo_69",
+    "extra": {
+      "eas": {
+        "projectId": "ff6018d2-dcb3-4455-8b26-6e615922e145"
+      }
     }
   }
 }

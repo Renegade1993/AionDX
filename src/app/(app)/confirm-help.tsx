@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHostLabel } from '@/components/Banners';
 import { Button } from '@/components/ui/Button';
 import { Text } from '@/components/ui/Text';
+import { biometricsInGeneral } from '@/lib/confirmState';
 import { useActiveHost } from '@/state/connectionStore';
 import { space, useColors } from '@/theme';
 
@@ -28,7 +29,7 @@ export default function ConfirmHelp() {
       <View style={styles.step}>
         <Text style={styles.num}>1</Text>
         <View style={styles.stepBody}>
-          <Text>Set a passcode (and Face ID, if you like) on this phone, then re-confirm it.</Text>
+          <Text>Set a passcode (and {biometricsInGeneral()}, if you like) on this phone, then re-confirm it.</Text>
           {host ? (
             <Button
               title="Re-confirm this phone"

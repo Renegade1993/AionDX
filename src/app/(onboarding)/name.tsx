@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Text } from '@/components/ui/Text';
 import { TextField } from '@/components/ui/TextField';
 import { defaultDeviceName } from '@/lib/api/pairing';
+import { biometricsInGeneral } from '@/lib/confirmState';
 import { usePrefsStore } from '@/state/prefsStore';
 import { radius, space, touchTarget, useColors } from '@/theme';
 
@@ -45,7 +46,7 @@ export default function NamePhone() {
         {/* What this phone can use to confirm sensitive actions; the PC shows the same (SPEC §15.2.1). */}
         {enrolled === 'device_passcode' ? (
           <Text variant="caption" color="textMuted">
-            🔒 This phone has no Face ID or fingerprint set up. It will use its passcode to confirm sensitive actions. Your PC will show this.
+            🔒 This phone has no {biometricsInGeneral()} set up. It will use its passcode to confirm sensitive actions. Your PC will show this.
           </Text>
         ) : enrolled === 'none' ? (
           <Text variant="caption" color="stNeedsYouText">

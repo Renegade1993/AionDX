@@ -3,10 +3,6 @@ import { create } from 'zustand';
 import { secureStorage } from '@/lib/storage/secureStorage';
 
 export type LockMethod = 'biometric' | 'passcode' | 'none';
-export type PollRate = 'fast' | 'normal' | 'saver';
-
-export const POLL_RATE_MS: Record<PollRate, number> = { fast: 1000, normal: 3000, saver: 10000 };
-export const POLL_RATE_LABEL: Record<PollRate, string> = { fast: 'Fast (1s)', normal: 'Normal (3s)', saver: 'Battery saver (10s)' };
 
 /** Capped at 5 minutes (SPEC §15): app lock is the only control on chat send (contract §5.1). */
 export const AUTO_LOCK_OPTIONS = [
@@ -21,7 +17,6 @@ export interface Prefs {
   deviceName: string | null;
   lockMethod: LockMethod;
   autoLockMs: number;
-  pollRate: PollRate;
   /** Last selected team per host. */
   activeTeamByHost: Record<string, string>;
   /** Local display names for paired PCs (S2 "Rename" is phone-only). */
@@ -36,7 +31,6 @@ const DEFAULTS: Prefs = {
   deviceName: null,
   lockMethod: 'biometric',
   autoLockMs: 5 * 60_000,
-  pollRate: 'normal',
   activeTeamByHost: {},
   hostLabels: {},
   confirmToastShown: {},
@@ -60,6 +54,8 @@ export const usePrefsStore = create<PrefsState>()((set, get) => ({
     const stored = raw ? (JSON.parse(raw) as Partial<Prefs> & { approvalBiometric?: unknown }) : {};
     // "Face ID before approving" is gone (SPEC §15: the PC enforces confirmation now).
     delete stored.approvalBiometric;
+    // "Refresh rate" is gone too: the change feed pushes updates; nothing polls on a timer.
+    delete (stored as { pollRate?: unknown }).pollRate;
     // A stored 15 min auto-lock from before the cap becomes 5 min.
     if (typeof stored.autoLockMs === 'number' && stored.autoLockMs > MAX_AUTO_LOCK_MS) stored.autoLockMs = MAX_AUTO_LOCK_MS;
     set({ ...DEFAULTS, ...stored, loaded: true });

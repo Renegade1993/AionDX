@@ -3,11 +3,12 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Card, Divider, Icon } from '@/components/ui/primitives';
 import { Text } from '@/components/ui/Text';
 import type { ConfirmMode } from '@/lib/api/types';
+import { biometricLockLabel } from '@/lib/confirmState';
 import type { LockMethod } from '@/state/prefsStore';
 import { space, touchTarget } from '@/theme';
 
 const OPTIONS: { value: LockMethod; label: string; note?: string }[] = [
-  { value: 'biometric', label: 'Face ID / fingerprint', note: 'Default' },
+  { value: 'biometric', label: biometricLockLabel(), note: 'Default' },
   { value: 'passcode', label: 'Device passcode only', note: 'Your OS may still offer biometrics first' },
   { value: 'none', label: 'No lock', note: 'Anyone holding this phone can open AionDX and message your agents' },
 ];

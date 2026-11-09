@@ -28,7 +28,8 @@ page.on('console', (m) => {
 });
 page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message.slice(0, 300)}`));
 
-const base = 'http://localhost:8081';
+// 8082 by default: 8081 is the dev-client server a phone may be using. Override with BASE=.
+const base = process.env.BASE ?? 'http://localhost:8082';
 for (const s of steps) {
   try {
     if (s.goto) await page.goto(base + s.goto, { waitUntil: 'networkidle', timeout: 90000 });

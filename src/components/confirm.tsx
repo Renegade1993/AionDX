@@ -9,7 +9,7 @@ import { Text } from '@/components/ui/Text';
 import { useConfirmState, useHostInfo } from '@/lib/api/hooks';
 import { detectConfirmMode } from '@/lib/api/pairing';
 import type { ConfirmMode } from '@/lib/api/types';
-import { type BiometricKind, biometricName, canConfirm, type ConfirmState } from '@/lib/confirmState';
+import { type BiometricKind, biometricName, biometricsInGeneral, canConfirm, type ConfirmState } from '@/lib/confirmState';
 import { DEMO_HOST_ID, useActiveHost, useConnectionStore } from '@/state/connectionStore';
 import { usePrefsStore } from '@/state/prefsStore';
 import { toast } from '@/state/toastStore';
@@ -21,16 +21,22 @@ import { space, useColors, withAlpha } from '@/theme';
  * "needs attention" toast.
  */
 
-/** Face ID vs Touch ID vs fingerprint, for glyphs and copy (copy says "Face ID" when unknown). */
+/**
+ * The phone's biometric type, for glyphs and copy (`supportedAuthenticationTypesAsync`). The web
+ * preview can't tell: no kind, so the glyph is the lock and the copy says "Biometrics".
+ */
 export function useBiometricKind(): BiometricKind | null {
-  // The web preview can't tell, so it gets no kind (the glyph falls back to the lock).
   const [kind, setKind] = useState<BiometricKind | null>(null);
   useEffect(() => {
     if (Platform.OS === 'web') return;
     void LocalAuthentication.supportedAuthenticationTypesAsync()
       .then((types) => {
-        if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) setKind('face');
-        else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) setKind(Platform.OS === 'ios' ? 'touch' : 'fingerprint');
+        const face = types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION);
+        const finger = types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT);
+        // Iris (Android) counts toward "several".
+        if (types.length > 1) setKind('multiple');
+        else if (face) setKind('face');
+        else if (finger) setKind('fingerprint');
       })
       .catch(() => undefined);
   }, []);
@@ -64,7 +70,7 @@ export function ConfirmationsCard({ state, hostName }: { state: ConfirmState; ho
       : state === 'device_passcode'
         ? {
             title: '🔒 Passcode (app-enforced)',
-            body: "Approving requests and managing agents will ask for your phone's passcode. Set up Face ID later and re-confirm to switch.",
+            body: `Approving requests and managing agents will ask for your phone's passcode. Set up ${biometricsInGeneral()} later and re-confirm to switch.`,
           }
         : state === 'off'
           ? { title: 'Off on this PC', body: `${hostName} lets this phone approve and manage agents without confirming.` }
@@ -101,7 +107,7 @@ export function ConfirmationsCard({ state, hostName }: { state: ConfirmState; ho
  * confirmations are unavailable; none when Off.
  */
 export function confirmGlyph(state: ConfirmState, kind: BiometricKind | null): IconName | undefined {
-  if (state === 'biometric') return kind === 'face' ? 'face-id' : kind === 'touch' || kind === 'fingerprint' ? 'finger-print' : 'lock-closed';
+  if (state === 'biometric') return kind === 'face' ? 'face-id' : kind === 'fingerprint' ? 'finger-print' : 'lock-closed';
   if (state === 'device_passcode') return 'lock-closed';
   if (state === 'none' || state === 'needs_reconfirm') return 'lock-off';
   return undefined;

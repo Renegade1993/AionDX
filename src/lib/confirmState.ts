@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import type { ApprovalOption, HostInfo } from './api/types';
 import type { PairedHost } from './storage/keyStore';
 
@@ -23,11 +25,30 @@ export function confirmStateFor(host: Pick<PairedHost, 'confirmMode' | 'keyInval
 /** Sensitive buttons work (possibly after a prompt). Otherwise they're disabled (SPEC §15.1.5). */
 export const canConfirm = (state: ConfirmState) => state === 'off' || state === 'biometric' || state === 'device_passcode';
 
-/** Face ID / Touch ID / fingerprint: what the phone calls its biometric (for copy). */
-export type BiometricKind = 'face' | 'touch' | 'fingerprint';
+/**
+ * What the phone can unlock with, from expo-local-authentication's supported types: one face
+ * sensor, one fingerprint sensor, or several (e.g. Samsung fingerprint + face). null = unknown.
+ */
+export type BiometricKind = 'face' | 'fingerprint' | 'multiple';
 
-export function biometricName(kind: BiometricKind | null): string {
-  return kind === 'touch' ? 'Touch ID' : kind === 'fingerprint' ? 'Fingerprint' : 'Face ID';
+/**
+ * The phone's own name for its biometric (device run, 2026-11-08): Face ID / Touch ID on iOS;
+ * Face unlock / Fingerprint on Android; "Biometrics" when there are several or it's unknown.
+ */
+export function biometricName(kind: BiometricKind | null, os: string = Platform.OS): string {
+  if (kind === 'face') return os === 'ios' ? 'Face ID' : 'Face unlock';
+  if (kind === 'fingerprint') return os === 'ios' ? 'Touch ID' : 'Fingerprint';
+  return 'Biometrics';
+}
+
+/** Copy that names biometrics in general: "Face ID or Touch ID" / "fingerprint or face unlock". */
+export function biometricsInGeneral(os: string = Platform.OS): string {
+  return os === 'ios' ? 'Face ID or Touch ID' : 'fingerprint or face unlock';
+}
+
+/** The app-lock option label: "Face ID / Touch ID" on iOS, "Fingerprint / face unlock" elsewhere. */
+export function biometricLockLabel(os: string = Platform.OS): string {
+  return os === 'ios' ? 'Face ID / Touch ID' : 'Fingerprint / face unlock';
 }
 
 /** The Confirmations value text (SPEC §15.5). */

@@ -9,7 +9,7 @@ is replaced by a confirm dialog.
 npm i playwright-core qrcode && npx esbuild ...   # see below
 
 # 1. app
-npx expo start --web --port 8081          # NOT with CI=1 (disables file watching)
+npx expo start --web --port 8082          # NOT with CI=1; 8082 keeps clear of a phone's dev server on 8081
 
 # 2. test bridge: reference host protocol + the /v1 mock facade behind the real encrypted channel
 npx esbuild e2e/bridge.ts --bundle --platform=node --format=esm --outfile=<scratch>/bridge.mjs --alias:proj=$PWD

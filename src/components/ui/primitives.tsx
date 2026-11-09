@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { ComponentProps, ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, View, type ViewProps } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View, type ViewProps } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 
 import { type ColorToken, radius, space, touchTarget, useColors, withAlpha } from '@/theme';
@@ -161,6 +161,13 @@ export function IconButton({
 }
 
 /** Settings-style tappable row. */
+/** Font scale from which a row's value always moves under its label (Android "largest" is 2.0). */
+const LARGE_TEXT = 1.5;
+/** Card margins, row padding, icon and chevron, in points: what's left is for label + value. */
+const ROW_CHROME = 120;
+/** Average body-text character width at font scale 1 (15–16 pt system font). */
+const AVG_CHAR_WIDTH = 8.5;
+
 export function Row({
   title,
   subtitle,
@@ -188,6 +195,16 @@ export function Row({
   disabled?: boolean;
 }) {
   const c = useColors();
+  // When label and value can't share one line (long text, narrow phone, large font), the value
+  // moves under the label, as Android settings do, rather than squeezing either mid-word.
+  const { fontScale, width } = useWindowDimensions();
+  const charsPerLine = (width - ROW_CHROME) / (AVG_CHAR_WIDTH * fontScale);
+  const stacked = !!value && (fontScale >= LARGE_TEXT || title.length + value.length + 2 > charsPerLine);
+  const valueText = value ? (
+    <Text color={valueColor} style={stacked ? null : styles.rowValue} numberOfLines={2}>
+      {value}
+    </Text>
+  ) : null;
   return (
     <Pressable
       onPress={onPress}
@@ -197,22 +214,27 @@ export function Row({
       style={({ pressed }) => [styles.row, subtitle ? styles.rowTall : null, { backgroundColor: pressed ? c.surfaceAlt : c.surface }, disabled ? { opacity: 0.4 } : null]}
     >
       {icon ? <Icon name={icon} color={destructive ? 'danger' : 'textMuted'} /> : null}
-      <View style={{ flex: 1, gap: 2 }}>
+      {/*
+        The label keeps its natural width (up to 55%, wrapping only between words), so "DEMO-PC" or
+        "App lock" never break mid-word; the value takes what's left, and wraps or truncates.
+      */}
+      <View style={[styles.rowLabel, value && !stacked ? styles.rowLabelBeside : styles.rowLabelAlone]}>
         <Text color={destructive ? 'danger' : 'text'}>{title}</Text>
         {subtitle ? (
           <Text variant="caption" color="textMuted">
             {subtitle}
           </Text>
         ) : null}
+        {stacked ? valueText : null}
       </View>
       {dot ? <View style={[styles.dot, { backgroundColor: c.stNeedsYou }]} /> : null}
-      {value ? (
-        <Text color={valueColor} style={styles.rowValue} numberOfLines={2}>
-          {value}
-        </Text>
-      ) : null}
+      {stacked ? null : valueText}
       {right}
-      {onPress && !right ? <Icon name="chevron-forward" color="textMuted" /> : null}
+      {onPress && !right ? (
+        <View style={styles.rowEnd}>
+          <Icon name="chevron-forward" color="textMuted" />
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -251,6 +273,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
   },
   rowTall: { paddingVertical: space.sm },
-  rowValue: { maxWidth: '55%', textAlign: 'right' },
+  rowLabel: { gap: 2 },
+  rowLabelBeside: { flexShrink: 0, maxWidth: '55%' },
+  rowLabelAlone: { flex: 1 },
+  rowValue: { flex: 1, flexShrink: 1, minWidth: 0, textAlign: 'right' },
+  rowEnd: { flexShrink: 0 },
   dot: { width: 8, height: 8, borderRadius: 4 },
 });
