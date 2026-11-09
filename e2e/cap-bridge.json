@@ -1,0 +1,4 @@
+[{"goto":"/name"},{"wait":2500},{"tap":"Continue","exact":true},{"wait":9000},{"shot":"02-verify-code"},{"tap":"Codes match"},{"wait":2500},{"shot":"15-app-lock-setup"},{"tap":"No lock"},{"tap":"Continue","exact":true},{"wait":2000},{"shot":"16-paired-done"},{"tap":"Open dashboard"},{"wait":5000},
+ {"eval":"fetch('http://localhost:7777/__fail?on=1',{method:'POST'}).then(r=>r.status)"},{"wait":4500},{"shot":"17-banner-reconnecting"},{"wait":25000},{"shot":"18-banner-cant-reach"},
+ {"eval":"fetch('http://localhost:7777/__fail?on=0',{method:'POST'}).then(r=>r.status)"},{"tap":"Retry","exact":true},{"wait":3000},
+ {"eval":"fetch('http://localhost:7777/__revoke',{method:'POST'}).then(r=>r.status)"},{"wait":5000},{"shot":"19-banner-revoked"}]

@@ -1,0 +1,1 @@
+[{"dialog":"accept"},{"goto":"/"},{"wait":3000},{"tap":"Explore with demo data (dev build)"},{"wait":5000},{"tap":"Review","exact":true},{"wait":2000},{"shot":"21-narrow-320-approval-sheet"}]
