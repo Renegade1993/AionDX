@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index b05f590b..ff7a5049 100644
+index b05f590b..c9ff15ef 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -413,6 +413,7 @@ dependencies = [
@@ -10,7 +10,7 @@ index b05f590b..ff7a5049 100644
   "aionui-office",
   "aionui-process",
   "aionui-project",
-@@ -743,6 +744,34 @@ dependencies = [
+@@ -743,6 +744,36 @@ dependencies = [
   "tracing-subscriber",
  ]
  
@@ -21,6 +21,7 @@ index b05f590b..ff7a5049 100644
 + "aionui-api-types",
 + "aionui-auth",
 + "aionui-common",
++ "aionui-runtime",
 + "async-trait",
 + "axum",
 + "base64",
@@ -29,6 +30,7 @@ index b05f590b..ff7a5049 100644
 + "hex",
 + "hkdf",
 + "hmac 0.12.1",
++ "mdns-sd",
 + "serde",
 + "serde_json",
 + "sha2 0.10.9",
@@ -45,7 +47,7 @@ index b05f590b..ff7a5049 100644
  [[package]]
  name = "aionui-office"
  version = "0.2.2"
-@@ -1103,7 +1132,7 @@ version = "1.1.5"
+@@ -1103,7 +1134,7 @@ version = "1.1.5"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
  dependencies = [
@@ -54,7 +56,7 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -1114,7 +1143,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
+@@ -1114,7 +1145,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
  dependencies = [
   "anstyle",
   "once_cell_polyfill",
@@ -63,7 +65,7 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -1953,6 +1982,30 @@ version = "0.2.1"
+@@ -1953,6 +1984,30 @@ version = "0.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
  
@@ -94,7 +96,7 @@ index b05f590b..ff7a5049 100644
  [[package]]
  name = "chrono"
  version = "0.4.44"
-@@ -1985,6 +2038,7 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
+@@ -1985,6 +2040,7 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
  dependencies = [
   "crypto-common 0.1.7",
   "inout",
@@ -102,7 +104,7 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -2519,7 +2573,7 @@ dependencies = [
+@@ -2519,7 +2575,7 @@ dependencies = [
   "libc",
   "option-ext",
   "redox_users",
@@ -111,7 +113,7 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -2664,7 +2718,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -2664,7 +2720,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
  dependencies = [
   "libc",
@@ -120,7 +122,40 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -3599,7 +3653,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+@@ -2789,6 +2845,15 @@ dependencies = [
+  "spin",
+ ]
+ 
++[[package]]
++name = "flume"
++version = "0.12.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
++dependencies = [
++ "spin",
++]
++
+ [[package]]
+ name = "fnv"
+ version = "1.0.7"
+@@ -3489,6 +3554,16 @@ dependencies = [
+  "icu_properties",
+ ]
+ 
++[[package]]
++name = "if-addrs"
++version = "0.15.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
++dependencies = [
++ "libc",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "ignore"
+ version = "0.4.25"
+@@ -3599,7 +3674,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
  dependencies = [
   "hermit-abi",
   "libc",
@@ -129,7 +164,7 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -3694,7 +3748,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -3694,7 +3769,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "8cfc352a66ba903c23239ef51e809508b6fc2b0f90e3476ac7a9ff47e863ae95"
  dependencies = [
   "scopeguard",
@@ -138,7 +173,40 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -3979,7 +4033,7 @@ version = "0.50.3"
+@@ -3734,9 +3809,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
+ 
+ [[package]]
+ name = "libc"
+-version = "0.2.186"
++version = "0.2.191"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
++checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+ 
+ [[package]]
+ name = "libgit2-sys"
+@@ -3885,6 +3960,20 @@ dependencies = [
+  "digest 0.10.7",
+ ]
+ 
++[[package]]
++name = "mdns-sd"
++version = "0.21.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e6743ed743ff2bada2b8651ef298d3f98addb0b74844f19cdd57137d8bd0219e"
++dependencies = [
++ "fastrand",
++ "flume 0.12.0",
++ "if-addrs",
++ "mio",
++ "socket-pktinfo",
++ "socket2",
++]
++
+ [[package]]
+ name = "memchr"
+ version = "2.8.0"
+@@ -3979,7 +4068,7 @@ version = "0.50.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
  dependencies = [
@@ -147,7 +215,7 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -4399,6 +4453,17 @@ dependencies = [
+@@ -4399,6 +4488,17 @@ dependencies = [
   "windows-sys 0.61.2",
  ]
  
@@ -165,7 +233,7 @@ index b05f590b..ff7a5049 100644
  [[package]]
  name = "polyval"
  version = "0.6.2"
-@@ -4966,7 +5031,7 @@ dependencies = [
+@@ -4966,7 +5066,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys",
@@ -174,7 +242,25 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -5440,7 +5505,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -5433,6 +5533,17 @@ dependencies = [
+  "serde",
+ ]
+ 
++[[package]]
++name = "socket-pktinfo"
++version = "0.4.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "612942246d0cc239cfd83af1dfd39be47f649208a3524e5e9da651910128e0ac"
++dependencies = [
++ "libc",
++ "socket2",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "socket2"
+ version = "0.6.3"
+@@ -5440,7 +5551,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
  dependencies = [
   "libc",
@@ -183,7 +269,16 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -5779,7 +5844,7 @@ dependencies = [
+@@ -5643,7 +5754,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2d12fe70b2c1b4401038055f90f151b78208de1f9f89a7dbfd41587a10c3eea"
+ dependencies = [
+  "atoi",
+- "flume",
++ "flume 0.11.1",
+  "futures-channel",
+  "futures-core",
+  "futures-executor",
+@@ -5779,7 +5890,7 @@ dependencies = [
   "getrandom 0.4.2",
   "once_cell",
   "rustix",
@@ -192,7 +287,7 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -6667,7 +6732,7 @@ version = "0.1.11"
+@@ -6667,7 +6778,7 @@ version = "0.1.11"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
  dependencies = [
@@ -201,7 +296,7 @@ index b05f590b..ff7a5049 100644
  ]
  
  [[package]]
-@@ -7188,6 +7253,18 @@ version = "0.13.2"
+@@ -7188,6 +7299,18 @@ version = "0.13.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
  
@@ -429,10 +524,10 @@ index 17526034..c23179e6 100644
          .into_future();
 diff --git a/crates/aionui-app/src/router/mobile_backend.rs b/crates/aionui-app/src/router/mobile_backend.rs
 new file mode 100644
-index 00000000..e55f10cb
+index 00000000..cadca386
 --- /dev/null
 +++ b/crates/aionui-app/src/router/mobile_backend.rs
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,534 @@
 +#![allow(clippy::disallowed_types)] // maps domain errors through ApiError at this HTTP-facing boundary
 +
 +//! AionDX core-0015: the mobile facade's view of AionCore, over the team,
@@ -482,11 +577,16 @@ index 00000000..e55f10cb
 +    facade: Arc<aionui_mobile::Facade>,
 +) {
 +    use tokio::sync::broadcast::error::RecvError;
++    let mut sweep = tokio::time::interval(std::time::Duration::from_secs(60));
++    sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 +    loop {
-+        match rx.recv().await {
-+            Ok(event) => facade.on_event(&event.name, &event.data).await,
-+            Err(RecvError::Lagged(missed)) => facade.on_lagged(missed),
-+            Err(RecvError::Closed) => break,
++        tokio::select! {
++            received = rx.recv() => match received {
++                Ok(event) => facade.on_event(&event.name, &event.data).await,
++                Err(RecvError::Lagged(missed)) => facade.on_lagged(missed).await,
++                Err(RecvError::Closed) => break,
++            },
++            _ = sweep.tick() => facade.expire_shutdowns(aionui_common::now_ms()),
 +        }
 +    }
 +    tracing::info!("mobile bridge: event pump stopped (bus closed)");
@@ -913,6 +1013,34 @@ index 00000000..e55f10cb
 +            .map_err(map_err)
 +    }
 +
++    async fn respond_now_solo(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        content: &str,
++    ) -> Result<SendOutcome, BackendError> {
++        use aionui_conversation::RespondNow;
++        let outcome = self
++            .conversation
++            .respond_now(user_id, conversation_id, content, &self.task_manager)
++            .await
++            .map_err(map_err)?;
++        Ok(match outcome {
++            RespondNow::Delivered { .. } => SendOutcome {
++                message_id: String::new(),
++                delivery: "midturn",
++            },
++            RespondNow::Sent { msg_id, .. } => SendOutcome {
++                message_id: msg_id,
++                delivery: "started",
++            },
++            RespondNow::AfterTurn => SendOutcome {
++                message_id: String::new(),
++                delivery: "queued",
++            },
++        })
++    }
++
 +    async fn answer_ask(
 +        &self,
 +        user_id: &str,
@@ -1072,8 +1200,21 @@ index 1c2ee34b..97d2122c 100644
  struct ConversationServiceDeps<'a> {
      database: &'a Database,
      work_dir: PathBuf,
+diff --git a/crates/aionui-conversation/src/lib.rs b/crates/aionui-conversation/src/lib.rs
+index a1820663..fcf2b645 100644
+--- a/crates/aionui-conversation/src/lib.rs
++++ b/crates/aionui-conversation/src/lib.rs
+@@ -41,7 +41,7 @@ pub use runtime_routes::{ConversationRuntimeRouterState, conversation_runtime_ro
+ pub use service::is_temp_session_workspace;
+ pub use service::{
+     ConversationAgentTurnOutcome, ConversationAgentTurnRequest, ConversationAgentTurnStarted,
+-    ConversationAgentTurnStartedCallback, ConversationAgentTurnStatus, ConversationService, SteerActiveTurn,
++    ConversationAgentTurnStartedCallback, ConversationAgentTurnStatus, ConversationService, RespondNow, SteerActiveTurn,
+ };
+ pub use state::ConversationRouterState;
+ 
 diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
-index 49bbde7a..d45ea207 100644
+index 49bbde7a..668f9d5d 100644
 --- a/crates/aionui-conversation/src/service.rs
 +++ b/crates/aionui-conversation/src/service.rs
 @@ -3700,6 +3700,20 @@ impl ConversationService {
@@ -1106,7 +1247,99 @@ index 49bbde7a..d45ea207 100644
  
          if let Some(conf_id) = conf_id {
              let payload = serde_json::json!({
-@@ -4359,6 +4373,9 @@ impl ConversationService {
+@@ -3848,6 +3862,21 @@ pub enum SteerActiveTurn {
+     NotAvailable { reason: &'static str },
+ }
+ 
++/// AionDX core-0015: how `respond_now` delivered a message to a solo chat.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum RespondNow {
++    /// Into the running turn; the agent reads it at its next step.
++    Delivered { turn_id: String },
++    /// The chat was idle: an ordinary send started a turn.
++    Sent { msg_id: String, turn_id: String },
++    /// A turn is running and its agent can't take a message mid-turn: the message is held and sent the moment that
++    /// turn ends (first in line, like a team's respond-now).
++    AfterTurn,
++}
++
++/// How long `respond_now` holds a message for a running turn before giving up.
++const RESPOND_NOW_HOLD: std::time::Duration = std::time::Duration::from_secs(30 * 60);
++
+ /// Is this delivery error codex's "the turn already ended" steer rejection?
+ /// codex returns a bare -32600 for both steer rejections; the message text is
+ /// the ONLY discriminator (verified 0.144.6, design spec §6甲.1). Locked by
+@@ -4063,6 +4092,69 @@ impl ConversationService {
+             }
+         }
+     }
++    /// AionDX core-0015: deliver a message to a solo chat now, whatever its state: into the running turn when the
++    /// agent can take it, as a new turn when the chat is idle, and otherwise right after the running turn ends.
++    /// The mobile bridge's refusal follow-up uses it, since right after a refused tool the turn usually still runs.
++    pub async fn respond_now(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        content: &str,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) -> Result<RespondNow, ConversationError> {
++        if let SteerActiveTurn::Delivered { turn_id } = self
++            .steer_active_turn(user_id, conversation_id, content, Vec::new(), true, task_manager)
++            .await?
++        {
++            return Ok(RespondNow::Delivered { turn_id });
++        }
++        let request = |content: &str| SendMessageRequest {
++            content: content.to_owned(),
++            files: Vec::new(),
++            sessions: Vec::new(),
++            inject_skills: Vec::new(),
++            hidden: false,
++        };
++        match self
++            .send_message(user_id, conversation_id, request(content), task_manager)
++            .await
++        {
++            Ok(r) => {
++                return Ok(RespondNow::Sent {
++                    msg_id: r.msg_id,
++                    turn_id: r.turn_id,
++                });
++            }
++            Err(ConversationError::Busy { .. }) => {}
++            Err(e) => return Err(e),
++        }
++        let (svc, tm) = (self.clone(), task_manager.clone());
++        let (user, conv, text) = (user_id.to_owned(), conversation_id.to_owned(), content.to_owned());
++        tokio::spawn(async move {
++            let deadline = tokio::time::Instant::now() + RESPOND_NOW_HOLD;
++            while tokio::time::Instant::now() < deadline {
++                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
++                if svc.runtime_state.active_turn_id_for(&conv).is_some() {
++                    continue;
++                }
++                match svc.send_message(&user, &conv, request(&text), &tm).await {
++                    Ok(_) => {
++                        info!(conversation_id = %conv, "held respond-now message sent after the turn ended");
++                        return;
++                    }
++                    // Another turn won the race; wait for that one too.
++                    Err(ConversationError::Busy { .. }) => continue,
++                    Err(e) => {
++                        warn!(conversation_id = %conv, error = %ErrorChain(&e), "held respond-now message could not be sent");
++                        return;
++                    }
++                }
++            }
++            warn!(conversation_id = %conv, "held respond-now message dropped: the turn ran past the hold limit");
++        });
++        Ok(RespondNow::AfterTurn)
++    }
++
+     /// AionDX core-0002: hand a message to the conversation's RUNNING turn without stopping it, the delivery a
+     /// solo chat's own send takes while its agent works (see `send_message`, "Mid-turn delivery"). A team
+     /// member's conversation cannot be sent to through the ordinary route, so the team layer asks for it here.
+@@ -4359,6 +4451,9 @@ impl ConversationService {
                      "user_id": user_id,
                      "conversation_id": conversation_id,
                      "msg_id": &user_msg_id,
@@ -1117,10 +1350,51 @@ index 49bbde7a..d45ea207 100644
                      "position": "right",
                      "status": "finish",
 diff --git a/crates/aionui-conversation/src/service_test.rs b/crates/aionui-conversation/src/service_test.rs
-index a6cf541d..30897b93 100644
+index a6cf541d..42752cfa 100644
 --- a/crates/aionui-conversation/src/service_test.rs
 +++ b/crates/aionui-conversation/src/service_test.rs
-@@ -5901,6 +5901,8 @@ async fn send_message_broadcasts_user_created_event() {
+@@ -4245,6 +4245,40 @@ async fn steer_active_turn_for_a_queued_message_writes_nothing_to_the_chat() {
+     assert!(!broadcaster.take_events().iter().any(|e| e.name == "message.userCreated"));
+ }
+ 
++/// AionDX core-0015: a refusal follow-up to a solo chat whose agent can't take a message mid-turn is held while
++/// the turn runs, and sent as soon as it ends (QA AP6). An idle chat gets it straight away.
++#[tokio::test]
++async fn respond_now_holds_the_message_until_the_running_turn_ends() {
++    let (svc, _broadcaster, repo, task_mgr) = make_service();
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    let has = |text: &str| {
++        repo.messages
++            .lock()
++            .unwrap()
++            .iter()
++            .any(|m| m.position.as_deref() == Some("right") && m.content.contains(text))
++    };
++
++    let mut claim = svc
++        .runtime_state()
++        .try_claim_turn(&conv.id, "turn_running")
++        .expect("claim the running turn");
++    let held = svc
++        .respond_now("user_1", &conv.id, "Denied Bash: use pnpm", &task_mgr)
++        .await
++        .unwrap();
++    assert_eq!(held, crate::RespondNow::AfterTurn);
++    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
++    assert!(!has("Denied Bash: use pnpm"), "nothing is sent while the turn runs");
++
++    claim.release();
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
++    while !has("Denied Bash: use pnpm") {
++        assert!(std::time::Instant::now() < deadline, "the held message was never sent");
++        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
++    }
++}
++
+ /// AionDX core-0002: nothing is delivered, written or changed when there is no running turn, or the turn is
+ /// waiting on a permission card.
+ #[tokio::test]
+@@ -5901,6 +5935,8 @@ async fn send_message_broadcasts_user_created_event() {
      assert_eq!(user_created.data["msg_id"], response.msg_id);
      assert_eq!(user_created.data["content"], "Hello");
      assert_eq!(user_created.data["position"], "right");
@@ -1249,10 +1523,10 @@ index a352946b..8086f997 100644
 +}
 diff --git a/crates/aionui-mobile/Cargo.toml b/crates/aionui-mobile/Cargo.toml
 new file mode 100644
-index 00000000..3adb2f16
+index 00000000..21bff076
 --- /dev/null
 +++ b/crates/aionui-mobile/Cargo.toml
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,36 @@
 +[package]
 +name = "aionui-mobile"
 +version.workspace = true
@@ -1264,6 +1538,7 @@ index 00000000..3adb2f16
 +aionui-common.workspace = true
 +aionui-auth.workspace = true
 +aionui-api-types.workspace = true
++aionui-runtime.workspace = true
 +axum.workspace = true
 +tokio.workspace = true
 +serde.workspace = true
@@ -1279,9 +1554,10 @@ index 00000000..3adb2f16
 +hkdf = "0.12"
 +hmac = "0.12"
 +sha2.workspace = true
++mdns-sd = { version = "0.21.7", default-features = false }
 +
 +[target.'cfg(windows)'.dependencies]
-+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
++windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 +
 +[dev-dependencies]
 +hex.workspace = true
@@ -1370,10 +1646,10 @@ index 00000000..816a594b
 +CREATE INDEX IF NOT EXISTS mobile_send_failures_conversation ON mobile_send_failures (conversation_id);
 diff --git a/crates/aionui-mobile/src/admin_routes.rs b/crates/aionui-mobile/src/admin_routes.rs
 new file mode 100644
-index 00000000..a8147977
+index 00000000..3d5dc595
 --- /dev/null
 +++ b/crates/aionui-mobile/src/admin_routes.rs
-@@ -0,0 +1,406 @@
+@@ -0,0 +1,435 @@
 +#![allow(clippy::disallowed_types)] // ApiError at this HTTP boundary, as in AionCore's own routes modules
 +
 +//! Desktop-only admin routes on AionCore's own 127.0.0.1 server (CONTRACT §3.4).
@@ -1398,6 +1674,7 @@ index 00000000..a8147977
 +use crate::error::MobileError;
 +use crate::pairing::OfferView;
 +use crate::service::{AdminFailure, DeviceView, MobileBridge, MobileStatus, PairingOffer};
++use crate::service_net::{FirewallView, RekeyOfferView};
 +use crate::settings::MobileSettingsPatch;
 +
 +#[derive(Clone)]
@@ -1421,6 +1698,8 @@ index 00000000..a8147977
 +            "/api/mobile/admin/devices/{device_id}/rekey-offers",
 +            post(create_rekey_offer),
 +        )
++        .route("/api/mobile/admin/rekey-offers/{offer_id}", get(get_rekey_offer))
++        .route("/api/mobile/admin/firewall", get(firewall_status))
 +        .route("/api/mobile/admin/devices", get(list_devices))
 +        .route(
 +            "/api/mobile/admin/devices/{device_id}",
@@ -1569,6 +1848,32 @@ index 00000000..a8147977
 +        .await
 +        .map_err(admin_error)?;
 +    Ok(Json(ApiResponse::ok(offer)))
++}
++
++async fn get_rekey_offer(
++    State(state): State<MobileAdminState>,
++    Extension(user): Extension<CurrentUser>,
++    channel: Option<Extension<AuthChannel>>,
++    Path(offer_id): Path<String>,
++) -> Result<Json<ApiResponse<RekeyOfferView>>, ApiError> {
++    require_user_client(channel.as_deref())?;
++    let view = state
++        .bridge
++        .rekey_offer_state(&user.id, &offer_id)
++        .await
++        .map_err(admin_error)?;
++    Ok(Json(ApiResponse::ok(view)))
++}
++
++/// Read-only: what `netsh` says about the rule, and the plan the desktop would run (elevated) to add it.
++async fn firewall_status(
++    State(state): State<MobileAdminState>,
++    Extension(user): Extension<CurrentUser>,
++    channel: Option<Extension<AuthChannel>>,
++) -> Result<Json<ApiResponse<FirewallView>>, ApiError> {
++    require_user_client(channel.as_deref())?;
++    let view = state.bridge.firewall_status(&user.id).await.map_err(to_api_error)?;
++    Ok(Json(ApiResponse::ok(view)))
 +}
 +
 +async fn list_devices(
@@ -3503,10 +3808,10 @@ index 00000000..dcb63878
 +}
 diff --git a/crates/aionui-mobile/src/backend.rs b/crates/aionui-mobile/src/backend.rs
 new file mode 100644
-index 00000000..e99099f7
+index 00000000..033ee2a2
 --- /dev/null
 +++ b/crates/aionui-mobile/src/backend.rs
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,234 @@
 +//! The facade's view of AionCore (CONTRACT §6). `aionui-app` implements it over
 +//! the team, conversation and assistant services; this crate depends on no
 +//! domain crate. Every call acts as `user_id`, the Core user the phone was
@@ -3667,6 +3972,16 @@ index 00000000..e99099f7
 +    async fn confirm(&self, _user_id: &str, _call: ConfirmCall) -> Result<(), BackendError> {
 +        Err(BackendError::Unavailable("approvals are not available".into()))
 +    }
++    /// A message to a solo chat that must not be refused because a turn is running (the refusal follow-up,
++    /// CONTRACT §6.5): into the running turn, as a new turn, or held until the running turn ends.
++    async fn respond_now_solo(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        content: &str,
++    ) -> Result<SendOutcome, BackendError> {
++        self.send_solo(user_id, conversation_id, content).await
++    }
 +    /// AionCore's AskUserQuestion answer; `answers: None` declines.
 +    async fn answer_ask(
 +        &self,
@@ -3733,10 +4048,10 @@ index 00000000..e99099f7
 +}
 diff --git a/crates/aionui-mobile/src/core.rs b/crates/aionui-mobile/src/core.rs
 new file mode 100644
-index 00000000..d3efa1b5
+index 00000000..de4c0796
 --- /dev/null
 +++ b/crates/aionui-mobile/src/core.rs
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,168 @@
 +//! Shared state behind the LAN routes and the desktop admin routes.
 +
 +use std::collections::HashMap;
@@ -3790,6 +4105,16 @@ index 00000000..d3efa1b5
 +    pub secret: [u8; 32],
 +    pub expires_at: i64,
 +    pub attempts: u8,
++    /// Kept after use, so the desktop can see how it ended (`GET /api/mobile/admin/rekey-offers/{id}`).
++    pub state: RekeyState,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum RekeyState {
++    Pending,
++    Completed,
++    /// Too many wrong proofs.
++    Failed,
 +}
 +
 +/// The mobile facade (`/v1/...`, CONTRACT §6). Implemented in later phases;
@@ -4236,10 +4561,10 @@ index 00000000..77da66f5
 +}
 diff --git a/crates/aionui-mobile/src/facade.rs b/crates/aionui-mobile/src/facade.rs
 new file mode 100644
-index 00000000..091725b7
+index 00000000..49f728ba
 --- /dev/null
 +++ b/crates/aionui-mobile/src/facade.rs
-@@ -0,0 +1,696 @@
+@@ -0,0 +1,706 @@
 +//! The mobile facade (CONTRACT §6): the `/v1/...` routes inside the RPC tunnel.
 +//! An allowlist by construction (§11 #1): anything not matched here is
 +//! `no_such_route`. This file routes and pages; `shape.rs` builds the JSON.
@@ -4269,7 +4594,7 @@ index 00000000..091725b7
 +    /// The bridge's own store: settings (tasks.write), devices, broadcasts.
 +    pub(crate) store: Option<crate::store::MobileStore>,
 +    /// Shutdown requests sent from a phone, by (team, slot): `Agent.shutdown` (§6.3).
-+    pub(crate) shutdowns: std::sync::Mutex<HashMap<(String, String), Value>>,
++    pub(crate) shutdowns: std::sync::Mutex<HashMap<(String, String), crate::facade_live::PendingShutdown>>,
 +    /// Phase 4: the change journal and the approvals tracker, fed by `on_event`.
 +    pub(crate) live: crate::facade_live::Live,
 +}
@@ -4433,7 +4758,15 @@ index 00000000..091725b7
 +                _ => None,
 +            };
 +            let team_id = team["id"].as_str().unwrap_or_default().to_owned();
-+            let shutdown = self.shutdowns.lock().unwrap().get(&(team_id, slot.to_owned())).cloned();
++            self.expire_shutdowns(aionui_common::now_ms());
++            let shutdown = self
++                .shutdowns
++                .lock()
++                .unwrap()
++                .get(&(team_id, slot.to_owned()))
++                .map(|p| p.state.clone());
++            self.heal(user, conv, a["pending_confirmations"].as_u64().unwrap_or(0))
++                .await;
 +            let read = self.read_state_of(user, conv, &roster, name).await;
 +            // your_turn is for the lead only, once its turn is over (teammates report to the lead).
 +            let idle = run["slot_work"]
@@ -4695,6 +5028,8 @@ index 00000000..091725b7
 +            Ok(Some(m)) => shape::message(&to_value(&m), &roster, &agent).map(|m| shape::last_message(&m)),
 +            _ => None,
 +        };
++        self.heal(user, id, c["runtime"]["pending_confirmations"].as_u64().unwrap_or(0))
++            .await;
 +        let read = self.read_state_of(user, id, &roster, &agent).await;
 +        let idle = c["runtime"]["state"].as_str().is_none_or(|s| s == "idle");
 +        // your_turn: solo chats and a team's lead (teammates report to the lead, not to the user).
@@ -4938,10 +5273,10 @@ index 00000000..091725b7
 +}
 diff --git a/crates/aionui-mobile/src/facade_live.rs b/crates/aionui-mobile/src/facade_live.rs
 new file mode 100644
-index 00000000..3d2c1ac7
+index 00000000..38a82bed
 --- /dev/null
 +++ b/crates/aionui-mobile/src/facade_live.rs
-@@ -0,0 +1,763 @@
+@@ -0,0 +1,882 @@
 +//! Phase 4: the live side of the facade (CONTRACT §6.2, §6.5).
 +//!
 +//! AionCore's event bus feeds `Facade::on_event`, which turns bus events into change-journal entries and keeps the
@@ -4975,6 +5310,27 @@ index 00000000..3d2c1ac7
 +/// How many recent new-turn sends are remembered for linking a send failure to its message.
 +const TURN_MEMORY: usize = 1000;
 +
++/// A phone-sent shutdown and the user who sent it (`Agent.shutdown`, §6.3).
++pub(crate) struct PendingShutdown {
++    pub(crate) user_id: String,
++    /// The `Agent.shutdown` JSON.
++    pub(crate) state: Value,
++}
++
++/// A request with neither a removal nor a refusal after this long becomes `expired` (CONTRACT rev 4.5).
++pub const SHUTDOWN_TIMEOUT_MS: i64 = 10 * 60 * 1000;
++
++/// How long a resolved approval's id is remembered, so a retried or late answer gets `409` with the outcome
++/// instead of `404` (QA AP5).
++const RESOLVED_MEMORY_MS: i64 = 10 * 60 * 1000;
++
++/// A resolved approval: who it belonged to, how it ended, and when.
++struct Resolved {
++    user_id: String,
++    resolution: Resolution,
++    at: i64,
++}
++
 +/// What `on_event` learns and keeps between events.
 +pub(crate) struct Live {
 +    pub(crate) journal: ChangeJournal,
@@ -4987,8 +5343,10 @@ index 00000000..3d2c1ac7
 +    session_status: Mutex<HashMap<String, String>>,
 +    /// Per conversation: where its approvals come from, or None when it can't be resolved (not a live agent).
 +    origins: Mutex<HashMap<String, Option<ApprovalOrigin>>>,
-+    /// Users whose live conversations were reconciled since start (or since the bus lagged).
-+    swept: Mutex<HashSet<String>>,
++    /// Recently resolved approvals by id (`RESOLVED_MEMORY_MS`).
++    resolved: Mutex<HashMap<String, Resolved>>,
++    /// Every Core user an event was seen for: the ones to re-sweep when the bus lags.
++    users_seen: Mutex<HashSet<String>>,
 +}
 +
 +impl Default for Live {
@@ -4996,11 +5354,12 @@ index 00000000..3d2c1ac7
 +        Self {
 +            journal: ChangeJournal::new(JOURNAL_MAX_ENTRIES, JOURNAL_MAX_AGE_MS),
 +            approvals: ApprovalTracker::new(),
++            resolved: Mutex::new(HashMap::new()),
 +            session_status: Mutex::new(HashMap::new()),
 +            turn_messages: Mutex::new(std::collections::VecDeque::new()),
 +            errored: Mutex::new(HashMap::new()),
 +            origins: Mutex::new(HashMap::new()),
-+            swept: Mutex::new(HashSet::new()),
++            users_seen: Mutex::new(HashSet::new()),
 +        }
 +    }
 +}
@@ -5105,16 +5464,46 @@ index 00000000..3d2c1ac7
 +        }
 +    }
 +
++    /// Turns every `requested` shutdown older than `SHUTDOWN_TIMEOUT_MS` into `expired`, and announces it on the
++    /// change feed. Called when an agent is read, and every minute by the app's event pump.
++    pub fn expire_shutdowns(&self, now: i64) {
++        let mut announce = Vec::new();
++        for ((team_id, _), pending) in self.shutdowns.lock().unwrap().iter_mut() {
++            let requested_at = pending.state["requestedAt"].as_i64().unwrap_or(now);
++            if pending.state["state"] == "requested" && now - requested_at >= SHUTDOWN_TIMEOUT_MS {
++                pending.state = json!({
++                    "state": "expired",
++                    "requestedAt": requested_at,
++                    "expiredAt": requested_at + SHUTDOWN_TIMEOUT_MS,
++                    "reason": pending.state["reason"],
++                });
++                announce.push((pending.user_id.clone(), team_id.clone()));
++            }
++        }
++        for (user, team_id) in announce {
++            self.record_team(&user, &team_id, &[TeamWhat::RunState]);
++        }
++    }
++
 +    /// The bus dropped events: anything cached may be stale, and approvals must be re-swept.
-+    pub fn on_lagged(&self, missed: u64) {
-+        tracing::warn!(missed, "mobile bridge: event bus lagged; approvals will be re-swept");
++    ///
++    /// Dropped events may include permission frames (QA AP1), so every known user's live conversations are swept
++    /// against AionCore's confirmations right away; what was missed shows up as `approval_added` on the feed.
++    pub async fn on_lagged(&self, missed: u64) {
++        tracing::warn!(missed, "mobile bridge: event bus lagged; re-sweeping approvals");
 +        self.live.origins.lock().unwrap().clear();
-+        self.live.swept.lock().unwrap().clear();
++        let users: Vec<String> = self.live.users_seen.lock().unwrap().iter().cloned().collect();
++        for user in users {
++            self.sweep(&user).await;
++        }
 +    }
 +
 +    /// One AionCore bus event (`WebSocketMessage { name, data }`).
 +    pub async fn on_event(&self, name: &str, data: &Value) {
 +        let Some(user) = s(data, "user_id") else { return };
++        if !self.live.users_seen.lock().unwrap().contains(user) {
++            self.live.users_seen.lock().unwrap().insert(user.to_owned());
++        }
 +        let team_id = s(data, "team_id");
 +        match name {
 +            "message.stream" => self.on_stream(user, data).await,
@@ -5254,9 +5643,19 @@ index 00000000..3d2c1ac7
 +        if matches!(frame_type, "start" | "finish" | "error") {
 +            what.push(ConversationWhat::State);
 +        }
-+        if matches!(frame_type, "acp_permission" | "permission" | "ask")
-+            && let Some(origin) = self.origin(user, cid).await
-+        {
++        let is_approval = matches!(frame_type, "acp_permission" | "permission" | "ask");
++        let origin = if is_approval {
++            self.origin(user, cid).await
++        } else {
++            None
++        };
++        if is_approval && origin.is_none() {
++            tracing::warn!(
++                conversation_id = cid,
++                "mobile bridge: a permission frame's conversation could not be resolved; it will be recovered by a sweep"
++            );
++        }
++        if let Some(origin) = origin {
 +            let frame = PermissionFrame {
 +                origin,
 +                frame_type: frame_type.to_owned(),
@@ -5307,6 +5706,19 @@ index 00000000..3d2c1ac7
 +    }
 +
 +    async fn approval_gone(&self, user: &str, conversation_id: &str, approval_id: String, resolution: Resolution) {
++        {
++            let now = now_ms();
++            let mut resolved = self.live.resolved.lock().unwrap();
++            resolved.retain(|_, r| now - r.at < RESOLVED_MEMORY_MS);
++            resolved.insert(
++                approval_id.clone(),
++                Resolved {
++                    user_id: user.to_owned(),
++                    resolution,
++                    at: now,
++                },
++            );
++        }
 +        let team_id = self.origin(user, conversation_id).await.and_then(|o| o.team_id);
 +        if let Some(t) = &team_id {
 +            self.record_team(user, t, &[TeamWhat::RunState]);
@@ -5355,7 +5767,9 @@ index 00000000..3d2c1ac7
 +        };
 +        let key = (team_id.to_owned(), from.to_owned());
 +        let mut shutdowns = self.shutdowns.lock().unwrap();
-+        let Some(state) = shutdowns.get_mut(&key) else { return };
++        let Some(state) = shutdowns.get_mut(&key).map(|p| &mut p.state) else {
++            return;
++        };
 +        if state["state"] != "requested" {
 +            return;
 +        }
@@ -5433,10 +5847,9 @@ index 00000000..3d2c1ac7
 +        }
 +    }
 +
-+    /// The first listing for a user (after start, or after the bus lagged) sweeps every live conversation; later
-+    /// listings re-check only the conversations that hold tracked approvals.
-+    async fn approvals_list(&self, user: &str, q: &HashMap<String, String>) -> InnerResponse {
-+        let first = self.live.swept.lock().unwrap().insert(user.to_owned());
++    /// Reconciles every conversation that holds a tracked approval or has a live agent. The listing is the
++    /// recovery path for anything the event stream missed, so it sweeps every time (in-process calls, cheap).
++    pub(crate) async fn sweep(&self, user: &str) {
 +        let mut convs: Vec<String> = self
 +            .live
 +            .approvals
@@ -5444,20 +5857,40 @@ index 00000000..3d2c1ac7
 +            .into_iter()
 +            .map(|a| a.conversation_id)
 +            .collect();
-+        if first {
-+            match self.backend.live_conversations(user).await {
-+                Ok(live) => convs.extend(live),
-+                Err(e) => {
-+                    tracing::warn!(error = ?e, "mobile bridge: approvals sweep could not list live conversations");
-+                    self.live.swept.lock().unwrap().remove(user);
-+                }
-+            }
++        match self.backend.live_conversations(user).await {
++            Ok(live) => convs.extend(live),
++            Err(e) => tracing::warn!(error = ?e, "mobile bridge: approvals sweep could not list live conversations"),
 +        }
 +        convs.sort();
 +        convs.dedup();
 +        for cid in convs {
 +            self.reconcile(user, &cid).await;
 +        }
++    }
++
++    /// Self-healing for derived state: AionCore says this conversation has pending confirmations but nothing is
++    /// tracked for it (a frame was missed), so it is reconciled now, which also puts it on the feed.
++    pub(crate) async fn heal(&self, user: &str, conversation_id: &str, pending: u64) {
++        if pending == 0
++            || self
++                .live
++                .approvals
++                .list(user, None)
++                .iter()
++                .any(|a| a.conversation_id == conversation_id)
++        {
++            return;
++        }
++        tracing::info!(
++            conversation_id,
++            pending,
++            "mobile bridge: untracked pending confirmations; reconciling"
++        );
++        self.reconcile(user, conversation_id).await;
++    }
++
++    async fn approvals_list(&self, user: &str, q: &HashMap<String, String>) -> InnerResponse {
++        self.sweep(user).await;
 +        let team = q.get("teamId").map(String::as_str).filter(|t| !t.is_empty());
 +        let items: Vec<Value> = self.live.approvals.list(user, team).iter().map(to_value).collect();
 +        InnerResponse::ok(json!({ "items": items }))
@@ -5471,7 +5904,7 @@ index 00000000..3d2c1ac7
 +            .get(approval_id)
 +            .filter(|t| t.origin.user_id == user)
 +        else {
-+            return InnerResponse::error(404, "not_found", "No such pending approval");
++            return self.not_pending(user, approval_id);
 +        };
 +        let input = match answer_input(body) {
 +            Ok(i) => i,
@@ -5597,9 +6030,30 @@ index 00000000..3d2c1ac7
 +                .map(|_| ()),
 +            _ => self
 +                .backend
-+                .send_solo(user, &o.conversation_id, &text)
++                .respond_now_solo(user, &o.conversation_id, &text)
 +                .await
 +                .map(|_| ()),
++        }
++    }
++}
++
++impl Facade {
++    /// An answer for an approval that isn't pending: `409` with how it ended when it was resolved in the last
++    /// `RESOLVED_MEMORY_MS` (answered elsewhere, a retry after a lost response, or the turn ended), else `404`.
++    fn not_pending(&self, user: &str, approval_id: &str) -> InnerResponse {
++        let resolved = self.live.resolved.lock().unwrap();
++        match resolved
++            .get(approval_id)
++            .filter(|r| r.user_id == user && now_ms() - r.at < RESOLVED_MEMORY_MS)
++        {
++            Some(r) => {
++                let mut resp = already_resolved();
++                if let Some(b) = resp.body.as_mut() {
++                    b["error"]["details"] = json!({ "resolution": r.resolution, "resolvedAt": r.at });
++                }
++                resp
++            }
++            None => InnerResponse::error(404, "not_found", "No such pending approval"),
 +        }
 +    }
 +}
@@ -5707,10 +6161,10 @@ index 00000000..3d2c1ac7
 +}
 diff --git a/crates/aionui-mobile/src/facade_write.rs b/crates/aionui-mobile/src/facade_write.rs
 new file mode 100644
-index 00000000..8c8213f4
+index 00000000..75284f3e
 --- /dev/null
 +++ b/crates/aionui-mobile/src/facade_write.rs
-@@ -0,0 +1,587 @@
+@@ -0,0 +1,590 @@
 +//! The facade's write side (CONTRACT §6.4, §6.6, §6.7): sends, read markers,
 +//! broadcasts, agent controls, session start, task writes. Sensitive actions
 +//! (§5.1) need a verified confirm proof unless the PC relaxed it for the phone.
@@ -6179,7 +6633,10 @@ index 00000000..8c8213f4
 +            |()| {
 +                self.shutdowns.lock().unwrap().insert(
 +                    (team_id.to_owned(), slot.to_owned()),
-+                    json!({ "state": "requested", "requestedAt": aionui_common::now_ms(), "reason": reason }),
++                    crate::facade_live::PendingShutdown {
++                        user_id: ctx.user_id.clone(),
++                        state: json!({ "state": "requested", "requestedAt": aionui_common::now_ms(), "reason": reason }),
++                    },
 +                );
 +                InnerResponse::ok(json!({ "outcome": "requested" }))
 +            },
@@ -6297,6 +6754,602 @@ index 00000000..8c8213f4
 +        "sentFrom": { "kind": "mobile", "deviceId": r.device_id, "deviceName": r.device_name },
 +        "deliveries": serde_json::from_str::<Value>(&r.deliveries).unwrap_or_else(|_| json!([])),
 +    })
++}
+diff --git a/crates/aionui-mobile/src/firewall.rs b/crates/aionui-mobile/src/firewall.rs
+new file mode 100644
+index 00000000..9da969f5
+--- /dev/null
++++ b/crates/aionui-mobile/src/firewall.rs
+@@ -0,0 +1,590 @@
++//! The Windows Firewall rule that lets phones on the LAN reach the bridge (CONTRACT §2, PHASE5-NET-SPEC part C).
++//!
++//! This module only builds and parses `netsh` command plans. It never adds or deletes a rule itself: adding needs
++//! elevation and the user's switch, and the desktop side runs the add plan through the app's own `elevate.exe`.
++//! The one executor here, [`ShowOnlyRunner`], refuses every plan except the read-only `show rule` one.
++//!
++//! The rule is scoped as the spec says: inbound TCP on the bridge's port, the Private profile only, and only for the
++//! given program. Which remote addresses may connect is the listener's job (`peer_filter`), not the rule's.
++//!
++//! Plans are argument vectors handed to the program directly, never a shell string, so a path cannot add arguments.
++//! A path `netsh` could misread (a `"`, a control character, an `=`) is refused instead of quoted around.
++//!
++//! `netsh` output is localized. [`parse_show_rule`] reads the English labels; on a Windows in another language it
++//! finds no rule and reports `present: false`, never a panic. Callers should treat that as "unknown".
++
++use std::path::Path;
++
++/// The rule's display name. `show` and `delete` find the rule by it.
++pub const RULE_NAME: &str = "AionDX mobile bridge";
++
++/// What would be executed: `program` with `args`, each argument passed as is (no shell, no joining).
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct FirewallPlan {
++    pub program: String,
++    pub args: Vec<String>,
++}
++
++/// What `show rule` said about the rule. `Default` is "not there".
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub struct RuleStatus {
++    /// At least one rule with [`RULE_NAME`] exists.
++    pub present: bool,
++    /// Every rule with that name is enabled.
++    pub enabled: bool,
++    /// Every rule with that name applies to the Private profile and to no other profile.
++    pub private_only: bool,
++    /// The one local port every rule with that name opens; `None` for "Any", a range, a list, or rules that differ.
++    pub port: Option<u16>,
++}
++
++/// Why an add plan was not built.
++#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
++pub enum PlanError {
++    #[error("the program path is not valid Unicode")]
++    NotUnicode,
++    #[error("the program path must be an absolute path to a file: {0}")]
++    NotAbsoluteFile(String),
++    #[error("the program path contains a character netsh cannot take safely: {0}")]
++    UnsafePath(String),
++    #[error("port 0 cannot be opened")]
++    ZeroPort,
++}
++
++/// `%SystemRoot%\System32\netsh.exe`, by absolute path so nothing on `PATH` or in the working directory stands in
++/// for it. Falls back to `C:\Windows` when `SystemRoot` is missing or not an absolute path.
++pub fn netsh_program() -> String {
++    let root = std::env::var("SystemRoot")
++        .ok()
++        .filter(|r| Path::new(r).is_absolute())
++        .unwrap_or_else(|| String::from(r"C:\Windows"));
++    let root = root.trim_end_matches(['\\', '/']);
++    format!(r"{root}\System32\netsh.exe")
++}
++
++fn rule_name_arg() -> String {
++    format!("name={RULE_NAME}")
++}
++
++/// `netsh advfirewall firewall add rule name="AionDX mobile bridge" dir=in action=allow protocol=TCP
++///  localport=<port> profile=private program="<exe>" enable=yes`
++///
++/// Needs elevation to run; this only builds it.
++pub fn add_rule_plan(exe_path: &Path, port: u16) -> Result<FirewallPlan, PlanError> {
++    if port == 0 {
++        return Err(PlanError::ZeroPort);
++    }
++    let exe = exe_path.to_str().ok_or(PlanError::NotUnicode)?;
++    if !exe_path.is_absolute() || exe.ends_with(['\\', '/']) {
++        return Err(PlanError::NotAbsoluteFile(exe.to_string()));
++    }
++    // A `"` would end netsh's own quoting early, and a control character could end the line; `=` makes the
++    // `program=<value>` token ambiguous to netsh's key=value reader. None of them is in a normal install path.
++    if exe.chars().any(|c| c == '"' || c == '=' || c.is_control()) {
++        return Err(PlanError::UnsafePath(exe.to_string()));
++    }
++    Ok(FirewallPlan {
++        program: netsh_program(),
++        args: vec![
++            "advfirewall".into(),
++            "firewall".into(),
++            "add".into(),
++            "rule".into(),
++            rule_name_arg(),
++            "dir=in".into(),
++            "action=allow".into(),
++            "protocol=TCP".into(),
++            format!("localport={port}"),
++            "profile=private".into(),
++            format!("program={exe}"),
++            "enable=yes".into(),
++        ],
++    })
++}
++
++/// `netsh advfirewall firewall delete rule name="AionDX mobile bridge"`. Needs elevation to run; this only builds it.
++pub fn remove_rule_plan() -> FirewallPlan {
++    FirewallPlan {
++        program: netsh_program(),
++        args: vec![
++            "advfirewall".into(),
++            "firewall".into(),
++            "delete".into(),
++            "rule".into(),
++            rule_name_arg(),
++        ],
++    }
++}
++
++/// Read-only, needs no admin: `netsh advfirewall firewall show rule name="AionDX mobile bridge" verbose`.
++pub fn show_rule_plan() -> FirewallPlan {
++    FirewallPlan {
++        program: netsh_program(),
++        args: vec![
++            "advfirewall".into(),
++            "firewall".into(),
++            "show".into(),
++            "rule".into(),
++            rule_name_arg(),
++            "verbose".into(),
++        ],
++    }
++}
++
++/// Read-only, needs no admin: `netsh advfirewall show privateprofile state`, whether Windows Firewall is on for the
++/// Private profile (the only profile the rule is for).
++pub fn profile_state_plan() -> FirewallPlan {
++    FirewallPlan {
++        program: netsh_program(),
++        args: vec![
++            "advfirewall".into(),
++            "show".into(),
++            "privateprofile".into(),
++            "state".into(),
++        ],
++    }
++}
++
++/// `State  ON` / `State  OFF` from `show privateprofile state` (English labels). `None` when it can't be read, e.g. a
++/// non-English Windows.
++pub fn parse_profile_state(output: &str) -> Option<bool> {
++    output.lines().find_map(|line| {
++        let rest = line.trim().strip_prefix("State")?;
++        match rest.trim() {
++            "ON" => Some(true),
++            "OFF" => Some(false),
++            _ => None,
++        }
++    })
++}
++
++/// Whether Windows Firewall is on for the Private profile, read-only; `None` when unknown.
++pub async fn query_firewall_enabled(runner: &dyn NetshRunner) -> Option<bool> {
++    runner
++        .run(&profile_state_plan())
++        .await
++        .ok()
++        .and_then(|out| parse_profile_state(&out))
++}
++
++/// Parses `show rule ... verbose` output (English labels): one block per rule, each starting with `Rule Name:`.
++/// Anything it cannot read, including localized output, comes out as `present: false`.
++pub fn parse_show_rule(output: &str) -> RuleStatus {
++    struct Block {
++        enabled: bool,
++        profiles: Vec<String>,
++        port: Option<u16>,
++    }
++    let mut blocks: Vec<Block> = Vec::new();
++    let mut current: Option<Block> = None;
++
++    for line in output.lines() {
++        let Some((key, value)) = line.split_once(':') else {
++            continue;
++        };
++        let key = key.trim();
++        let value = value.trim();
++        if key.eq_ignore_ascii_case("Rule Name") {
++            if let Some(b) = current.take() {
++                blocks.push(b);
++            }
++            if value.eq_ignore_ascii_case(RULE_NAME) {
++                current = Some(Block {
++                    enabled: false,
++                    profiles: Vec::new(),
++                    port: None,
++                });
++            }
++            continue;
++        }
++        let Some(b) = current.as_mut() else { continue };
++        if key.eq_ignore_ascii_case("Enabled") {
++            b.enabled = value.eq_ignore_ascii_case("Yes");
++        } else if key.eq_ignore_ascii_case("Profiles") {
++            b.profiles = value
++                .split(',')
++                .map(|p| p.trim().to_ascii_lowercase())
++                .filter(|p| !p.is_empty())
++                .collect();
++        } else if key.eq_ignore_ascii_case("LocalPort") {
++            b.port = value.parse::<u16>().ok().filter(|p| *p != 0);
++        }
++    }
++    if let Some(b) = current.take() {
++        blocks.push(b);
++    }
++
++    if blocks.is_empty() {
++        return RuleStatus::default();
++    }
++    let first_port = blocks[0].port;
++    RuleStatus {
++        present: true,
++        enabled: blocks.iter().all(|b| b.enabled),
++        private_only: blocks.iter().all(|b| b.profiles == ["private"]),
++        port: if blocks.iter().all(|b| b.port == first_port) {
++            first_port
++        } else {
++            None
++        },
++    }
++}
++
++/// Runs a plan and returns its standard output. Injectable, so callers and tests never need a live `netsh`.
++#[async_trait::async_trait]
++pub trait NetshRunner: Send + Sync {
++    async fn run(&self, plan: &FirewallPlan) -> std::io::Result<String>;
++}
++
++/// The rule's current state through `runner`, read-only. A failed run reads as "not there".
++pub async fn query_rule(runner: &dyn NetshRunner) -> RuleStatus {
++    runner
++        .run(&show_rule_plan())
++        .await
++        .map(|out| parse_show_rule(&out))
++        .unwrap_or_default()
++}
++
++/// The real executor, limited to the read-only `show rule` plan: anything else is refused before a process starts,
++/// so this module cannot add or delete a rule even by mistake. Spawned through `aionui_runtime::Builder::clean_cli`
++/// (piped output, no window, killed on drop), the workspace's one place for subprocess policy. `netsh` exits 1 for
++/// "No rules match", so the exit code is not treated as an error; its output decides.
++pub struct ShowOnlyRunner;
++
++#[async_trait::async_trait]
++impl NetshRunner for ShowOnlyRunner {
++    async fn run(&self, plan: &FirewallPlan) -> std::io::Result<String> {
++        if *plan != show_rule_plan() && *plan != profile_state_plan() {
++            return Err(std::io::Error::new(
++                std::io::ErrorKind::PermissionDenied,
++                "firewall: only the read-only show plans may be run from here",
++            ));
++        }
++        let mut builder = aionui_runtime::Builder::clean_cli(&plan.program);
++        builder.args(&plan.args);
++        let out = builder.spawn()?.wait_with_output().await?;
++        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::path::PathBuf;
++    use std::sync::Mutex;
++
++    const PORT: u16 = 47734;
++
++    /// Captured on this PC with the read-only `show rule` plan (2026-11-08): no such rule.
++    const NO_RULE: &str = "\r\nNo rules match the specified criteria.\r\n\r\n";
++
++    /// Written from the documented `show rule ... verbose` format, with the labels and layout of a real rule's output
++    /// captured on this PC ("Core Networking - DNS (UDP-Out)"), not captured from a real AionDX rule: adding one
++    /// here is an approval gate.
++    const PRESENT: &str = "\r\n\
++Rule Name:                            AionDX mobile bridge\r\n\
++----------------------------------------------------------------------\r\n\
++Enabled:                              Yes\r\n\
++Direction:                            In\r\n\
++Profiles:                             Private\r\n\
++Grouping:                             \r\n\
++LocalIP:                              Any\r\n\
++RemoteIP:                             Any\r\n\
++Protocol:                             TCP\r\n\
++LocalPort:                            47734\r\n\
++RemotePort:                           Any\r\n\
++Edge traversal:                       No\r\n\
++Program:                              C:\\Program Files\\AionDX\\resources\\bundled-aioncore\\win32-x64\\aioncore.exe\r\n\
++InterfaceTypes:                       Any\r\n\
++Security:                             NotRequired\r\n\
++Rule source:                          Local Setting\r\n\
++Action:                               Allow\r\n\
++Ok.\r\n\r\n";
++
++    /// Captured from `netsh advfirewall show privateprofile state` on the dev PC (English Windows, firewall off).
++    const PROFILE_OFF: &str = "\r\nPrivate Profile Settings: \r\n\
++----------------------------------------------------------------------\r\n\
++State                                 OFF\r\n\
++Ok.\r\n\r\n";
++
++    #[test]
++    fn profile_state_reads_on_off_and_unknown() {
++        assert_eq!(parse_profile_state(PROFILE_OFF), Some(false));
++        assert_eq!(parse_profile_state(&PROFILE_OFF.replace(" OFF", " ON")), Some(true));
++        // A localized Windows: no English label, so unknown rather than a guess.
++        assert_eq!(
++            parse_profile_state("Statut                                ACTIF\r\nOk.\r\n"),
++            None
++        );
++        assert_eq!(parse_profile_state(""), None);
++    }
++
++    #[test]
++    fn the_profile_plan_is_read_only_and_allowed() {
++        let plan = profile_state_plan();
++        assert_eq!(plan.args, ["advfirewall", "show", "privateprofile", "state"]);
++        assert!(!plan.args.iter().any(|a| a == "set" || a == "add" || a == "delete"));
++    }
++
++    fn spaced_exe() -> PathBuf {
++        PathBuf::from(r"C:\Program Files (x86)\Aion DX\resources\aioncore.exe")
++    }
++
++    #[test]
++    fn netsh_is_an_absolute_system32_path() {
++        let p = netsh_program();
++        assert!(Path::new(&p).is_absolute(), "{p}");
++        assert!(p.to_ascii_lowercase().ends_with(r"\system32\netsh.exe"), "{p}");
++    }
++
++    #[test]
++    fn add_plan_is_exact_with_a_path_with_spaces() {
++        let plan = add_rule_plan(&spaced_exe(), PORT).unwrap();
++        assert_eq!(plan.program, netsh_program());
++        assert_eq!(
++            plan.args,
++            vec![
++                "advfirewall",
++                "firewall",
++                "add",
++                "rule",
++                "name=AionDX mobile bridge",
++                "dir=in",
++                "action=allow",
++                "protocol=TCP",
++                "localport=47734",
++                "profile=private",
++                r"program=C:\Program Files (x86)\Aion DX\resources\aioncore.exe",
++                "enable=yes",
++            ]
++        );
++    }
++
++    #[test]
++    fn add_plan_is_scoped_to_private_and_never_any() {
++        let plan = add_rule_plan(&spaced_exe(), PORT).unwrap();
++        let joined = plan.args.join(" ").to_ascii_lowercase();
++        assert!(plan.args.contains(&"profile=private".to_string()));
++        assert!(
++            !joined.contains("profile=any") && !joined.contains("profile=public") && !joined.contains("profile=domain")
++        );
++        assert!(!joined.contains("localport=any") && !joined.contains("program=any"));
++        assert!(plan.args.contains(&"dir=in".to_string()) && plan.args.contains(&"protocol=TCP".to_string()));
++    }
++
++    #[test]
++    fn a_quote_in_the_path_is_refused_not_quoted_around() {
++        // An attempt to close netsh's quoting and widen the rule must not become extra arguments.
++        let evil = PathBuf::from(r#"C:\Program Files\x" profile=any dir=out "\aioncore.exe"#);
++        assert!(matches!(add_rule_plan(&evil, PORT), Err(PlanError::UnsafePath(_))));
++        let quoted = PathBuf::from(r#"C:\Program Files\"Aion DX"\aioncore.exe"#);
++        assert!(matches!(add_rule_plan(&quoted, PORT), Err(PlanError::UnsafePath(_))));
++    }
++
++    #[test]
++    fn other_unsafe_paths_are_refused() {
++        let newline = PathBuf::from("C:\\Program Files\\AionDX\\a\r\nb.exe");
++        assert!(matches!(add_rule_plan(&newline, PORT), Err(PlanError::UnsafePath(_))));
++        let equals = PathBuf::from(r"C:\Program Files\x=y\aioncore.exe");
++        assert!(matches!(add_rule_plan(&equals, PORT), Err(PlanError::UnsafePath(_))));
++        assert!(matches!(
++            add_rule_plan(Path::new(r"aioncore.exe"), PORT),
++            Err(PlanError::NotAbsoluteFile(_))
++        ));
++        assert!(matches!(
++            add_rule_plan(Path::new(r"C:\Program Files\AionDX\"), PORT),
++            Err(PlanError::NotAbsoluteFile(_))
++        ));
++        assert_eq!(add_rule_plan(&spaced_exe(), 0), Err(PlanError::ZeroPort));
++    }
++
++    #[test]
++    fn shell_characters_stay_inside_one_argument() {
++        // No shell is involved, so these are just characters in one argument (the plan has no other arguments).
++        let odd = PathBuf::from(r"C:\Program Files\A&B (copy) ^ % !\aioncore.exe");
++        let plan = add_rule_plan(&odd, PORT).unwrap();
++        assert_eq!(plan.args.len(), 12);
++        assert_eq!(plan.args[10], r"program=C:\Program Files\A&B (copy) ^ % !\aioncore.exe");
++    }
++
++    #[test]
++    fn remove_and_show_plans_are_exact() {
++        assert_eq!(
++            remove_rule_plan().args,
++            vec!["advfirewall", "firewall", "delete", "rule", "name=AionDX mobile bridge"]
++        );
++        assert_eq!(
++            show_rule_plan().args,
++            vec![
++                "advfirewall",
++                "firewall",
++                "show",
++                "rule",
++                "name=AionDX mobile bridge",
++                "verbose"
++            ]
++        );
++        assert_eq!(remove_rule_plan().program, netsh_program());
++        assert_eq!(show_rule_plan().program, netsh_program());
++    }
++
++    #[test]
++    fn parses_the_real_no_rule_output() {
++        assert_eq!(parse_show_rule(NO_RULE), RuleStatus::default());
++    }
++
++    #[test]
++    fn parses_a_present_rule() {
++        assert_eq!(
++            parse_show_rule(PRESENT),
++            RuleStatus {
++                present: true,
++                enabled: true,
++                private_only: true,
++                port: Some(PORT)
++            }
++        );
++    }
++
++    #[test]
++    fn a_disabled_rule_is_present_but_not_enabled() {
++        let s = parse_show_rule(&PRESENT.replace(
++            "Enabled:                              Yes",
++            "Enabled:                              No",
++        ));
++        assert!(s.present && !s.enabled);
++    }
++
++    #[test]
++    fn a_rule_on_more_than_the_private_profile_is_not_private_only() {
++        let s = parse_show_rule(&PRESENT.replace(
++            "Profiles:                             Private",
++            "Profiles:                             Domain,Private,Public",
++        ));
++        assert!(s.present && !s.private_only);
++        let s = parse_show_rule(&PRESENT.replace(
++            "Profiles:                             Private",
++            "Profiles:                             Public",
++        ));
++        assert!(!s.private_only);
++    }
++
++    #[test]
++    fn a_port_netsh_shows_as_any_or_a_range_is_none() {
++        for v in ["Any", "47734-47740", "47734,8080", "0"] {
++            let s = parse_show_rule(&PRESENT.replace(
++                "LocalPort:                            47734",
++                &format!("LocalPort:                            {v}"),
++            ));
++            assert!(s.present && s.port.is_none(), "{v}");
++        }
++    }
++
++    #[test]
++    fn duplicate_rules_must_all_agree() {
++        let other = PRESENT
++            .replace(
++                "Enabled:                              Yes",
++                "Enabled:                              No",
++            )
++            .replace("47734", "47735");
++        let s = parse_show_rule(&format!("{PRESENT}{other}"));
++        assert!(s.present && !s.enabled && s.port.is_none());
++        let s = parse_show_rule(&format!("{PRESENT}{PRESENT}"));
++        assert_eq!(
++            s,
++            RuleStatus {
++                present: true,
++                enabled: true,
++                private_only: true,
++                port: Some(PORT)
++            }
++        );
++    }
++
++    #[test]
++    fn a_rule_with_another_name_does_not_count() {
++        let s = parse_show_rule(&PRESENT.replace("AionDX mobile bridge", "Some other rule"));
++        assert_eq!(s, RuleStatus::default());
++    }
++
++    #[test]
++    fn localized_or_garbage_output_is_not_present_and_does_not_panic() {
++        let german = "\r\nRegelname:                            AionDX mobile bridge\r\n----\r\nAktiviert:                            Ja\r\nProfile:                              Privat\r\nOK.\r\n";
++        assert_eq!(parse_show_rule(german), RuleStatus::default());
++        for junk in [
++            "",
++            ":",
++            "Rule Name:",
++            "Rule Name: AionDX mobile bridge",
++            "\u{0}\u{fffd}:::\r\n\r",
++            "LocalPort: 99999999",
++        ] {
++            let s = parse_show_rule(junk);
++            assert!(!s.enabled || s.present, "{junk:?}");
++        }
++        // A block with a name but nothing else is present and not enabled.
++        assert_eq!(
++            parse_show_rule("Rule Name: AionDX mobile bridge"),
++            RuleStatus {
++                present: true,
++                enabled: false,
++                private_only: false,
++                port: None
++            }
++        );
++    }
++
++    struct FakeRunner {
++        out: std::io::Result<String>,
++        seen: Mutex<Vec<FirewallPlan>>,
++    }
++    #[async_trait::async_trait]
++    impl NetshRunner for FakeRunner {
++        async fn run(&self, plan: &FirewallPlan) -> std::io::Result<String> {
++            self.seen.lock().unwrap().push(plan.clone());
++            match &self.out {
++                Ok(s) => Ok(s.clone()),
++                Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
++            }
++        }
++    }
++
++    #[tokio::test]
++    async fn query_rule_runs_only_the_show_plan_through_the_runner() {
++        let fake = FakeRunner {
++            out: Ok(PRESENT.to_string()),
++            seen: Mutex::new(Vec::new()),
++        };
++        assert_eq!(
++            query_rule(&fake).await,
++            RuleStatus {
++                present: true,
++                enabled: true,
++                private_only: true,
++                port: Some(PORT)
++            }
++        );
++        assert_eq!(*fake.seen.lock().unwrap(), vec![show_rule_plan()]);
++        let failing = FakeRunner {
++            out: Err(std::io::Error::other("no netsh")),
++            seen: Mutex::new(Vec::new()),
++        };
++        assert_eq!(query_rule(&failing).await, RuleStatus::default());
++    }
++
++    #[tokio::test]
++    async fn the_real_runner_refuses_add_and_remove_before_starting_anything() {
++        // The refusal happens before any process is spawned, so this test runs nothing.
++        let denied = |r: std::io::Result<String>| r.unwrap_err().kind() == std::io::ErrorKind::PermissionDenied;
++        let add = add_rule_plan(&spaced_exe(), PORT).unwrap();
++        assert!(denied(ShowOnlyRunner.run(&add).await));
++        assert!(denied(ShowOnlyRunner.run(&remove_rule_plan()).await));
++        let mut tweaked = show_rule_plan();
++        tweaked.args[2] = "add".into();
++        assert!(denied(ShowOnlyRunner.run(&tweaked).await));
++        let mut other_program = show_rule_plan();
++        other_program.program = r"C:\Windows\System32\cmd.exe".into();
++        assert!(denied(ShowOnlyRunner.run(&other_program).await));
++    }
 +}
 diff --git a/crates/aionui-mobile/src/host_key.rs b/crates/aionui-mobile/src/host_key.rs
 new file mode 100644
@@ -7363,10 +8416,10 @@ index 00000000..ab2491a9
 +}
 diff --git a/crates/aionui-mobile/src/lib.rs b/crates/aionui-mobile/src/lib.rs
 new file mode 100644
-index 00000000..0dd47d5b
+index 00000000..20d36950
 --- /dev/null
 +++ b/crates/aionui-mobile/src/lib.rs
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,44 @@
 +//! AionDX core-0015: the encrypted PC <-> phone bridge.
 +//! Contract: `docs/mobile-bridge/CONTRACT.md` in the AionDX repository.
 +
@@ -7379,14 +8432,18 @@ index 00000000..0dd47d5b
 +pub mod facade;
 +pub mod facade_live;
 +pub mod facade_write;
++pub mod firewall;
 +pub mod host_key;
 +pub mod journal;
 +pub mod listener;
++pub mod mdns;
++pub mod netinfo;
 +pub mod outer;
 +pub mod pairing;
 +pub mod peer_filter;
 +pub mod read_state;
 +pub mod service;
++pub mod service_net;
 +pub mod session;
 +pub mod settings;
 +pub mod shape;
@@ -7409,10 +8466,10 @@ index 00000000..0dd47d5b
 +pub use wire::{InnerRequest, InnerResponse};
 diff --git a/crates/aionui-mobile/src/listener.rs b/crates/aionui-mobile/src/listener.rs
 new file mode 100644
-index 00000000..1eab6520
+index 00000000..ce9bb21c
 --- /dev/null
 +++ b/crates/aionui-mobile/src/listener.rs
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,192 @@
 +//! The LAN listener (CONTRACT §2, §4). It is separate from AionCore's own
 +//! 127.0.0.1 server and serves only `/api/mobile/v1/*`. Every request from a
 +//! peer outside the private ranges is refused before routing.
@@ -7471,28 +8528,22 @@ index 00000000..1eab6520
 +/// A running listener. Dropping it does not stop it; call [`ListenerHandle::stop`].
 +pub struct ListenerHandle {
 +    pub addr: SocketAddr,
-+    shutdown: Option<oneshot::Sender<()>>,
-+    task: JoinHandle<()>,
++    /// The IPv6 twin of a `0.0.0.0` listener (`[::]`, same port), when the PC has IPv6.
++    pub addr_v6: Option<SocketAddr>,
++    servers: Vec<(oneshot::Sender<()>, JoinHandle<()>)>,
 +}
 +
 +impl ListenerHandle {
-+    pub async fn stop(mut self) {
-+        if let Some(tx) = self.shutdown.take() {
++    pub async fn stop(self) {
++        for (tx, task) in self.servers {
 +            let _ = tx.send(());
++            let _ = task.await;
 +        }
-+        let _ = self.task.await;
 +        tracing::info!(addr = %self.addr, "mobile bridge: listener stopped");
 +    }
 +}
 +
-+/// Binds `bind_ip:port` and serves `router` until stopped.
-+pub async fn start(bind_ip: std::net::IpAddr, port: u16, router: Router) -> Result<ListenerHandle, MobileError> {
-+    let listener = TcpListener::bind(SocketAddr::new(bind_ip, port))
-+        .await
-+        .map_err(|e| MobileError::Listener(format!("could not listen on port {port}: {e}")))?;
-+    let addr = listener
-+        .local_addr()
-+        .map_err(|e| MobileError::Listener(e.to_string()))?;
++fn serve(listener: TcpListener, router: Router) -> (oneshot::Sender<()>, JoinHandle<()>) {
 +    let (tx, rx) = oneshot::channel::<()>();
 +    let service = router.into_make_service_with_connect_info::<SocketAddr>();
 +    let task = tokio::spawn(async move {
@@ -7505,12 +8556,33 @@ index 00000000..1eab6520
 +            tracing::error!(error = %e, "mobile bridge: listener failed");
 +        }
 +    });
-+    tracing::info!(%addr, "mobile bridge: listener started");
-+    Ok(ListenerHandle {
-+        addr,
-+        shutdown: Some(tx),
-+        task,
-+    })
++    (tx, task)
++}
++
++/// Binds `bind_ip:port` and serves `router` until stopped.
++pub async fn start(bind_ip: std::net::IpAddr, port: u16, router: Router) -> Result<ListenerHandle, MobileError> {
++    let listener = TcpListener::bind(SocketAddr::new(bind_ip, port))
++        .await
++        .map_err(|e| MobileError::Listener(format!("could not listen on port {port}: {e}")))?;
++    let addr = listener
++        .local_addr()
++        .map_err(|e| MobileError::Listener(e.to_string()))?;
++    // IPv6 too, for ULA addresses (CONTRACT §2). Windows sockets are v6-only by default, so `[::]` and `0.0.0.0` share
++    // the port; where IPv6 is off (or the stack is dual by default), the IPv4 listener alone is fine.
++    let mut addr_v6 = None;
++    let mut servers = Vec::new();
++    if bind_ip == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED) {
++        match TcpListener::bind(SocketAddr::new(std::net::Ipv6Addr::UNSPECIFIED.into(), addr.port())).await {
++            Ok(v6) => {
++                addr_v6 = v6.local_addr().ok();
++                servers.push(serve(v6, router.clone()));
++            }
++            Err(e) => tracing::info!(error = %e, "mobile bridge: no IPv6 listener; IPv4 only"),
++        }
++    }
++    servers.push(serve(listener, router));
++    tracing::info!(%addr, ?addr_v6, "mobile bridge: listener started");
++    Ok(ListenerHandle { addr, addr_v6, servers })
 +}
 +
 +#[cfg(test)]
@@ -7590,12 +8662,779 @@ index 00000000..1eab6520
 +        first.stop().await;
 +    }
 +}
+diff --git a/crates/aionui-mobile/src/mdns.rs b/crates/aionui-mobile/src/mdns.rs
+new file mode 100644
+index 00000000..9aa9181b
+--- /dev/null
++++ b/crates/aionui-mobile/src/mdns.rs
+@@ -0,0 +1,200 @@
++//! The `_aiondx._tcp` mDNS advertisement (CONTRACT §7, PHASE5-NET-SPEC §B), through the `mdns-sd` crate.
++//!
++//! Advertised only on the private interfaces `netinfo` finds, both at the daemon (every other interface, loopback
++//! included, is disabled) and on the service itself (`ServiceInfo::set_interfaces`). The record carries the
++//! instance name and TXT `v`/`hid` only: no host name, no user name. The SRV target is `aiondx-<4 hex>.local.`,
++//! derived from the host id like the instance name, so the PC's own name is never published.
++
++use std::net::IpAddr;
++use std::time::Duration;
++
++use mdns_sd::{IfKind, MDNS_PORT, ServiceDaemon, ServiceInfo};
++use sha2::{Digest, Sha256};
++
++use crate::crypto::b64u;
++use crate::netinfo::{self, LocalAddress};
++use crate::peer_filter::is_private_peer;
++
++pub const SERVICE_TYPE: &str = "_aiondx._tcp.local.";
++
++/// How long `stop` waits for the goodbye packets and the daemon's shutdown.
++const STOP_WAIT: Duration = Duration::from_secs(1);
++
++fn digest(host_id: &str) -> [u8; 32] {
++    Sha256::digest(host_id.as_bytes()).into()
++}
++
++/// `AionDX-<first 4 hex of SHA-256(hostId)>`.
++pub fn instance_name(host_id: &str) -> String {
++    let d = digest(host_id);
++    format!("AionDX-{:02x}{:02x}", d[0], d[1])
++}
++
++/// TXT `v=1` and `hid=<first 8 base64url chars of SHA-256(hostId)>`, and nothing else.
++pub fn txt_records(host_id: &str) -> Vec<(String, String)> {
++    let hid: String = b64u(&digest(host_id)).chars().take(8).collect();
++    vec![("v".to_owned(), "1".to_owned()), ("hid".to_owned(), hid)]
++}
++
++/// The addresses that may be advertised: private, not loopback, de-duplicated.
++fn advertisable(addresses: &[LocalAddress]) -> Vec<IpAddr> {
++    let mut out: Vec<IpAddr> = Vec::new();
++    for a in addresses {
++        if is_private_peer(a.ip) && !a.ip.is_loopback() && !a.ip.is_unspecified() && !out.contains(&a.ip) {
++            out.push(a.ip);
++        }
++    }
++    out
++}
++
++pub struct MdnsAdvertiser {
++    daemon: Option<ServiceDaemon>,
++    fullname: String,
++}
++
++impl MdnsAdvertiser {
++    /// Advertises `AionDX-<first 4 hex of SHA-256(hostId)>._aiondx._tcp.local` on `port` with TXT
++    /// `v=1` and `hid=<first 8 base64url chars of SHA-256(hostId)>`. Must never fail AionCore: errors are returned,
++    /// and the caller logs them.
++    pub fn start(host_id: &str, port: u16) -> Result<MdnsAdvertiser, String> {
++        Self::start_on(host_id, port, &netinfo::private_addresses(), MDNS_PORT)
++    }
++
++    /// `start` with the addresses and the mDNS port given, so the refusal paths are testable without a socket.
++    fn start_on(host_id: &str, port: u16, addresses: &[LocalAddress], mdns_port: u16) -> Result<Self, String> {
++        let ips = advertisable(addresses);
++        if ips.is_empty() {
++            return Err("mDNS: no private network interface to advertise on".to_owned());
++        }
++        let instance = instance_name(host_id);
++        let host_name = format!("{}.local.", instance.to_ascii_lowercase());
++        let txt = txt_records(host_id);
++        let txt: Vec<(&str, &str)> = txt.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
++        let mut info = ServiceInfo::new(SERVICE_TYPE, &instance, &host_name, &ips[..], port, &txt[..])
++            .map_err(|e| format!("mDNS: invalid service record: {e}"))?;
++        let kinds = || ips.iter().map(|ip| IfKind::Addr(*ip)).collect::<Vec<_>>();
++        info.set_interfaces(kinds());
++        let fullname = info.get_fullname().to_owned();
++
++        let daemon = ServiceDaemon::new_with_port(mdns_port).map_err(|e| format!("mDNS: could not start: {e}"))?;
++        let setup = daemon
++            .disable_interface(vec![IfKind::All, IfKind::LoopbackV4, IfKind::LoopbackV6])
++            .and_then(|_| daemon.enable_interface(kinds()))
++            .and_then(|_| daemon.register(info));
++        if let Err(e) = setup {
++            let _ = daemon.shutdown();
++            return Err(format!("mDNS: could not register: {e}"));
++        }
++        Ok(Self {
++            daemon: Some(daemon),
++            fullname,
++        })
++    }
++
++    /// The full service name, `AionDX-xxxx._aiondx._tcp.local.`.
++    pub fn fullname(&self) -> &str {
++        &self.fullname
++    }
++
++    /// Sends goodbye packets for the service and shuts the daemon down, waiting up to a second for each.
++    pub fn stop(mut self) {
++        self.shut_down(true);
++    }
++
++    fn shut_down(&mut self, wait: bool) {
++        let Some(daemon) = self.daemon.take() else { return };
++        if let Ok(rx) = daemon.unregister(&self.fullname)
++            && wait
++        {
++            let _ = rx.recv_timeout(STOP_WAIT);
++        }
++        if let Ok(rx) = daemon.shutdown()
++            && wait
++        {
++            let _ = rx.recv_timeout(STOP_WAIT);
++        }
++    }
++}
++
++impl Drop for MdnsAdvertiser {
++    /// An advertiser dropped without `stop` still withdraws the service, without blocking.
++    fn drop(&mut self) {
++        self.shut_down(false);
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn la(ip: &str) -> LocalAddress {
++        LocalAddress {
++            ip: ip.parse().unwrap(),
++            interface: "Ethernet".into(),
++        }
++    }
++
++    #[test]
++    fn instance_name_is_aiondx_and_four_hex_of_the_host_id_hash() {
++        // SHA-256("abc") = ba7816bf..., SHA-256("host-123") = 828f...
++        assert_eq!(instance_name("abc"), "AionDX-ba78");
++        assert_eq!(instance_name("host-123"), "AionDX-828f");
++    }
++
++    #[test]
++    fn txt_is_v1_and_hid_only() {
++        assert_eq!(
++            txt_records("abc"),
++            vec![("v".into(), "1".into()), ("hid".into(), "ungWv48B".into())]
++        );
++        let keys: Vec<String> = txt_records("host-123").into_iter().map(|(k, _)| k).collect();
++        assert_eq!(keys, ["v", "hid"], "no host name, no user name");
++        assert_eq!(txt_records("host-123")[1].1, "go9WOeTj");
++    }
++
++    #[test]
++    fn only_private_non_loopback_addresses_are_advertised() {
++        let ips = advertisable(&[
++            la("192.168.1.5"),
++            la("8.8.8.8"),
++            la("127.0.0.1"),
++            la("::1"),
++            la("2001:db8::1"),
++            la("fe80::1"),
++            la("192.168.1.5"),
++            la("100.64.0.9"),
++        ]);
++        let want: Vec<IpAddr> = ["192.168.1.5", "fe80::1", "100.64.0.9"]
++            .iter()
++            .map(|s| s.parse().unwrap())
++            .collect();
++        assert_eq!(ips, want);
++    }
++
++    #[test]
++    fn no_private_interface_is_an_error_and_starts_nothing() {
++        let err = MdnsAdvertiser::start_on("abc", 47734, &[], 0).err().unwrap();
++        assert!(err.contains("no private network interface"), "{err}");
++        let err = MdnsAdvertiser::start_on("abc", 47734, &[la("8.8.8.8"), la("127.0.0.1")], 0)
++            .err()
++            .unwrap();
++        assert!(err.contains("no private network interface"), "{err}");
++    }
++
++    /// Real multicast on this PC's private interfaces: run by hand only (`cargo test -- --ignored`).
++    #[test]
++    #[ignore]
++    fn live_start_and_stop() {
++        match MdnsAdvertiser::start("live-test-host", 47734) {
++            Ok(adv) => {
++                assert_eq!(
++                    adv.fullname(),
++                    format!("{}.{SERVICE_TYPE}", instance_name("live-test-host"))
++                );
++                std::thread::sleep(Duration::from_millis(500));
++                adv.stop();
++            }
++            Err(e) => assert!(e.starts_with("mDNS:"), "{e}"),
++        }
++    }
++}
+diff --git a/crates/aionui-mobile/src/netinfo.rs b/crates/aionui-mobile/src/netinfo.rs
+new file mode 100644
+index 00000000..7e07e640
+--- /dev/null
++++ b/crates/aionui-mobile/src/netinfo.rs
+@@ -0,0 +1,555 @@
++//! This PC's private addresses, for the pairing QR's `u=` list and the mDNS advertisement (CONTRACT §7,
++//! PHASE5-NET-SPEC §A). Only addresses `peer_filter::is_private_peer` accepts ever leave this module, so a public
++//! address can never reach a QR or a TXT record.
++
++use std::net::IpAddr;
++
++use crate::peer_filter::is_private_peer;
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct LocalAddress {
++    pub ip: IpAddr,
++    /// The adapter's name as the OS shows it ("Ethernet", "Wi-Fi"); also the zone of a link-local IPv6 URL.
++    pub interface: String,
++}
++
++// IF_TYPE values (windows-sys Win32::NetworkManagement::IpHelper), here so ordering is testable on any platform.
++const IF_TYPE_ETHERNET: u32 = 6;
++const IF_TYPE_WIFI: u32 = 71;
++const IF_TYPE_PROP_VIRTUAL: u32 = 53;
++const IF_TYPE_TUNNEL: u32 = 131;
++
++/// Adapters that report a physical type but are virtual or VPN: matched, lowercased, against the adapter's name
++/// and description. Only used for ordering; nothing is excluded for matching.
++const KNOWN_VIRTUAL: &[&str] = &[
++    "hyper-v",
++    "vethernet",
++    "wsl",
++    "virtualbox",
++    "vmware",
++    "radmin",
++    "pdanet",
++    "nordlynx",
++    "tap-windows",
++    "wintun",
++    "wireguard",
++];
++
++#[derive(Debug, Clone)]
++struct Candidate {
++    ip: IpAddr,
++    interface: String,
++    /// The adapter's IF_TYPE.
++    if_type: u32,
++    /// The adapter has a default gateway.
++    has_gateway: bool,
++    /// The adapter's TUNNEL_TYPE and description, for `is_transition_tunnel`.
++    tunnel_type: i32,
++    description: String,
++}
++
++/// The order of the spec: RFC 1918 IPv4, 100.64/10, link-local IPv4, IPv6 ULA, IPv6 link-local. None for anything
++/// that must not be listed.
++fn range_rank(ip: IpAddr) -> Option<u8> {
++    if ip.is_loopback() || ip.is_unspecified() || !is_private_peer(ip) {
++        return None;
++    }
++    match ip {
++        IpAddr::V4(v4) => {
++            let [a, b, ..] = v4.octets();
++            Some(if v4.is_private() {
++                0
++            } else if a == 100 && (64..=127).contains(&b) {
++                1
++            } else {
++                2
++            })
++        }
++        // An IPv4-mapped IPv6 address is not a real interface address.
++        IpAddr::V6(v6) if v6.to_ipv4_mapped().is_some() => None,
++        IpAddr::V6(v6) => Some(if (v6.segments()[0] & 0xfe00) == 0xfc00 { 3 } else { 4 }),
++    }
++}
++
++/// Filters, orders and de-duplicates what the OS listed. Within RFC 1918: adapters with a gateway first, then
++/// Ethernet before Wi-Fi before anything else; otherwise the OS's own order.
++/// Virtual or VPN: IF_TYPE_PROP_VIRTUAL (wintun, WireGuard, NordLynx), a tunnel, or a known-virtual name.
++fn is_virtual(c: &Candidate) -> bool {
++    if matches!(c.if_type, IF_TYPE_PROP_VIRTUAL | IF_TYPE_TUNNEL) {
++        return true;
++    }
++    let name = c.interface.to_ascii_lowercase();
++    let desc = c.description.to_ascii_lowercase();
++    KNOWN_VIRTUAL.iter().any(|v| name.contains(v) || desc.contains(v))
++}
++
++/// Within an address range: a physical Ethernet or Wi-Fi adapter with a default gateway (the LAN the phone is on)
++/// first, then other physical adapters, then virtual and VPN adapters whatever their gateway (a connected VPN such
++/// as NordLynx has one).
++fn tier(c: &Candidate) -> u8 {
++    if is_virtual(c) {
++        2
++    } else if matches!(c.if_type, IF_TYPE_ETHERNET | IF_TYPE_WIFI) && c.has_gateway {
++        0
++    } else {
++        1
++    }
++}
++
++fn kind_rank(if_type: u32) -> u8 {
++    match if_type {
++        IF_TYPE_ETHERNET => 0,
++        IF_TYPE_WIFI => 1,
++        _ => 2,
++    }
++}
++
++fn order(candidates: Vec<Candidate>) -> Vec<LocalAddress> {
++    let mut ranked: Vec<((u8, u8, u8, usize), Candidate)> = candidates
++        .into_iter()
++        .enumerate()
++        .filter(|(_, c)| !is_transition_tunnel(c.tunnel_type, &c.description))
++        .filter_map(|(i, c)| range_rank(c.ip).map(|r| ((r, tier(&c), kind_rank(c.if_type), i), c)))
++        .collect();
++    ranked.sort_by_key(|(key, _)| *key);
++    let mut out: Vec<LocalAddress> = Vec::new();
++    for (.., c) in ranked {
++        if !out.iter().any(|a| a.ip == c.ip) {
++            out.push(LocalAddress {
++                ip: c.ip,
++                interface: c.interface,
++            });
++        }
++    }
++    out
++}
++
++// TUNNEL_TYPE values (windows-sys Win32::NetworkManagement::Ndis), here so the rule is testable on any platform.
++const TUNNEL_TYPE_6TO4: i32 = 11;
++const TUNNEL_TYPE_ISATAP: i32 = 13;
++const TUNNEL_TYPE_TEREDO: i32 = 14;
++
++/// Teredo, ISATAP and 6to4: IPv6-transition tunnels no phone on the LAN can reach through. Keyed on the adapter's
++/// tunnel type, with its description as a fallback, and never on the interface type, so WireGuard and wintun
++/// adapters (IF_TYPE_PROP_VIRTUAL, tunnel type none) always stay: Private Party Net is a WireGuard tunnel.
++fn is_transition_tunnel(tunnel_type: i32, description: &str) -> bool {
++    if matches!(tunnel_type, TUNNEL_TYPE_6TO4 | TUNNEL_TYPE_ISATAP | TUNNEL_TYPE_TEREDO) {
++        return true;
++    }
++    let d = description.to_ascii_lowercase();
++    d.contains("teredo") || d.contains("isatap") || d.contains("6to4")
++}
++
++/// Every UP, non-loopback address on this PC that `peer_filter::is_private_peer` accepts, IPv6-transition tunnel
++/// adapters (Teredo, ISATAP, 6to4) excluded. Order by range: RFC 1918 IPv4, then 100.64/10 (Tailscale), then
++/// link-local IPv4, then IPv6 ULA, then IPv6 link-local; within a range by `tier` (physical with a gateway, other
++/// physical, virtual/VPN), then Ethernet before Wi-Fi, then the OS's order. Duplicates removed. Empty on other
++/// platforms than Windows.
++pub fn private_addresses() -> Vec<LocalAddress> {
++    order(os::candidates())
++}
++
++/// The QR's `u=` list for `port`: one URL per address, in the order given; IPv6 bracketed. Link-local IPv6 is never
++/// listed: its zone id is the PC's own interface, which means nothing on the phone (lead's decision, 2026-11-08);
++/// link-local IPv4 needs none and stays. An address that is not private is left out, and a repeated URL is listed
++/// once.
++pub fn pairing_urls(addresses: &[LocalAddress], port: u16) -> Vec<String> {
++    let mut out: Vec<String> = Vec::new();
++    for a in addresses {
++        if range_rank(a.ip).is_none() {
++            continue;
++        }
++        let url = match a.ip {
++            IpAddr::V4(v4) => format!("http://{v4}:{port}"),
++            IpAddr::V6(v6) if (v6.segments()[0] & 0xffc0) == 0xfe80 => continue,
++            IpAddr::V6(v6) => format!("http://[{v6}]:{port}"),
++        };
++        if !out.contains(&url) {
++            out.push(url);
++        }
++    }
++    out
++}
++
++#[cfg(windows)]
++mod os {
++    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
++
++    use windows_sys::Win32::Foundation::ERROR_BUFFER_OVERFLOW;
++    use windows_sys::Win32::NetworkManagement::IpHelper::{
++        GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
++        GetAdaptersAddresses, IF_TYPE_SOFTWARE_LOOPBACK, IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_UNICAST_ADDRESS_LH,
++    };
++    use windows_sys::Win32::NetworkManagement::Ndis::IfOperStatusUp;
++    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6, AF_UNSPEC, IpDadStatePreferred, SOCKET_ADDRESS};
++
++    use super::Candidate;
++
++    /// A NUL-terminated UTF-16 string from the OS.
++    ///
++    /// # Safety
++    /// `p` is null or points at a NUL-terminated UTF-16 string that stays valid for the call.
++    unsafe fn wide(p: *const u16) -> String {
++        if p.is_null() {
++            return String::new();
++        }
++        let mut len = 0;
++        // SAFETY: the caller guarantees a NUL terminator.
++        while unsafe { *p.add(len) } != 0 {
++            len += 1;
++        }
++        // SAFETY: `len` u16s were just read from `p`.
++        String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(p, len) })
++    }
++
++    /// # Safety
++    /// `sa.lpSockaddr` is null or points at `sa.iSockaddrLength` readable bytes.
++    unsafe fn ip_of(sa: &SOCKET_ADDRESS) -> Option<IpAddr> {
++        if sa.lpSockaddr.is_null() || sa.iSockaddrLength < 2 {
++            return None;
++        }
++        // SAFETY: the OS gives a buffer of iSockaddrLength bytes.
++        let bytes = unsafe { std::slice::from_raw_parts(sa.lpSockaddr as *const u8, sa.iSockaddrLength as usize) };
++        let family = u16::from_ne_bytes([bytes[0], bytes[1]]);
++        if family == AF_INET && bytes.len() >= 8 {
++            Some(IpAddr::V4(Ipv4Addr::new(bytes[4], bytes[5], bytes[6], bytes[7])))
++        } else if family == AF_INET6 && bytes.len() >= 24 {
++            let mut a = [0u8; 16];
++            a.copy_from_slice(&bytes[8..24]);
++            Some(IpAddr::V6(Ipv6Addr::from(a)))
++        } else {
++            None
++        }
++    }
++
++    pub(super) fn candidates() -> Vec<Candidate> {
++        let flags =
++            GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_GATEWAYS;
++        let mut size: u32 = 16 * 1024;
++        for _ in 0..4 {
++            // u64 elements keep the buffer aligned for the structs the OS writes into it.
++            let mut buf: Vec<u64> = vec![0; (size as usize).div_ceil(8)];
++            let head = buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH;
++            // SAFETY: `head` points at `size` writable bytes; the OS updates `size` when that is too small.
++            let rc = unsafe { GetAdaptersAddresses(AF_UNSPEC as u32, flags, std::ptr::null(), head, &mut size) };
++            if rc == ERROR_BUFFER_OVERFLOW {
++                continue;
++            }
++            if rc != 0 {
++                return Vec::new();
++            }
++            let mut out = Vec::new();
++            let mut adapter = head as *const IP_ADAPTER_ADDRESSES_LH;
++            while !adapter.is_null() {
++                // SAFETY: a node of the list the OS just wrote into `buf`, which is still alive.
++                let a = unsafe { &*adapter };
++                if a.OperStatus == IfOperStatusUp && a.IfType != IF_TYPE_SOFTWARE_LOOPBACK {
++                    // SAFETY: FriendlyName is a NUL-terminated string inside `buf`.
++                    let interface = unsafe { wide(a.FriendlyName) };
++                    let has_gateway = !a.FirstGatewayAddress.is_null();
++                    // SAFETY: Description is a NUL-terminated string inside `buf`.
++                    let description = unsafe { wide(a.Description) };
++                    let mut unicast: *const IP_ADAPTER_UNICAST_ADDRESS_LH = a.FirstUnicastAddress;
++                    while !unicast.is_null() {
++                        // SAFETY: as for the adapter node.
++                        let u = unsafe { &*unicast };
++                        // Tentative, duplicate or deprecated addresses are not reachable.
++                        if u.DadState == IpDadStatePreferred {
++                            // SAFETY: the sockaddr lives in `buf`.
++                            if let Some(ip) = unsafe { ip_of(&u.Address) } {
++                                out.push(Candidate {
++                                    ip,
++                                    interface: interface.clone(),
++                                    if_type: a.IfType,
++                                    has_gateway,
++                                    tunnel_type: a.TunnelType,
++                                    description: description.clone(),
++                                });
++                            }
++                        }
++                        unicast = u.Next;
++                    }
++                }
++                adapter = a.Next;
++            }
++            return out;
++        }
++        Vec::new()
++    }
++}
++
++#[cfg(not(windows))]
++mod os {
++    pub(super) fn candidates() -> Vec<super::Candidate> {
++        Vec::new()
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn cand(ip: &str, interface: &str, if_type: u32, has_gateway: bool) -> Candidate {
++        Candidate {
++            ip: ip.parse().unwrap(),
++            interface: interface.into(),
++            if_type,
++            has_gateway,
++            tunnel_type: 0,
++            description: String::new(),
++        }
++    }
++    /// An adapter as GetAdaptersAddresses describes it.
++    fn adapter(ip: &str, interface: &str, if_type: u32, tunnel_type: i32, description: &str) -> Candidate {
++        Candidate {
++            tunnel_type,
++            description: description.into(),
++            ..cand(ip, interface, if_type, false)
++        }
++    }
++    fn la(ip: &str, interface: &str) -> LocalAddress {
++        LocalAddress {
++            ip: ip.parse().unwrap(),
++            interface: interface.into(),
++        }
++    }
++    fn ips(list: &[LocalAddress]) -> Vec<String> {
++        list.iter().map(|a| a.ip.to_string()).collect()
++    }
++
++    #[test]
++    fn order_is_rfc1918_then_cgnat_then_v4_link_local_then_ula_then_v6_link_local() {
++        let got = order(vec![
++            cand("fe80::1", "Wi-Fi", IF_TYPE_WIFI, true),
++            cand("fd00::5", "Wi-Fi", IF_TYPE_WIFI, true),
++            cand("169.254.9.9", "Ethernet 3", IF_TYPE_ETHERNET, false),
++            cand("100.101.1.2", "Tailscale", IF_TYPE_PROP_VIRTUAL, false),
++            cand("192.168.1.20", "Wi-Fi", IF_TYPE_WIFI, true),
++        ]);
++        assert_eq!(
++            ips(&got),
++            ["192.168.1.20", "100.101.1.2", "169.254.9.9", "fd00::5", "fe80::1"]
++        );
++    }
++
++    #[test]
++    fn within_rfc1918_physical_with_gateway_then_virtual_ethernet_before_wifi() {
++        let got = order(vec![
++            cand("172.20.0.1", "vEthernet (WSL)", IF_TYPE_ETHERNET, false),
++            cand("10.0.0.7", "Wi-Fi", IF_TYPE_WIFI, true),
++            cand("192.168.50.2", "Hamachi", IF_TYPE_PROP_VIRTUAL, true),
++            cand("192.168.1.5", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("192.168.56.1", "VirtualBox", IF_TYPE_ETHERNET, false),
++        ]);
++        // Virtual adapters last whatever their gateway; among them Ethernet-typed before PROP_VIRTUAL.
++        assert_eq!(
++            ips(&got),
++            ["192.168.1.5", "10.0.0.7", "172.20.0.1", "192.168.56.1", "192.168.50.2"]
++        );
++    }
++
++    /// The adapters on the PC used for the real-phone test: a connected NordVPN must not outrank Wi-Fi.
++    #[test]
++    fn physical_wifi_beats_a_connected_vpn_and_virtual_adapters() {
++        let with_gw = |c: Candidate| Candidate { has_gateway: true, ..c };
++        let got = order(vec![
++            with_gw(adapter(
++                "10.5.0.2",
++                "NordLynx",
++                IF_TYPE_PROP_VIRTUAL,
++                0,
++                "NordLynx Tunnel",
++            )),
++            with_gw(adapter(
++                "26.119.0.5",
++                "Radmin VPN",
++                IF_TYPE_ETHERNET,
++                0,
++                "Famatech Radmin VPN Ethernet Adapter",
++            )),
++            with_gw(adapter(
++                "192.168.49.10",
++                "Ethernet 5",
++                IF_TYPE_ETHERNET,
++                0,
++                "PdaNet Broadband Adapter",
++            )),
++            adapter(
++                "10.66.0.2",
++                "Private Party Net",
++                IF_TYPE_PROP_VIRTUAL,
++                0,
++                "WireGuard Tunnel",
++            ),
++            adapter(
++                "172.28.0.1",
++                "vEthernet (Default Switch)",
++                IF_TYPE_ETHERNET,
++                0,
++                "Hyper-V Virtual Ethernet Adapter",
++            ),
++            with_gw(adapter(
++                "192.168.1.20",
++                "Wi-Fi",
++                IF_TYPE_WIFI,
++                0,
++                "Intel(R) Wi-Fi 6E AX211 160MHz",
++            )),
++        ]);
++        let got = ips(&got);
++        assert_eq!(got[0], "192.168.1.20", "physical Wi-Fi with a gateway first: {got:?}");
++        assert!(
++            !got.contains(&"26.119.0.5".to_string()),
++            "Radmin's 26.x is public, never listed"
++        );
++        for vpn in ["10.5.0.2", "192.168.49.10", "10.66.0.2", "172.28.0.1"] {
++            assert!(got.contains(&vpn.to_string()), "{vpn} is re-ordered, never excluded");
++        }
++        assert_eq!(
++            got,
++            ["192.168.1.20", "192.168.49.10", "172.28.0.1", "10.5.0.2", "10.66.0.2"]
++        );
++    }
++
++    #[test]
++    fn a_physical_adapter_without_a_gateway_sits_between() {
++        let got = order(vec![
++            cand("10.9.0.1", "NordLynx", IF_TYPE_PROP_VIRTUAL, true),
++            cand("192.168.2.1", "Ethernet 2", IF_TYPE_ETHERNET, false),
++            cand("192.168.3.1", "Cellular", 243, false),
++            cand("192.168.1.20", "Wi-Fi", IF_TYPE_WIFI, true),
++        ]);
++        assert_eq!(ips(&got), ["192.168.1.20", "192.168.2.1", "192.168.3.1", "10.9.0.1"]);
++    }
++
++    #[test]
++    fn public_loopback_unspecified_and_mapped_addresses_never_appear() {
++        let got = order(vec![
++            cand("8.8.8.8", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("2001:db8::1", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("2606:4700::1111", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("127.0.0.1", "Loopback", IF_TYPE_PROP_VIRTUAL, false),
++            cand("::1", "Loopback", IF_TYPE_PROP_VIRTUAL, false),
++            cand("0.0.0.0", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("::ffff:192.168.1.2", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("100.128.0.1", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("192.168.1.2", "Ethernet", IF_TYPE_ETHERNET, true),
++        ]);
++        assert_eq!(ips(&got), ["192.168.1.2"]);
++    }
++
++    #[test]
++    fn duplicates_are_removed_keeping_the_best_ranked() {
++        let got = order(vec![
++            cand("192.168.1.5", "Wi-Fi", IF_TYPE_WIFI, false),
++            cand("192.168.1.5", "Ethernet", IF_TYPE_ETHERNET, true),
++        ]);
++        assert_eq!(got, vec![la("192.168.1.5", "Ethernet")]);
++    }
++
++    #[test]
++    fn wireguard_stays_and_ipv6_transition_tunnels_go() {
++        let got = order(vec![
++            // WireGuard-NT / wintun: IF_TYPE_PROP_VIRTUAL, tunnel type none. Private Party Net is one.
++            adapter(
++                "10.66.0.2",
++                "Private Party Net",
++                IF_TYPE_PROP_VIRTUAL,
++                0,
++                "WireGuard Tunnel",
++            ),
++            adapter("100.64.7.9", "wg0", IF_TYPE_PROP_VIRTUAL, 0, "Wintun Userspace Tunnel"),
++            adapter(
++                "fd7a:115c:a1e0::5",
++                "Tailscale",
++                IF_TYPE_PROP_VIRTUAL,
++                0,
++                "Tailscale Tunnel",
++            ),
++            // Teredo by tunnel type, ISATAP by tunnel type, 6to4 by tunnel type, and Teredo by description alone.
++            adapter(
++                "fe80::8000:abcd:1:2",
++                "Teredo Tunneling Pseudo-Interface",
++                IF_TYPE_PROP_VIRTUAL,
++                14,
++                "Teredo Tunneling Pseudo-Interface",
++            ),
++            adapter(
++                "fe80::5efe:c0a8:15f",
++                "isatap.{1234}",
++                IF_TYPE_PROP_VIRTUAL,
++                13,
++                "Microsoft ISATAP Adapter",
++            ),
++            adapter(
++                "fe80::2002:1",
++                "6TO4 Adapter",
++                IF_TYPE_PROP_VIRTUAL,
++                11,
++                "Microsoft 6to4 Adapter",
++            ),
++            adapter(
++                "fe80::9",
++                "Tunnel 9",
++                IF_TYPE_PROP_VIRTUAL,
++                0,
++                "Microsoft Teredo Tunneling Adapter",
++            ),
++        ]);
++        assert_eq!(ips(&got), ["10.66.0.2", "100.64.7.9", "fd7a:115c:a1e0::5"]);
++        assert!(!is_transition_tunnel(0, "WireGuard Tunnel"));
++        assert!(is_transition_tunnel(14, "") && is_transition_tunnel(13, "") && is_transition_tunnel(11, ""));
++    }
++
++    #[test]
++    fn urls_for_v4_and_v6_never_link_local_v6() {
++        let urls = pairing_urls(
++            &[
++                la("192.168.1.5", "Ethernet"),
++                la("100.101.1.2", "Tailscale"),
++                la("fd12:3456::1", "Wi-Fi"),
++                la("fe80::1", "eth0"),
++                la("fe80::2", "Ethernet 2"),
++                la("fe80::3", ""),
++                la("169.254.9.9", "Ethernet 3"),
++            ],
++            47734,
++        );
++        assert_eq!(
++            urls,
++            [
++                "http://192.168.1.5:47734",
++                "http://100.101.1.2:47734",
++                "http://[fd12:3456::1]:47734",
++                "http://169.254.9.9:47734",
++            ]
++        );
++    }
++
++    #[test]
++    fn urls_keep_the_given_order_drop_repeats_and_never_list_a_public_address() {
++        let urls = pairing_urls(
++            &[
++                la("10.0.0.2", "Wi-Fi"),
++                la("8.8.8.8", "Ethernet"),
++                la("192.168.1.5", "Ethernet"),
++                la("10.0.0.2", "Ethernet"),
++                la("2001:db8::1", "Ethernet"),
++                la("127.0.0.1", "Loopback"),
++            ],
++            8080,
++        );
++        assert_eq!(urls, ["http://10.0.0.2:8080", "http://192.168.1.5:8080"]);
++        assert!(pairing_urls(&[], 1).is_empty());
++    }
++
++    #[test]
++    fn private_addresses_smoke() {
++        let got = private_addresses();
++        for a in &got {
++            assert!(is_private_peer(a.ip) && !a.ip.is_loopback(), "{a:?}");
++        }
++        let mut seen = std::collections::HashSet::new();
++        assert!(got.iter().all(|a| seen.insert(a.ip)), "no duplicates");
++    }
++}
 diff --git a/crates/aionui-mobile/src/outer.rs b/crates/aionui-mobile/src/outer.rs
 new file mode 100644
-index 00000000..9b16d354
+index 00000000..29cb1bc0
 --- /dev/null
 +++ b/crates/aionui-mobile/src/outer.rs
-@@ -0,0 +1,391 @@
+@@ -0,0 +1,393 @@
 +//! The LAN routes `pair`, `session` and `rpc` (CONTRACT §4.2–4.4). Outer
 +//! errors are plaintext `{"error": code, ...}` and never carry secrets.
 +
@@ -7887,22 +9726,24 @@ index 00000000..9b16d354
 +    };
 +    {
 +        let mut offers = core.rekey_offers.lock().unwrap();
-+        let Some(offer) = offers.get_mut(&ctx.device_id) else {
++        let Some(offer) = offers
++            .get_mut(&ctx.device_id)
++            .filter(|o| o.state == crate::core::RekeyState::Pending)
++        else {
 +            return InnerResponse::error(404, "no_rekey_offer", "No re-key offer is open for this phone");
 +        };
 +        if now() >= offer.expires_at {
-+            offers.remove(&ctx.device_id);
 +            return InnerResponse::error(404, "no_rekey_offer", "The re-key offer expired");
 +        }
 +        offer.attempts += 1;
 +        let expected = crypto::hmac_sha256(&offer.secret, &crypto::rekey_mac_input(&ctx.sid, &ctx.device_id));
 +        if !crypto::mac_eq(&proof, &expected) {
 +            if offer.attempts >= MAX_ATTEMPTS {
-+                offers.remove(&ctx.device_id);
++                offer.state = crate::core::RekeyState::Failed;
 +            }
 +            return InnerResponse::error(403, "rekey_invalid", "The re-key proof did not verify");
 +        }
-+        offers.remove(&ctx.device_id);
++        offer.state = crate::core::RekeyState::Completed;
 +    }
 +    let key = if mode == "none" {
 +        None
@@ -8723,10 +10564,10 @@ index 00000000..72e5cfa8
 +}
 diff --git a/crates/aionui-mobile/src/service.rs b/crates/aionui-mobile/src/service.rs
 new file mode 100644
-index 00000000..8f11fcfe
+index 00000000..a01309e5
 --- /dev/null
 +++ b/crates/aionui-mobile/src/service.rs
-@@ -0,0 +1,888 @@
+@@ -0,0 +1,979 @@
 +//! The bridge's lifecycle: settings, the host key, whether the LAN listener
 +//! runs, and the desktop's pairing and device actions. Business logic only;
 +//! the HTTP surfaces live in `listener.rs`/`outer.rs` (LAN) and
@@ -8754,9 +10595,16 @@ index 00000000..8f11fcfe
 +    pub enabled: bool,
 +    pub port: u16,
 +    pub urls: Vec<String>,
++    /// What the user saved under Advanced, as saved (`urls` has them merged in).
++    pub extra_urls: Vec<String>,
 +    pub host_id: String,
 +    pub host_name: String,
++    /// Whether the `_aiondx._tcp` advertisement is in effect: the saved setting, unless something overrides it.
 +    pub mdns: bool,
++    /// The saved setting (what the desktop's switch shows).
++    pub mdns_setting: bool,
++    /// Why `mdns` differs from `mdnsSetting`: `loopback_bind` (`AIONDX_MOBILE_BIND`); `null` when they agree.
++    pub mdns_off_reason: Option<&'static str>,
 +    pub tasks_write: bool,
 +    pub listening: bool,
 +    pub error: Option<String>,
@@ -8808,12 +10656,16 @@ index 00000000..8f11fcfe
 +    user_id: String,
 +    port: u16,
 +    handle: ListenerHandle,
++    /// The `_aiondx._tcp` advertisement while the listener runs (when the user left mDNS on); dropping withdraws it.
++    _mdns: Option<crate::mdns::MdnsAdvertiser>,
 +}
 +
 +pub struct MobileBridge {
-+    core: Arc<BridgeCore>,
++    pub(crate) core: Arc<BridgeCore>,
 +    default_host_name: String,
-+    bind_ip: IpAddr,
++    pub(crate) bind_ip: IpAddr,
++    /// Reads the firewall rule (read-only `netsh show`); a fake in tests.
++    pub(crate) firewall: Arc<dyn crate::firewall::NetshRunner>,
 +    running: Mutex<Option<Running>>,
 +    last_error: Mutex<Option<String>>,
 +    /// Set when this boot can't run the bridge (e.g. host.key unreadable): the
@@ -8833,7 +10685,7 @@ index 00000000..8f11fcfe
 +            host_key,
 +            default_host_name,
 +            events,
-+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
++            crate::service_net::bind_ip_from_env(),
 +        )
 +    }
 +
@@ -8849,6 +10701,7 @@ index 00000000..8f11fcfe
 +            core: BridgeCore::new(host_key, store, default_host_name.clone(), events),
 +            default_host_name,
 +            bind_ip,
++            firewall: Arc::new(crate::firewall::ShowOnlyRunner),
 +            running: Mutex::new(None),
 +            last_error: Mutex::new(None),
 +            fault: None,
@@ -8867,6 +10720,7 @@ index 00000000..8f11fcfe
 +            core: BridgeCore::new(placeholder, store, default_host_name.clone(), events),
 +            default_host_name,
 +            bind_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
++            firewall: Arc::new(crate::firewall::ShowOnlyRunner),
 +            running: Mutex::new(None),
 +            last_error: Mutex::new(None),
 +            fault: Some(reason),
@@ -8895,6 +10749,7 @@ index 00000000..8f11fcfe
 +                secret,
 +                expires_at,
 +                attempts: 0,
++                state: crate::core::RekeyState::Pending,
 +            },
 +        );
 +        let uri = format!(
@@ -8929,12 +10784,17 @@ index 00000000..8f11fcfe
 +        &self.core.store
 +    }
 +
++    /// Replaces the firewall reader (tests use a fake instead of `netsh`).
++    pub fn set_firewall_runner(&mut self, runner: Arc<dyn crate::firewall::NetshRunner>) {
++        self.firewall = runner;
++    }
++
 +    /// Installs the mobile facade (`/v1/...` beyond `/v1/host`).
 +    pub fn set_facade(&self, facade: Arc<dyn InnerApi>) {
 +        *self.core.facade.write().unwrap() = Some(facade);
 +    }
 +
-+    async fn settings_for(&self, user_id: &str) -> Result<MobileSettings, MobileError> {
++    pub(crate) async fn settings_for(&self, user_id: &str) -> Result<MobileSettings, MobileError> {
 +        Ok(self
 +            .store()
 +            .load_settings(user_id)
@@ -9000,7 +10860,7 @@ index 00000000..8f11fcfe
 +            &self.core.host_key,
 +            &settings.host_name,
 +            &offer,
-+            &pairing_urls(&settings),
++            &self.pairing_urls(&settings),
 +        );
 +        tracing::info!(user_id, "mobile bridge: pairing offer created");
 +        Ok(PairingOffer {
@@ -9141,10 +11001,12 @@ index 00000000..8f11fcfe
 +        let router = listener::outer_router(self.core.clone());
 +        match listener::start(self.bind_ip, settings.port, router).await {
 +            Ok(handle) => {
++                let mdns = self.advertise(settings);
 +                *running = Some(Running {
 +                    user_id: user_id.to_owned(),
 +                    port: settings.port,
 +                    handle,
++                    _mdns: mdns,
 +                });
 +            }
 +            Err(e) => {
@@ -9159,10 +11021,13 @@ index 00000000..8f11fcfe
 +        MobileStatus {
 +            enabled: settings.enabled,
 +            port: settings.port,
-+            urls: pairing_urls(settings),
++            urls: self.pairing_urls(settings),
++            extra_urls: settings.extra_urls.clone(),
 +            host_id: self.core.host_key.host_id.clone(),
 +            host_name: settings.host_name.clone(),
-+            mdns: settings.mdns,
++            mdns: settings.mdns && !self.bind_ip.is_loopback(),
++            mdns_setting: settings.mdns,
++            mdns_off_reason: (settings.mdns && self.bind_ip.is_loopback()).then_some("loopback_bind"),
 +            tasks_write: settings.tasks_write,
 +            listening,
 +            error: match &self.fault {
@@ -9312,12 +11177,18 @@ index 00000000..8f11fcfe
 +    plain.try_into().ok()
 +}
 +
-+/// The base URLs that go into the pairing QR: this PC's primary LAN address,
-+/// then the user's extra URLs. Phase 5 replaces the primary-address probe with
-+/// a full interface enumeration.
-+fn pairing_urls(settings: &MobileSettings) -> Vec<String> {
-+    let mut urls = Vec::new();
-+    if let Some(ip) = primary_lan_ip() {
++/// The base URLs that go into the pairing QR: this PC's private addresses (`netinfo`, best first; the primary
++/// LAN address when enumeration finds none), or only loopback when the listener is bound there; then the user's
++/// extra URLs.
++pub(crate) fn pairing_urls_for(bind_ip: IpAddr, settings: &MobileSettings) -> Vec<String> {
++    let mut urls = if bind_ip.is_loopback() {
++        vec![format!("http://{}", std::net::SocketAddr::new(bind_ip, settings.port))]
++    } else {
++        crate::netinfo::pairing_urls(&crate::netinfo::private_addresses(), settings.port)
++    };
++    if urls.is_empty()
++        && let Some(ip) = primary_lan_ip()
++    {
 +        urls.push(format!("http://{ip}:{}", settings.port));
 +    }
 +    for url in &settings.extra_urls {
@@ -9455,6 +11326,67 @@ index 00000000..8f11fcfe
 +            .await
 +            .unwrap();
 +        assert_eq!(status.urls.last().unwrap(), "http://100.64.0.9:47734");
++        // Bound to loopback, the QR offers only loopback; the saved extras are reported as saved.
++        assert_eq!(status.urls[0], format!("http://127.0.0.1:{}", status.port));
++        assert_eq!(status.extra_urls, vec!["http://100.64.0.9:47734".to_owned()]);
++        // Bound to loopback, mDNS is off whatever the saved setting says, and the status says why.
++        assert!(status.mdns_setting);
++        assert!(!status.mdns);
++        assert_eq!(status.mdns_off_reason, Some("loopback_bind"));
++    }
++
++    struct FakeNetsh(&'static str);
++
++    #[async_trait::async_trait]
++    impl crate::firewall::NetshRunner for FakeNetsh {
++        async fn run(&self, plan: &crate::firewall::FirewallPlan) -> std::io::Result<String> {
++            if *plan == crate::firewall::profile_state_plan() {
++                return Ok(
++                    "Private Profile Settings:\r\nState                                 OFF\r\nOk.\r\n".to_owned(),
++                );
++            }
++            assert_eq!(
++                *plan,
++                crate::firewall::show_rule_plan(),
++                "only the read-only plans are ever run"
++            );
++            Ok(self.0.to_owned())
++        }
++    }
++
++    #[tokio::test]
++    async fn firewall_status_reads_the_rule_and_offers_an_add_plan() {
++        let mut b = bridge().await;
++        Arc::get_mut(&mut b).unwrap().set_firewall_runner(Arc::new(FakeNetsh(
++            "Rule Name:                            AionDX mobile bridge\r\n\
++             ----------------------------------------------------------------------\r\n\
++             Enabled:                              Yes\r\n\
++             Direction:                            In\r\n\
++             Profiles:                             Private\r\n\
++             Protocol:                             TCP\r\n\
++             LocalPort:                            47734\r\n\
++             Action:                               Allow\r\nOk.\r\n",
++        )));
++        let view = b.firewall_status("u1").await.unwrap();
++        assert_eq!(view.rule, "present");
++        assert_eq!(
++            view.firewall_enabled,
++            Some(false),
++            "the Private profile is off on the fake"
++        );
++        assert!(view.private_only && view.enabled);
++        assert!(view.matches_settings, "{view:?}");
++        let plan = view.plan.expect("a plan for this test executable");
++        assert!(plan.program.to_ascii_lowercase().ends_with("netsh.exe"));
++        assert!(plan.args.iter().any(|a| a == "profile=private"), "{:?}", plan.args);
++
++        let mut b = bridge().await;
++        Arc::get_mut(&mut b)
++            .unwrap()
++            .set_firewall_runner(Arc::new(FakeNetsh("No rules match the specified criteria.\r\n")));
++        let view = b.firewall_status("u1").await.unwrap();
++        assert_eq!(view.rule, "absent");
++        assert!(!view.matches_settings);
 +    }
 +
 +    #[test]
@@ -9613,6 +11545,202 @@ index 00000000..8f11fcfe
 +        .await;
 +        assert!(bridge.is_some());
 +        assert!(dir.path().join("aiondx-bridge.db").exists());
++    }
++}
+diff --git a/crates/aionui-mobile/src/service_net.rs b/crates/aionui-mobile/src/service_net.rs
+new file mode 100644
+index 00000000..aa3ca87b
+--- /dev/null
++++ b/crates/aionui-mobile/src/service_net.rs
+@@ -0,0 +1,190 @@
++//! Phase 5: the bridge's network surface for the desktop (CONTRACT §7, PHASE5-NET-SPEC): the QR address list, the
++//! mDNS advertisement, the firewall rule's state, the listener's bind address, and how a re-key offer ended.
++
++use std::net::{IpAddr, Ipv4Addr};
++
++use serde::Serialize;
++
++use crate::error::MobileError;
++use crate::firewall::{self, FirewallPlan, RuleStatus};
++use crate::service::{AdminFailure, MobileBridge, pairing_urls_for};
++use crate::settings::MobileSettings;
++
++/// `AIONDX_MOBILE_BIND`: a loopback address to listen on instead of every interface, for test runs that must not be
++/// reachable from the LAN. Unset means `0.0.0.0` (plus `[::]`). Anything that isn't a loopback address is ignored
++/// with a warning: this switch can only make the bridge less reachable.
++pub(crate) fn bind_ip_from_env() -> IpAddr {
++    bind_ip_from(std::env::var("AIONDX_MOBILE_BIND").ok().as_deref())
++}
++
++fn bind_ip_from(value: Option<&str>) -> IpAddr {
++    let any = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
++    let Some(raw) = value.map(str::trim).filter(|v| !v.is_empty()) else {
++        return any;
++    };
++    match raw.parse::<IpAddr>() {
++        Ok(ip) if ip.is_loopback() => {
++            tracing::info!(%ip, "mobile bridge: AIONDX_MOBILE_BIND set; listening on loopback only");
++            ip
++        }
++        _ => {
++            tracing::warn!(
++                value = raw,
++                "mobile bridge: AIONDX_MOBILE_BIND is not a loopback address; ignored"
++            );
++            any
++        }
++    }
++}
++
++/// `GET /api/mobile/admin/firewall`.
++#[derive(Debug, Clone, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct FirewallView {
++    /// `present` | `absent`. On a non-English Windows `netsh` output can't be read, which shows as `absent`.
++    pub rule: &'static str,
++    /// Windows Firewall on (`true`) or off (`false`) for the Private profile; `null` when `netsh` couldn't be read (e.g.
++    /// a non-English Windows). Off means no rule is needed.
++    pub firewall_enabled: Option<bool>,
++    pub enabled: bool,
++    pub private_only: bool,
++    pub port: Option<u16>,
++    /// The rule is there, enabled, Private-only, and opens the port the bridge uses now.
++    pub matches_settings: bool,
++    /// What adding the rule would run (elevated, by the desktop app). `null` when no plan can be built.
++    pub plan: Option<PlanView>,
++}
++
++#[derive(Debug, Clone, Serialize)]
++pub struct PlanView {
++    pub program: String,
++    pub args: Vec<String>,
++}
++
++impl From<FirewallPlan> for PlanView {
++    fn from(p: FirewallPlan) -> Self {
++        Self {
++            program: p.program,
++            args: p.args,
++        }
++    }
++}
++
++fn firewall_view(
++    status: RuleStatus,
++    firewall_enabled: Option<bool>,
++    port: u16,
++    plan: Option<FirewallPlan>,
++) -> FirewallView {
++    FirewallView {
++        rule: if status.present { "present" } else { "absent" },
++        firewall_enabled,
++        enabled: status.enabled,
++        private_only: status.private_only,
++        port: status.port,
++        matches_settings: status.present && status.enabled && status.private_only && status.port == Some(port),
++        plan: plan.map(PlanView::from),
++    }
++}
++
++/// `GET /api/mobile/admin/rekey-offers/{offerId}`: `pending` | `completed` | `failed` | `expired`.
++#[derive(Debug, Clone, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RekeyOfferView {
++    pub state: &'static str,
++    pub expires_at: i64,
++}
++
++impl MobileBridge {
++    pub(crate) fn pairing_urls(&self, settings: &MobileSettings) -> Vec<String> {
++        pairing_urls_for(self.bind_ip, settings)
++    }
++
++    /// Starts the `_aiondx._tcp` advertisement when the user left mDNS on and the listener is on the LAN. A failure
++    /// (no private interface, a socket error) only loses discovery: phones still use their stored URLs.
++    pub(crate) fn advertise(&self, settings: &MobileSettings) -> Option<crate::mdns::MdnsAdvertiser> {
++        if !settings.mdns || self.bind_ip.is_loopback() {
++            return None;
++        }
++        match crate::mdns::MdnsAdvertiser::start(&self.core.host_key.host_id, settings.port) {
++            Ok(a) => Some(a),
++            Err(e) => {
++                tracing::warn!(error = %e, "mobile bridge: mDNS advertisement did not start");
++                None
++            }
++        }
++    }
++
++    /// The firewall rule as `netsh` reports it, read-only, and the plan the desktop would run to add it for this
++    /// process and port.
++    pub async fn firewall_status(&self, user_id: &str) -> Result<FirewallView, MobileError> {
++        let settings = self.settings_for(user_id).await?;
++        let status = firewall::query_rule(self.firewall.as_ref()).await;
++        let enabled = firewall::query_firewall_enabled(self.firewall.as_ref()).await;
++        let plan = std::env::current_exe()
++            .ok()
++            .and_then(|exe| firewall::add_rule_plan(&exe, settings.port).ok());
++        Ok(firewall_view(status, enabled, settings.port, plan))
++    }
++
++    /// How a re-key offer (its id is the device's) ended, for one of this user's phones.
++    pub async fn rekey_offer_state(&self, user_id: &str, offer_id: &str) -> Result<RekeyOfferView, AdminFailure> {
++        self.store()
++            .device(offer_id)
++            .await?
++            .filter(|d| d.user_id == user_id)
++            .ok_or(AdminFailure::NotFound)?;
++        let offers = self.core.rekey_offers.lock().unwrap();
++        let offer = offers.get(offer_id).ok_or(AdminFailure::NotFound)?;
++        let state = match offer.state {
++            crate::core::RekeyState::Completed => "completed",
++            crate::core::RekeyState::Failed => "failed",
++            crate::core::RekeyState::Pending if aionui_common::now_ms() >= offer.expires_at => "expired",
++            crate::core::RekeyState::Pending => "pending",
++        };
++        Ok(RekeyOfferView {
++            state,
++            expires_at: offer.expires_at,
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn the_bind_switch_only_accepts_loopback() {
++        let any = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
++        assert_eq!(bind_ip_from(None), any);
++        assert_eq!(bind_ip_from(Some("  ")), any);
++        assert_eq!(bind_ip_from(Some("127.0.0.1")), IpAddr::from([127, 0, 0, 1]));
++        assert_eq!(bind_ip_from(Some("::1")), IpAddr::V6(std::net::Ipv6Addr::LOCALHOST));
++        assert_eq!(bind_ip_from(Some("192.168.1.5")), any, "a LAN address is refused");
++        assert_eq!(bind_ip_from(Some("0.0.0.0")), any);
++        assert_eq!(bind_ip_from(Some("nonsense")), any);
++    }
++
++    #[test]
++    fn the_firewall_view_says_whether_the_rule_fits_the_port() {
++        let good = RuleStatus {
++            present: true,
++            enabled: true,
++            private_only: true,
++            port: Some(47734),
++        };
++        assert!(firewall_view(good, Some(true), 47734, None).matches_settings);
++        assert!(
++            !firewall_view(good, Some(true), 47735, None).matches_settings,
++            "the user changed the port"
++        );
++        let public_too = RuleStatus {
++            private_only: false,
++            ..good
++        };
++        assert!(!firewall_view(public_too, Some(true), 47734, None).matches_settings);
++        let none = firewall_view(RuleStatus::default(), None, 47734, None);
++        assert_eq!(none.rule, "absent");
++        assert!(!none.matches_settings);
 +    }
 +}
 diff --git a/crates/aionui-mobile/src/session.rs b/crates/aionui-mobile/src/session.rs
@@ -11447,10 +13575,10 @@ index 00000000..9855cfc9
 +}
 diff --git a/crates/aionui-mobile/tests/facade_routes.rs b/crates/aionui-mobile/tests/facade_routes.rs
 new file mode 100644
-index 00000000..d20298aa
+index 00000000..9e6b2837
 --- /dev/null
 +++ b/crates/aionui-mobile/tests/facade_routes.rs
-@@ -0,0 +1,1301 @@
+@@ -0,0 +1,1455 @@
 +//! The phase 2 read routes through the real facade, over a fake AionCore
 +//! whose fixtures are AionCore's own JSON forms.
 +
@@ -11725,6 +13853,13 @@ index 00000000..d20298aa
 +            }),
 +            _ => Err(BackendError::NotFound(c.into())),
 +        }
++    }
++    async fn respond_now_solo(&self, _u: &str, c: &str, content: &str) -> Result<SendOutcome, BackendError> {
++        self.log(format!("respond_now_solo {c} {content}"));
++        Ok(SendOutcome {
++            message_id: String::new(),
++            delivery: "queued",
++        })
 +    }
 +    async fn live_conversations(&self, _u: &str) -> Result<Vec<String>, BackendError> {
 +        Ok(vec!["c2".into()])
@@ -12394,6 +14529,22 @@ index 00000000..d20298aa
 +    assert_eq!(removed[0]["approvalId"], id.as_str());
 +    assert_eq!(removed[0]["resolution"], "answered");
 +    assert!(approval_ids(&f).await.is_empty());
++
++    // A retry (say, after a lost response) learns it is resolved, and how; nothing is sent twice (QA AP5).
++    let before = fake.calls().len();
++    let (status, body) = call(
++        &f,
++        ConfirmCheck::Verified,
++        "POST",
++        &format!("/v1/approvals/{id}/answer"),
++        json!({ "decision": "deny" }),
++    )
++    .await;
++    assert_eq!(status, 409, "{body}");
++    assert_eq!(body["error"]["code"], "already_resolved");
++    assert_eq!(body["error"]["details"]["resolution"], "answered");
++    assert!(body["error"]["details"]["resolvedAt"].is_i64());
++    assert_eq!(fake.calls().len(), before);
 +}
 +
 +#[tokio::test]
@@ -12752,12 +14903,143 @@ index 00000000..d20298aa
 +        .unwrap();
 +    assert_eq!(f1["error"]["messageId"], "u7");
 +}
++
++#[tokio::test]
++async fn an_unanswered_shutdown_request_expires() {
++    let (_fake, f) = facade();
++    let (status, _) = call(
++        &f,
++        ConfirmCheck::Verified,
++        "POST",
++        "/v1/teams/t1/agents/s2/shutdown",
++        json!({ "reason": "done" }),
++    )
++    .await;
++    assert_eq!(status, 200);
++    let (_, agent) = get(&f, "/v1/teams/t1/agents/s2").await.unwrap();
++    let requested_at = agent["shutdown"]["requestedAt"].as_i64().unwrap();
++    let timeout = aionui_mobile::facade_live::SHUTDOWN_TIMEOUT_MS;
++
++    let t0 = first_token(&f).await;
++    // Not yet: a minute short of the timeout.
++    f.expire_shutdowns(requested_at + timeout - 60_000);
++    let (_, changes) = changes_since(&f, &t0).await;
++    assert!(changes.is_empty());
++    // Past it: a terminal state, announced on the feed.
++    f.expire_shutdowns(requested_at + timeout);
++    let (_, agent) = get(&f, "/v1/teams/t1/agents/s2").await.unwrap();
++    assert_eq!(
++        agent["shutdown"],
++        json!({ "state": "expired", "requestedAt": requested_at, "expiredAt": requested_at + timeout, "reason": "done" })
++    );
++    let (_, changes) = changes_since(&f, &t0).await;
++    assert_eq!(
++        changes,
++        vec![json!({ "kind": "team", "teamId": "t1", "what": ["run_state"] })]
++    );
++    // A late refusal no longer changes a terminal state.
++    emit(
++        &f,
++        "team.mailboxChanged",
++        json!({ "team_id": "t1", "change": "created",
++                "message": { "id": "mb2", "team_id": "t1", "from_agent_id": "s2", "to_agent_id": "lead",
++                             "msg_type": "message", "content": "Teammate 'Bob' declined shutdown: late",
++                             "summary": null, "files": [], "read": false, "created_at": 5 } }),
++    )
++    .await;
++    let (_, agent) = get(&f, "/v1/teams/t1/agents/s2").await.unwrap();
++    assert_eq!(agent["shutdown"]["state"], "expired");
++}
++
++/// QA AP6: a refusal reason for a SOLO chat goes through respond-now (held until a running turn ends), never the
++/// plain send that a running turn refuses.
++#[tokio::test]
++async fn a_solo_refusal_reason_goes_respond_now() {
++    let (fake, f) = facade();
++    let mut frame = acp_frame("call-s");
++    frame["conversation_id"] = json!("c9");
++    emit(&f, "message.stream", frame).await;
++    let mut row = listed("call-s");
++    row["conversation_id"] = json!("c9");
++    *fake.pending.lock().unwrap() = vec![row];
++    // (The fake lists its confirmations for every conversation, so the first listing also recovers a c2 copy.)
++    let (_, list) = get(&f, "/v1/approvals").await.unwrap();
++    let id = list["items"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|a| a["conversationId"] == "c9")
++        .unwrap()["approvalId"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    let (status, body) = call(
++        &f,
++        ConfirmCheck::Missing,
++        "POST",
++        &format!("/v1/approvals/{id}/answer"),
++        json!({ "decision": "deny", "message": "use pnpm" }),
++    )
++    .await;
++    assert_eq!(status, 200, "{body}");
++    assert_eq!(body, json!({ "resolved": true, "messageDelivery": "followup" }));
++    let calls = fake.calls();
++    assert!(
++        calls.contains(&"respond_now_solo c9 Denied Bash: use pnpm".to_owned()),
++        "{calls:?}"
++    );
++    assert!(!calls.iter().any(|c| c.starts_with("send_solo")), "{calls:?}");
++}
++
++/// QA AP1: a permission frame lost to a lagging bus still surfaces: on the lag itself (a resweep puts it on the feed),
++/// on any later listing, and wherever derived state shows untracked pending confirmations.
++#[tokio::test]
++async fn a_dropped_permission_frame_is_recovered() {
++    // 1. The lag: every user seen gets a resweep, and the feed carries the recovered approval.
++    let (fake, f) = facade();
++    emit(&f, "team.renamed", json!({ "team_id": "t1" })).await; // the pump has seen u1
++    let t0 = first_token(&f).await;
++    *fake.pending.lock().unwrap() = vec![listed("call-lag")]; // AionCore has it; its frame never arrived
++    f.on_lagged(12).await;
++    let (_, changes) = changes_since(&f, &t0).await;
++    let added = of_kind(&changes, "approval_added");
++    assert_eq!(added.len(), 1, "{changes:?}");
++    assert_eq!(added[0]["approval"]["conversationId"], "c2");
++    assert_eq!(
++        added[0]["approval"]["input"],
++        Value::Null,
++        "recovered without the frame's input"
++    );
++
++    // 2. No lag noticed: a listing after an earlier (empty) one still finds it.
++    let (fake, f) = facade();
++    let (_, list) = get(&f, "/v1/approvals").await.unwrap();
++    assert_eq!(list["items"], json!([]));
++    *fake.pending.lock().unwrap() = vec![listed("call-late")];
++    assert_eq!(approval_ids(&f).await.len(), 1);
++
++    // 3. Derived state: run-state shows Bob with pending confirmations and nothing tracked, so it heals at once.
++    let (fake, f) = facade();
++    let t0 = first_token(&f).await;
++    *fake.pending.lock().unwrap() = vec![listed("call-heal")];
++    let (_, rs) = get(&f, "/v1/teams/t1/run-state").await.unwrap();
++    let bob = rs["agents"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|a| a["slotId"] == "s2")
++        .unwrap()
++        .clone();
++    assert_eq!(bob["attention"], "needs_approval");
++    let (_, changes) = changes_since(&f, &t0).await;
++    assert_eq!(of_kind(&changes, "approval_added").len(), 1, "{changes:?}");
++}
 diff --git a/crates/aionui-mobile/tests/protocol_e2e.rs b/crates/aionui-mobile/tests/protocol_e2e.rs
 new file mode 100644
-index 00000000..377f2bc8
+index 00000000..3aee7721
 --- /dev/null
 +++ b/crates/aionui-mobile/tests/protocol_e2e.rs
-@@ -0,0 +1,620 @@
+@@ -0,0 +1,636 @@
 +//! End to end over the real outer router: a phone implemented here from
 +//! CONTRACT §4 alone pairs, handshakes, calls RPC, and gets revoked.
 +
@@ -13337,6 +15619,11 @@ index 00000000..377f2bc8
 +
 +    // Re-key (§5.3): QR secret + this session → a new key; the old one stops working.
 +    let offer_uri = bridge.create_rekey_offer("u1", "dev-1").await.unwrap().uri;
++    assert_eq!(bridge.rekey_offer_state("u1", "dev-1").await.unwrap().state, "pending");
++    assert!(
++        bridge.rekey_offer_state("u2", "dev-1").await.is_err(),
++        "another user's phone"
++    );
 +    let secret = from_b64u(offer_uri.split("&s=").nth(1).unwrap().split('&').next().unwrap()).unwrap();
 +    seq += 1;
 +    let bad = json!({ "method": "POST", "path": "/v1/host/device/confirm-key", "rid": format!("r{seq}"),
@@ -13357,6 +15644,17 @@ index 00000000..377f2bc8
 +    let new_key = from_b64u(inner["body"]["confirmKey"].as_str().unwrap()).unwrap();
 +    assert_ne!(new_key, confirm_key);
 +    assert_eq!(bridge.devices("u1").await.unwrap()[0].confirm_mode, "device_passcode");
++    // The desktop's re-key dialog can see it finished, and the used offer can't be replayed.
++    assert_eq!(
++        bridge.rekey_offer_state("u1", "dev-1").await.unwrap().state,
++        "completed"
++    );
++    seq += 1;
++    let again = json!({ "method": "POST", "path": "/v1/host/device/confirm-key", "rid": format!("r{seq}"),
++                        "body": { "proof": rekey_proof, "confirmMode": "device_passcode" } });
++    let (_, resp) = post(&router, "/api/mobile/v1/rpc", &envelope(&s, seq, &again)).await;
++    let inner = open_rpc(&s, seq, &resp);
++    assert_eq!(inner["body"]["error"]["code"], "no_rekey_offer");
 +
 +    seq += 1;
 +    let old = proof(
@@ -14283,3 +16581,79 @@ index 46156818..86320761 100644
              status: update.status.map(|s| s.to_string()),
              description: update.description.clone(),
              owner: update.owner.clone(),
+diff --git a/crates/aionui-team/tests/mcp_server_integration.rs b/crates/aionui-team/tests/mcp_server_integration.rs
+index 481cd827..900c5713 100644
+--- a/crates/aionui-team/tests/mcp_server_integration.rs
++++ b/crates/aionui-team/tests/mcp_server_integration.rs
+@@ -1501,3 +1501,71 @@ async fn tsr3_send_message_without_sentinel_rejects_without_live_team_run_servic
+ 
+     env.server.stop();
+ }
++
++// ---------------------------------------------------------------------------
++// AionDX core-0015: a declined shutdown reaches the event bus (QA SD2a)
++// ---------------------------------------------------------------------------
++
++/// The mobile bridge learns that a teammate refused a phone-sent shutdown from the `team.mailboxChanged` event of the
++/// note AionCore writes to the lead. This drives the REAL path: the teammate's `team_send_message
++/// "shutdown_rejected: ..."` over MCP, `notify_shutdown_rejected`, and a mailbox wired the way `TeamSession::new`
++/// wires it (`Mailbox::new_for_user(..).with_events(emitter)`, the same `Arc` handed to the scheduler). The event's
++/// shape is what `aionui-mobile` `facade_live.rs` `on_mailbox` / `declined_shutdown_reason` parse.
++#[tokio::test]
++async fn declined_shutdown_emits_mailbox_changed_for_the_bridge() {
++    let repo = Arc::new(MockTeamRepo::new());
++    let recorder = Arc::new(RecordingBroadcaster::new());
++    let broadcaster: Arc<dyn EventBroadcaster> = recorder.clone();
++    let emitter = Arc::new(aionui_team::TeamEventEmitter::new(
++        "team-1".into(),
++        "user-1".into(),
++        broadcaster.clone(),
++    ));
++    let mailbox = Arc::new(Mailbox::new_for_user(repo.clone(), "user-1").with_events(emitter.clone()));
++    let task_board = Arc::new(TaskBoard::new_for_user(repo.clone(), "user-1").with_events(emitter));
++    let scheduler = Arc::new(TeammateManager::new(
++        "team-1".into(),
++        "user-1".into(),
++        &make_agents(),
++        mailbox,
++        task_board,
++        broadcaster.clone(),
++    ));
++    let server = TeamMcpServer::start_with_prompt_dump(
++        "test-token-123".into(),
++        scheduler,
++        "team-1".into(),
++        broadcaster,
++        std::sync::Weak::new(),
++        None,
++    )
++    .await
++    .unwrap();
++
++    let mut stream = connect_and_init(server.port(), "test-token-123", "worker-1").await;
++    let resp = call_tool(
++        &mut stream,
++        2,
++        "team_send_message",
++        json!({"to": "lead-1", "message": "shutdown_rejected: still migrating"}),
++    )
++    .await;
++    assert!(!is_error_response(&resp));
++
++    let events = recorder.events.lock().unwrap().clone();
++    let changed: Vec<&WebSocketMessage<Value>> = events.iter().filter(|e| e.name == "team.mailboxChanged").collect();
++    assert_eq!(changed.len(), 1, "exactly one mailbox event: {events:?}");
++    let data = &changed[0].data;
++    assert_eq!(data["user_id"], "user-1");
++    assert_eq!(data["team_id"], "team-1");
++    assert_eq!(data["change"], "created");
++    assert_eq!(data["message"]["from_agent_id"], "worker-1");
++    assert_eq!(data["message"]["to_agent_id"], "lead-1");
++    assert_eq!(
++        data["message"]["content"],
++        "Teammate 'Worker' declined shutdown: still migrating"
++    );
++    assert!(data["message"]["created_at"].is_i64());
++
++    server.stop();
++}

@@ -1,6 +1,6 @@
 # AionDX Mobile Bridge: API Contract v1 (DRAFT)
 
-**Status:** revision 4.4, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
+**Status:** revision 4.5, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
 - **Rev 1:** first draft.
 - **Rev 2:** folds in the mobile team's review: the pairing rate-limit bug and questions 2-16. The answers are in
   §4.2-4.3 and A1/A8, §5.1-5.3, §6.1-6.8, and Appendix A (shared test vectors).
@@ -18,6 +18,10 @@
 - **Rev 4 (2026-11-07):** Nathan approved all nine §11 items as recommended. §11 is now a record of those decisions.
   The `[PENDING SIGN-OFF]` markers are removed, and `tasks.write` is on by default (§6.1, §6.7). The Claude
   "Allow Always" relabel wording is fixed in §6.5. §8 adds Private Party Net (WireGuard) as a to-verify item.
+- **Rev 4.5 (2026-11-08):** §6.3 `Agent.shutdown`: no `approved` state (the agent's removal means it agreed), and a
+  new terminal `expired` state after 10 minutes without an answer.
+  - §6.5: a repeat answer within 10 minutes of resolution is `409 already_resolved` with `details.resolution`.
+  - §6.5: a solo chat's refusal follow-up is held until the running turn ends.
 - **Rev 4.4 (2026-11-08):**
   - §6.5 approvals of kind `permission` may carry an optional, display-only `questions` (non-Claude agents that ask
     questions through the permission channel). They're answered with `optionId` only, `freeText: false`.
@@ -591,9 +595,15 @@ interface Agent {
   unread: number;
   shutdown: null
     | { state: 'requested'; requestedAt: number; reason: string | null }          // reason: what the user gave
-    | { state: 'approved'; requestedAt: number; respondedAt: number }             // removal follows within ~1 s
-    | { state: 'rejected'; requestedAt: number; respondedAt: number; rejectReason: string };
-      // Cleared when the user sends a new shutdown or the agent is removed. A 'rejected' agent can be force-removed.
+    | { state: 'rejected'; requestedAt: number; respondedAt: number; rejectReason: string }
+    | { state: 'expired'; requestedAt: number; expiredAt: number; reason: string | null };
+      // Cleared when the user sends a new shutdown or the agent is removed. A 'rejected' or 'expired' agent can be
+      //   force-removed.
+      // Rev 4.5: there is NO 'approved' state. AionCore reports nothing when a teammate agrees; it removes the agent
+      //   about 0.5 s later. So clients treat "the agent left the roster while its shutdown was 'requested'" as
+      //   approved (a `team` change with `roster`).
+      // Rev 4.5: 'expired' means 10 minutes passed with neither a refusal nor a removal (the agent may be busy or
+      //   stuck). It is terminal: a late refusal doesn't change it. It arrives as a `team` / `run_state` change.
   currentTask: null | { taskId: string; subject: string };
       // The most recently updated in_progress task owned by this slot. Derived from the task board; agents don't
       //   declare it.
@@ -845,7 +855,10 @@ and stays until a core change gives Claude agents a real "always".
 
 Responses:
 - `200 {resolved: true, messageDelivery: "native" | "followup" | null}`. `null` when no `message` was sent.
-- `409 already_resolved`: answered on the PC or by another device
+- `409 already_resolved`: answered on the PC or by another device, or this phone's own retry. Rev 4.5: for 10 minutes
+  after an approval is resolved, a repeat answer gets this with `details: {resolution: 'answered' | 'cancelled',
+  resolvedAt}`, so a retry after a lost response learns how it ended. Nothing is sent twice. After that, or for an id
+  never seen, it's `404`.
 - `404 not_found`
 - `422 ambiguous_decision {details: {options: ApprovalOption[]}}`: the `decision` doesn't map to exactly one option
 
@@ -861,7 +874,9 @@ source):
 | Question decline (Claude) | `answers: None` dismisses the card. | Follow-up message. | `followup` |
 
 **Follow-up message:** right after the refusal, the bridge sends the text to the same conversation as a user message,
-using the respond-now path (delivered into the running turn if possible, otherwise first in the queue). It reads
+using the respond-now path (delivered into the running turn if possible, otherwise first in the queue). Rev 4.5: in a
+solo chat whose agent can't take a message mid-turn (ACP), "first in the queue" means the bridge holds it and sends it
+the moment the running turn ends (up to 30 minutes). `messageDelivery` is still `followup`. It reads
 `Denied <title or toolName>: <message>`. That message appears in the chat like any other. If the follow-up fails, the
 refusal still stands, and the response is `200` with `messageDelivery: null` and `details.messageError`.
 

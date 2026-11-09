@@ -1,0 +1,42 @@
+diff --git a/crates/aionui-app/tests/team_e2e.rs b/crates/aionui-app/tests/team_e2e.rs
+index 4079b3ab..d8a2aedf 100644
+--- a/crates/aionui-app/tests/team_e2e.rs
++++ b/crates/aionui-app/tests/team_e2e.rs
+@@ -560,8 +560,11 @@ async fn team_api_rejects_cross_user_access() {
+     }
+ }
+ 
++/// AionDX core-0010: pausing (Stop) a member no longer needs an active team run. A turn started by a scheduled
++/// task, or after its run ended, has none, and Stop used to answer "team run X is not active" and do nothing. The
++/// team must still be one the caller owns.
+ #[tokio::test]
+-async fn pause_team_slot_endpoint_requires_owned_team_and_active_run() {
++async fn pause_team_slot_endpoint_works_without_an_active_run_on_an_owned_team() {
+     let (mut app, services) = build_app_with_mock_agents().await;
+     let (token, csrf) = setup_and_login(&mut app, &services, "admin", "StrongP@ss1").await;
+     let data = create_team(&mut app, &services, &token, &csrf).await;
+@@ -575,11 +578,20 @@ async fn pause_team_slot_endpoint_requires_owned_team_and_active_run() {
+         &token,
+         &csrf,
+     );
+-    let resp = app.oneshot(req).await.unwrap();
+-
+-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
++    let resp = app.clone().oneshot(req).await.unwrap();
++    assert_eq!(resp.status(), StatusCode::OK);
+     let body = body_json(resp).await;
+-    assert!(body["success"].as_bool().is_some_and(|success| !success));
++    assert_eq!(body["success"], true);
++
++    let req = json_with_token(
++        "POST",
++        &format!("/api/teams/no-such-team/runs/not-a-run/agents/{lead_slot_id}/pause"),
++        json!({"reason": "user stopped"}),
++        &token,
++        &csrf,
++    );
++    let resp = app.oneshot(req).await.unwrap();
++    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+ }
+ 
+ /// I5: the interrupt endpoint had no coverage at all. Bad paths only — the happy
