@@ -123,10 +123,10 @@ function toShutdown(v: unknown): AgentShutdown {
   switch (j.state) {
     case 'requested':
       return { state: 'requested', requestedAt, reason: strOrNull(j.reason) };
-    case 'approved':
-      return { state: 'approved', requestedAt, respondedAt: num(j.respondedAt) };
     case 'rejected':
       return { state: 'rejected', requestedAt, respondedAt: num(j.respondedAt), rejectReason: str(j.rejectReason) };
+    case 'expired':
+      return { state: 'expired', requestedAt, expiredAt: num(j.expiredAt), reason: strOrNull(j.reason) };
     default:
       return null;
   }

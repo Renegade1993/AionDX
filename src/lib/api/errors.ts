@@ -54,6 +54,12 @@ export function apiErrorFrom(status: number, body: unknown): ApiError {
 export const isApiError = (err: unknown, code?: ApiErrorCode): err is ApiError =>
   err instanceof ApiError && (code === undefined || err.code === code);
 
+/**
+ * How a `409 already_resolved` approval ended (§6.5, rev 4.5 `details.resolution`). Older bridges
+ * send no details: it was answered somewhere else.
+ */
+export const resolutionOf = (err: ApiError): 'answered' | 'cancelled' => (err.details?.resolution === 'cancelled' ? 'cancelled' : 'answered');
+
 /** The user dismissed the Face ID / passcode prompt for a sensitive action. Not a failure to report. */
 export class ConfirmCancelledError extends Error {
   /**
@@ -147,7 +153,7 @@ export function describeActionError(err: unknown, fallback: string): string | nu
       case 'lead_not_allowed':
         return "That isn't available for the team lead.";
       case 'already_resolved':
-        return 'Already handled on your PC.';
+        return resolutionOf(err) === 'cancelled' ? 'No longer needed — the agent moved on.' : 'Answered on your PC.';
       case 'team_session_failed': {
         const reason = typeof err.details?.error === 'string' ? err.details.error : null;
         return reason ? `The team couldn't start: ${reason}` : "The team couldn't start.";

@@ -11,7 +11,8 @@ import { toast } from '@/state/toastStore';
 
 import type { AionDxApi } from './client';
 import { promptName } from '../confirmState';
-import { describeActionError, isApiError } from './errors';
+import { describeActionError, isApiError, resolutionOf } from './errors';
+import { TransportError } from './http';
 import { DeviceRevokedError } from './secureChannel';
 import { canConfirm, confirmStateFor, type ConfirmState } from '../confirmState';
 import type {
@@ -244,20 +245,41 @@ export function useApprovals() {
   return { ...all, data };
 }
 
+/** Approvals whose answer was sent but whose response never came back (the outcome is unknown). */
+const unconfirmedAnswers = new Set<string>();
+
+export type AnswerOutcome = AnswerResult & {
+  /** `409 already_resolved` (§6.5): answered on the PC or another device, or the agent moved on. */
+  alreadyHandled?: 'answered' | 'cancelled';
+  /** A retry after a lost response found its own earlier answer had gone through. */
+  recovered?: boolean;
+};
+
 /**
- * Answers an approval. Optimistically removes it; `409 already_resolved` counts as done (someone
- * answered on the PC). Allow answers prompt for Face ID / passcode inside the transport (§5).
+ * Answers an approval. Optimistically removes it; `409 already_resolved` counts as done.
+ * Allow answers prompt for Face ID / passcode inside the transport (§5).
  */
 export function useAnswerApproval({ quiet = false }: { quiet?: boolean } = {}) {
   const qc = useQueryClient();
   const hostId = useHostId();
   const key = keys.approvals(hostId);
-  return useMutation<AnswerResult & { alreadyHandled?: boolean }, unknown, { approval: Approval; answer: ApprovalAnswer }, { prev?: Approval[] }>({
+  return useMutation<AnswerOutcome, unknown, { approval: Approval; answer: ApprovalAnswer }, { prev?: Approval[] }>({
     mutationFn: async ({ approval, answer }) => {
+      const id = approval.approvalId;
       try {
-        return await getApi(hostId).answerApproval(approval, answer);
+        const res = await getApi(hostId).answerApproval(approval, answer);
+        unconfirmedAnswers.delete(id);
+        return res;
       } catch (err) {
-        if (isApiError(err, 'already_resolved')) return { resolved: true, messageDelivery: null, alreadyHandled: true };
+        if (isApiError(err, 'already_resolved')) {
+          const resolution = resolutionOf(err);
+          // Rev 4.5: a repeat answer within 10 min learns how it ended. If this phone's last try
+          // got lost on the way back, "answered" is most likely that try: not an error.
+          const recovered = resolution === 'answered' && unconfirmedAnswers.has(id);
+          unconfirmedAnswers.delete(id);
+          return recovered ? { resolved: true, messageDelivery: null, recovered } : { resolved: true, messageDelivery: null, alreadyHandled: resolution };
+        }
+        if (err instanceof TransportError) unconfirmedAnswers.add(id);
         throw err;
       }
     },

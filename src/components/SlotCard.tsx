@@ -22,8 +22,17 @@ export interface SlotCardProps {
   /** Accessibility custom actions (Message, Stop turn). */
   actions?: { name: string; label: string; onActivate: () => void }[];
   disabled?: boolean;
-  /** A declined shutdown, unless dismissed with Keep running on this phone (SPEC §14.1.5). */
-  rejection?: { onKeepRunning: () => void; onForceRemove?: () => void; forceIcon?: IconName; forceDisabled?: boolean } | null;
+  /**
+   * A declined or unanswered (rev 4.5 `expired`) shutdown, unless dismissed with Keep running on
+   * this phone (SPEC §14.1.5). onAskAgain: a new shutdown request, offered after no response.
+   */
+  rejection?: {
+    onKeepRunning: () => void;
+    onAskAgain?: () => void;
+    onForceRemove?: () => void;
+    forceIcon?: IconName;
+    forceDisabled?: boolean;
+  } | null;
 }
 
 /** Dashboard row (SPEC §4.3). Flashes briefly when status changes between polls. */
@@ -125,7 +134,7 @@ export function SlotCard({ agent, sessionStatus, approvals, tasks, onPress, onLo
             onPress={() => onReasonAction(reason.cta!)}
           />
         ) : null}
-        {rejection && agent.shutdown?.state === 'rejected' ? (
+        {rejection && hasShutdownOutcome(agent) ? (
           <RejectedBlock agent={agent} now={now} {...rejection} disabled={disabled} />
         ) : null}
       </Card>
@@ -147,11 +156,18 @@ function reasonColor(reason: ReasonCopy, statusText: ColorToken): ColorToken {
   }
 }
 
-/** "Declined to shut down" inset (SPEC §14.1.5). Not attention: the user was the one who asked. */
+/** A shutdown the agent declined, or never answered within 10 minutes (contract rev 4.5). */
+export const hasShutdownOutcome = (agent: Agent) => agent.shutdown?.state === 'rejected' || agent.shutdown?.state === 'expired';
+
+/**
+ * "Declined to shut down" / "No response" inset (SPEC §14.1.5). Not attention: the user was the
+ * one who asked.
+ */
 export function RejectedBlock({
   agent,
   now,
   onKeepRunning,
+  onAskAgain,
   onForceRemove,
   forceIcon,
   forceDisabled,
@@ -160,16 +176,19 @@ export function RejectedBlock({
 }: NonNullable<SlotCardProps['rejection']> & { agent: Agent; now: number; disabled?: boolean; inset?: boolean }) {
   const c = useColors();
   const [more, setMore] = useState(false);
-  if (agent.shutdown?.state !== 'rejected') return null;
-  const { rejectReason, respondedAt } = agent.shutdown;
+  const shutdown = agent.shutdown;
+  if (shutdown?.state !== 'rejected' && shutdown?.state !== 'expired') return null;
+  const expired = shutdown.state === 'expired';
+  const rejectReason = expired ? null : shutdown.rejectReason;
   return (
     <View
       accessibilityRole="summary"
       style={[styles.rejected, inset && styles.rejectedInset, { backgroundColor: c.surfaceAlt, borderLeftColor: c.stNeedsYou }]}
     >
       <Text variant="caption" color="stNeedsYouText" style={{ fontWeight: '600' }}>
-        Declined to shut down · {formatAgo(respondedAt, now)}
+        {expired ? 'No response to shutdown' : 'Declined to shut down'} · {formatAgo(expired ? shutdown.expiredAt : shutdown.respondedAt, now)}
       </Text>
+      {expired ? <Text color="textMuted">{"It didn't answer within 10 minutes. It may be busy or stuck."}</Text> : null}
       {rejectReason ? (
         <Pressable onPress={() => setMore((m) => !m)} disabled={rejectReason.length < 120} accessibilityRole="text">
           <Text numberOfLines={more ? undefined : 3}>“{rejectReason}”</Text>
@@ -177,6 +196,9 @@ export function RejectedBlock({
       ) : null}
       <View style={styles.rejectedActions}>
         <Button title="Keep running" variant="outline" compact onPress={onKeepRunning} />
+        {expired && onAskAgain ? (
+          <Button title="Ask again" variant="outline" compact icon={forceIcon} disabled={disabled || forceDisabled} onPress={onAskAgain} />
+        ) : null}
         {onForceRemove ? (
           <Button title="Force remove…" variant="dangerOutline" compact icon={forceIcon} disabled={disabled || forceDisabled} onPress={onForceRemove} />
         ) : null}

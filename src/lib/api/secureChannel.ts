@@ -115,6 +115,8 @@ export class SecureChannel {
   constructor(
     private readonly identity: DeviceIdentity,
     readonly host: PairedHost,
+    /** A different URL than before answered: persist it so it's tried first next launch. */
+    private readonly onUrlWorked?: (baseUrl: string) => void,
   ) {
     this.hostPublicKey = fromB64u(host.hostPublicKey);
   }
@@ -147,7 +149,7 @@ export class SecureChannel {
       : request;
     const envelope = sealRpcRequest(session, seq, sealed);
     const res = await postJson(this.urls(), ENDPOINTS.rpc, envelope, { timeoutMs });
-    this.preferredUrl = res.baseUrl;
+    this.urlWorked(res.baseUrl);
     this.lastActivityAt = Date.now();
 
     if (res.status === 200) return openRpcResponse(session, seq, res.json as RpcEnvelope);
@@ -186,7 +188,7 @@ export class SecureChannel {
       hostPublicKey: this.hostPublicKey,
     });
     const res = await postJson(this.urls(), ENDPOINTS.session, body);
-    this.preferredUrl = res.baseUrl;
+    this.urlWorked(res.baseUrl);
     if (res.status !== 200) throw this.handshakeError(res.status, res.json, state);
     const session = finishHandshake(this.identity, state, res.json as HandshakeResponseBody);
     this.session = session;
@@ -213,6 +215,12 @@ export class SecureChannel {
     if (status === 409 && code === 'unknown_host') return new HostResetError(this.host.hostId);
     if (code === 'clock_skew') return new ClockSkewError(hostTimeOf(json));
     return new TransportError(`Handshake failed (${status}${code ? `: ${code}` : ''})`);
+  }
+
+  private urlWorked(baseUrl: string) {
+    if (baseUrl === (this.preferredUrl ?? this.host.urls[0])) return;
+    this.preferredUrl = baseUrl;
+    this.onUrlWorked?.(baseUrl);
   }
 
   private urls(): string[] {

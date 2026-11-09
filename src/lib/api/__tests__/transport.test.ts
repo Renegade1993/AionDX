@@ -35,8 +35,12 @@ type Reply = { status: number; json: unknown };
 type Handler = (path: string, body: unknown) => Reply | Promise<Reply>;
 
 function stubFetch(handler: Handler) {
+  http.resetReachability();
   globalThis.fetch = jest.fn(async (url: string | URL, init?: RequestInit) => {
-    const reply = await handler(new URL(String(url)).pathname, JSON.parse(String(init?.body)));
+    const path = new URL(String(url)).pathname;
+    // The reachability probe before an unproven URL (§4.1).
+    if (path === '/api/mobile/v1/hello') return { status: 200, json: async () => ({ v: [1] }) } as Response;
+    const reply = await handler(path, JSON.parse(String(init?.body)));
     return { status: reply.status, json: async () => reply.json } as Response;
   }) as typeof fetch;
 }
