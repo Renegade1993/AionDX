@@ -200,6 +200,32 @@ Voice Core's pure modules (`journal.rs`, `approvals.rs`, from `phase4-core` d059
 - `Agent.shutdown` "approved" can't be observed: AionCore broadcasts nothing when a teammate approves (`notify_shutdown_acknowledged` only logs); the agent is simply removed about 0.5 s later. The state goes requested → (removed).
 - Team-chat send failures stay unlinked (`messageId: null`), as the contract says.
 
+## Phase 5, 2026-11-08: network surface (core side)
+
+The parallel modules are cherry-picked: `firewall.rs` (fe760633), and `netinfo.rs` + `mdns.rs` (bb94d097, 90f2dc35).
+mdns-sd 0.21.7 bumps libc workspace-wide.
+
+| File | What |
+|---|---|
+| `service_net.rs` | The QR `u=` list from netinfo (loopback only when bound there; the primary-address probe as a fallback). The mDNS advertiser while listening, when mDNS is on. `AIONDX_MOBILE_BIND` (loopback only; anything else is ignored with a warning). `firewall_status` (read-only show + the add plan for this exe and port). `rekey_offer_state`. |
+| `listener.rs` | On `0.0.0.0`, also `[::]` on the same port; with no IPv6, IPv4 only. |
+| `admin_routes.rs` | `GET /api/mobile/admin/firewall`, `GET /api/mobile/admin/rekey-offers/{id}`. |
+| `core.rs`, `outer.rs` | A re-key offer keeps its end state (completed / failed) and can't be replayed. |
+| `service.rs` | `status.extraUrls`; Running holds the advertiser (dropping it withdraws). |
+
+**Tests:** aionui-mobile 156 (126 unit, 19 facade, 6 e2e, 5 vectors). New: the bind switch; the firewall view; a fake-netsh
+firewall status that only ever runs the show plan; re-key pending → completed → no replay (e2e); loopback QR URLs and
+`extraUrls`.
+
+**Not covered by an automated test:**
+- The `[::]` twin of a `0.0.0.0` listener. A unit test would listen on the LAN, and Windows could show a firewall prompt.
+- A live mDNS advertisement.
+
+Both need a LAN live check (an approval gate: it listens on the LAN).
+
+**Desktop:** Voice UI Engineer's app patch 0018-mobile-settings (branch `mobile-desktop-ui`). It runs the elevated
+firewall add itself.
+
 ## Resume (2026-11-08, phase 4 done)
 
 **State.** Dev tree `aiondx-dev`:
