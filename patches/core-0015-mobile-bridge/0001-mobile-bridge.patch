@@ -524,10 +524,10 @@ index 17526034..c23179e6 100644
          .into_future();
 diff --git a/crates/aionui-app/src/router/mobile_backend.rs b/crates/aionui-app/src/router/mobile_backend.rs
 new file mode 100644
-index 00000000..2faecc20
+index 00000000..920121f2
 --- /dev/null
 +++ b/crates/aionui-app/src/router/mobile_backend.rs
-@@ -0,0 +1,506 @@
+@@ -0,0 +1,534 @@
 +#![allow(clippy::disallowed_types)] // maps domain errors through ApiError at this HTTP-facing boundary
 +
 +//! AionDX core-0015: the mobile facade's view of AionCore, over the team,
@@ -1013,6 +1013,34 @@ index 00000000..2faecc20
 +            .map_err(map_err)
 +    }
 +
++    async fn respond_now_solo(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        content: &str,
++    ) -> Result<SendOutcome, BackendError> {
++        use aionui_conversation::RespondNow;
++        let outcome = self
++            .conversation
++            .respond_now(user_id, conversation_id, content, &self.task_manager)
++            .await
++            .map_err(map_err)?;
++        Ok(match outcome {
++            RespondNow::Delivered { .. } => SendOutcome {
++                message_id: String::new(),
++                delivery: "midturn",
++            },
++            RespondNow::Sent { msg_id, .. } => SendOutcome {
++                message_id: msg_id,
++                delivery: "started",
++            },
++            RespondNow::AfterTurn => SendOutcome {
++                message_id: String::new(),
++                delivery: "queued",
++            },
++        })
++    }
++
 +    async fn answer_ask(
 +        &self,
 +        user_id: &str,
@@ -1172,8 +1200,21 @@ index 1c2ee34b..97d2122c 100644
  struct ConversationServiceDeps<'a> {
      database: &'a Database,
      work_dir: PathBuf,
+diff --git a/crates/aionui-conversation/src/lib.rs b/crates/aionui-conversation/src/lib.rs
+index a1820663..fcf2b645 100644
+--- a/crates/aionui-conversation/src/lib.rs
++++ b/crates/aionui-conversation/src/lib.rs
+@@ -41,7 +41,7 @@ pub use runtime_routes::{ConversationRuntimeRouterState, conversation_runtime_ro
+ pub use service::is_temp_session_workspace;
+ pub use service::{
+     ConversationAgentTurnOutcome, ConversationAgentTurnRequest, ConversationAgentTurnStarted,
+-    ConversationAgentTurnStartedCallback, ConversationAgentTurnStatus, ConversationService, SteerActiveTurn,
++    ConversationAgentTurnStartedCallback, ConversationAgentTurnStatus, ConversationService, RespondNow, SteerActiveTurn,
+ };
+ pub use state::ConversationRouterState;
+ 
 diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
-index 49bbde7a..d45ea207 100644
+index 49bbde7a..668f9d5d 100644
 --- a/crates/aionui-conversation/src/service.rs
 +++ b/crates/aionui-conversation/src/service.rs
 @@ -3700,6 +3700,20 @@ impl ConversationService {
@@ -1206,7 +1247,99 @@ index 49bbde7a..d45ea207 100644
  
          if let Some(conf_id) = conf_id {
              let payload = serde_json::json!({
-@@ -4359,6 +4373,9 @@ impl ConversationService {
+@@ -3848,6 +3862,21 @@ pub enum SteerActiveTurn {
+     NotAvailable { reason: &'static str },
+ }
+ 
++/// AionDX core-0015: how `respond_now` delivered a message to a solo chat.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum RespondNow {
++    /// Into the running turn; the agent reads it at its next step.
++    Delivered { turn_id: String },
++    /// The chat was idle: an ordinary send started a turn.
++    Sent { msg_id: String, turn_id: String },
++    /// A turn is running and its agent can't take a message mid-turn: the message is held and sent the moment that
++    /// turn ends (first in line, like a team's respond-now).
++    AfterTurn,
++}
++
++/// How long `respond_now` holds a message for a running turn before giving up.
++const RESPOND_NOW_HOLD: std::time::Duration = std::time::Duration::from_secs(30 * 60);
++
+ /// Is this delivery error codex's "the turn already ended" steer rejection?
+ /// codex returns a bare -32600 for both steer rejections; the message text is
+ /// the ONLY discriminator (verified 0.144.6, design spec §6甲.1). Locked by
+@@ -4063,6 +4092,69 @@ impl ConversationService {
+             }
+         }
+     }
++    /// AionDX core-0015: deliver a message to a solo chat now, whatever its state: into the running turn when the
++    /// agent can take it, as a new turn when the chat is idle, and otherwise right after the running turn ends.
++    /// The mobile bridge's refusal follow-up uses it, since right after a refused tool the turn usually still runs.
++    pub async fn respond_now(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        content: &str,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) -> Result<RespondNow, ConversationError> {
++        if let SteerActiveTurn::Delivered { turn_id } = self
++            .steer_active_turn(user_id, conversation_id, content, Vec::new(), true, task_manager)
++            .await?
++        {
++            return Ok(RespondNow::Delivered { turn_id });
++        }
++        let request = |content: &str| SendMessageRequest {
++            content: content.to_owned(),
++            files: Vec::new(),
++            sessions: Vec::new(),
++            inject_skills: Vec::new(),
++            hidden: false,
++        };
++        match self
++            .send_message(user_id, conversation_id, request(content), task_manager)
++            .await
++        {
++            Ok(r) => {
++                return Ok(RespondNow::Sent {
++                    msg_id: r.msg_id,
++                    turn_id: r.turn_id,
++                });
++            }
++            Err(ConversationError::Busy { .. }) => {}
++            Err(e) => return Err(e),
++        }
++        let (svc, tm) = (self.clone(), task_manager.clone());
++        let (user, conv, text) = (user_id.to_owned(), conversation_id.to_owned(), content.to_owned());
++        tokio::spawn(async move {
++            let deadline = tokio::time::Instant::now() + RESPOND_NOW_HOLD;
++            while tokio::time::Instant::now() < deadline {
++                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
++                if svc.runtime_state.active_turn_id_for(&conv).is_some() {
++                    continue;
++                }
++                match svc.send_message(&user, &conv, request(&text), &tm).await {
++                    Ok(_) => {
++                        info!(conversation_id = %conv, "held respond-now message sent after the turn ended");
++                        return;
++                    }
++                    // Another turn won the race; wait for that one too.
++                    Err(ConversationError::Busy { .. }) => continue,
++                    Err(e) => {
++                        warn!(conversation_id = %conv, error = %ErrorChain(&e), "held respond-now message could not be sent");
++                        return;
++                    }
++                }
++            }
++            warn!(conversation_id = %conv, "held respond-now message dropped: the turn ran past the hold limit");
++        });
++        Ok(RespondNow::AfterTurn)
++    }
++
+     /// AionDX core-0002: hand a message to the conversation's RUNNING turn without stopping it, the delivery a
+     /// solo chat's own send takes while its agent works (see `send_message`, "Mid-turn delivery"). A team
+     /// member's conversation cannot be sent to through the ordinary route, so the team layer asks for it here.
+@@ -4359,6 +4451,9 @@ impl ConversationService {
                      "user_id": user_id,
                      "conversation_id": conversation_id,
                      "msg_id": &user_msg_id,
@@ -1217,10 +1350,51 @@ index 49bbde7a..d45ea207 100644
                      "position": "right",
                      "status": "finish",
 diff --git a/crates/aionui-conversation/src/service_test.rs b/crates/aionui-conversation/src/service_test.rs
-index a6cf541d..30897b93 100644
+index a6cf541d..42752cfa 100644
 --- a/crates/aionui-conversation/src/service_test.rs
 +++ b/crates/aionui-conversation/src/service_test.rs
-@@ -5901,6 +5901,8 @@ async fn send_message_broadcasts_user_created_event() {
+@@ -4245,6 +4245,40 @@ async fn steer_active_turn_for_a_queued_message_writes_nothing_to_the_chat() {
+     assert!(!broadcaster.take_events().iter().any(|e| e.name == "message.userCreated"));
+ }
+ 
++/// AionDX core-0015: a refusal follow-up to a solo chat whose agent can't take a message mid-turn is held while
++/// the turn runs, and sent as soon as it ends (QA AP6). An idle chat gets it straight away.
++#[tokio::test]
++async fn respond_now_holds_the_message_until_the_running_turn_ends() {
++    let (svc, _broadcaster, repo, task_mgr) = make_service();
++    let conv = svc.create("user_1", make_create_req()).await.unwrap();
++    let has = |text: &str| {
++        repo.messages
++            .lock()
++            .unwrap()
++            .iter()
++            .any(|m| m.position.as_deref() == Some("right") && m.content.contains(text))
++    };
++
++    let mut claim = svc
++        .runtime_state()
++        .try_claim_turn(&conv.id, "turn_running")
++        .expect("claim the running turn");
++    let held = svc
++        .respond_now("user_1", &conv.id, "Denied Bash: use pnpm", &task_mgr)
++        .await
++        .unwrap();
++    assert_eq!(held, crate::RespondNow::AfterTurn);
++    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
++    assert!(!has("Denied Bash: use pnpm"), "nothing is sent while the turn runs");
++
++    claim.release();
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
++    while !has("Denied Bash: use pnpm") {
++        assert!(std::time::Instant::now() < deadline, "the held message was never sent");
++        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
++    }
++}
++
+ /// AionDX core-0002: nothing is delivered, written or changed when there is no running turn, or the turn is
+ /// waiting on a permission card.
+ #[tokio::test]
+@@ -5901,6 +5935,8 @@ async fn send_message_broadcasts_user_created_event() {
      assert_eq!(user_created.data["msg_id"], response.msg_id);
      assert_eq!(user_created.data["content"], "Hello");
      assert_eq!(user_created.data["position"], "right");
@@ -3634,10 +3808,10 @@ index 00000000..dcb63878
 +}
 diff --git a/crates/aionui-mobile/src/backend.rs b/crates/aionui-mobile/src/backend.rs
 new file mode 100644
-index 00000000..e99099f7
+index 00000000..033ee2a2
 --- /dev/null
 +++ b/crates/aionui-mobile/src/backend.rs
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,234 @@
 +//! The facade's view of AionCore (CONTRACT §6). `aionui-app` implements it over
 +//! the team, conversation and assistant services; this crate depends on no
 +//! domain crate. Every call acts as `user_id`, the Core user the phone was
@@ -3797,6 +3971,16 @@ index 00000000..e99099f7
 +    /// AionCore's confirm, with the user's refusal reason for backends that take one natively.
 +    async fn confirm(&self, _user_id: &str, _call: ConfirmCall) -> Result<(), BackendError> {
 +        Err(BackendError::Unavailable("approvals are not available".into()))
++    }
++    /// A message to a solo chat that must not be refused because a turn is running (the refusal follow-up,
++    /// CONTRACT §6.5): into the running turn, as a new turn, or held until the running turn ends.
++    async fn respond_now_solo(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        content: &str,
++    ) -> Result<SendOutcome, BackendError> {
++        self.send_solo(user_id, conversation_id, content).await
 +    }
 +    /// AionCore's AskUserQuestion answer; `answers: None` declines.
 +    async fn answer_ask(
@@ -5085,10 +5269,10 @@ index 00000000..053851a3
 +}
 diff --git a/crates/aionui-mobile/src/facade_live.rs b/crates/aionui-mobile/src/facade_live.rs
 new file mode 100644
-index 00000000..19c373df
+index 00000000..31c111dd
 --- /dev/null
 +++ b/crates/aionui-mobile/src/facade_live.rs
-@@ -0,0 +1,796 @@
+@@ -0,0 +1,844 @@
 +//! Phase 4: the live side of the facade (CONTRACT §6.2, §6.5).
 +//!
 +//! AionCore's event bus feeds `Facade::on_event`, which turns bus events into change-journal entries and keeps the
@@ -5132,6 +5316,17 @@ index 00000000..19c373df
 +/// A request with neither a removal nor a refusal after this long becomes `expired` (CONTRACT rev 4.5).
 +pub const SHUTDOWN_TIMEOUT_MS: i64 = 10 * 60 * 1000;
 +
++/// How long a resolved approval's id is remembered, so a retried or late answer gets `409` with the outcome
++/// instead of `404` (QA AP5).
++const RESOLVED_MEMORY_MS: i64 = 10 * 60 * 1000;
++
++/// A resolved approval: who it belonged to, how it ended, and when.
++struct Resolved {
++    user_id: String,
++    resolution: Resolution,
++    at: i64,
++}
++
 +/// What `on_event` learns and keeps between events.
 +pub(crate) struct Live {
 +    pub(crate) journal: ChangeJournal,
@@ -5144,6 +5339,8 @@ index 00000000..19c373df
 +    session_status: Mutex<HashMap<String, String>>,
 +    /// Per conversation: where its approvals come from, or None when it can't be resolved (not a live agent).
 +    origins: Mutex<HashMap<String, Option<ApprovalOrigin>>>,
++    /// Recently resolved approvals by id (`RESOLVED_MEMORY_MS`).
++    resolved: Mutex<HashMap<String, Resolved>>,
 +    /// Users whose live conversations were reconciled since start (or since the bus lagged).
 +    swept: Mutex<HashSet<String>>,
 +}
@@ -5153,6 +5350,7 @@ index 00000000..19c373df
 +        Self {
 +            journal: ChangeJournal::new(JOURNAL_MAX_ENTRIES, JOURNAL_MAX_AGE_MS),
 +            approvals: ApprovalTracker::new(),
++            resolved: Mutex::new(HashMap::new()),
 +            session_status: Mutex::new(HashMap::new()),
 +            turn_messages: Mutex::new(std::collections::VecDeque::new()),
 +            errored: Mutex::new(HashMap::new()),
@@ -5485,6 +5683,19 @@ index 00000000..19c373df
 +    }
 +
 +    async fn approval_gone(&self, user: &str, conversation_id: &str, approval_id: String, resolution: Resolution) {
++        {
++            let now = now_ms();
++            let mut resolved = self.live.resolved.lock().unwrap();
++            resolved.retain(|_, r| now - r.at < RESOLVED_MEMORY_MS);
++            resolved.insert(
++                approval_id.clone(),
++                Resolved {
++                    user_id: user.to_owned(),
++                    resolution,
++                    at: now,
++                },
++            );
++        }
 +        let team_id = self.origin(user, conversation_id).await.and_then(|o| o.team_id);
 +        if let Some(t) = &team_id {
 +            self.record_team(user, t, &[TeamWhat::RunState]);
@@ -5651,7 +5862,7 @@ index 00000000..19c373df
 +            .get(approval_id)
 +            .filter(|t| t.origin.user_id == user)
 +        else {
-+            return InnerResponse::error(404, "not_found", "No such pending approval");
++            return self.not_pending(user, approval_id);
 +        };
 +        let input = match answer_input(body) {
 +            Ok(i) => i,
@@ -5777,9 +5988,30 @@ index 00000000..19c373df
 +                .map(|_| ()),
 +            _ => self
 +                .backend
-+                .send_solo(user, &o.conversation_id, &text)
++                .respond_now_solo(user, &o.conversation_id, &text)
 +                .await
 +                .map(|_| ()),
++        }
++    }
++}
++
++impl Facade {
++    /// An answer for an approval that isn't pending: `409` with how it ended when it was resolved in the last
++    /// `RESOLVED_MEMORY_MS` (answered elsewhere, a retry after a lost response, or the turn ended), else `404`.
++    fn not_pending(&self, user: &str, approval_id: &str) -> InnerResponse {
++        let resolved = self.live.resolved.lock().unwrap();
++        match resolved
++            .get(approval_id)
++            .filter(|r| r.user_id == user && now_ms() - r.at < RESOLVED_MEMORY_MS)
++        {
++            Some(r) => {
++                let mut resp = already_resolved();
++                if let Some(b) = resp.body.as_mut() {
++                    b["error"]["details"] = json!({ "resolution": r.resolution, "resolvedAt": r.at });
++                }
++                resp
++            }
++            None => InnerResponse::error(404, "not_found", "No such pending approval"),
 +        }
 +    }
 +}
@@ -13100,10 +13332,10 @@ index 00000000..9855cfc9
 +}
 diff --git a/crates/aionui-mobile/tests/facade_routes.rs b/crates/aionui-mobile/tests/facade_routes.rs
 new file mode 100644
-index 00000000..d4484fc3
+index 00000000..84e386e9
 --- /dev/null
 +++ b/crates/aionui-mobile/tests/facade_routes.rs
-@@ -0,0 +1,1348 @@
+@@ -0,0 +1,1411 @@
 +//! The phase 2 read routes through the real facade, over a fake AionCore
 +//! whose fixtures are AionCore's own JSON forms.
 +
@@ -13378,6 +13610,13 @@ index 00000000..d4484fc3
 +            }),
 +            _ => Err(BackendError::NotFound(c.into())),
 +        }
++    }
++    async fn respond_now_solo(&self, _u: &str, c: &str, content: &str) -> Result<SendOutcome, BackendError> {
++        self.log(format!("respond_now_solo {c} {content}"));
++        Ok(SendOutcome {
++            message_id: String::new(),
++            delivery: "queued",
++        })
 +    }
 +    async fn live_conversations(&self, _u: &str) -> Result<Vec<String>, BackendError> {
 +        Ok(vec!["c2".into()])
@@ -14047,6 +14286,22 @@ index 00000000..d4484fc3
 +    assert_eq!(removed[0]["approvalId"], id.as_str());
 +    assert_eq!(removed[0]["resolution"], "answered");
 +    assert!(approval_ids(&f).await.is_empty());
++
++    // A retry (say, after a lost response) learns it is resolved, and how; nothing is sent twice (QA AP5).
++    let before = fake.calls().len();
++    let (status, body) = call(
++        &f,
++        ConfirmCheck::Verified,
++        "POST",
++        &format!("/v1/approvals/{id}/answer"),
++        json!({ "decision": "deny" }),
++    )
++    .await;
++    assert_eq!(status, 409, "{body}");
++    assert_eq!(body["error"]["code"], "already_resolved");
++    assert_eq!(body["error"]["details"]["resolution"], "answered");
++    assert!(body["error"]["details"]["resolvedAt"].is_i64());
++    assert_eq!(fake.calls().len(), before);
 +}
 +
 +#[tokio::test]
@@ -14451,6 +14706,46 @@ index 00000000..d4484fc3
 +    .await;
 +    let (_, agent) = get(&f, "/v1/teams/t1/agents/s2").await.unwrap();
 +    assert_eq!(agent["shutdown"]["state"], "expired");
++}
++
++/// QA AP6: a refusal reason for a SOLO chat goes through respond-now (held until a running turn ends), never the
++/// plain send that a running turn refuses.
++#[tokio::test]
++async fn a_solo_refusal_reason_goes_respond_now() {
++    let (fake, f) = facade();
++    let mut frame = acp_frame("call-s");
++    frame["conversation_id"] = json!("c9");
++    emit(&f, "message.stream", frame).await;
++    let mut row = listed("call-s");
++    row["conversation_id"] = json!("c9");
++    *fake.pending.lock().unwrap() = vec![row];
++    // (The fake lists its confirmations for every conversation, so the first listing also recovers a c2 copy.)
++    let (_, list) = get(&f, "/v1/approvals").await.unwrap();
++    let id = list["items"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|a| a["conversationId"] == "c9")
++        .unwrap()["approvalId"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    let (status, body) = call(
++        &f,
++        ConfirmCheck::Missing,
++        "POST",
++        &format!("/v1/approvals/{id}/answer"),
++        json!({ "decision": "deny", "message": "use pnpm" }),
++    )
++    .await;
++    assert_eq!(status, 200, "{body}");
++    assert_eq!(body, json!({ "resolved": true, "messageDelivery": "followup" }));
++    let calls = fake.calls();
++    assert!(
++        calls.contains(&"respond_now_solo c9 Denied Bash: use pnpm".to_owned()),
++        "{calls:?}"
++    );
++    assert!(!calls.iter().any(|c| c.starts_with("send_solo")), "{calls:?}");
 +}
 diff --git a/crates/aionui-mobile/tests/protocol_e2e.rs b/crates/aionui-mobile/tests/protocol_e2e.rs
 new file mode 100644

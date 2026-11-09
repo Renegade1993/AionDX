@@ -20,6 +20,8 @@
   "Allow Always" relabel wording is fixed in §6.5. §8 adds Private Party Net (WireGuard) as a to-verify item.
 - **Rev 4.5 (2026-11-08):** §6.3 `Agent.shutdown`: no `approved` state (the agent's removal means it agreed), and a
   new terminal `expired` state after 10 minutes without an answer.
+  - §6.5: a repeat answer within 10 minutes of resolution is `409 already_resolved` with `details.resolution`.
+  - §6.5: a solo chat's refusal follow-up is held until the running turn ends.
 - **Rev 4.4 (2026-11-08):**
   - §6.5 approvals of kind `permission` may carry an optional, display-only `questions` (non-Claude agents that ask
     questions through the permission channel). They're answered with `optionId` only, `freeText: false`.
@@ -853,7 +855,10 @@ and stays until a core change gives Claude agents a real "always".
 
 Responses:
 - `200 {resolved: true, messageDelivery: "native" | "followup" | null}`. `null` when no `message` was sent.
-- `409 already_resolved`: answered on the PC or by another device
+- `409 already_resolved`: answered on the PC or by another device, or this phone's own retry. Rev 4.5: for 10 minutes
+  after an approval is resolved, a repeat answer gets this with `details: {resolution: 'answered' | 'cancelled',
+  resolvedAt}`, so a retry after a lost response learns how it ended. Nothing is sent twice. After that, or for an id
+  never seen, it's `404`.
 - `404 not_found`
 - `422 ambiguous_decision {details: {options: ApprovalOption[]}}`: the `decision` doesn't map to exactly one option
 
@@ -869,7 +874,9 @@ source):
 | Question decline (Claude) | `answers: None` dismisses the card. | Follow-up message. | `followup` |
 
 **Follow-up message:** right after the refusal, the bridge sends the text to the same conversation as a user message,
-using the respond-now path (delivered into the running turn if possible, otherwise first in the queue). It reads
+using the respond-now path (delivered into the running turn if possible, otherwise first in the queue). Rev 4.5: in a
+solo chat whose agent can't take a message mid-turn (ACP), "first in the queue" means the bridge holds it and sends it
+the moment the running turn ends (up to 30 minutes). `messageDelivery` is still `followup`. It reads
 `Denied <title or toolName>: <message>`. That message appears in the chat like any other. If the follow-up fails, the
 refusal still stands, and the response is `200` with `messageDelivery: null` and `details.messageError`.
 

@@ -223,6 +223,13 @@ firewall status that only ever runs the show plan; re-key pending → completed 
 
 Both need a LAN live check (an approval gate: it listens on the LAN).
 
+**Phase 5b, QA phase 4 fixes:**
+- AP6: a solo refusal follow-up goes through `ConversationService::respond_now`: into the running turn, a new turn,
+  or held until the running turn ends (an ACP agent's turn keeps running after a refused tool). There's a
+  conversation-service test with a turn held running.
+- AP5: a repeat answer within 10 minutes is `409` with `details.resolution`.
+- CONTRACT rev 4.5 notes both.
+
 **Desktop:** Voice UI Engineer's app patch 0018-mobile-settings (branch `mobile-desktop-ui`). It runs the elevated
 firewall add itself.
 
