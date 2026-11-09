@@ -60,6 +60,8 @@ interface ConnectionState {
   addDemoHost: () => Promise<void>;
   /** Persists a change to one pairing (e.g. its confirm state) and rebuilds its API client. */
   updateHost: (hostId: string, patch: Partial<PairedHost>) => Promise<void>;
+  /** Moves the URL that last worked to the front, so it's tried first next launch. Keeps the live client. */
+  rememberUrl: (hostId: string, baseUrl: string) => Promise<void>;
   /** Stores a re-issued confirm key under its mode and clears any key problem (SPEC §15.3 R3). */
   storeConfirmKey: (hostId: string, key: Uint8Array, mode: ConfirmMode) => Promise<void>;
   setActiveHost: (hostId: string) => void;
@@ -147,6 +149,12 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
     set({ hosts });
   },
 
+  rememberUrl: async (hostId, baseUrl) => {
+    const hosts = get().hosts.map((h) => (h.hostId === hostId ? { ...h, urls: [baseUrl, ...h.urls.filter((u) => u !== baseUrl)] } : h));
+    await savePairedHosts(hosts);
+    set({ hosts });
+  },
+
   storeConfirmKey: async (hostId, key, mode) => {
     // The demo PC has no keystore entry: its "key" is the simulated prompt.
     if (!isDemo(hostId)) await saveConfirmKey(hostId, key, mode);
@@ -193,7 +201,7 @@ export function getApi(hostId: string): AionDxApi {
   } else {
     const identity = identities[hostId];
     if (!identity) throw new Error('No device identity for this PC. Pair it again.');
-    api = createApi(createSecureTransport(new SecureChannel(identity, host), { onKeyProblem: () => markKeyInvalid(hostId) }));
+    api = createApi(createSecureTransport(new SecureChannel(identity, host, (url) => void useConnectionStore.getState().rememberUrl(hostId, url)), { onKeyProblem: () => markKeyInvalid(hostId) }));
   }
   apis.set(hostId, api);
   return api;

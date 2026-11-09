@@ -27,20 +27,23 @@ export default function ApprovalsInbox() {
   const offline = useIsOffline();
   const sensitive = useSensitive();
   // Resolved cards linger 1 s with their outcome before leaving the list.
-  const [resolved, setResolved] = useState<Record<string, 'Allowed ✓' | 'Denied'>>({});
+  const [resolved, setResolved] = useState<Record<string, string>>({});
   const [lingering, setLingering] = useState<Approval[]>([]);
 
   const act = async (a: Approval, option: ApprovalOption) => {
     const allow = option.kind.startsWith('allow_');
+    let res;
     try {
-      await answer.mutateAsync({ approval: a, answer: { optionId: option.optionId } });
+      res = await answer.mutateAsync({ approval: a, answer: { optionId: option.optionId } });
     } catch (err) {
       // The options changed under us: the sheet shows the full list.
       if (isApiError(err, 'ambiguous_decision')) openSheet(a.approvalId);
       return;
     }
+    const outcome =
+      res.alreadyHandled === 'cancelled' ? 'No longer needed' : res.alreadyHandled === 'answered' ? 'Answered on PC' : allow ? 'Allowed ✓' : 'Denied';
     setLingering((l) => [...l, a]);
-    setResolved((r) => ({ ...r, [a.approvalId]: allow ? 'Allowed ✓' : 'Denied' }));
+    setResolved((r) => ({ ...r, [a.approvalId]: outcome }));
     setTimeout(() => setLingering((l) => l.filter((x) => x.approvalId !== a.approvalId)), 1000);
   };
 
@@ -112,7 +115,7 @@ export default function ApprovalsInbox() {
                   )}
                 </Pressable>
                 {outcome ? (
-                  <Text variant="headline" color={outcome === 'Denied' ? 'danger' : 'stWorkingText'} style={{ marginTop: space.sm }}>
+                  <Text variant="headline" color={outcome === 'Denied' ? 'danger' : outcome === 'No longer needed' ? 'textMuted' : 'stWorkingText'} style={{ marginTop: space.sm }}>
                     {outcome}
                   </Text>
                 ) : quick ? (

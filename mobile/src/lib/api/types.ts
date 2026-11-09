@@ -100,8 +100,10 @@ export type AgentRuntime = 'dormant' | 'pending' | 'ready' | 'failed';
 export type AgentShutdown =
   | null
   | { state: 'requested'; requestedAt: number; reason: string | null }
-  | { state: 'approved'; requestedAt: number; respondedAt: number }
-  | { state: 'rejected'; requestedAt: number; respondedAt: number; rejectReason: string };
+  | { state: 'rejected'; requestedAt: number; respondedAt: number; rejectReason: string }
+  // Rev 4.5: 10 minutes with neither a refusal nor a removal. There is no 'approved' state: an agent
+  // that agrees just leaves the roster.
+  | { state: 'expired'; requestedAt: number; expiredAt: number; reason: string | null };
 
 export interface Agent {
   slotId: string;

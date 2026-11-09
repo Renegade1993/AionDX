@@ -58,7 +58,8 @@ export default function ApprovalSheet() {
       return next;
     });
   const [resolvedHere, setResolvedHere] = useState(false);
-  const [handledOnPc, setHandledOnPc] = useState(false);
+  // 409 already_resolved: how it ended (§6.5).
+  const [handledOnPc, setHandledOnPc] = useState<'answered' | 'cancelled' | null>(null);
   // Errors show inside the sheet, above its footer: a toast would sit behind a web form sheet.
   const [error, setError] = useState<string | null>(null);
   // Re-confirm is offered with an error only when the confirm key is the problem.
@@ -72,7 +73,7 @@ export default function ApprovalSheet() {
   const [snapshot, setSnapshot] = useState<Approval | undefined>(live);
   if (live && live !== snapshot) setSnapshot(live);
 
-  const handledElsewhere = handledOnPc || (!!snapshot && !live && approvals.isFetched && !resolvedHere);
+  const handledElsewhere = !!handledOnPc || (!!snapshot && !live && approvals.isFetched && !resolvedHere);
   useEffect(() => {
     if (!handledElsewhere) return;
     const t = setTimeout(() => (router.canGoBack() ? router.back() : router.replace('/')), 1500);
@@ -98,12 +99,15 @@ export default function ApprovalSheet() {
     try {
       const res = await answer.mutateAsync({ approval, answer: body });
       if (res.alreadyHandled) {
-        setHandledOnPc(true);
+        drafts.delete(approvalId);
+        setHandledOnPc(res.alreadyHandled);
         return;
       }
       drafts.delete(approvalId);
       clearCancelNotices();
-      toastFor(res, approval, body, message);
+      // A retry found its own earlier answer had arrived; how a message was delivered isn't known.
+      if (res.recovered) toast('Your answer went through', 'success');
+      else toastFor(res, approval, body, message);
       if (router.canGoBack()) router.back();
       else router.replace('/');
     } catch (err) {
@@ -237,8 +241,14 @@ export default function ApprovalSheet() {
       <View style={[styles.footer, { borderTopColor: c.border, paddingBottom: insets.bottom + space.md }]}>
         {handledElsewhere ? (
           <View style={styles.row}>
-            <Icon name="checkmark-done" color="stWorking" />
-            <Text variant="headline">{approval.kind === 'question' ? 'Answered on your PC' : 'Already handled on PC'}</Text>
+            <Icon name={handledOnPc === 'cancelled' ? 'arrow-redo-outline' : 'checkmark-done'} color={handledOnPc === 'cancelled' ? 'textMuted' : 'stWorking'} />
+            <Text variant="headline" style={{ flex: 1 }}>
+              {handledOnPc === 'cancelled'
+                ? 'No longer needed — the agent moved on'
+                : handledOnPc === 'answered' || approval.kind === 'question'
+                  ? 'Answered on your PC'
+                  : 'Already handled on PC'}
+            </Text>
           </View>
         ) : (
           <>
@@ -560,7 +570,9 @@ function toastFor(res: AnswerResult, approval: Approval, body: ApprovalAnswer, m
   if (!message) return;
   const what = 'decline' in body ? 'note' : 'reason';
   if (res.messageDelivery === 'native') toast(`Denied. ${approval.agentName} got your reason.`, 'success');
-  else if (res.messageDelivery === 'followup') toast(`${'decline' in body ? 'Declined' : 'Denied'}. Your ${what} was posted in the chat.`, 'success', openChat);
+  // Rev 4.5: a follow-up reaches the agent when its running turn ends, not necessarily now.
+  else if (res.messageDelivery === 'followup')
+    toast(`${'decline' in body ? 'Declined' : 'Denied'}. Your ${what} will be posted when ${approval.agentName} finishes its current step.`, 'success', openChat);
   else toast(`${'decline' in body ? 'Declined' : 'Denied'}, but your message wasn't delivered.`, 'error', openChat);
 }
 

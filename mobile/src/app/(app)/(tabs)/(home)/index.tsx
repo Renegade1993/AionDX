@@ -2,10 +2,10 @@ import { router, Stack } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
-import { canForceRemove, canStop, confirmForceRemove, confirmStop, openThread, promptInstruction, showQuickActions } from '@/components/agentActions';
+import { canForceRemove, canShutDown, canStop, confirmForceRemove, confirmShutdown, confirmStop, openThread, promptInstruction, showQuickActions } from '@/components/agentActions';
 import { useSensitive } from '@/components/confirm';
 import { FreshnessIndicator, useHostLabel } from '@/components/Banners';
-import { SlotCard } from '@/components/SlotCard';
+import { hasShutdownOutcome, SlotCard } from '@/components/SlotCard';
 import { TabChrome, TeamSwitcherTitle } from '@/components/TeamHeader';
 import { usePullRefresh } from '@/components/usePullRefresh';
 import { Button } from '@/components/ui/Button';
@@ -52,6 +52,7 @@ export default function Dashboard() {
   const sessionUp = sessionStatus === 'ready' || sessionStatus === undefined;
 
   // When an agent that was shutting down leaves the roster: "QA Engineer was removed" (SPEC §14.1.5).
+  // Rev 4.5 has no 'approved' state: leaving the roster while the request is pending is the agreement.
   const removing = useRef(new Map<string, string>());
   useEffect(() => {
     if (!agents) return;
@@ -60,15 +61,16 @@ export default function Dashboard() {
       if (!present.has(slotId)) toast(`${name} was removed`);
     }
     removing.current = new Map(
-      agents.filter((a) => a.shutdown?.state === 'approved' || a.blockedReason === 'removing').map((a) => [a.slotId, a.name]),
+      agents.filter((a) => a.shutdown?.state === 'requested' || a.blockedReason === 'removing').map((a) => [a.slotId, a.name]),
     );
   }, [agents]);
 
   const rejectionKey = (a: Agent) => `${hostId}:${a.slotId}`;
   const rejectionFor = (a: Agent) =>
-    a.shutdown?.state === 'rejected' && dismissed[rejectionKey(a)] !== a.shutdown.requestedAt
+    hasShutdownOutcome(a) && dismissed[rejectionKey(a)] !== a.shutdown!.requestedAt
       ? {
           onKeepRunning: () => updatePrefs({ dismissedRejections: { ...dismissed, [rejectionKey(a)]: a.shutdown!.requestedAt } }),
+          onAskAgain: canShutDown(a) && sessionUp ? () => void confirmShutdown(a, actions, sensitive, hostId) : undefined,
           onForceRemove: canForceRemove(a) && sessionUp ? () => confirmForceRemove(a, actions, sensitive, hostId) : undefined,
           forceIcon: sensitive.icon,
           forceDisabled: !sensitive.available,

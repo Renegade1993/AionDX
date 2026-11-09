@@ -2,10 +2,10 @@ import { QueryClient } from '@tanstack/react-query';
 
 import { createApi, isSensitiveAnswer } from '../api/api';
 import { applyChanges, resetHost } from '../api/changeFeed';
-import { ApiError, cancelNotice, ConfirmCancelledError, ConfirmUnavailableError, describeActionError } from '../api/errors';
+import { ApiError, cancelNotice, ConfirmCancelledError, ConfirmUnavailableError, describeActionError, resolutionOf } from '../api/errors';
 import { keys, upsertMessages } from '../api/hooks';
 import { approvalHeading, toAgent, toApproval, toChanges, toMessage, toMessageSync, toRunState, toTask } from '../api/mappers';
-import { isUsableBaseUrl, joinUrl, postJson } from '../api/http';
+import { isUsableBaseUrl, joinUrl, postJson, resetReachability } from '../api/http';
 import { createMockFacade, DEMO_REKEY_SECRET, type MockFacade } from '../api/mock/facade';
 import { generateKeyPair } from '../crypto/primitives';
 import { encodePairingUri, parsePairingUri } from '../crypto/protocol';
@@ -65,7 +65,6 @@ describe('agent display status', () => {
     expect(agentStatusKey(agent({ attention: 'needs_approval', state: 'running' }))).toBe('needs_you');
     expect(agentStatusKey(agent({ attention: 'error' }))).toBe('error');
     expect(agentStatusKey(agent({ runtime: 'failed' }))).toBe('error');
-    expect(agentStatusKey(agent({ shutdown: { state: 'approved', requestedAt: 1, respondedAt: 2 } }))).toBe('removing');
     expect(agentStatusKey(agent({ blockedReason: 'removing' }))).toBe('removing');
     expect(agentStatusKey(agent({ shutdown: { state: 'requested', requestedAt: 1, reason: null }, state: 'running' }))).toBe('shutting_down');
     expect(agentStatusKey(agent({ state: 'paused' }))).toBe('paused');
@@ -74,6 +73,14 @@ describe('agent display status', () => {
     expect(agentStatusKey(agent({ state: 'queued' }))).toBe('idle');
     // A rejected shutdown isn't a status: the real state shows.
     expect(agentStatusKey(agent({ state: 'running', shutdown: { state: 'rejected', requestedAt: 1, respondedAt: 2, rejectReason: 'no' } }))).toBe('working');
+    // Neither is an unanswered one (rev 4.5 'expired').
+    expect(agentStatusKey(agent({ state: 'paused', shutdown: { state: 'expired', requestedAt: 1, expiredAt: 2, reason: null } }))).toBe('paused');
+  });
+
+  it('maps rev 4.5 shutdown states: expired is kept, the retired approved is dropped', () => {
+    const shutdownOf = (shutdown: unknown) => toAgent({ slotId: 's', name: 'A', conversationId: 'c', shutdown })!.shutdown;
+    expect(shutdownOf({ state: 'expired', requestedAt: 1, expiredAt: 600_001, reason: 'Done' })).toEqual({ state: 'expired', requestedAt: 1, expiredAt: 600_001, reason: 'Done' });
+    expect(shutdownOf({ state: 'approved', requestedAt: 1, respondedAt: 2 })).toBeNull();
   });
 
   it('shows "Not running" while the team session is down, but still surfaces errors', () => {
@@ -386,7 +393,23 @@ describe('demo facade via createApi', () => {
     const allow = first.options.find((o) => o.kind === 'allow_once')!;
     await expect(api.answerApproval(first, { optionId: allow.optionId })).resolves.toMatchObject({ resolved: true, messageDelivery: null });
     expect(gate).toHaveBeenCalledWith(expect.stringMatching(/^Allow /));
-    await expect(api.answerApproval(first, { optionId: allow.optionId })).rejects.toMatchObject({ status: 409, code: 'already_resolved' });
+    await expect(api.answerApproval(first, { optionId: allow.optionId })).rejects.toMatchObject({
+      status: 409,
+      code: 'already_resolved',
+      details: { resolution: 'answered', resolvedAt: expect.any(Number) },
+    });
+    // Rev 4.5: an id the bridge never saw is 404, not 409.
+    await expect(api.answerApproval({ ...first, approvalId: 'never-seen' }, { optionId: allow.optionId })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("tells a removed agent's approvals apart: 409 cancelled (rev 4.5)", async () => {
+    const api = setup();
+    const a = (await api.listApprovals(T)).find((x) => x.slotId === 'mobile')!;
+    await api.forceRemoveAgent(T, 'mobile');
+    const err = await api.answerApproval(a, { optionId: 'opt-reject-once' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 409, code: 'already_resolved', details: { resolution: 'cancelled' } });
+    expect(resolutionOf(err as ApiError)).toBe('cancelled');
+    expect(describeActionError(err, 'x')).toBe('No longer needed — the agent moved on.');
   });
 
   it('refusals skip the gate; a message on an allow is rejected (400)', async () => {
@@ -407,6 +430,19 @@ describe('demo facade via createApi', () => {
     expect((await api.getAgent(T, 'research')).shutdown).toMatchObject({ state: 'requested', reason: 'Duplicate' });
     await jest.advanceTimersByTimeAsync(3000);
     expect((await api.getAgent(T, 'research')).shutdown?.state).toBe('rejected');
+  });
+
+  it('an agent that agrees leaves the roster; a paused one never answers and expires (rev 4.5)', async () => {
+    const api = setup(4000);
+    await api.shutdownAgent(T, 'qa');
+    await api.shutdownAgent(T, 'release');
+    await jest.advanceTimersByTimeAsync(3500);
+    let run = await api.getRunState(T);
+    expect(run.agents.find((a) => a.slotId === 'qa')).toBeUndefined();
+    expect(run.agents.find((a) => a.slotId === 'release')?.shutdown?.state).toBe('requested');
+    await jest.advanceTimersByTimeAsync(13_000);
+    run = await api.getRunState(T);
+    expect(run.agents.find((a) => a.slotId === 'release')?.shutdown).toMatchObject({ state: 'expired', reason: null });
   });
 
   it('task create notifies the owner with a user-sent notice (rev 4.1)', async () => {
@@ -596,8 +632,57 @@ describe('contract rev 4.4', () => {
       calls.push(String(url));
       return { status: 200, json: async () => ({}) } as Response;
     }) as typeof fetch;
+    resetReachability();
     await postJson(['http://[fe80::1%25en0]:47734', 'http://[fd12::1]:47734'], '/api/mobile/v1/session', {});
-    expect(calls).toEqual(['http://[fd12::1]:47734/api/mobile/v1/session']);
+    expect(calls).toEqual(['http://[fd12::1]:47734/api/mobile/v1/hello', 'http://[fd12::1]:47734/api/mobile/v1/session']);
+  });
+});
+
+describe('URL failover (bridge lead, rev 4.5)', () => {
+  const realFetch = globalThis.fetch;
+  beforeEach(() => resetReachability());
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    resetReachability();
+  });
+  /** dead: never connects (only the abort ends it). slowMs: how long a live URL takes to answer. */
+  const fakeNet = ({ dead, slowMs = 0 }: { dead: string[]; slowMs?: number }) => {
+    const calls: string[] = [];
+    globalThis.fetch = jest.fn((url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      calls.push(u);
+      return new Promise<Response>((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        if (dead.some((d) => u.startsWith(d))) return;
+        setTimeout(() => resolve({ status: 200, json: async () => ({ ok: u }) } as Response), u.endsWith('/hello') ? 0 : slowMs);
+      });
+    }) as typeof fetch;
+    return calls;
+  };
+
+  it('skips a dead first URL after the short connect timeout, then remembers the live one', async () => {
+    const calls = fakeNet({ dead: ['http://10.5.0.2'] });
+    const urls = ['http://10.5.0.2:47734', 'http://[fd12::1]:47734'];
+    const started = Date.now();
+    const res = await postJson(urls, '/api/mobile/v1/session', {}, { timeoutMs: 30_000, connectTimeoutMs: 100 });
+    expect(res.baseUrl).toBe('http://[fd12::1]:47734');
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(calls).toEqual(['http://10.5.0.2:47734/api/mobile/v1/hello', 'http://[fd12::1]:47734/api/mobile/v1/hello', 'http://[fd12::1]:47734/api/mobile/v1/session']);
+    // Answered just now: the next request goes straight to it, with no probe.
+    calls.length = 0;
+    await postJson(['http://[fd12::1]:47734', ...urls], '/api/mobile/v1/rpc', {}, { connectTimeoutMs: 100 });
+    expect(calls).toEqual(['http://[fd12::1]:47734/api/mobile/v1/rpc']);
+  });
+
+  it("doesn't cut a long-poll short: the connect timeout covers reaching the PC, not the response", async () => {
+    fakeNet({ dead: [], slowMs: 400 });
+    const res = await postJson(['http://192.168.1.5:47734'], '/api/mobile/v1/rpc', {}, { timeoutMs: 5000, connectTimeoutMs: 100 });
+    expect(res).toMatchObject({ status: 200, baseUrl: 'http://192.168.1.5:47734' });
+  });
+
+  it('fails with TransportError when no URL connects', async () => {
+    fakeNet({ dead: ['http://'] });
+    await expect(postJson(['http://10.0.0.1:1', 'http://10.0.0.2:1'], '/api/mobile/v1/pair', {}, { connectTimeoutMs: 50 })).rejects.toThrow(/Could not reach your PC/);
   });
 });
 

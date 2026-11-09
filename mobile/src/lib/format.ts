@@ -20,7 +20,7 @@ export function agentStatusKey(
   if (a.attention === 'needs_answer') return 'question';
   if (a.attention === 'needs_approval') return 'needs_you';
   if (a.attention === 'error' || a.runtime === 'failed' || a.blockedReason === 'runtime_failed') return 'error';
-  if (a.shutdown?.state === 'approved' || a.blockedReason === 'removing') return 'removing';
+  if (a.blockedReason === 'removing') return 'removing';
   if (a.shutdown?.state === 'requested') return 'shutting_down';
   if (isSessionDown(sessionStatus)) return 'not_running';
   if (a.state === 'paused') return 'paused';
@@ -116,7 +116,7 @@ export function openBlockers(task: Task, all: Task[]): Task[] {
  * first unfinished blocker of its oldest open task. Otherwise null (idle with work is normal).
  */
 export function waitingOn(a: Pick<Agent, 'slotId' | 'state' | 'shutdown'>, tasks: Task[]): { blocker: Task; more: number } | null {
-  if ((a.state !== 'idle' && a.state !== 'queued') || a.shutdown?.state === 'requested' || a.shutdown?.state === 'approved') return null;
+  if ((a.state !== 'idle' && a.state !== 'queued') || a.shutdown?.state === 'requested') return null;
   const open = tasks.filter((t) => t.owner === a.slotId && isOpen(t)).sort((x, y) => x.createdAt - y.createdAt);
   if (open.length === 0 || !open.every((t) => openBlockers(t, tasks).length > 0)) return null;
   return { blocker: openBlockers(open[0], tasks)[0], more: open.length - 1 };

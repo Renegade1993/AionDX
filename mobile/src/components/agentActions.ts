@@ -21,10 +21,10 @@ export function openThread(conversationId: string) {
  * The bridge refuses a polite shutdown, a force remove and an interrupt-with-replacement for the
  * lead (`422 lead_not_allowed`, contract §6.6), so those controls are never offered for it.
  */
-export const canShutDown = (agent: Agent) => agent.role !== 'lead' && agent.shutdown?.state !== 'requested' && agent.shutdown?.state !== 'approved';
+export const canShutDown = (agent: Agent) => agent.role !== 'lead' && agent.shutdown?.state !== 'requested';
 export const canStopWithInstruction = (agent: Agent) => agent.role !== 'lead';
-/** Force remove is the "it refused shutdown" path only (SPEC §14.1.5). */
-export const canForceRemove = (agent: Agent) => agent.role !== 'lead' && agent.shutdown?.state === 'rejected';
+/** Force remove is the "it refused shutdown" path only (SPEC §14.1.5), or it never answered (rev 4.5 `expired`). */
+export const canForceRemove = (agent: Agent) => agent.role !== 'lead' && (agent.shutdown?.state === 'rejected' || agent.shutdown?.state === 'expired');
 /** Paused slots have no resume route and waking them isn't defined (SPEC §14.1.2). */
 export const canStop = (agent: Agent) => agent.state !== 'paused';
 

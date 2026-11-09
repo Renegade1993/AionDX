@@ -13,7 +13,7 @@ import {
   promptRename,
 } from '@/components/agentActions';
 import { useSensitive } from '@/components/confirm';
-import { RejectedBlock } from '@/components/SlotCard';
+import { hasShutdownOutcome, RejectedBlock } from '@/components/SlotCard';
 import { pickOption } from '@/components/OptionSheet';
 import { Avatar } from '@/components/Avatar';
 import { FreshnessIndicator } from '@/components/Banners';
@@ -70,7 +70,7 @@ export default function AgentDetail() {
   const stuck = !running && !paused && (slot.queue.foreground > 0 || slot.runtime === 'dormant' || slot.runtime === 'failed');
   const queued = slot.queue.foreground;
   const rejectionKey = `${hostId}:${slot.slotId}`;
-  const showRejection = slot.shutdown?.state === 'rejected' && dismissed[rejectionKey] !== slot.shutdown.requestedAt;
+  const showRejection = hasShutdownOutcome(slot) && dismissed[rejectionKey] !== slot.shutdown!.requestedAt;
   // Agent controls are hidden while the team session isn't ready (§14.1.4).
   const sessionUp = sessionStatus === 'ready' || sessionStatus === undefined;
 
@@ -155,6 +155,7 @@ export default function AgentDetail() {
               inset={false}
               disabled={offline}
               onKeepRunning={() => updatePrefs({ dismissedRejections: { ...dismissed, [rejectionKey]: slot.shutdown!.requestedAt } })}
+              onAskAgain={canShutDown(slot) && sessionUp ? () => void confirmShutdown(slot, actions, sensitive, hostId) : undefined}
               onForceRemove={canForceRemove(slot) && sessionUp ? () => confirmForceRemove(slot, actions, sensitive, hostId) : undefined}
               forceIcon={sensitive.icon}
               forceDisabled={!sensitive.available}

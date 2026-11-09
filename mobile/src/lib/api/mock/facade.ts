@@ -30,7 +30,7 @@ import { seed } from './seed';
  * An in-memory bridge facade (contract rev 3.1 §6) for the demo host, tests and the e2e
  * bridge. It answers the same /v1 routes with the same shapes and error codes as the real
  * bridge, keeps a change journal for /v1/changes, and simulates a live team: replies stream in,
- * approvals unblock agents, shutdowns are accepted or declined, tasks notify their owners.
+ * approvals unblock agents, shutdowns are accepted, declined or go unanswered, tasks notify their owners.
  */
 
 export interface MockAgent {
@@ -106,6 +106,8 @@ export interface MockFacadeOptions {
   requireConfirm?: boolean;
   /** Simulated agent work speed; tests pass small values. */
   replyDelayMs?: number;
+  /** How long an unanswered shutdown stays 'requested' before 'expired' (the bridge waits 10 min). */
+  shutdownExpiryMs?: number;
 }
 
 export interface MockFacade {
@@ -132,6 +134,8 @@ function fail(status: number, code: string, message?: string, details?: Record<s
 }
 
 const MAX_TEXT = 2000;
+/** §6.5: how long the bridge remembers how a resolved approval ended. */
+const RESOLVED_MEMORY_MS = 10 * 60_000;
 const JOURNAL_LIMIT = 5000;
 const CHANGES_LIMIT = 500;
 const PAGE_DEFAULT = 50;
@@ -149,6 +153,8 @@ export function createMockFacade(opts: MockFacadeOptions = {}): MockFacade {
   const hostId = opts.hostId ?? 'demo';
   const deviceId = opts.deviceId ?? 'demo-device';
   const replyDelay = opts.replyDelayMs ?? 4000;
+  // Compressed so the demo can show "No response" without a 10-minute wait.
+  const shutdownExpiry = opts.shutdownExpiryMs ?? replyDelay * 4;
   const capabilities = opts.capabilities ?? ['changes.longpoll', 'tasks.write', 'approvals.questions'];
   const requireConfirm = opts.requireConfirm ?? true;
 
@@ -156,6 +162,7 @@ export function createMockFacade(opts: MockFacadeOptions = {}): MockFacade {
   const { teams } = state;
   const conversations = new Map(state.conversations.map((c) => [c.conversationId, c]));
   let approvals = state.approvals;
+  const resolvedApprovals = new Map<string, { resolution: 'answered' | 'cancelled'; resolvedAt: number }>();
 
   /** Simulation timers, tagged with the conversation they belong to so a stop cancels only that turn. */
   const timers = new Map<ReturnType<typeof setTimeout>, string | undefined>();
@@ -502,6 +509,7 @@ export function createMockFacade(opts: MockFacadeOptions = {}): MockFacade {
 
   function removeApproval(ap: Approval, resolution: 'answered' | 'cancelled') {
     approvals = approvals.filter((x) => x !== ap);
+    resolvedApprovals.set(ap.approvalId, { resolution, resolvedAt: Date.now() });
     emit({ kind: 'approval_removed', approvalId: ap.approvalId, conversationId: ap.conversationId, teamId: ap.teamId, resolution });
   }
 
@@ -743,18 +751,26 @@ export function createMockFacade(opts: MockFacadeOptions = {}): MockFacade {
           const requestedAt = Date.now();
           a.shutdown = { state: 'requested', requestedAt, reason };
           emitTeam(t, 'run_state');
+          const current = () => t.agents.includes(a) && a.shutdown?.state === 'requested' && a.shutdown.requestedAt === requestedAt;
+          // A paused agent can't read its mailbox, so its request runs out (rev 4.5 'expired').
+          if (a.state === 'paused') {
+            later(shutdownExpiry, () => {
+              if (!current()) return;
+              a.shutdown = { state: 'expired', requestedAt, expiredAt: Date.now(), reason };
+              emitTeam(t, 'run_state');
+            });
+            return { outcome: 'requested' };
+          }
           later(Math.round(replyDelay * 0.75), () => {
-            if (!t.agents.includes(a)) return;
-            // The Researcher declines (exercises the rejected path); everyone else accepts.
+            if (!current()) return;
+            // The Researcher declines (exercises the rejected path); everyone else agrees, which
+            // AionCore reports only by removing the agent (rev 4.5: there is no 'approved' state).
             if (a.slotId === 'research') {
               a.shutdown = { state: 'rejected', requestedAt, respondedAt: Date.now(), rejectReason: "I'm still collecting sources for the bridge review." };
               emitTeam(t, 'run_state');
               return;
             }
-            a.shutdown = { state: 'approved', requestedAt, respondedAt: Date.now() };
-            a.blockedReason = 'removing';
-            emitTeam(t, 'run_state');
-            later(1000, () => t.agents.includes(a) && removeAgent(t, a));
+            removeAgent(t, a);
           });
           return { outcome: 'requested' };
         }
@@ -835,7 +851,12 @@ export function createMockFacade(opts: MockFacadeOptions = {}): MockFacade {
     }
     if (r1 === 'approvals' && r2 && r3 === 'answer' && m === 'POST') {
       const ap = approvals.find((a) => a.approvalId === r2);
-      if (!ap) fail(409, 'already_resolved', 'Already answered on the PC or another device');
+      if (!ap) {
+        // Rev 4.5: a repeat answer within 10 minutes learns how it ended; after that, or never seen, 404.
+        const done = resolvedApprovals.get(r2);
+        if (done && Date.now() - done.resolvedAt < RESOLVED_MEMORY_MS) fail(409, 'already_resolved', 'Already answered on the PC or another device', { ...done });
+        fail(404, 'not_found', 'No such approval');
+      }
       return answer(ap!, body);
     }
 
