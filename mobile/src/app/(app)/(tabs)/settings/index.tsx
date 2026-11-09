@@ -3,19 +3,18 @@ import { router } from 'expo-router';
 import { Alert, Platform, ScrollView, StyleSheet, View } from 'react-native';
 
 import { useHostLabel } from '@/components/Banners';
-import { pickOption } from '@/components/OptionSheet';
 import { TabChrome } from '@/components/TeamHeader';
 import { useBiometricKind } from '@/components/confirm';
 import { Card, Divider, Row, SectionHeader } from '@/components/ui/primitives';
 import { useConfirmState, useRunState } from '@/lib/api/hooks';
-import { confirmValueText, isConfirmWarning } from '@/lib/confirmState';
+import { biometricLockLabel, confirmValueText, isConfirmWarning } from '@/lib/confirmState';
 import { useConnectionStore } from '@/state/connectionStore';
 import { formatAgo } from '@/lib/format';
 import { useConnectionState, useHealthStore } from '@/state/healthStore';
-import { POLL_RATE_LABEL, type PollRate, usePrefsStore } from '@/state/prefsStore';
+import { usePrefsStore } from '@/state/prefsStore';
 import { space } from '@/theme';
 
-const LOCK_LABEL = { biometric: 'Face ID / fingerprint', passcode: 'Device passcode', none: 'Off' } as const;
+const LOCK_LABEL = { biometric: biometricLockLabel(), passcode: 'Device passcode', none: 'Off' } as const;
 
 /** S1 — Settings (SPEC §6.11). */
 export default function Settings() {
@@ -27,15 +26,6 @@ export default function Settings() {
   const activeHostId = useConnectionStore((s) => s.activeHostId);
   const confirmState = useConfirmState();
   const kind = useBiometricKind();
-
-  const pickRate = () => {
-    const rates: PollRate[] = ['fast', 'normal', 'saver'];
-    void pickOption(
-      'Refresh rate',
-      rates.map((r) => ({ key: r, label: POLL_RATE_LABEL[r], selected: prefs.pollRate === r })),
-      'How often live data is fetched while the app is open.',
-    ).then((key) => key && prefs.update({ pollRate: key as PollRate }));
-  };
 
   const showDiagnostics = () =>
     Alert.alert(
@@ -77,8 +67,6 @@ export default function Settings() {
 
         <SectionHeader title="Live updates" />
         <Card style={styles.group}>
-          <Row icon="refresh-outline" title="Refresh rate" value={POLL_RATE_LABEL[prefs.pollRate]} onPress={pickRate} />
-          <Divider />
           <Row icon="notifications-outline" title="Notifications" value="Coming soon" />
         </Card>
 

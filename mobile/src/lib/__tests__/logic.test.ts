@@ -9,7 +9,7 @@ import { isUsableBaseUrl, joinUrl, postJson } from '../api/http';
 import { createMockFacade, DEMO_REKEY_SECRET, type MockFacade } from '../api/mock/facade';
 import { generateKeyPair } from '../crypto/primitives';
 import { encodePairingUri, parsePairingUri } from '../crypto/protocol';
-import { allowPrompt, canConfirm, confirmStateFor } from '../confirmState';
+import { allowPrompt, biometricName, canConfirm, confirmStateFor, confirmValueText } from '../confirmState';
 import { classifyScannedCode, encodeRekeyUri } from '../crypto/confirm';
 import { createMockTransport } from '../api/mock/transport';
 import type { Agent, Approval, Message, Task } from '../api/types';
@@ -598,5 +598,17 @@ describe('contract rev 4.4', () => {
     }) as typeof fetch;
     await postJson(['http://[fe80::1%25en0]:47734', 'http://[fd12::1]:47734'], '/api/mobile/v1/session', {});
     expect(calls).toEqual(['http://[fd12::1]:47734/api/mobile/v1/session']);
+  });
+});
+
+describe('biometric naming (device run 2026-11-08)', () => {
+  it('uses the phone’s own name per platform, "Biometrics" for several or unknown', () => {
+    expect(biometricName('fingerprint', 'android')).toBe('Fingerprint');
+    expect(biometricName('face', 'android')).toBe('Face unlock');
+    expect(biometricName('face', 'ios')).toBe('Face ID');
+    expect(biometricName('fingerprint', 'ios')).toBe('Touch ID');
+    expect(biometricName('multiple', 'android')).toBe('Biometrics');
+    expect(biometricName(null, 'android')).toBe('Biometrics');
+    expect(confirmValueText('biometric', 'fingerprint')).not.toBe('Face ID');
   });
 });

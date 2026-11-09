@@ -3,6 +3,8 @@
  * plus the client-side confirmation failures (§5). Outer transport errors live in secureChannel.ts.
  */
 
+import { Platform } from 'react-native';
+
 export type ApiErrorCode =
   | 'invalid_request'
   | 'confirm_invalid'
@@ -92,7 +94,7 @@ export function cancelNotice(err: ConfirmCancelledError, now = Date.now()): stri
   if (times.length >= NEUTRAL_AFTER) {
     // Once per run of failures; the count starts over after the hint.
     recentCancels.delete(key);
-    return "Couldn't confirm. If Face ID is locked, unlock your phone with its passcode, then try again.";
+    return `Couldn't confirm. If ${Platform.OS === 'ios' ? 'Face ID' : 'biometric unlock'} is locked, unlock your phone with its passcode, then try again.`;
   }
   recentCancels.set(key, times);
   return err.reason === 'failed' ? "Passcode didn't match. Try again." : null;
@@ -125,7 +127,9 @@ export class ConfirmUnavailableError extends Error {
  */
 export class ConfirmKeyInvalidatedError extends Error {
   constructor() {
-    super('Your Face ID or fingerprints changed, so this phone needs to be re-confirmed on your PC.');
+    super(
+      `Your ${Platform.OS === 'ios' ? 'Face ID or Touch ID settings' : 'fingerprints or face unlock'} changed, so this phone needs to be re-confirmed on your PC.`,
+    );
     this.name = 'ConfirmKeyInvalidatedError';
   }
 }
