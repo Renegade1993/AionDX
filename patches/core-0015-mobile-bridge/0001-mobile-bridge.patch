@@ -524,7 +524,7 @@ index 17526034..c23179e6 100644
          .into_future();
 diff --git a/crates/aionui-app/src/router/mobile_backend.rs b/crates/aionui-app/src/router/mobile_backend.rs
 new file mode 100644
-index 00000000..920121f2
+index 00000000..cadca386
 --- /dev/null
 +++ b/crates/aionui-app/src/router/mobile_backend.rs
 @@ -0,0 +1,534 @@
@@ -583,7 +583,7 @@ index 00000000..920121f2
 +        tokio::select! {
 +            received = rx.recv() => match received {
 +                Ok(event) => facade.on_event(&event.name, &event.data).await,
-+                Err(RecvError::Lagged(missed)) => facade.on_lagged(missed),
++                Err(RecvError::Lagged(missed)) => facade.on_lagged(missed).await,
 +                Err(RecvError::Closed) => break,
 +            },
 +            _ = sweep.tick() => facade.expire_shutdowns(aionui_common::now_ms()),
@@ -4561,10 +4561,10 @@ index 00000000..77da66f5
 +}
 diff --git a/crates/aionui-mobile/src/facade.rs b/crates/aionui-mobile/src/facade.rs
 new file mode 100644
-index 00000000..053851a3
+index 00000000..49f728ba
 --- /dev/null
 +++ b/crates/aionui-mobile/src/facade.rs
-@@ -0,0 +1,702 @@
+@@ -0,0 +1,706 @@
 +//! The mobile facade (CONTRACT §6): the `/v1/...` routes inside the RPC tunnel.
 +//! An allowlist by construction (§11 #1): anything not matched here is
 +//! `no_such_route`. This file routes and pages; `shape.rs` builds the JSON.
@@ -4765,6 +4765,8 @@ index 00000000..053851a3
 +                .unwrap()
 +                .get(&(team_id, slot.to_owned()))
 +                .map(|p| p.state.clone());
++            self.heal(user, conv, a["pending_confirmations"].as_u64().unwrap_or(0))
++                .await;
 +            let read = self.read_state_of(user, conv, &roster, name).await;
 +            // your_turn is for the lead only, once its turn is over (teammates report to the lead).
 +            let idle = run["slot_work"]
@@ -5026,6 +5028,8 @@ index 00000000..053851a3
 +            Ok(Some(m)) => shape::message(&to_value(&m), &roster, &agent).map(|m| shape::last_message(&m)),
 +            _ => None,
 +        };
++        self.heal(user, id, c["runtime"]["pending_confirmations"].as_u64().unwrap_or(0))
++            .await;
 +        let read = self.read_state_of(user, id, &roster, &agent).await;
 +        let idle = c["runtime"]["state"].as_str().is_none_or(|s| s == "idle");
 +        // your_turn: solo chats and a team's lead (teammates report to the lead, not to the user).
@@ -5269,10 +5273,10 @@ index 00000000..053851a3
 +}
 diff --git a/crates/aionui-mobile/src/facade_live.rs b/crates/aionui-mobile/src/facade_live.rs
 new file mode 100644
-index 00000000..31c111dd
+index 00000000..38a82bed
 --- /dev/null
 +++ b/crates/aionui-mobile/src/facade_live.rs
-@@ -0,0 +1,844 @@
+@@ -0,0 +1,882 @@
 +//! Phase 4: the live side of the facade (CONTRACT §6.2, §6.5).
 +//!
 +//! AionCore's event bus feeds `Facade::on_event`, which turns bus events into change-journal entries and keeps the
@@ -5341,8 +5345,8 @@ index 00000000..31c111dd
 +    origins: Mutex<HashMap<String, Option<ApprovalOrigin>>>,
 +    /// Recently resolved approvals by id (`RESOLVED_MEMORY_MS`).
 +    resolved: Mutex<HashMap<String, Resolved>>,
-+    /// Users whose live conversations were reconciled since start (or since the bus lagged).
-+    swept: Mutex<HashSet<String>>,
++    /// Every Core user an event was seen for: the ones to re-sweep when the bus lags.
++    users_seen: Mutex<HashSet<String>>,
 +}
 +
 +impl Default for Live {
@@ -5355,7 +5359,7 @@ index 00000000..31c111dd
 +            turn_messages: Mutex::new(std::collections::VecDeque::new()),
 +            errored: Mutex::new(HashMap::new()),
 +            origins: Mutex::new(HashMap::new()),
-+            swept: Mutex::new(HashSet::new()),
++            users_seen: Mutex::new(HashSet::new()),
 +        }
 +    }
 +}
@@ -5482,15 +5486,24 @@ index 00000000..31c111dd
 +    }
 +
 +    /// The bus dropped events: anything cached may be stale, and approvals must be re-swept.
-+    pub fn on_lagged(&self, missed: u64) {
-+        tracing::warn!(missed, "mobile bridge: event bus lagged; approvals will be re-swept");
++    ///
++    /// Dropped events may include permission frames (QA AP1), so every known user's live conversations are swept
++    /// against AionCore's confirmations right away; what was missed shows up as `approval_added` on the feed.
++    pub async fn on_lagged(&self, missed: u64) {
++        tracing::warn!(missed, "mobile bridge: event bus lagged; re-sweeping approvals");
 +        self.live.origins.lock().unwrap().clear();
-+        self.live.swept.lock().unwrap().clear();
++        let users: Vec<String> = self.live.users_seen.lock().unwrap().iter().cloned().collect();
++        for user in users {
++            self.sweep(&user).await;
++        }
 +    }
 +
 +    /// One AionCore bus event (`WebSocketMessage { name, data }`).
 +    pub async fn on_event(&self, name: &str, data: &Value) {
 +        let Some(user) = s(data, "user_id") else { return };
++        if !self.live.users_seen.lock().unwrap().contains(user) {
++            self.live.users_seen.lock().unwrap().insert(user.to_owned());
++        }
 +        let team_id = s(data, "team_id");
 +        match name {
 +            "message.stream" => self.on_stream(user, data).await,
@@ -5630,9 +5643,19 @@ index 00000000..31c111dd
 +        if matches!(frame_type, "start" | "finish" | "error") {
 +            what.push(ConversationWhat::State);
 +        }
-+        if matches!(frame_type, "acp_permission" | "permission" | "ask")
-+            && let Some(origin) = self.origin(user, cid).await
-+        {
++        let is_approval = matches!(frame_type, "acp_permission" | "permission" | "ask");
++        let origin = if is_approval {
++            self.origin(user, cid).await
++        } else {
++            None
++        };
++        if is_approval && origin.is_none() {
++            tracing::warn!(
++                conversation_id = cid,
++                "mobile bridge: a permission frame's conversation could not be resolved; it will be recovered by a sweep"
++            );
++        }
++        if let Some(origin) = origin {
 +            let frame = PermissionFrame {
 +                origin,
 +                frame_type: frame_type.to_owned(),
@@ -5824,10 +5847,9 @@ index 00000000..31c111dd
 +        }
 +    }
 +
-+    /// The first listing for a user (after start, or after the bus lagged) sweeps every live conversation; later
-+    /// listings re-check only the conversations that hold tracked approvals.
-+    async fn approvals_list(&self, user: &str, q: &HashMap<String, String>) -> InnerResponse {
-+        let first = self.live.swept.lock().unwrap().insert(user.to_owned());
++    /// Reconciles every conversation that holds a tracked approval or has a live agent. The listing is the
++    /// recovery path for anything the event stream missed, so it sweeps every time (in-process calls, cheap).
++    pub(crate) async fn sweep(&self, user: &str) {
 +        let mut convs: Vec<String> = self
 +            .live
 +            .approvals
@@ -5835,20 +5857,40 @@ index 00000000..31c111dd
 +            .into_iter()
 +            .map(|a| a.conversation_id)
 +            .collect();
-+        if first {
-+            match self.backend.live_conversations(user).await {
-+                Ok(live) => convs.extend(live),
-+                Err(e) => {
-+                    tracing::warn!(error = ?e, "mobile bridge: approvals sweep could not list live conversations");
-+                    self.live.swept.lock().unwrap().remove(user);
-+                }
-+            }
++        match self.backend.live_conversations(user).await {
++            Ok(live) => convs.extend(live),
++            Err(e) => tracing::warn!(error = ?e, "mobile bridge: approvals sweep could not list live conversations"),
 +        }
 +        convs.sort();
 +        convs.dedup();
 +        for cid in convs {
 +            self.reconcile(user, &cid).await;
 +        }
++    }
++
++    /// Self-healing for derived state: AionCore says this conversation has pending confirmations but nothing is
++    /// tracked for it (a frame was missed), so it is reconciled now, which also puts it on the feed.
++    pub(crate) async fn heal(&self, user: &str, conversation_id: &str, pending: u64) {
++        if pending == 0
++            || self
++                .live
++                .approvals
++                .list(user, None)
++                .iter()
++                .any(|a| a.conversation_id == conversation_id)
++        {
++            return;
++        }
++        tracing::info!(
++            conversation_id,
++            pending,
++            "mobile bridge: untracked pending confirmations; reconciling"
++        );
++        self.reconcile(user, conversation_id).await;
++    }
++
++    async fn approvals_list(&self, user: &str, q: &HashMap<String, String>) -> InnerResponse {
++        self.sweep(user).await;
 +        let team = q.get("teamId").map(String::as_str).filter(|t| !t.is_empty());
 +        let items: Vec<Value> = self.live.approvals.list(user, team).iter().map(to_value).collect();
 +        InnerResponse::ok(json!({ "items": items }))
@@ -6715,10 +6757,10 @@ index 00000000..75284f3e
 +}
 diff --git a/crates/aionui-mobile/src/firewall.rs b/crates/aionui-mobile/src/firewall.rs
 new file mode 100644
-index 00000000..9aa134f5
+index 00000000..9da969f5
 --- /dev/null
 +++ b/crates/aionui-mobile/src/firewall.rs
-@@ -0,0 +1,529 @@
+@@ -0,0 +1,590 @@
 +//! The Windows Firewall rule that lets phones on the LAN reach the bridge (CONTRACT §2, PHASE5-NET-SPEC part C).
 +//!
 +//! This module only builds and parses `netsh` command plans. It never adds or deletes a rule itself: adding needs
@@ -6852,6 +6894,42 @@ index 00000000..9aa134f5
 +    }
 +}
 +
++/// Read-only, needs no admin: `netsh advfirewall show privateprofile state`, whether Windows Firewall is on for the
++/// Private profile (the only profile the rule is for).
++pub fn profile_state_plan() -> FirewallPlan {
++    FirewallPlan {
++        program: netsh_program(),
++        args: vec![
++            "advfirewall".into(),
++            "show".into(),
++            "privateprofile".into(),
++            "state".into(),
++        ],
++    }
++}
++
++/// `State  ON` / `State  OFF` from `show privateprofile state` (English labels). `None` when it can't be read, e.g. a
++/// non-English Windows.
++pub fn parse_profile_state(output: &str) -> Option<bool> {
++    output.lines().find_map(|line| {
++        let rest = line.trim().strip_prefix("State")?;
++        match rest.trim() {
++            "ON" => Some(true),
++            "OFF" => Some(false),
++            _ => None,
++        }
++    })
++}
++
++/// Whether Windows Firewall is on for the Private profile, read-only; `None` when unknown.
++pub async fn query_firewall_enabled(runner: &dyn NetshRunner) -> Option<bool> {
++    runner
++        .run(&profile_state_plan())
++        .await
++        .ok()
++        .and_then(|out| parse_profile_state(&out))
++}
++
 +/// Parses `show rule ... verbose` output (English labels): one block per rule, each starting with `Rule Name:`.
 +/// Anything it cannot read, including localized output, comes out as `present: false`.
 +pub fn parse_show_rule(output: &str) -> RuleStatus {
@@ -6939,10 +7017,10 @@ index 00000000..9aa134f5
 +#[async_trait::async_trait]
 +impl NetshRunner for ShowOnlyRunner {
 +    async fn run(&self, plan: &FirewallPlan) -> std::io::Result<String> {
-+        if *plan != show_rule_plan() {
++        if *plan != show_rule_plan() && *plan != profile_state_plan() {
 +            return Err(std::io::Error::new(
 +                std::io::ErrorKind::PermissionDenied,
-+                "firewall: only the read-only show-rule plan may be run from here",
++                "firewall: only the read-only show plans may be run from here",
 +            ));
 +        }
 +        let mut builder = aionui_runtime::Builder::clean_cli(&plan.program);
@@ -6985,6 +7063,31 @@ index 00000000..9aa134f5
 +Rule source:                          Local Setting\r\n\
 +Action:                               Allow\r\n\
 +Ok.\r\n\r\n";
++
++    /// Captured from `netsh advfirewall show privateprofile state` on the dev PC (English Windows, firewall off).
++    const PROFILE_OFF: &str = "\r\nPrivate Profile Settings: \r\n\
++----------------------------------------------------------------------\r\n\
++State                                 OFF\r\n\
++Ok.\r\n\r\n";
++
++    #[test]
++    fn profile_state_reads_on_off_and_unknown() {
++        assert_eq!(parse_profile_state(PROFILE_OFF), Some(false));
++        assert_eq!(parse_profile_state(&PROFILE_OFF.replace(" OFF", " ON")), Some(true));
++        // A localized Windows: no English label, so unknown rather than a guess.
++        assert_eq!(
++            parse_profile_state("Statut                                ACTIF\r\nOk.\r\n"),
++            None
++        );
++        assert_eq!(parse_profile_state(""), None);
++    }
++
++    #[test]
++    fn the_profile_plan_is_read_only_and_allowed() {
++        let plan = profile_state_plan();
++        assert_eq!(plan.args, ["advfirewall", "show", "privateprofile", "state"]);
++        assert!(!plan.args.iter().any(|a| a == "set" || a == "add" || a == "delete"));
++    }
 +
 +    fn spaced_exe() -> PathBuf {
 +        PathBuf::from(r"C:\Program Files (x86)\Aion DX\resources\aioncore.exe")
@@ -10352,10 +10455,10 @@ index 00000000..72e5cfa8
 +}
 diff --git a/crates/aionui-mobile/src/service.rs b/crates/aionui-mobile/src/service.rs
 new file mode 100644
-index 00000000..bdc23c04
+index 00000000..a01309e5
 --- /dev/null
 +++ b/crates/aionui-mobile/src/service.rs
-@@ -0,0 +1,958 @@
+@@ -0,0 +1,979 @@
 +//! The bridge's lifecycle: settings, the host key, whether the LAN listener
 +//! runs, and the desktop's pairing and device actions. Business logic only;
 +//! the HTTP surfaces live in `listener.rs`/`outer.rs` (LAN) and
@@ -10387,7 +10490,12 @@ index 00000000..bdc23c04
 +    pub extra_urls: Vec<String>,
 +    pub host_id: String,
 +    pub host_name: String,
++    /// Whether the `_aiondx._tcp` advertisement is in effect: the saved setting, unless something overrides it.
 +    pub mdns: bool,
++    /// The saved setting (what the desktop's switch shows).
++    pub mdns_setting: bool,
++    /// Why `mdns` differs from `mdnsSetting`: `loopback_bind` (`AIONDX_MOBILE_BIND`); `null` when they agree.
++    pub mdns_off_reason: Option<&'static str>,
 +    pub tasks_write: bool,
 +    pub listening: bool,
 +    pub error: Option<String>,
@@ -10808,7 +10916,9 @@ index 00000000..bdc23c04
 +            extra_urls: settings.extra_urls.clone(),
 +            host_id: self.core.host_key.host_id.clone(),
 +            host_name: settings.host_name.clone(),
-+            mdns: settings.mdns,
++            mdns: settings.mdns && !self.bind_ip.is_loopback(),
++            mdns_setting: settings.mdns,
++            mdns_off_reason: (settings.mdns && self.bind_ip.is_loopback()).then_some("loopback_bind"),
 +            tasks_write: settings.tasks_write,
 +            listening,
 +            error: match &self.fault {
@@ -11110,6 +11220,10 @@ index 00000000..bdc23c04
 +        // Bound to loopback, the QR offers only loopback; the saved extras are reported as saved.
 +        assert_eq!(status.urls[0], format!("http://127.0.0.1:{}", status.port));
 +        assert_eq!(status.extra_urls, vec!["http://100.64.0.9:47734".to_owned()]);
++        // Bound to loopback, mDNS is off whatever the saved setting says, and the status says why.
++        assert!(status.mdns_setting);
++        assert!(!status.mdns);
++        assert_eq!(status.mdns_off_reason, Some("loopback_bind"));
 +    }
 +
 +    struct FakeNetsh(&'static str);
@@ -11117,10 +11231,15 @@ index 00000000..bdc23c04
 +    #[async_trait::async_trait]
 +    impl crate::firewall::NetshRunner for FakeNetsh {
 +        async fn run(&self, plan: &crate::firewall::FirewallPlan) -> std::io::Result<String> {
++            if *plan == crate::firewall::profile_state_plan() {
++                return Ok(
++                    "Private Profile Settings:\r\nState                                 OFF\r\nOk.\r\n".to_owned(),
++                );
++            }
 +            assert_eq!(
 +                *plan,
 +                crate::firewall::show_rule_plan(),
-+                "only the read-only plan is ever run"
++                "only the read-only plans are ever run"
 +            );
 +            Ok(self.0.to_owned())
 +        }
@@ -11141,6 +11260,11 @@ index 00000000..bdc23c04
 +        )));
 +        let view = b.firewall_status("u1").await.unwrap();
 +        assert_eq!(view.rule, "present");
++        assert_eq!(
++            view.firewall_enabled,
++            Some(false),
++            "the Private profile is off on the fake"
++        );
 +        assert!(view.private_only && view.enabled);
 +        assert!(view.matches_settings, "{view:?}");
 +        let plan = view.plan.expect("a plan for this test executable");
@@ -11316,10 +11440,10 @@ index 00000000..bdc23c04
 +}
 diff --git a/crates/aionui-mobile/src/service_net.rs b/crates/aionui-mobile/src/service_net.rs
 new file mode 100644
-index 00000000..28d7c68e
+index 00000000..aa3ca87b
 --- /dev/null
 +++ b/crates/aionui-mobile/src/service_net.rs
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,190 @@
 +//! Phase 5: the bridge's network surface for the desktop (CONTRACT §7, PHASE5-NET-SPEC): the QR address list, the
 +//! mDNS advertisement, the firewall rule's state, the listener's bind address, and how a re-key offer ended.
 +
@@ -11365,6 +11489,9 @@ index 00000000..28d7c68e
 +pub struct FirewallView {
 +    /// `present` | `absent`. On a non-English Windows `netsh` output can't be read, which shows as `absent`.
 +    pub rule: &'static str,
++    /// Windows Firewall on (`true`) or off (`false`) for the Private profile; `null` when `netsh` couldn't be read (e.g.
++    /// a non-English Windows). Off means no rule is needed.
++    pub firewall_enabled: Option<bool>,
 +    pub enabled: bool,
 +    pub private_only: bool,
 +    pub port: Option<u16>,
@@ -11389,9 +11516,15 @@ index 00000000..28d7c68e
 +    }
 +}
 +
-+fn firewall_view(status: RuleStatus, port: u16, plan: Option<FirewallPlan>) -> FirewallView {
++fn firewall_view(
++    status: RuleStatus,
++    firewall_enabled: Option<bool>,
++    port: u16,
++    plan: Option<FirewallPlan>,
++) -> FirewallView {
 +    FirewallView {
 +        rule: if status.present { "present" } else { "absent" },
++        firewall_enabled,
 +        enabled: status.enabled,
 +        private_only: status.private_only,
 +        port: status.port,
@@ -11433,10 +11566,11 @@ index 00000000..28d7c68e
 +    pub async fn firewall_status(&self, user_id: &str) -> Result<FirewallView, MobileError> {
 +        let settings = self.settings_for(user_id).await?;
 +        let status = firewall::query_rule(self.firewall.as_ref()).await;
++        let enabled = firewall::query_firewall_enabled(self.firewall.as_ref()).await;
 +        let plan = std::env::current_exe()
 +            .ok()
 +            .and_then(|exe| firewall::add_rule_plan(&exe, settings.port).ok());
-+        Ok(firewall_view(status, settings.port, plan))
++        Ok(firewall_view(status, enabled, settings.port, plan))
 +    }
 +
 +    /// How a re-key offer (its id is the device's) ended, for one of this user's phones.
@@ -11485,17 +11619,17 @@ index 00000000..28d7c68e
 +            private_only: true,
 +            port: Some(47734),
 +        };
-+        assert!(firewall_view(good, 47734, None).matches_settings);
++        assert!(firewall_view(good, Some(true), 47734, None).matches_settings);
 +        assert!(
-+            !firewall_view(good, 47735, None).matches_settings,
++            !firewall_view(good, Some(true), 47735, None).matches_settings,
 +            "the user changed the port"
 +        );
 +        let public_too = RuleStatus {
 +            private_only: false,
 +            ..good
 +        };
-+        assert!(!firewall_view(public_too, 47734, None).matches_settings);
-+        let none = firewall_view(RuleStatus::default(), 47734, None);
++        assert!(!firewall_view(public_too, Some(true), 47734, None).matches_settings);
++        let none = firewall_view(RuleStatus::default(), None, 47734, None);
 +        assert_eq!(none.rule, "absent");
 +        assert!(!none.matches_settings);
 +    }
@@ -13332,10 +13466,10 @@ index 00000000..9855cfc9
 +}
 diff --git a/crates/aionui-mobile/tests/facade_routes.rs b/crates/aionui-mobile/tests/facade_routes.rs
 new file mode 100644
-index 00000000..84e386e9
+index 00000000..9e6b2837
 --- /dev/null
 +++ b/crates/aionui-mobile/tests/facade_routes.rs
-@@ -0,0 +1,1411 @@
+@@ -0,0 +1,1455 @@
 +//! The phase 2 read routes through the real facade, over a fake AionCore
 +//! whose fixtures are AionCore's own JSON forms.
 +
@@ -14746,6 +14880,50 @@ index 00000000..84e386e9
 +        "{calls:?}"
 +    );
 +    assert!(!calls.iter().any(|c| c.starts_with("send_solo")), "{calls:?}");
++}
++
++/// QA AP1: a permission frame lost to a lagging bus still surfaces: on the lag itself (a resweep puts it on the feed),
++/// on any later listing, and wherever derived state shows untracked pending confirmations.
++#[tokio::test]
++async fn a_dropped_permission_frame_is_recovered() {
++    // 1. The lag: every user seen gets a resweep, and the feed carries the recovered approval.
++    let (fake, f) = facade();
++    emit(&f, "team.renamed", json!({ "team_id": "t1" })).await; // the pump has seen u1
++    let t0 = first_token(&f).await;
++    *fake.pending.lock().unwrap() = vec![listed("call-lag")]; // AionCore has it; its frame never arrived
++    f.on_lagged(12).await;
++    let (_, changes) = changes_since(&f, &t0).await;
++    let added = of_kind(&changes, "approval_added");
++    assert_eq!(added.len(), 1, "{changes:?}");
++    assert_eq!(added[0]["approval"]["conversationId"], "c2");
++    assert_eq!(
++        added[0]["approval"]["input"],
++        Value::Null,
++        "recovered without the frame's input"
++    );
++
++    // 2. No lag noticed: a listing after an earlier (empty) one still finds it.
++    let (fake, f) = facade();
++    let (_, list) = get(&f, "/v1/approvals").await.unwrap();
++    assert_eq!(list["items"], json!([]));
++    *fake.pending.lock().unwrap() = vec![listed("call-late")];
++    assert_eq!(approval_ids(&f).await.len(), 1);
++
++    // 3. Derived state: run-state shows Bob with pending confirmations and nothing tracked, so it heals at once.
++    let (fake, f) = facade();
++    let t0 = first_token(&f).await;
++    *fake.pending.lock().unwrap() = vec![listed("call-heal")];
++    let (_, rs) = get(&f, "/v1/teams/t1/run-state").await.unwrap();
++    let bob = rs["agents"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|a| a["slotId"] == "s2")
++        .unwrap()
++        .clone();
++    assert_eq!(bob["attention"], "needs_approval");
++    let (_, changes) = changes_since(&f, &t0).await;
++    assert_eq!(of_kind(&changes, "approval_added").len(), 1, "{changes:?}");
 +}
 diff --git a/crates/aionui-mobile/tests/protocol_e2e.rs b/crates/aionui-mobile/tests/protocol_e2e.rs
 new file mode 100644

@@ -28,7 +28,7 @@ is the only way a user turns it on, pairs a phone, and revokes one. CONTRACT.md 
 
 | Route | Body → result | Used by |
 |---|---|---|
-| `GET /api/mobile/admin/status` | → `{enabled, port, urls[], extraUrls[], hostId, hostName, mdns, tasksWrite, listening, error, lastRecovery}` (`extraUrls` since phase 5: the saved list, as saved) (`lastRecovery: {kind: "database"\|"host_key", at, movedTo} \| null`) | the whole page; poll every 2 s while the page is open |
+| `GET /api/mobile/admin/status` | → `{enabled, port, urls[], extraUrls[], hostId, hostName, mdns, mdnsSetting, mdnsOffReason, tasksWrite, listening, error, lastRecovery}` (`mdns` is the EFFECTIVE value; the mDNS switch shows `mdnsSetting`; `mdnsOffReason: "loopback_bind" \| null`) (`extraUrls` since phase 5: the saved list, as saved) (`lastRecovery: {kind: "database"\|"host_key", at, movedTo} \| null`) | the whole page; poll every 2 s while the page is open |
 | `PUT /api/mobile/admin/settings` | any of `{enabled, port, hostName, extraUrls[], mdns, tasksWrite}` → status | the toggle and the advanced settings |
 | `POST /api/mobile/admin/pairing-offers` | → `{offerId, uri, expiresAt}` | "Pair a phone" |
 | `GET /api/mobile/admin/pairing-offers/{offerId}` | → `{state, request?}`; `state` is `waiting \| request_received \| approved \| rejected \| aborted \| expired`; `request: {deviceName, platform, appVersion, sas, confirmMode}` | poll every 1 s while the QR is shown |
@@ -40,7 +40,7 @@ is the only way a user turns it on, pairs a phone, and revokes one. CONTRACT.md 
 | `POST /api/mobile/admin/devices/{deviceId}/rekey-offers` | → `{offerId, uri, expiresAt}` (`aiondx://rekey?...`) | "Reset confirmation key" (§5.3) |
 | `POST /api/mobile/admin/recovery/dismiss` | → ok | the recovery notice's Dismiss |
 | `GET /api/mobile/admin/rekey-offers/{offerId}` (phase 5) | → `{state: "pending" \| "completed" \| "failed" \| "expired", expiresAt}`; `offerId` is the device id; 404 when there is none | the re-key dialog closes itself |
-| `GET /api/mobile/admin/firewall` (phase 5) | → `{rule: "present" \| "absent", enabled, privateOnly, port, matchesSettings, plan: {program, args[]} \| null}`. Read-only (`netsh ... show rule`). On a non-English Windows the output can't be read and shows as `absent`. | the firewall row |
+| `GET /api/mobile/admin/firewall` (phase 5) | → `{rule: "present" \| "absent", firewallEnabled: bool \| null, enabled, privateOnly, port, matchesSettings, plan: {program, args[]} \| null}` (`firewallEnabled`: Windows Firewall on for the Private profile; `false` → "Windows Firewall is off — no rule needed"; `null` = couldn't read `netsh`). Read-only (`netsh ... show rule`). On a non-English Windows the output can't be read and shows as `absent`. | the firewall row |
 
 **Tests (phase 5):** set `AIONDX_MOBILE_BIND=127.0.0.1` in the staged app's environment, and the listener binds loopback only
 (the QR then offers `http://127.0.0.1:<port>`, and mDNS is off). Any non-loopback value is ignored.
