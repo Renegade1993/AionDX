@@ -1,0 +1,10 @@
+[{"dialog":"accept"},{"goto":"/"},{"wait":3000},{"shot":"01-welcome"},
+ {"tap":"Pair with my PC"},{"wait":1500},{"tap":"Continue","exact":true},{"wait":3000},{"shot":"03-camera-needed"},
+ {"goto":"/"},{"wait":3000},{"tap":"Explore with demo data (dev build)"},{"wait":5000},{"shot":"04-dashboard-top"},{"scroll":560},{"wait":600},{"shot":"05-dashboard-middle"},{"scroll":800},{"wait":600},{"shot":"06-dashboard-bottom"},
+ {"scroll":-3000},{"wait":500},{"tap":"Review","exact":true},{"wait":2000},{"shot":"07-approval-sheet-long-command"},{"back":true},{"wait":1500},
+ {"tap":"Chat","exact":true},{"wait":2000},{"shot":"08-chat-list"},{"tap":"Mobile Engineer"},{"wait":2500},{"shot":"09-thread-code-block"},
+ {"fill":["textarea","Msg A"]},{"click":"css=[aria-label='Send']"},{"wait":5000},
+ {"fill":["textarea","Msg B"]},{"click":"css=[aria-label='Send']"},{"wait":5000},
+ {"fill":["textarea","Msg C"]},{"click":"css=[aria-label='Send']"},{"wait":2000},{"scroll":-2500},{"wait":5000},{"shot":"10-thread-new-pill"},
+ {"tap":"Tasks","exact":true},{"wait":2000},{"shot":"11-task-list"},{"tap":"In progress","exact":false},{"wait":1000},{"tap":"Build app screens per design spec"},{"wait":2500},{"shot":"12-task-detail"},{"scroll":500},{"wait":500},{"shot":"13-task-detail-description"},
+ {"dialog":"dismiss"},{"goto":"/"},{"wait":3500},{"shot":"14-lock-screen"}]

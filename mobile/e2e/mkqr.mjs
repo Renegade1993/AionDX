@@ -1,0 +1,13 @@
+import QRCode from 'qrcode';
+import { chromium } from 'playwright-core';
+import fs from 'node:fs';
+const uri = fs.readFileSync('pairing-uri.txt', 'utf8');
+const dataUrl = await QRCode.toDataURL(uri, { margin: 4, width: 440, errorCorrectionLevel: 'M' });
+const browser = await chromium.launch({ channel: 'msedge', headless: true });
+const page = await browser.newPage({ viewport: { width: 640, height: 480 } });
+await page.setContent(`<body style="margin:0;background:#fff;display:flex;align-items:center;justify-content:center;height:480px"><img src="${dataUrl}" width="440"></body>`);
+const jpg = await page.screenshot({ type: 'jpeg', quality: 95 });
+fs.writeFileSync('qr.jpg', jpg);
+fs.writeFileSync('qr.mjpeg', Buffer.concat([jpg, jpg, jpg]));
+await browser.close();
+console.log('qr ok', jpg.length);

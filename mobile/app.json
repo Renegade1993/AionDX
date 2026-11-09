@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "AionDX",
+    "slug": "aiondx-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pacifictiertech.aiondx",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "AionDX connects to the AionDX app on your computer over your local network.",
+        "NSBonjourServices": [
+          "_aiondx._tcp"
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.pacifictiertech.aiondx"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera to scan the pairing QR code shown on your computer.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow $(PRODUCT_NAME) to use Face ID to unlock the app and confirm approvals."
+        }
+      ],
+      "expo-font",
+      "./plugins/withLanCleartext"
+    ],
+    "scheme": "aiondx",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
