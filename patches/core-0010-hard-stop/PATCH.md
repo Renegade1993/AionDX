@@ -38,3 +38,11 @@ Added October 31st, after the first build (the cause of "agents start for no rea
 | `aionui-team/tests/session_service_integration.rs` | The recovery-on-open test now asserts no turn runs on open. |
 
 Not in this patch: a per-job "catch up missed runs" choice (missed runs are skipped), and a marker in the chat for what started a turn.
+
+## 0002-pause-test.patch (2026-11-08, test only)
+
+AionCore's `team_e2e.rs` test `pause_team_slot_endpoint_requires_owned_team_and_active_run` still expected the old `400`
+for a pause with no active run, which this patch removed on purpose, so it failed on every AionDX build. It is now
+`pause_team_slot_endpoint_works_without_an_active_run_on_an_owned_team`: `200` without an active run, and `404` for a
+team the caller doesn't own. No product code changes. Found by the Bridge/API Engineer's baseline comparison against
+v0.2.2.

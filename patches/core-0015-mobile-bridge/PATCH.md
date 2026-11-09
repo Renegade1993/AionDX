@@ -233,23 +233,58 @@ Both need a LAN live check (an approval gate: it listens on the LAN).
 **Desktop:** Voice UI Engineer's app patch 0018-mobile-settings (branch `mobile-desktop-ui`). It runs the elevated
 firewall add itself.
 
-## Resume (2026-11-08, phase 4 done)
+## Hand-off (final, 2026-11-08)
 
-**State.** Dev tree `aiondx-dev`:
-- `295bf2a6` core-0014
-- … `4b504dcb` 4c
-- `d1253e4e` 4d
+### State of every phase
 
-Exports: core-0014 = `79d4e2e3..295bf2a6`; core-0015 = `295bf2a6..HEAD`.
+| Phase | State | Where |
+|---|---|---|
+| core-0014 (K1: lifecycle routes lead-only for runtime tokens) | done; QA live A1–A7 pass | `patches/core-0014-auth-channel` |
+| 0: the crate, its own DB, the DPAPI host key, the listener, admin status/settings | done | |
+| 1: pair / session / rpc, devices; recovery, `lastRecovery` | done; QA B0–B11 pass | |
+| 2: facade reads | done | |
+| 3: writes, confirm proofs (§5.4), re-key (§5.3) | done; QA 68/69, the one gap fixed in 4 | |
+| 4: the change feed, approvals, native/follow-up refusals, derived state, send-failure links, shutdown rejected/expired | done; QA 92/95, then AP5/AP6 fixed in 5b | |
+| 5 core: netinfo QR, mDNS, IPv6 `[::]`, firewall status, re-key state, `extraUrls`, `AIONDX_MOBILE_BIND` | done | |
+| 5b: AP6 (`respond_now` for solo refusals), AP5 (409 for a resolved id) | done; QA's final pass running on exe 47b64970 | |
+| 5 desktop: Settings > Mobile | done by Voice UI Engineer, app patch 0018 (branch `mobile-desktop-ui`) | |
+| LAN live check (mDNS, `[::]`) | approved by Nathan, part of QA's final pass | checklist sent to the lead |
 
-**Wider suites** (session, conversation, ai-agent, app, team; `--no-fail-fast`): 3950 passed, 12 failed (11 distinct tests), none in files this patch touches. A baseline comparison runs in the worktree `work-base` (at 79d4e2e3), log `%LOCALAPPDATA%\aiondx-build\base-tests.log`.
+**Commits (all local, never pushed).**
+- Dev tree `work-core`, branch `aiondx-dev`. Rebased 2026-11-08 again, to put the core-0010 test fix under core-0014:
+  - `74bffa45`: baseline core-0001..0013 + core-0010/0002;
+  - `52913b90`: core-0014;
+  - `b0a02d25`: HEAD, phase 5b.
+- Exports:
+  - core-0014 = `git diff 74bffa45 52913b90`;
+  - core-0015 = `git diff 52913b90 HEAD`;
+  - core-0010/0002 = the `team_e2e.rs` test only.
+- Checked: applying every core patch in order to v0.2.2 (47e66d0d) gives exactly the dev tree (0 diff lines).
 
-**Next: phase 5.**
-- Cherry-pick `phase5-fw` fe760633, then `phase5-net` bb94d097 + 90f2dc35.
-- Wire them: QR `u=` from netinfo; mDNS while enabled; `GET /api/mobile/admin/firewall` → `{rule, plan}`.
-- Listener IPv6.
-- The desktop UI's asks:
-  - (a) `GET` a re-key offer's state;
-  - (b) `extraUrls` in the admin status;
-  - (c) `AIONDX_MOBILE_BIND=127.0.0.1`, a loopback-only bind for tests.
-- The desktop UI itself is done by Voice UI Engineer: patch 0018-mobile-settings, branch `mobile-desktop-ui`.
+### Known gaps
+
+- `Agent.shutdown` has no "approved" state: AionCore reports nothing, so the agent's removal stands for it
+  (CONTRACT rev 4.5).
+- Team-chat send failures have `messageId: null` (no exact link, as in the contract).
+- `Task.assignment` is found only within the owner's newest 200 messages; `unread` looks at the newest 100.
+- On a non-English Windows the firewall status reads `absent` (the `netsh` output is localized).
+- `respond_now` holds a solo follow-up for at most 30 minutes, in memory: an AionCore restart drops it.
+- The bridge's in-memory state (approvals, journal, shutdowns, held messages) restarts empty. The journal epoch changes,
+  so phones get `reset: true` and reload, as the contract says.
+- The wider workspace tests have 8 upstream failures (Windows/env). The 2 legacy-DB config tests fail only in the
+  un-branded dev tree and pass in the branded build tree.
+
+### How to rebuild
+
+1. `cd work-core` and run the tests:
+   - `CARGO_TARGET_DIR=%LOCALAPPDATA%\aiondx-build\dev-target`;
+   - `~/.cargo/bin/cargo.exe test -p aionui-mobile` (157);
+   - `-p aionui-team --test mcp_server_integration` (51).
+   Cargo isn't on PATH on purpose.
+2. Export the patches with the two `git diff` lines above.
+3. `tools\build-aioncore.ps1 -Patched` (from the repo root). Don't tail its log; wait for its exit. The output is
+   `vendor\aioncore\aioncore.exe` plus `aioncore.json`, which lists core-0001..0015.
+4. Ship with `tools\build-release.ps1 -AionDxCore …`.
+5. Live tests only through `tools\live-app.js` with a throwaway profile and a made-up APPDATA.
+   `AIONDX_MOBILE_BIND=127.0.0.1` keeps the bridge off the LAN.
+6. Merging with voice and the desktop UI: `docs/mobile-bridge/RELEASE-MERGE-NOTE.md`.
