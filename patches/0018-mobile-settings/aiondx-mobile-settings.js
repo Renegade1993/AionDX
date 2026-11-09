@@ -173,7 +173,10 @@
 
     ui.toggle = toggle(function (on) { saveSettings({ enabled: on }); });
     ui.toggle.setAttribute('data-testid', 'aiondx-mobile-enable');
-    c.appendChild(row('Phone access', ui.toggle, 'Off until you turn it on.'));
+    var accessRow = row('Phone access', ui.toggle, 'Off until you turn it on.');
+    ui.toggleHint = accessRow.querySelector('.aiondx-mobile-hint');
+    ui.toggleHint.setAttribute('data-testid', 'aiondx-mobile-enable-hint');
+    c.appendChild(accessRow);
     ui.status = el('div', 'aiondx-mobile-status');
     ui.status.setAttribute('data-testid', 'aiondx-mobile-status');
     c.appendChild(ui.status);
@@ -276,6 +279,8 @@
   function paintStatus(fillFields) {
     var s = status || {};
     setToggle(ui.toggle, s.enabled, savingSettings);
+    var hint = s.enabled ? "On. Phones you've paired can connect." : 'Off until you turn it on.';
+    if (ui.toggleHint.textContent !== hint) ui.toggleHint.textContent = hint;
     ui.status.textContent = '';
     if (s.enabled) {
       ui.status.appendChild(el('div', null, s.listening ? 'Listening on port ' + s.port + '.' : 'Not listening yet.'));
@@ -577,29 +582,49 @@
     t.setAttribute('data-testid', 'aiondx-mobile-firewall-state');
     t.setAttribute('data-rule', String(f.rule));
     r.appendChild(t);
-    if (f.rule === 'absent' && f.plan) {
-      var go = button('Allow phones through Windows Firewall (Private networks only)', 'primary', function () { runFirewallPlan(f.plan, go); });
+    if (f.rule === 'absent') {
+      var go = button(ALLOW_LABEL, 'primary', function () { allowFirewall(f.plan, go); });
       go.setAttribute('data-testid', 'aiondx-mobile-firewall-allow');
       r.appendChild(go);
+    } else if (f.rule === 'present' && bridgeApi()) {
+      var rm = button('Remove the rule', null, function () { removeFirewall(rm); });
+      rm.setAttribute('data-testid', 'aiondx-mobile-firewall-remove');
+      r.appendChild(rm);
     }
     box.appendChild(r);
   }
 
-  /** Only on the user's click, and only through a runner the app provides (elevate.exe, a UAC prompt). Without one, the exact
-   *  command is shown for the user to run themselves, never executed from here. */
-  function runFirewallPlan(plan, btn) {
-    var runner = window.__aionDxElevateRun;
-    if (typeof runner === 'function') {
-      btn.disabled = true;
-      setLabel(btn, 'Waiting for Windows...');
-      Promise.resolve().then(function () { return runner(plan.program, plan.args.slice()); }).then(function () {
-        btn.disabled = false; setLabel(btn, 'Allow phones through Windows Firewall (Private networks only)'); refreshFirewall();
-      }, function (e) {
-        btn.disabled = false; setLabel(btn, 'Allow phones through Windows Firewall (Private networks only)');
-        showError('The firewall rule was not added: ' + ((e && e.message) || e));
-      });
-      return;
-    }
+  var ALLOW_LABEL = 'Allow phones through Windows Firewall (Private networks only)';
+  /** The main process's one narrow handler (patch 0018's apply.js: window.aiondxMobile). The page passes the port and nothing
+   *  else; main builds the rule itself for the app's own aioncore.exe and runs it through elevate.exe (a UAC prompt), and answers
+   *  { ok, error }. */
+  function bridgeApi() {
+    var m = window.aiondxMobile;
+    return m && typeof m.allowFirewall === 'function' ? m : null;
+  }
+  function firewallCall(btn, busyLabel, label, call, what) {
+    btn.disabled = true;
+    setLabel(btn, busyLabel);
+    Promise.resolve().then(call).then(function (res) {
+      btn.disabled = false; setLabel(btn, label);
+      if (res && res.ok) { showError(''); refreshFirewall(); }
+      else showError('The firewall rule was not ' + what + ': ' + ((res && res.error) || 'no answer'));
+    }, function () {
+      btn.disabled = false; setLabel(btn, label);
+      showError('The firewall rule was not ' + what + '.');
+    });
+  }
+  function removeFirewall(btn) {
+    var api2 = bridgeApi();
+    if (api2 && typeof api2.removeFirewall === 'function') firewallCall(btn, 'Waiting for Windows...', 'Remove the rule', function () { return api2.removeFirewall(); }, 'removed');
+  }
+  /** Only on the user's click. Without the main-process handler (an older build), the exact command is shown for the user to run
+   *  themselves in an administrator prompt, never executed from here. */
+  function allowFirewall(plan, btn) {
+    var api2 = bridgeApi();
+    var port = status && status.port;
+    if (api2) { firewallCall(btn, 'Waiting for Windows...', ALLOW_LABEL, function () { return api2.allowFirewall(port); }, 'added'); return; }
+    if (!plan) { showError('This build cannot change Windows Firewall.'); return; }
     var d = openDialog();
     d.box.appendChild(el('h3', null, 'Allow phones through Windows Firewall'));
     d.box.appendChild(el('p', null, 'This build cannot ask Windows for permission itself yet. To allow phones on Private networks, run this in a Command Prompt opened with "Run as administrator":'));

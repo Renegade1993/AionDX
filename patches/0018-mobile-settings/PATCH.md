@@ -24,10 +24,25 @@ release build.
   it shows); **Revoke** after a confirm dialog (`DELETE`).
 - **Advanced** (collapsed): port, PC name (shown on the phone), extra addresses (one per line), mDNS, "Allow phones to edit
   tasks". The switches save at once; the text fields with Save.
-- **Windows Firewall** row, shown only when `GET /api/mobile/admin/firewall` answers (phase 5; a 404 hides it): the rule's state,
-  and when it is absent a button "Allow phones through Windows Firewall (Private networks only)". The button never runs
-  anything by itself: it hands the route's `plan` to `window.__aionDxElevateRun(program, args)` if the app provides one (a UAC
-  prompt through `elevate.exe`), and otherwise shows the exact command for the user to run in an administrator prompt.
+- **Windows Firewall** row, shown only when `GET /api/mobile/admin/firewall` answers (phase 5; a 404 hides it): the rule's state;
+  when it is absent, "Allow phones through Windows Firewall (Private networks only)"; when present, "Remove the rule". Only on
+  the user's click, through `window.aiondxMobile` (below); the page gets `{ok, error}` back and shows the error in plain words.
+  On a build without that handler, the button shows the exact command to run in an administrator prompt instead.
+
+## The firewall path in the main process (`apply.js`, `firewall-plan.js`)
+
+The page never chooses what gets elevated. `apply.js` adds to `out/main/index.js` one IPC handler, `aiondx:mobile-firewall`
+(action `allow` or `remove`; for `allow` the port, which must be a whole number from 1024 to 65535), and to
+`out/preload/index.js` `window.aiondxMobile = { allowFirewall(port), removeFirewall() }`, which only invoke that handler.
+Main builds the plan itself (`firewall-plan.js`, inlined; the same rules as core-0015's `firewall.rs`): `%SystemRoot%\System32\
+netsh.exe` by absolute path, the fixed rule name `AionDX mobile bridge`, `dir=in action=allow protocol=TCP localport=<port>
+profile=private program=<the app's own resources\bundled-aioncore\win32-x64\aioncore.exe> enable=yes`; a program path with a `"`,
+`=`, a control character, a relative path or a trailing separator is refused, never quoted around. It runs that through the app's
+own `resources\elevate.exe -wait` (`ShellExecuteEx`, a UAC prompt), as an argument vector with no shell, then reads the rule back
+with the read-only `netsh ... show rule ... verbose` and answers `{ok: true}` only if the rule is there, enabled, Private-only
+and on that port (for `remove`, only if it is gone); a cancelled prompt answers `{ok: false, error}` in plain words. One request
+at a time; nothing off Windows. `apply.js` runs after patch 0010 (they edit the same preload line, which both keep); re-running
+it replaces its marked main block and leaves the preload alone; a missing anchor writes nothing.
 
 Polling: status and the device list every 2 s, the firewall every 10 s, only while the card is on screen and the window is
 visible; an open offer every second. Everything a phone sent (its name, platform) is put on the page as text, never as HTML.
@@ -44,17 +59,24 @@ first), a `Copy-Item` of each file to `out\renderer\` (`aiondx-qrcodegen.js`, `a
 renderer privacy check, a README line, and `0018-mobile-settings` in the release manifest's patch list. Removing: those lines and
 the two files; the bridge's own settings stay where AionCore keeps them.
 
-Check (`test-live-mobile.js`, 29 checks): a real app with a bridge-capable core through `tools\live-app.js` (a throwaway profile,
+Check `test-firewall.js` (51 checks, nothing real run): the plan builder against firewall.rs's injection cases (a quote closing
+netsh's quoting, `=`, newline, NUL, relative and folder paths, ports outside 1024-65535 or not integers, unknown actions); the
+show-rule parser; `apply.js` on a made-up tree (idempotent, a missing anchor writes nothing, the preload exposes exactly two
+calls on one channel); and the inserted main block run in a sandbox whose `spawn` only records - allow runs exactly `elevate.exe
+-wait netsh.exe <12 args>` then the read-only show rule; extra arguments from the page are ignored; a bad install path, a
+missing elevate.exe or a busy handler runs nothing; a cancelled prompt answers not ok. `apply.js` was also dry-run in memory on
+the real built bundles: one anchor after 0010, 0010's `aiondxUpdate` kept, both files still parse.
+
+Check (`test-live-mobile.js`, 33 checks): a real app with a bridge-capable core through `tools\live-app.js` (a throwaway profile,
 made-up APPDATA/LOCALAPPDATA/cache/work/log folders, `AIONUI_E2E_TEST=1`, `AIONDX_NO_ACTIVATE=1`), with the two scripts evaluated
 into the page so the stage needs no rebuild. QA's phone client (`qa-k1-bridge\pair.js`, the CONTRACT §4 crypto) plays the phone:
 it reads the URI the QR encodes, sends a pairing request, and checks the SAS it computes against the one on screen; the PC side
-is driven only through the UI. The firewall route and the elevate runner are stubbed in the page.
+is driven only through the UI. The firewall route and `window.aiondxMobile` are stubbed in the page (it checks the page passes the
+port and nothing else, shows a refusal, and offers the command when the handler is missing). No rule was ever added or removed
+on the test PC; a real run needs Nathan's approval.
 
-## Open points (spec gaps, for the lead and the Bridge/API Engineer)
+## Open points (spec gaps, for the Bridge/API Engineer; the UI keeps a fallback until they land)
 
-- **No elevate path from the renderer.** The spec says the firewall button runs the plan "through the app's existing
-  elevate.exe path", but the renderer has no way to start a process: the main process would need to expose one (a preload
-  function, or a core route). Until then the button shows the command instead. The UI calls `window.__aionDxElevateRun`.
 - **Re-key has no completion signal.** There is no `GET` for a re-key offer's state, so the dialog cannot tell when the phone
   finished; it polls the device list and has a Done button.
 - **`extraUrls` is not in `status`.** The status shape has `urls` but not the saved `extraUrls`, so the field cannot show what

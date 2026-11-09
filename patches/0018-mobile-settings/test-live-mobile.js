@@ -82,7 +82,13 @@ function phone(uri, bport, deviceName) {
         if (window.__fakeRecovery && /\\/api\\/mobile\\/admin\\/recovery\\/dismiss$/.test(s)) window.__fakeRecovery = null;
         return of.apply(this, arguments);
       };
-      window.__aionDxElevateRun = (program, args) => { window.__elevateCalls.push({ program, args }); window.__fw = { rule: 'present', plan: null }; return Promise.resolve(); };
+      // What patch 0018's preload exposes (main process handler stubbed: it never reaches elevate.exe or netsh here).
+      window.__fwAnswer = { ok: true };
+      window.aiondxMobile = {
+        allowFirewall: function (port) { window.__elevateCalls.push({ action: 'allow', port, argc: arguments.length }); if (window.__fwAnswer.ok) window.__fw = { rule: 'present', plan: null }; return Promise.resolve(window.__fwAnswer); },
+        removeFirewall: () => { window.__elevateCalls.push({ action: 'remove' }); window.__fw = { rule: 'absent', plan: window.__fwPlan }; return Promise.resolve({ ok: true }); },
+      };
+      window.__fwPlan = window.__fw.plan;
       return 0; })()`);
     for (const f of ['qrcodegen.js', 'aiondx-mobile-settings.js']) await app.js(fs.readFileSync(path.join(HERE, f), 'utf8') + '\n;0');
 
@@ -105,6 +111,8 @@ function phone(uri, bport, deviceName) {
     check('the toggle turns it on, and it listens', await waitFor(`/Listening on port ${bport}/.test(document.querySelector('[data-testid="aiondx-mobile-status"]').textContent)`, 60),
       await q('[data-testid="aiondx-mobile-status"]', 'e.textContent'));
     check('"Pair a phone" is enabled once it listens', (await q('[data-testid="aiondx-mobile-pair"]', 'e.disabled')) === false);
+    check('the subtitle says it is on', (await q('[data-testid="aiondx-mobile-enable-hint"]', 'e.textContent')) === "On. Phones you've paired can connect.",
+      await q('[data-testid="aiondx-mobile-enable-hint"]', 'e.textContent'));
     await shot('2-on');
 
     // ---- pairing: QR, then the SAS, then "The codes match" ----
@@ -167,11 +175,19 @@ function phone(uri, bport, deviceName) {
     await app.js('window.__aionDxMobile.refresh()');
     check('the firewall row shows the rule is absent, with the allow button', await waitFor(`(document.querySelector('[data-testid="aiondx-mobile-firewall-state"]') || {}).getAttribute && document.querySelector('[data-testid="aiondx-mobile-firewall-state"]').getAttribute('data-rule') === 'absent' && !!document.querySelector('[data-testid="aiondx-mobile-firewall-allow"]')`, 40));
     await shot('8-firewall');
+    // A refusal from main (e.g. the UAC prompt cancelled) is shown, and the rule stays absent.
+    await app.js(`window.__fwAnswer = { ok: false, error: 'Windows did not add the rule (the permission prompt may have been cancelled)' }; 0`);
+    await click('[data-testid="aiondx-mobile-firewall-allow"]');
+    check('a not-ok answer from the main process is shown in plain words', await waitFor(`/The firewall rule was not added: Windows did not add the rule/.test(document.querySelector('[data-testid="aiondx-mobile-error"]').textContent)`, 20),
+      await q('[data-testid="aiondx-mobile-error"]', 'e.textContent'));
+    await app.js(`window.__fwAnswer = { ok: true }; 0`);
     await click('[data-testid="aiondx-mobile-firewall-allow"]');
     const calls = await app.js('window.__elevateCalls');
-    check('the button hands the exact plan to the (stubbed) elevate runner, once', calls.length === 1 && /netsh\.exe$/.test(calls[0].program) && calls[0].args.includes('profile=private') && calls[0].args.length === 12, JSON.stringify(calls));
-    check('and the row then shows the rule present', await waitFor(`document.querySelector('[data-testid="aiondx-mobile-firewall-state"]').getAttribute('data-rule') === 'present'`, 60));
-    await app.js(`window.__fw = { rule: 'absent', plan: window.__fw.plan || { program: 'C:\\\\Windows\\\\System32\\\\netsh.exe', args: ['advfirewall', 'firewall', 'add', 'rule', 'name=AionDX mobile bridge', 'profile=private'] } }; delete window.__aionDxElevateRun; window.__aionDxMobile.refresh(); 0`);
+    check('the button asks the main process with the port and nothing else', calls.length === 2 && calls.every((c) => c.action === 'allow' && c.port === bport && c.argc === 1), JSON.stringify(calls));
+    check('and the row then shows the rule present, with "Remove the rule"', await waitFor(`document.querySelector('[data-testid="aiondx-mobile-firewall-state"]').getAttribute('data-rule') === 'present' && !!document.querySelector('[data-testid="aiondx-mobile-firewall-remove"]')`, 60));
+    await click('[data-testid="aiondx-mobile-firewall-remove"]');
+    check('"Remove the rule" asks the main process to remove it', await waitFor(`window.__elevateCalls.some((c) => c.action === 'remove') && document.querySelector('[data-testid="aiondx-mobile-firewall-state"]').getAttribute('data-rule') === 'absent'`, 60));
+    await app.js(`delete window.aiondxMobile; window.__aionDxMobile.refresh(); 0`);
     await waitFor(`!!document.querySelector('[data-testid="aiondx-mobile-firewall-allow"]')`, 40);
     await click('[data-testid="aiondx-mobile-firewall-allow"]');
     check('without a runner it shows the command to run, and runs nothing', await waitFor(`/netsh\\.exe advfirewall firewall add rule name="AionDX mobile bridge"/.test((document.querySelector('[data-testid="aiondx-mobile-firewall-command"]') || {}).textContent || '')`, 20),
@@ -195,6 +211,7 @@ function phone(uri, bport, deviceName) {
       !((await admin('GET', '/api/mobile/admin/devices')).data || []).length);
     await click('[data-testid="aiondx-mobile-enable"]');
     check('the toggle turns it off again', await waitFor(`/Off\\./.test(document.querySelector('[data-testid="aiondx-mobile-status"]').textContent) && (window.__aionDxMobile.state().status || {}).listening === false`, 40));
+    check('and the subtitle says it is off', (await q('[data-testid="aiondx-mobile-enable-hint"]', 'e.textContent')) === 'Off until you turn it on.');
   } catch (e) {
     check('the test ran to the end', false, e && e.stack || e);
   } finally {

@@ -126,6 +126,9 @@ foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-ident
 }
 Run $node @("$root\patches\0010-official-identity\apply.js", $ext, $Version, '--report', "$work\0010-report.txt") 'patch 0010'
 Say "patch 0010 applied (report: $work\0010-report.txt)"
+# Patch 0018's main-process side: one narrow IPC handler for the Windows Firewall rule (built in main, run through
+# resources\elevate.exe on the user's click) and window.aiondxMobile in the preload. After 0010, which edits the same preload line.
+Run $node @("$root\patches\0018-mobile-settings\apply.js", $ext) 'patch 0018 (main, preload)'
 # The AionDX names (a request of 2026-11-01): AionUi is renamed to AionDX across the app, except the licence notices, web addresses and the stored values
 # tools\brand-names.js lists. Patch 0015 goes after it: it holds the old data folder's name, which must stay as written.
 # The two unpacked scripts stay stock here (the pack step refuses changes to unpacked files); they are renamed in the stage below.
