@@ -8870,10 +8870,10 @@ index 00000000..9aa9181b
 +}
 diff --git a/crates/aionui-mobile/src/netinfo.rs b/crates/aionui-mobile/src/netinfo.rs
 new file mode 100644
-index 00000000..bbc06f86
+index 00000000..7e07e640
 --- /dev/null
 +++ b/crates/aionui-mobile/src/netinfo.rs
-@@ -0,0 +1,446 @@
+@@ -0,0 +1,555 @@
 +//! This PC's private addresses, for the pairing QR's `u=` list and the mDNS advertisement (CONTRACT §7,
 +//! PHASE5-NET-SPEC §A). Only addresses `peer_filter::is_private_peer` accepts ever leave this module, so a public
 +//! address can never reach a QR or a TXT record.
@@ -8889,21 +8889,35 @@ index 00000000..bbc06f86
 +    pub interface: String,
 +}
 +
-+/// What the OS says about one address's adapter; only used for ordering.
-+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-+enum AdapterKind {
-+    Ethernet,
-+    WiFi,
-+    Other,
-+}
++// IF_TYPE values (windows-sys Win32::NetworkManagement::IpHelper), here so ordering is testable on any platform.
++const IF_TYPE_ETHERNET: u32 = 6;
++const IF_TYPE_WIFI: u32 = 71;
++const IF_TYPE_PROP_VIRTUAL: u32 = 53;
++const IF_TYPE_TUNNEL: u32 = 131;
++
++/// Adapters that report a physical type but are virtual or VPN: matched, lowercased, against the adapter's name
++/// and description. Only used for ordering; nothing is excluded for matching.
++const KNOWN_VIRTUAL: &[&str] = &[
++    "hyper-v",
++    "vethernet",
++    "wsl",
++    "virtualbox",
++    "vmware",
++    "radmin",
++    "pdanet",
++    "nordlynx",
++    "tap-windows",
++    "wintun",
++    "wireguard",
++];
 +
 +#[derive(Debug, Clone)]
 +struct Candidate {
 +    ip: IpAddr,
 +    interface: String,
-+    kind: AdapterKind,
-+    /// The adapter has a default gateway: the one actually on the LAN. Virtual adapters (WSL, Hyper-V) are typed
-+    /// as Ethernet too, but have none.
++    /// The adapter's IF_TYPE.
++    if_type: u32,
++    /// The adapter has a default gateway.
 +    has_gateway: bool,
 +    /// The adapter's TUNNEL_TYPE and description, for `is_transition_tunnel`.
 +    tunnel_type: i32,
@@ -8935,20 +8949,45 @@ index 00000000..bbc06f86
 +
 +/// Filters, orders and de-duplicates what the OS listed. Within RFC 1918: adapters with a gateway first, then
 +/// Ethernet before Wi-Fi before anything else; otherwise the OS's own order.
++/// Virtual or VPN: IF_TYPE_PROP_VIRTUAL (wintun, WireGuard, NordLynx), a tunnel, or a known-virtual name.
++fn is_virtual(c: &Candidate) -> bool {
++    if matches!(c.if_type, IF_TYPE_PROP_VIRTUAL | IF_TYPE_TUNNEL) {
++        return true;
++    }
++    let name = c.interface.to_ascii_lowercase();
++    let desc = c.description.to_ascii_lowercase();
++    KNOWN_VIRTUAL.iter().any(|v| name.contains(v) || desc.contains(v))
++}
++
++/// Within an address range: a physical Ethernet or Wi-Fi adapter with a default gateway (the LAN the phone is on)
++/// first, then other physical adapters, then virtual and VPN adapters whatever their gateway (a connected VPN such
++/// as NordLynx has one).
++fn tier(c: &Candidate) -> u8 {
++    if is_virtual(c) {
++        2
++    } else if matches!(c.if_type, IF_TYPE_ETHERNET | IF_TYPE_WIFI) && c.has_gateway {
++        0
++    } else {
++        1
++    }
++}
++
++fn kind_rank(if_type: u32) -> u8 {
++    match if_type {
++        IF_TYPE_ETHERNET => 0,
++        IF_TYPE_WIFI => 1,
++        _ => 2,
++    }
++}
++
 +fn order(candidates: Vec<Candidate>) -> Vec<LocalAddress> {
-+    let mut ranked: Vec<(u8, bool, AdapterKind, usize, Candidate)> = candidates
++    let mut ranked: Vec<((u8, u8, u8, usize), Candidate)> = candidates
 +        .into_iter()
 +        .enumerate()
 +        .filter(|(_, c)| !is_transition_tunnel(c.tunnel_type, &c.description))
-+        .filter_map(|(i, c)| range_rank(c.ip).map(|r| (r, !c.has_gateway, c.kind, i, c)))
++        .filter_map(|(i, c)| range_rank(c.ip).map(|r| ((r, tier(&c), kind_rank(c.if_type), i), c)))
 +        .collect();
-+    ranked.sort_by_key(|(r, no_gw, kind, i, _)| {
-+        if *r == 0 {
-+            (*r, *no_gw, *kind, *i)
-+        } else {
-+            (*r, false, AdapterKind::Ethernet, *i)
-+        }
-+    });
++    ranked.sort_by_key(|(key, _)| *key);
 +    let mut out: Vec<LocalAddress> = Vec::new();
 +    for (.., c) in ranked {
 +        if !out.iter().any(|a| a.ip == c.ip) {
@@ -8978,9 +9017,10 @@ index 00000000..bbc06f86
 +}
 +
 +/// Every UP, non-loopback address on this PC that `peer_filter::is_private_peer` accepts, IPv6-transition tunnel
-+/// adapters (Teredo, ISATAP, 6to4) excluded. Order: RFC 1918 IPv4
-+/// first (Ethernet before Wi-Fi when the OS says which is which), then 100.64/10 (Tailscale), then link-local IPv4,
-+/// then IPv6 ULA, then IPv6 link-local. Duplicates removed. Empty on other platforms than Windows.
++/// adapters (Teredo, ISATAP, 6to4) excluded. Order by range: RFC 1918 IPv4, then 100.64/10 (Tailscale), then
++/// link-local IPv4, then IPv6 ULA, then IPv6 link-local; within a range by `tier` (physical with a gateway, other
++/// physical, virtual/VPN), then Ethernet before Wi-Fi, then the OS's order. Duplicates removed. Empty on other
++/// platforms than Windows.
 +pub fn private_addresses() -> Vec<LocalAddress> {
 +    order(os::candidates())
 +}
@@ -9014,13 +9054,12 @@ index 00000000..bbc06f86
 +    use windows_sys::Win32::Foundation::ERROR_BUFFER_OVERFLOW;
 +    use windows_sys::Win32::NetworkManagement::IpHelper::{
 +        GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
-+        GetAdaptersAddresses, IF_TYPE_ETHERNET_CSMACD, IF_TYPE_IEEE80211, IF_TYPE_SOFTWARE_LOOPBACK,
-+        IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_UNICAST_ADDRESS_LH,
++        GetAdaptersAddresses, IF_TYPE_SOFTWARE_LOOPBACK, IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_UNICAST_ADDRESS_LH,
 +    };
 +    use windows_sys::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 +    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6, AF_UNSPEC, IpDadStatePreferred, SOCKET_ADDRESS};
 +
-+    use super::{AdapterKind, Candidate};
++    use super::Candidate;
 +
 +    /// A NUL-terminated UTF-16 string from the OS.
 +    ///
@@ -9083,11 +9122,6 @@ index 00000000..bbc06f86
 +                if a.OperStatus == IfOperStatusUp && a.IfType != IF_TYPE_SOFTWARE_LOOPBACK {
 +                    // SAFETY: FriendlyName is a NUL-terminated string inside `buf`.
 +                    let interface = unsafe { wide(a.FriendlyName) };
-+                    let kind = match a.IfType {
-+                        IF_TYPE_ETHERNET_CSMACD => AdapterKind::Ethernet,
-+                        IF_TYPE_IEEE80211 => AdapterKind::WiFi,
-+                        _ => AdapterKind::Other,
-+                    };
 +                    let has_gateway = !a.FirstGatewayAddress.is_null();
 +                    // SAFETY: Description is a NUL-terminated string inside `buf`.
 +                    let description = unsafe { wide(a.Description) };
@@ -9102,7 +9136,7 @@ index 00000000..bbc06f86
 +                                out.push(Candidate {
 +                                    ip,
 +                                    interface: interface.clone(),
-+                                    kind,
++                                    if_type: a.IfType,
 +                                    has_gateway,
 +                                    tunnel_type: a.TunnelType,
 +                                    description: description.clone(),
@@ -9131,22 +9165,22 @@ index 00000000..bbc06f86
 +mod tests {
 +    use super::*;
 +
-+    fn cand(ip: &str, interface: &str, kind: AdapterKind, has_gateway: bool) -> Candidate {
++    fn cand(ip: &str, interface: &str, if_type: u32, has_gateway: bool) -> Candidate {
 +        Candidate {
 +            ip: ip.parse().unwrap(),
 +            interface: interface.into(),
-+            kind,
++            if_type,
 +            has_gateway,
 +            tunnel_type: 0,
 +            description: String::new(),
 +        }
 +    }
 +    /// An adapter as GetAdaptersAddresses describes it.
-+    fn adapter(ip: &str, interface: &str, kind: AdapterKind, tunnel_type: i32, description: &str) -> Candidate {
++    fn adapter(ip: &str, interface: &str, if_type: u32, tunnel_type: i32, description: &str) -> Candidate {
 +        Candidate {
 +            tunnel_type,
 +            description: description.into(),
-+            ..cand(ip, interface, kind, false)
++            ..cand(ip, interface, if_type, false)
 +        }
 +    }
 +    fn la(ip: &str, interface: &str) -> LocalAddress {
@@ -9162,11 +9196,11 @@ index 00000000..bbc06f86
 +    #[test]
 +    fn order_is_rfc1918_then_cgnat_then_v4_link_local_then_ula_then_v6_link_local() {
 +        let got = order(vec![
-+            cand("fe80::1", "Wi-Fi", AdapterKind::WiFi, true),
-+            cand("fd00::5", "Wi-Fi", AdapterKind::WiFi, true),
-+            cand("169.254.9.9", "Ethernet 3", AdapterKind::Ethernet, false),
-+            cand("100.101.1.2", "Tailscale", AdapterKind::Other, false),
-+            cand("192.168.1.20", "Wi-Fi", AdapterKind::WiFi, true),
++            cand("fe80::1", "Wi-Fi", IF_TYPE_WIFI, true),
++            cand("fd00::5", "Wi-Fi", IF_TYPE_WIFI, true),
++            cand("169.254.9.9", "Ethernet 3", IF_TYPE_ETHERNET, false),
++            cand("100.101.1.2", "Tailscale", IF_TYPE_PROP_VIRTUAL, false),
++            cand("192.168.1.20", "Wi-Fi", IF_TYPE_WIFI, true),
 +        ]);
 +        assert_eq!(
 +            ips(&got),
@@ -9175,32 +9209,107 @@ index 00000000..bbc06f86
 +    }
 +
 +    #[test]
-+    fn within_rfc1918_gateway_first_then_ethernet_before_wifi() {
++    fn within_rfc1918_physical_with_gateway_then_virtual_ethernet_before_wifi() {
 +        let got = order(vec![
-+            cand("172.20.0.1", "vEthernet (WSL)", AdapterKind::Ethernet, false),
-+            cand("10.0.0.7", "Wi-Fi", AdapterKind::WiFi, true),
-+            cand("192.168.50.2", "Hamachi", AdapterKind::Other, true),
-+            cand("192.168.1.5", "Ethernet", AdapterKind::Ethernet, true),
-+            cand("192.168.56.1", "VirtualBox", AdapterKind::Ethernet, false),
++            cand("172.20.0.1", "vEthernet (WSL)", IF_TYPE_ETHERNET, false),
++            cand("10.0.0.7", "Wi-Fi", IF_TYPE_WIFI, true),
++            cand("192.168.50.2", "Hamachi", IF_TYPE_PROP_VIRTUAL, true),
++            cand("192.168.1.5", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("192.168.56.1", "VirtualBox", IF_TYPE_ETHERNET, false),
 +        ]);
++        // Virtual adapters last whatever their gateway; among them Ethernet-typed before PROP_VIRTUAL.
 +        assert_eq!(
 +            ips(&got),
-+            ["192.168.1.5", "10.0.0.7", "192.168.50.2", "172.20.0.1", "192.168.56.1"]
++            ["192.168.1.5", "10.0.0.7", "172.20.0.1", "192.168.56.1", "192.168.50.2"]
 +        );
++    }
++
++    /// The adapters on the PC used for the real-phone test: a connected NordVPN must not outrank Wi-Fi.
++    #[test]
++    fn physical_wifi_beats_a_connected_vpn_and_virtual_adapters() {
++        let with_gw = |c: Candidate| Candidate { has_gateway: true, ..c };
++        let got = order(vec![
++            with_gw(adapter(
++                "10.5.0.2",
++                "NordLynx",
++                IF_TYPE_PROP_VIRTUAL,
++                0,
++                "NordLynx Tunnel",
++            )),
++            with_gw(adapter(
++                "26.119.0.5",
++                "Radmin VPN",
++                IF_TYPE_ETHERNET,
++                0,
++                "Famatech Radmin VPN Ethernet Adapter",
++            )),
++            with_gw(adapter(
++                "192.168.49.10",
++                "Ethernet 5",
++                IF_TYPE_ETHERNET,
++                0,
++                "PdaNet Broadband Adapter",
++            )),
++            adapter(
++                "10.66.0.2",
++                "Private Party Net",
++                IF_TYPE_PROP_VIRTUAL,
++                0,
++                "WireGuard Tunnel",
++            ),
++            adapter(
++                "172.28.0.1",
++                "vEthernet (Default Switch)",
++                IF_TYPE_ETHERNET,
++                0,
++                "Hyper-V Virtual Ethernet Adapter",
++            ),
++            with_gw(adapter(
++                "192.168.1.20",
++                "Wi-Fi",
++                IF_TYPE_WIFI,
++                0,
++                "Intel(R) Wi-Fi 6E AX211 160MHz",
++            )),
++        ]);
++        let got = ips(&got);
++        assert_eq!(got[0], "192.168.1.20", "physical Wi-Fi with a gateway first: {got:?}");
++        assert!(
++            !got.contains(&"26.119.0.5".to_string()),
++            "Radmin's 26.x is public, never listed"
++        );
++        for vpn in ["10.5.0.2", "192.168.49.10", "10.66.0.2", "172.28.0.1"] {
++            assert!(got.contains(&vpn.to_string()), "{vpn} is re-ordered, never excluded");
++        }
++        assert_eq!(
++            got,
++            ["192.168.1.20", "192.168.49.10", "172.28.0.1", "10.5.0.2", "10.66.0.2"]
++        );
++    }
++
++    #[test]
++    fn a_physical_adapter_without_a_gateway_sits_between() {
++        let got = order(vec![
++            cand("10.9.0.1", "NordLynx", IF_TYPE_PROP_VIRTUAL, true),
++            cand("192.168.2.1", "Ethernet 2", IF_TYPE_ETHERNET, false),
++            cand("192.168.3.1", "Cellular", 243, false),
++            cand("192.168.1.20", "Wi-Fi", IF_TYPE_WIFI, true),
++        ]);
++        assert_eq!(ips(&got), ["192.168.1.20", "192.168.2.1", "192.168.3.1", "10.9.0.1"]);
 +    }
 +
 +    #[test]
 +    fn public_loopback_unspecified_and_mapped_addresses_never_appear() {
 +        let got = order(vec![
-+            cand("8.8.8.8", "Ethernet", AdapterKind::Ethernet, true),
-+            cand("2001:db8::1", "Ethernet", AdapterKind::Ethernet, true),
-+            cand("2606:4700::1111", "Ethernet", AdapterKind::Ethernet, true),
-+            cand("127.0.0.1", "Loopback", AdapterKind::Other, false),
-+            cand("::1", "Loopback", AdapterKind::Other, false),
-+            cand("0.0.0.0", "Ethernet", AdapterKind::Ethernet, true),
-+            cand("::ffff:192.168.1.2", "Ethernet", AdapterKind::Ethernet, true),
-+            cand("100.128.0.1", "Ethernet", AdapterKind::Ethernet, true),
-+            cand("192.168.1.2", "Ethernet", AdapterKind::Ethernet, true),
++            cand("8.8.8.8", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("2001:db8::1", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("2606:4700::1111", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("127.0.0.1", "Loopback", IF_TYPE_PROP_VIRTUAL, false),
++            cand("::1", "Loopback", IF_TYPE_PROP_VIRTUAL, false),
++            cand("0.0.0.0", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("::ffff:192.168.1.2", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("100.128.0.1", "Ethernet", IF_TYPE_ETHERNET, true),
++            cand("192.168.1.2", "Ethernet", IF_TYPE_ETHERNET, true),
 +        ]);
 +        assert_eq!(ips(&got), ["192.168.1.2"]);
 +    }
@@ -9208,8 +9317,8 @@ index 00000000..bbc06f86
 +    #[test]
 +    fn duplicates_are_removed_keeping_the_best_ranked() {
 +        let got = order(vec![
-+            cand("192.168.1.5", "Wi-Fi", AdapterKind::WiFi, false),
-+            cand("192.168.1.5", "Ethernet", AdapterKind::Ethernet, true),
++            cand("192.168.1.5", "Wi-Fi", IF_TYPE_WIFI, false),
++            cand("192.168.1.5", "Ethernet", IF_TYPE_ETHERNET, true),
 +        ]);
 +        assert_eq!(got, vec![la("192.168.1.5", "Ethernet")]);
 +    }
@@ -9221,15 +9330,15 @@ index 00000000..bbc06f86
 +            adapter(
 +                "10.66.0.2",
 +                "Private Party Net",
-+                AdapterKind::Other,
++                IF_TYPE_PROP_VIRTUAL,
 +                0,
 +                "WireGuard Tunnel",
 +            ),
-+            adapter("100.64.7.9", "wg0", AdapterKind::Other, 0, "Wintun Userspace Tunnel"),
++            adapter("100.64.7.9", "wg0", IF_TYPE_PROP_VIRTUAL, 0, "Wintun Userspace Tunnel"),
 +            adapter(
 +                "fd7a:115c:a1e0::5",
 +                "Tailscale",
-+                AdapterKind::Other,
++                IF_TYPE_PROP_VIRTUAL,
 +                0,
 +                "Tailscale Tunnel",
 +            ),
@@ -9237,28 +9346,28 @@ index 00000000..bbc06f86
 +            adapter(
 +                "fe80::8000:abcd:1:2",
 +                "Teredo Tunneling Pseudo-Interface",
-+                AdapterKind::Other,
++                IF_TYPE_PROP_VIRTUAL,
 +                14,
 +                "Teredo Tunneling Pseudo-Interface",
 +            ),
 +            adapter(
 +                "fe80::5efe:c0a8:15f",
 +                "isatap.{1234}",
-+                AdapterKind::Other,
++                IF_TYPE_PROP_VIRTUAL,
 +                13,
 +                "Microsoft ISATAP Adapter",
 +            ),
 +            adapter(
 +                "fe80::2002:1",
 +                "6TO4 Adapter",
-+                AdapterKind::Other,
++                IF_TYPE_PROP_VIRTUAL,
 +                11,
 +                "Microsoft 6to4 Adapter",
 +            ),
 +            adapter(
 +                "fe80::9",
 +                "Tunnel 9",
-+                AdapterKind::Other,
++                IF_TYPE_PROP_VIRTUAL,
 +                0,
 +                "Microsoft Teredo Tunneling Adapter",
 +            ),
