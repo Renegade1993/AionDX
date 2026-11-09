@@ -88,7 +88,10 @@ function phone(uri, bport, deviceName) {
       };
       // What patch 0018's preload exposes (main process handler stubbed: it never reaches elevate.exe or netsh here).
       window.__fwAnswer = { ok: true };
+      // In a BUILT app this assignment fails silently (contextBridge's object cannot be replaced) and the real main handler would
+      // be reached: __aiondxTestStub marks the stub, and every firewall click below is skipped unless it is really in place.
       window.aiondxMobile = {
+        __aiondxTestStub: true,
         allowFirewall: function (port) { window.__elevateCalls.push({ action: 'allow', port, argc: arguments.length }); if (window.__fwAnswer.ok) window.__fw = { rule: 'present', plan: null }; return Promise.resolve(window.__fwAnswer); },
         removeFirewall: () => { window.__elevateCalls.push({ action: 'remove' }); window.__fw = { rule: 'absent', plan: window.__fwPlan }; return Promise.resolve({ ok: true }); },
       };
@@ -212,6 +215,13 @@ function phone(uri, bport, deviceName) {
     await app.js('window.__aionDxMobile.refresh()');
     check('the firewall row shows the rule is absent, with the allow button', await waitFor(`(document.querySelector('[data-testid="aiondx-mobile-firewall-state"]') || {}).getAttribute && document.querySelector('[data-testid="aiondx-mobile-firewall-state"]').getAttribute('data-rule') === 'absent' && !!document.querySelector('[data-testid="aiondx-mobile-firewall-allow"]')`, 40));
     await shot('8-firewall');
+    // Only with the stub really in place: on a built app window.aiondxMobile is contextBridge's, the stub assignment and the
+    // delete below fail silently, and a click would reach the real main handler (which refuses in test mode, but never rely on that).
+    const stubOk = (await app.js(`(() => { const m = window.aiondxMobile; const d = Object.getOwnPropertyDescriptor(window, 'aiondxMobile');
+      return !!m && m.__aiondxTestStub === true && !!d && d.writable === true && d.configurable === true; })()`)) === true;
+    if (!stubOk) {
+      console.log('SKIP  firewall clicks: window.aiondxMobile is not this test\'s stub (a built app\'s contextBridge object?) - no Allow/Remove click is made');
+    } else {
     // A refusal from main (e.g. the UAC prompt cancelled) is shown, and the rule stays absent.
     await app.js(`window.__fwAnswer = { ok: false, error: 'Windows did not add the rule (the permission prompt may have been cancelled)' }; 0`);
     await click('[data-testid="aiondx-mobile-firewall-allow"]');
@@ -225,12 +235,17 @@ function phone(uri, bport, deviceName) {
     await click('[data-testid="aiondx-mobile-firewall-remove"]');
     check('"Remove the rule" asks the main process to remove it', await waitFor(`window.__elevateCalls.some((c) => c.action === 'remove') && document.querySelector('[data-testid="aiondx-mobile-firewall-state"]').getAttribute('data-rule') === 'absent'`, 60));
     await app.js(`delete window.aiondxMobile; window.__aionDxMobile.refresh(); 0`);
-    await waitFor(`!!document.querySelector('[data-testid="aiondx-mobile-firewall-allow"]')`, 40);
-    await click('[data-testid="aiondx-mobile-firewall-allow"]');
-    check('without a runner it shows the command to run, and runs nothing', await waitFor(`/netsh\\.exe advfirewall firewall add rule name="AionDX mobile bridge"/.test((document.querySelector('[data-testid="aiondx-mobile-firewall-command"]') || {}).textContent || '')`, 20),
-      await q('[data-testid="aiondx-mobile-firewall-command"]', 'e.textContent'));
-    await shot('9-firewall-manual');
-    await app.js(`(() => { const o = document.querySelector('.aiondx-mobile-overlay'); if (o) o.click(); return 0; })()`);
+    if ((await app.js('typeof window.aiondxMobile')) !== 'undefined') {
+      console.log('SKIP  the no-handler check: window.aiondxMobile could not be removed - no click is made');
+    } else {
+      await waitFor(`!!document.querySelector('[data-testid="aiondx-mobile-firewall-allow"]')`, 40);
+      await click('[data-testid="aiondx-mobile-firewall-allow"]');
+      check('without a runner it shows the command to run, and runs nothing', await waitFor(`/netsh\\.exe advfirewall firewall add rule name="AionDX mobile bridge"/.test((document.querySelector('[data-testid="aiondx-mobile-firewall-command"]') || {}).textContent || '')`, 20),
+        await q('[data-testid="aiondx-mobile-firewall-command"]', 'e.textContent'));
+      await shot('9-firewall-manual');
+      await app.js(`(() => { const o = document.querySelector('.aiondx-mobile-overlay'); if (o) o.click(); return 0; })()`);
+    }
+    }
 
     // ---- recovery banner (the real route, with a recovery notice added for this step) ----
     await app.js(`window.__fakeRecovery = { kind: 'host_key', at: Date.now(), movedTo: 'C:\\\\fake\\\\mobile\\\\host-key.bad' }; 0`);

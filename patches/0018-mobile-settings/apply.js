@@ -46,7 +46,12 @@ function mainBlock() {
     '      child.on("error", () => resolve({ code: -1, out }));\n' +
     '      child.on("close", (code) => resolve({ code, out }));\n' +
     '    });\n' +
+    // Test builds (tools\\live-app.js sets AIONDX_E2E_TEST; QA's runs also set AIONUI_E2E_TEST) never elevate anything: a test
+    // that cannot replace window.aiondxMobile (it comes from contextBridge in a built app) must not reach elevate.exe. The
+    // second name is split so tools\\brand-names.js, which renames AIONUI to AIONDX in this bundle afterwards, leaves it as is.
+    '    const __aiondxTestEnv = ["AIONDX_E2E_TEST", "AION" + "UI_E2E_TEST"];\n' +
     '    electron.ipcMain.handle(' + JSON.stringify(CHANNEL) + ', async (_event, action, port) => {\n' +
+    '      if (__aiondxTestEnv.some((k) => process.env[k])) return { ok: false, error: "disabled in test mode" };\n' +
     '      if (busy) return { ok: false, error: "Windows is already being asked" };\n' +
     '      busy = true;\n' +
     '      try {\n' +

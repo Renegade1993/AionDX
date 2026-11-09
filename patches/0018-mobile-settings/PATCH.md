@@ -43,7 +43,7 @@ profile=private program=<the app's own resources\bundled-aioncore\win32-x64\aion
 own `resources\elevate.exe -wait` (`ShellExecuteEx`, a UAC prompt), as an argument vector with no shell, then reads the rule back
 with the read-only `netsh ... show rule ... verbose` and answers `{ok: true}` only if the rule is there, enabled, Private-only
 and on that port (for `remove`, only if it is gone); a cancelled prompt answers `{ok: false, error}` in plain words. One request
-at a time; nothing off Windows. `apply.js` runs after patch 0010 (they edit the same preload line, which both keep); re-running
+at a time; nothing off Windows; and nothing at all in a test run (`AIONDX_E2E_TEST` or `AIONUI_E2E_TEST` set, which tools\live-app.js and QA set): it answers `{ok: false, error: "disabled in test mode"}` without spawning anything, so a test that cannot replace the preload's `window.aiondxMobile` (a built app) never reaches elevate.exe. `test-live-mobile.js` also checks its stub really took effect before any firewall click, and skips those clicks if not. `apply.js` runs after patch 0010 (they edit the same preload line, which both keep); re-running
 it replaces its marked main block and leaves the preload alone; a missing anchor writes nothing.
 
 Polling: status and the device list every 2 s, the firewall every 10 s, only while the card is on screen and the window is

@@ -101,8 +101,8 @@ function sandbox(opts) {
     } };
     throw new Error('unexpected require ' + name);
   };
-  const proc = { platform: opts.platform || 'win32', resourcesPath: opts.resourcesPath || 'C:\\Program Files\\AionDX\\resources', env: { SystemRoot: 'C:\\Windows' } };
-  vm.runInNewContext(A.mainBlock(), { require: fakeRequire, process: proc, console, setImmediate });
+  const proc = { platform: opts.platform || 'win32', resourcesPath: opts.resourcesPath || 'C:\\Program Files\\AionDX\\resources', env: Object.assign({ SystemRoot: 'C:\\Windows' }, opts.env || {}) };
+  vm.runInNewContext(opts.code || A.mainBlock(), { require: fakeRequire, process: proc, console, setImmediate });
   return { handler: handlers['aiondx:mobile-firewall'], spawned };
 }
 
@@ -142,6 +142,32 @@ function sandbox(opts) {
   check('main: one request at a time (a second is turned away, not run twice)', both.filter((x) => x.ok).length === 1 && /already/.test(both.find((x) => !x.ok).error) && s.spawned.filter((c) => /elevate/.test(c.file)).length === 1);
   s = sandbox({ platform: 'linux' });
   check('main: off Windows the handler is not registered', s.handler === undefined);
+
+  // Test mode: a built app under tools\live-app.js (AIONDX_E2E_TEST) or QA's runs (AIONUI_E2E_TEST) never elevates anything.
+  for (const env of [{ AIONDX_E2E_TEST: '1' }, { AIONUI_E2E_TEST: '1' }, { AIONUI_E2E_TEST: '1', AIONDX_E2E_TEST: '1' }]) {
+    for (const call of [['allow', 47734], ['remove']]) {
+      s = sandbox({ env, showOut: () => PRESENT(47734) });
+      res = await s.handler({}, ...call);
+      check('main: with ' + Object.keys(env).join('+') + ', ' + call[0] + ' answers "disabled in test mode" and spawns nothing',
+        JSON.stringify(res) === '{"ok":false,"error":"disabled in test mode"}' && s.spawned.length === 0, JSON.stringify(res) + ' ' + JSON.stringify(s.spawned));
+    }
+  }
+  // The build renames AIONUI to AIONDX in out/main/index.js after this block goes in: the check must survive that pass.
+  const bt = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-0018-brand-'));
+  try {
+    const f = path.join(bt, 'index.js');
+    fs.writeFileSync(f, A.mainBlock());
+    const br = require('child_process').spawnSync(process.execPath, [path.join(__dirname, '..', '..', 'tools', 'brand-names.js'), f, '--mode', 'asar'], { encoding: 'utf8' });
+    const branded = fs.readFileSync(f, 'utf8');
+    check('(setup) the rename pass ran over the main block', br.status === 0, br.stderr || br.stdout);
+    for (const env of [{ AIONDX_E2E_TEST: '1' }, { AIONUI_E2E_TEST: '1' }]) {
+      s = sandbox({ code: branded, env, showOut: () => PRESENT(47734) });
+      res = await s.handler({}, 'allow', 47734);
+      check('main, after the rename pass: ' + Object.keys(env)[0] + ' still disables it, nothing spawned', res.ok === false && res.error === 'disabled in test mode' && s.spawned.length === 0, JSON.stringify(res));
+    }
+    s = sandbox({ code: branded, showOut: () => PRESENT(47734) });
+    check('main, after the rename pass: without test mode it still works (fake spawn)', (await s.handler({}, 'allow', 47734)).ok === true);
+  } finally { fs.rmSync(bt, { recursive: true, force: true }); }
 
   console.log(`${pass}/${pass + fail} passed`);
   process.exit(fail ? 1 : 0);
