@@ -190,42 +190,33 @@ Voice Core's pure modules (`journal.rs`, `approvals.rs`, from `phase4-core` d059
 - aionui-session: the deny message replaces the fixed text only on a deny. aionui-ai-agent: the aionrs denial reason. aionui-conversation: `turn_id` on userCreated.
 - **Hardening:** the bridge DB's corrupt-file move now retries (a Windows handle can linger after a failed open). The recovery test failed once in parallel runs and couldn't be reproduced in 8 more.
 
+**Phase 4d:**
+- QA SD2a: the aionui-team test `declined_shutdown_emits_mailbox_changed_for_the_bridge` drives the real MCP decline through a mailbox wired as `TeamSession::new` wires it, and pins the `team.mailboxChanged` the bridge parses.
+- A `requested` shutdown becomes `expired` after 10 minutes (rev 4.5).
+- `your_turn` for a lead on `GET /v1/conversations/{cid}`.
+- aionui-mobile: 124 tests.
+
 **Known limits:**
 - `Agent.shutdown` "approved" can't be observed: AionCore broadcasts nothing when a teammate approves (`notify_shutdown_acknowledged` only logs); the agent is simply removed about 0.5 s later. The state goes requested → (removed).
 - Team-chat send failures stay unlinked (`messageId: null`), as the contract says.
 
-## Resume (checkpoint 2026-11-08 ~12:40, usage at 80%)
+## Resume (2026-11-08, phase 4 done)
 
 **State.** Dev tree `aiondx-dev`:
-- `79d4e2e3` baseline
 - `295bf2a6` core-0014
-- `96891b66` phase 3
-- `dc967e63` 4a, native deny
-- `4e89cd78` 4b, pump / changes / approvals
-- **`4b504dcb` 4c, a WIP checkpoint**
+- … `4b504dcb` 4c
+- `d1253e4e` 4d
 
-The core-0015 patch is exported from `295bf2a6..HEAD`. Release exe 2133501c = phase 3 only (QA has it).
+Exports: core-0014 = `79d4e2e3..295bf2a6`; core-0015 = `295bf2a6..HEAD`.
 
-**Phase 4 is code-complete apart from the items below.**
-- aionui-mobile was 123/123 green before the last edit.
-- NOT YET VERIFIED:
-  1. The last edit (lead `your_turn` on `GET /v1/conversations/{cid}` in `facade.rs` `conversation_extras`, plus the teammate assertion in the `unread_your_turn_needs_answer_and_session_status` test) is uncompiled. Run `cargo test -p aionui-mobile`.
-  2. The wider run finished: aionui-ai-agent lib 983 passed, 1 failed. The failure is `terminal::tests::default_cwd_applies_when_agent_sends_none`, an upstream test that runs `pwd` against a canonicalized Windows path; it isn't in any file I changed. Cargo stopped there, so **the session, conversation and app suites did NOT run**. Rerun them with `--no-fail-fast`, and confirm that terminal test also fails on baseline 79d4e2e3. The old note follows:
-     the wider run `cargo test -p aionui-session -p aionui-conversation -p aionui-ai-agent -p aionui-app` was in flight. Its log is `%LOCALAPPDATA%\aiondx-build\p4-wide-tests.log`, ending in "cargo exit N". Check it; rerun if it didn't finish.
+**Wider suites** (session, conversation, ai-agent, app, team; `--no-fail-fast`): 3950 passed, 12 failed (11 distinct tests), none in files this patch touches. A baseline comparison runs in the worktree `work-base` (at 79d4e2e3), log `%LOCALAPPDATA%\aiondx-build\base-tests.log`.
 
-**QA SD2a ("declined shutdown stays requested").** That run used exe 2133501c (phase 3), which has NO event pump; rejected tracking arrived in 4b. QA's guess is that the scheduler's Mailbox has no emitter. Checked against the code, that looks wrong:
-- `session.rs:196` builds the mailbox `.with_events(emitter)`;
-- `session.rs:206-210` passes that same Arc to `TeammateManager::new`;
-- so `notify_shutdown_rejected`'s `mailbox.write` emits `team.mailboxChanged`.
-
-Still to do for SD2a (the lead's asks):
-- (a) A test through the REAL mailbox write path: an aionui-team-level test that `notify_shutdown_rejected` emits `team.mailboxChanged` with that content, OR an app-level bus test.
-- (b) A timeout on a pending request: `requested` older than N min (suggest 10) becomes a terminal state, e.g. `{state:'expired'}` or cleared. Pick one and document it.
-- (c) CONTRACT rev 4.5 note for §6.3 `Agent.shutdown`: "approved" isn't reported directly, and clients treat removal after a pending request as approved (lead-approved), plus the timeout.
-- Then a release build (`tools\build-aioncore.ps1 -Patched`, don't tail the log) and tell the lead, so QA reruns SD2a: `QA_PAIR=1 QA_P3=1 node run-k1.js`.
-
-**Then:** commit the impl repo (CONTRACT, PATCH.md, patch), report phase 4 to the lead, then phase 5:
-- cherry-pick `phase5-net` bb94d097 + 90f2dc35 and `phase5-fw` fe760633;
-- wire them; IPv6 bind; renderer Settings > Mobile; build-release;
-- live tests via `tools\live-app.js` only.
-- Gates: the firewall add plan on this PC, admin installs, and real data all need approval.
+**Next: phase 5.**
+- Cherry-pick `phase5-fw` fe760633, then `phase5-net` bb94d097 + 90f2dc35.
+- Wire them: QR `u=` from netinfo; mDNS while enabled; `GET /api/mobile/admin/firewall` → `{rule, plan}`.
+- Listener IPv6.
+- The desktop UI's asks:
+  - (a) `GET` a re-key offer's state;
+  - (b) `extraUrls` in the admin status;
+  - (c) `AIONDX_MOBILE_BIND=127.0.0.1`, a loopback-only bind for tests.
+- The desktop UI itself is done by Voice UI Engineer: patch 0018-mobile-settings, branch `mobile-desktop-ui`.
