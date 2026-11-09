@@ -24,7 +24,7 @@ release build.
   rekey-offers/{id}` is polled every second while the dialog is open: `completed` closes it, refreshes the list and shows
   "Confirmation key reset for ..."; `failed` or `expired` keep it open with a plain message; Done closes it by hand; a core
   without that route (404) gets the list polled instead); **Revoke** after a confirm dialog (`DELETE`).
-- **Advanced** (collapsed): port, PC name (shown on the phone), extra addresses (one per line), mDNS, "Allow phones to edit
+- **Advanced** (collapsed): port, PC name (shown on the phone), extra addresses (one per line), mDNS (the switch is the saved choice, `mdnsSetting`, falling back to `mdns` on an older core; "Off while AionDX is in local-only test mode." when `mdnsOffReason` is `loopback_bind`), "Allow phones to edit
   tasks". The switches save at once; the text fields with Save.
 - **Windows Firewall** row, shown only when `GET /api/mobile/admin/firewall` answers (phase 5; a 404 hides it): the rule's state;
   when it is absent, "Allow phones through Windows Firewall (Private networks only)"; when present, "Remove the rule". Only on
@@ -69,7 +69,7 @@ calls on one channel); and the inserted main block run in a sandbox whose `spawn
 missing elevate.exe or a busy handler runs nothing; a cancelled prompt answers not ok. `apply.js` was also dry-run in memory on
 the real built bundles: one anchor after 0010, 0010's `aiondxUpdate` kept, both files still parse.
 
-Check (`test-live-mobile.js`, 43 checks): a real app with a bridge-capable core through `tools\live-app.js` (a throwaway profile,
+Check (`test-live-mobile.js`, 46 checks): a real app with a bridge-capable core through `tools\live-app.js` (a throwaway profile,
 made-up APPDATA/LOCALAPPDATA/cache/work/log folders, `AIONUI_E2E_TEST=1`, `AIONDX_NO_ACTIVATE=1`, `AIONDX_MOBILE_BIND=127.0.0.1`
 so the bridge listens on loopback only), with the two scripts evaluated
 into the page so the stage needs no rebuild. QA's phone client (`qa-k1-bridge\pair.js`, the CONTRACT §4 crypto) plays the phone:

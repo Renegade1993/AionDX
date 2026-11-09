@@ -81,7 +81,8 @@ function phone(uri, bport, deviceName) {
         const s = String(u);
         if (window.__rekeyOverride && /\\/api\\/mobile\\/admin\\/rekey-offers\\/[^/]+$/.test(s)) return Promise.resolve(new Response(JSON.stringify({ success: true, data: { state: window.__rekeyOverride } }), { status: 200 }));
         if (/\\/api\\/mobile\\/admin\\/firewall$/.test(s)) return Promise.resolve(new Response(JSON.stringify({ success: true, data: window.__fw }), { status: 200 }));
-        if (window.__fakeRecovery && /\\/api\\/mobile\\/admin\\/status$/.test(s)) return of.apply(this, arguments).then(async (r) => { const j = await r.json(); j.data.lastRecovery = window.__fakeRecovery; return new Response(JSON.stringify(j), { status: 200 }); });
+        if ((window.__fakeRecovery || window.__fakeStatus) && /\\/api\\/mobile\\/admin\\/(status|settings)$/.test(s)) return of.apply(this, arguments).then(async (r) => { const j = await r.json();
+          if (window.__fakeRecovery) j.data.lastRecovery = window.__fakeRecovery; if (window.__fakeStatus) Object.assign(j.data, window.__fakeStatus); return new Response(JSON.stringify(j), { status: 200 }); });
         if (window.__fakeRecovery && /\\/api\\/mobile\\/admin\\/recovery\\/dismiss$/.test(s)) window.__fakeRecovery = null;
         return of.apply(this, arguments);
       };
@@ -237,6 +238,15 @@ function phone(uri, bport, deviceName) {
     await shot('10-recovery');
     await app.js(`[...document.querySelectorAll('[data-testid="aiondx-mobile-recovery"] button')][0].click(); 0`);
     check('Dismiss hides it', await waitFor(`document.querySelector('[data-testid="aiondx-mobile-recovery"]').hidden === true`, 20));
+
+    // ---- mDNS: the switch shows the saved choice, and why it is off in effect (stubbed: the newer core's status fields) ----
+    await app.js(`window.__fakeStatus = { mdns: false, mdnsSetting: true, mdnsOffReason: 'loopback_bind' }; window.__aionDxMobile.refresh(); 0`);
+    check('the mDNS switch follows mdnsSetting, not the effective mdns, with the local-only note', await waitFor(`document.querySelector('[data-testid="aiondx-mobile-mdns"]').getAttribute('aria-checked') === 'true' && !document.querySelector('[data-testid="aiondx-mobile-mdns-note"]').hidden && /local-only test mode/.test(document.querySelector('[data-testid="aiondx-mobile-mdns-note"]').textContent)`, 20));
+    await app.js(`window.__fakeStatus = { mdns: false, mdnsSetting: false, mdnsOffReason: null }; window.__aionDxMobile.refresh(); 0`);
+    check('saved off, no reason: switch off and no note', await waitFor(`document.querySelector('[data-testid="aiondx-mobile-mdns"]').getAttribute('aria-checked') === 'false' && document.querySelector('[data-testid="aiondx-mobile-mdns-note"]').hidden`, 20));
+    await app.js(`window.__fakeStatus = { mdnsSetting: undefined, mdnsOffReason: undefined, mdns: true }; window.__aionDxMobile.refresh(); 0`);
+    check('an older core without mdnsSetting: the switch falls back to mdns', await waitFor(`document.querySelector('[data-testid="aiondx-mobile-mdns"]').getAttribute('aria-checked') === 'true' && document.querySelector('[data-testid="aiondx-mobile-mdns-note"]').hidden`, 20));
+    await app.js(`window.__fakeStatus = null; 0`);
 
     // ---- the firewall is off on this PC (Nathan's case): plain text, no button ----
     await app.js(`window.__fw = { rule: 'absent', plan: window.__fwPlan, firewallEnabled: false }; window.__aionDxMobile.refresh(); 0`);

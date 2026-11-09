@@ -240,7 +240,12 @@
     d.appendChild(row('Extra addresses', ui.extraUrls, 'One per line, for example a Tailscale 100.x address or MagicDNS name.'));
     ui.mdns = toggle(function (on) { saveSettings({ mdns: on }); });
     ui.mdns.setAttribute('data-testid', 'aiondx-mobile-mdns');
-    d.appendChild(row('Announce on the local network (mDNS)', ui.mdns, 'Lets the phone app find this PC without typing an address.'));
+    var mdnsRow = row('Announce on the local network (mDNS)', ui.mdns, 'Lets the phone app find this PC without typing an address.');
+    ui.mdnsNote = el('div', 'aiondx-mobile-hint', 'Off while AionDX is in local-only test mode.');
+    ui.mdnsNote.setAttribute('data-testid', 'aiondx-mobile-mdns-note');
+    ui.mdnsNote.hidden = true;
+    mdnsRow.firstChild.appendChild(ui.mdnsNote);
+    d.appendChild(mdnsRow);
     ui.tasksWrite = toggle(function (on) { saveSettings({ tasksWrite: on }); });
     ui.tasksWrite.setAttribute('data-testid', 'aiondx-mobile-taskswrite');
     d.appendChild(row('Allow phones to edit tasks', ui.tasksWrite));
@@ -320,7 +325,9 @@
       ui.bannerDetail.textContent = rec.movedTo ? 'The old data was moved to ' + rec.movedTo : '';
     }
     ui.pair.disabled = !s.listening;
-    setToggle(ui.mdns, s.mdns, savingSettings);
+    // The switch is the saved choice (mdnsSetting); mdns is what is in effect, which an older core reports alone.
+    setToggle(ui.mdns, typeof s.mdnsSetting === 'boolean' ? s.mdnsSetting : s.mdns, savingSettings);
+    ui.mdnsNote.hidden = s.mdnsOffReason !== 'loopback_bind';
     setToggle(ui.tasksWrite, s.tasksWrite, savingSettings);
     if (fillFields || ui.port.value === '') {
       // not while the user is typing in them
