@@ -96,6 +96,16 @@ try {
   r = run([]);
   const ids = JSON.parse(rows().r1.available_models).available_models.map((m) => m.id);
   check('a model only the account catalog lists reaches the picker, after the catalog model before it', ids.indexOf('claude-fable-5-2') === ids.indexOf('opus') + 1 && /from the account catalog/.test(fs.readFileSync(path.join(root, 'logs', 'model-refresh.log'), 'utf8')), JSON.stringify(ids));
+  // --quick: no Claude Code launch while every picker already has its catalog's models; one when a picker lacks one
+  fs.writeFileSync(LOG, '');
+  r = run(['--quick', '--no-update']);
+  const quickStarts = fs.readFileSync(LOG, 'utf8').trim();
+  check('a quick run with every picker complete launches no Claude Code', quickStarts === '' && /quick check: every picker has its account's models/.test(fs.readFileSync(path.join(root, 'logs', 'model-refresh.log'), 'utf8')), quickStarts);
+  const dq = new DatabaseSync(dbFile);
+  dq.prepare('UPDATE agent_metadata SET available_models = ? WHERE id = ?').run(JSON.stringify({ available_models: [{ id: 'opus' }], current_model_id: 'opus' }), 'r1');
+  dq.close();
+  r = run(['--quick', '--no-update']);
+  check('a quick run with a picker short of a catalog model asks Claude Code and puts it back', fs.readFileSync(LOG, 'utf8').trim() !== '' && JSON.parse(rows().r1.available_models).available_models.some((m) => m.id === 'claude-fable-5-2'), rows().r1.available_models);
   // the lock
   fs.writeFileSync(path.join(root, 'logs', 'model-refresh.lock'), JSON.stringify({ pid: 999999, at: Date.now() }));
   r = run([]);

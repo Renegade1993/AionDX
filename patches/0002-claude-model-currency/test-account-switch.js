@@ -72,6 +72,10 @@ const lastLog = () => { try { return fs.readFileSync(LOG, 'utf8').trim().split('
 
     r = router(['--version'], { AIONDX_CONVERSATION_ID: CHAT });
     check('a chat with no choice runs on its agent\'s account (or the default)', r.status === 0 && /conv=\w+ agent=\S+ -> /.test(lastLog()) && !/chosen=/.test(lastLog()), lastLog());
+    // a Claude Code subcommand run from inside a chat (AionDX's plugin list, an agent's own `claude ...`) gets no session flags
+    // (2026-11-10: 0.26.3 added --add-dir to every start, and `claude plugin list` failed with "unknown option '--add-dir'")
+    r = router(['plugin', 'list', '--json'], { AIONDX_CONVERSATION_ID: CHAT });
+    check('a subcommand from inside a chat gets no --add-dir and runs (claude plugin list --json)', r.status === 0 && !/unknown option/.test(String(r.stderr || '')), String(r.stderr || '').slice(0, 300));
 
     const key = 'aiondx.account.conv.' + CHAT;
     cleanups.push(() => put({ [key]: null }));

@@ -98,6 +98,8 @@ if ($idx -notmatch 'aiondx-ui\.js') {
   $idx = $idx -replace '(<script type="module" crossorigin src="\./assets/index-[^"]+\.js"></script>)', "`$1`r`n    <script src=`"./aiondx-ui.js`" defer></script>"
   Set-Content "$ext\out\renderer\index.html" $idx -NoNewline -Encoding utf8
 }
+# A name declared twice as a function silently replaces the first (2026-11-10: the Loop menu stopped opening): refused here.
+Run $node @("$root\tools\check-page-script.js", "$root\patches\0001-renderer-dx\aiondx-ui.js", "$root\patches\0011-voice\aiondx-voice-ui.js") 'page script check'
 Copy-Item "$root\patches\0001-renderer-dx\aiondx-ui.js" "$ext\out\renderer\aiondx-ui.js" -Force
 Say "patch 0001: aiondx-ui.js ($rendererBuild) and its script tag"
 # Patch 0011: aiondx-voice.js (the provider-agnostic TTS/STT module, window.AionDxVoice) loads

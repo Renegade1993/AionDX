@@ -250,8 +250,25 @@ const claudeProvider = {
   async refresh(ctx) {
     const found = ctx.exe ? { exe: ctx.exe, version: '?' } : newestClaude();
     if (!found) { log('claude: no Claude Code on this PC; nothing to refresh'); return { updates: [] }; }
-    log('claude: Claude Code ' + found.version + ' at ' + found.exe);
     const cfg = routerConfig();
+    // --quick (AionDX's runs every 15 minutes): no Claude Code launch when every picker already has every model its account's catalog lists;
+    // the full run (at AionDX's start and every 12 hours) asks Claude Code. Added 2026-11-10: the 15-minute run launched Claude Code for each
+    // account every time, about 190 launches a day that found nothing.
+    if (args.includes('--quick') && !FORCE) {
+      const short = [];
+      for (const row of ctx.rows) {
+        if (row.enabled === 0) continue;
+        let cat = [];
+        try { cat = (JSON.parse(fs.readFileSync(path.join(envFor(row, cfg).dir, 'aiondx-models.json'), 'utf8')).models || []).map((m) => m && m.value).filter((v) => v && v !== 'default'); } catch (e) { short.push(row.name || row.agent_id); continue; }
+        const am = parse(row.available_models || 'null');
+        if (row.enabled === 0 || (am !== null && (typeof am !== 'object' || !Array.isArray(am.available_models)))) continue;   // the full run leaves these alone too
+        const have = new Set(am && Array.isArray(am.available_models) ? am.available_models.map((m) => m && m.id) : []);
+        if (cat.some((v) => !have.has(v))) short.push(row.name || row.agent_id);
+      }
+      if (!short.length) { log('claude: quick check: every picker has its account\'s models'); return { updates: [] }; }
+      log('claude: quick check: missing models in ' + short.join(', ') + '; asking Claude Code');
+    }
+    log('claude: Claude Code ' + found.version + ' at ' + found.exe);
     const groups = new Map();   // config folder -> { env, rows }
     for (const row of ctx.rows) {
       const e = envFor(row, cfg);

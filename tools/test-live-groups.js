@@ -54,6 +54,13 @@ for i in range(2):
     agents.append({"slot_id": slots[i], "name": "Member %d" % i, "role": "lead" if i == 0 else "teammate", "conversation_id": members[i], "backend": "claude", "model": "", "assistant_id": ""})
 c.execute("insert into teams (id, user_id, name, workspace, workspace_mode, agents, lead_agent_id, agents_version, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?)",
           (team, uid, "GRP TEAM", ws, "shared", json.dumps(agents), slots[0], "1.0.1", now - 10**8, now - 10**6))
+# a second team, never grouped, for the team page's own menu button at the end
+agents2 = []
+for i in range(2):
+    conv("grpoth0%d" % i, "GRP OTHER MEMBER %d" % i, {"backend": "claude", "workspace": ws, "teamId": "grp-other-team", "slot_id": "oth-slot-%d" % i, "role": "lead" if i == 0 else "teammate"}, now - 10**8)
+    agents2.append({"slot_id": "oth-slot-%d" % i, "name": "Other %d" % i, "role": "lead" if i == 0 else "teammate", "conversation_id": "grpoth0%d" % i, "backend": "claude", "model": "", "assistant_id": ""})
+c.execute("insert into teams (id, user_id, name, workspace, workspace_mode, agents, lead_agent_id, agents_version, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?)",
+          ("grp-other-team", uid, "GRP OTHER TEAM", ws, "shared", json.dumps(agents2), "oth-slot-0", "1.0.1", now - 10**8, now - 10**6))
 c.commit()
 print("seeded", n)
 `;
@@ -68,7 +75,7 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
   const seedFile = path.join(os.tmpdir(), 'aiondx-groups-seed.py');
   fs.writeFileSync(seedFile, SEED);
   const r = spawnSync('py', ['-I', seedFile, path.join(profile, 'aionui', 'aiondx-backend.db')], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
-  check('(setup) the chats and the team were put in the profile', /seeded 360/.test(r.stdout || ''), (r.stdout || '') + (r.stderr || ''));
+  check('(setup) the chats and the team were put in the profile', /seeded 480/.test(r.stdout || ''), (r.stdout || '') + (r.stderr || ''));
 
   const app = await launch({ port: 9642, deadlineMs: 900000, stage, profile, keepProfile: true });
   const js = (x) => Promise.race([app.js(x), sleep(20000).then(() => { throw new Error('the page did not answer in 20 s: ' + String(x).slice(0, 80)); })]);
@@ -95,6 +102,12 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
   // AionUi's own menus that are on screen: their items and where they are
   const stockMenus = () => js(`(() => Array.from(document.querySelectorAll('.arco-dropdown-menu:not(.aiondx-gmenu)')).map((m) => { const t = m.closest('.arco-trigger') || m; const cs = getComputedStyle(t); const r = t.getBoundingClientRect(); return { shown: cs.display !== 'none' && cs.visibility !== 'hidden' && r.height > 0, items: Array.from(m.querySelectorAll('.arco-dropdown-menu-item')).map((e) => e.textContent.trim()), x: Math.round(r.left), y: Math.round(r.top) }; }).filter((x) => x.shown))()`);
   const shownMenu = async () => { const m = await stockMenus(); return m.length ? m[m.length - 1] : null; };
+  const anyMenu = () => js(`(() => { const ms = Array.from(document.querySelectorAll('.arco-dropdown-menu')).filter((m) => { const t = m.closest('.arco-trigger') || m; const cs = getComputedStyle(t); return cs.display !== 'none' && cs.visibility !== 'hidden' && t.getBoundingClientRect().height > 0; }); const m = ms.pop(); if (!m) return null; const t = m.closest('.arco-trigger') || m; const r = t.getBoundingClientRect(); return { own: m.classList.contains('aiondx-gmenu'), items: Array.from(m.querySelectorAll('.arco-dropdown-menu-item')).map((e) => e.textContent.trim()), left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom) }; })()`);
+  // a menu line on screen, by its text
+  const line = (text) => js(`(() => { const e = Array.from(document.querySelectorAll('.arco-dropdown-menu-item')).find((x) => x.textContent.trim() === ${JSON.stringify(text)} && x.getClientRects().length && getComputedStyle(x.closest('.arco-trigger') || x).visibility !== 'hidden'); if (!e) return null; const r = e.getBoundingClientRect(); return { x: Math.round(r.left + 24), y: Math.round(r.top + r.height / 2) }; })()`);
+  const rowBox = (text) => js(`(() => { const e = Array.from(document.querySelectorAll('[data-testid="aiondx-groups"] .aiondx-grow')).find((x) => x.textContent.trim() === ${JSON.stringify(text)}); if (!e) return null; const r = e.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom) }; })()`);
+  const under = (menu, box) => !!menu && !!box && Math.abs(menu.top - box.bottom) <= 6 && (Math.abs(menu.right - box.right) <= 6 || Math.abs(menu.left - box.left) <= 6);
+  const listed = (path, id) => js(`(async () => { const r = await fetch('http://127.0.0.1:' + window.__backendPort + ${JSON.stringify(path)}, { credentials: 'include' }); const j = await r.json(); const d = j.data !== undefined ? j.data : j; const items = Array.isArray(d) ? d : (d.items || []); return items.some((x) => x.id === ${JSON.stringify(id)}); })()`);
   const away = () => lclick({ x: 1100, y: 800 });   // a real press elsewhere: AionUi's menu closes only for one
   // a real drag of the mouse: the debugger takes the drag when the page starts it, and the drop is put where the pointer ends
   const drag = async (from, to) => {
@@ -121,8 +134,11 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     await js("(() => { const s = document.createElement('style'); s.textContent = '.aiondx-welcome-backdrop{display:none !important}'; document.head.appendChild(s); return 0; })()");
     await sleep(1500);
     // the Teams list starts collapsed in a fresh profile
-    await js(`(() => { if (!document.querySelector('[data-testid^="team-icon-"]')) document.querySelector('[data-testid="team-section-toggle"]').click(); return 0; })()`);
+    // (AionDX keeps AionUi's Teams list open on the page and draws it closed itself: a closed list is opened as a person would, by its heading)
+    await sleep(2000);
+    await js(`(() => { const tg = document.querySelector('[data-testid="team-section-toggle"]'); if (tg.parentElement.classList.contains('aiondx-tvc')) tg.click(); return 0; })()`);
     await sleep(1500);
+    check('(setup) the Teams list shows its teams', await js(`(() => { const i = document.querySelector('[data-testid^="team-icon-"]'); return !!i && i.getClientRects().length > 0; })()`));
 
     let s = await state();
     check('with no groups there is one line, then "New Group +", after the teams and conversations', s.has && s.last && s.line && s.heads.length === 0 && s.newLast, JSON.stringify(s));
@@ -135,47 +151,45 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     const EXTRA = ['Compact context', 'Restart the agent (context kept)', 'Clear disk caches\u2026'];
     check("a chat's own menu is AionUi's (Pin, Mark as unread, Rename, Create scheduled task, Archive), then \"Add to group\" and the context and cache actions", !!plain && JSON.stringify(plain.items) === JSON.stringify(STOCK.concat(['Add to group']).concat(EXTRA)), JSON.stringify(plain));
     check('the menu grew to fit its lines: the last one is inside it and on screen (AionUi caps menus at 200 px)', await js(`(() => { const m = Array.from(document.querySelectorAll('.arco-dropdown-menu:not(.aiondx-gmenu)')).filter((x) => getComputedStyle(x.closest('.arco-trigger') || x).display !== 'none').pop(); if (!m) return false; const items = m.querySelectorAll('.arco-dropdown-menu-item'); const last = items[items.length - 1].getBoundingClientRect(); const box = m.getBoundingClientRect(); return last.bottom <= box.bottom + 1 && last.bottom <= window.innerHeight && document.elementFromPoint(last.left + 20, last.top + last.height / 2) && items[items.length - 1].contains(document.elementFromPoint(last.left + 20, last.top + last.height / 2)); })()`));
-    await clickText('Add to group', '.aiondx-gitem');
-    await sleep(500);
-    const pt = await where('New Group +', '.aiondx-gmenu');
-    check('its chooser lists "New Group +" and nothing to remove yet', !!pt && (await js(`Array.from(document.querySelectorAll('.aiondx-gmenu-item')).map((e) => e.textContent.replace(/^\\u2713/, '')).indexOf('Remove from group')`)) < 0, JSON.stringify(pt));
-    await lclick(pt);   // a real press, as a person's
+    await lclick(await line('Add to group'));
     await sleep(400);
-    check('"New Group +" opens a dialog for the name', await js(`!!document.querySelector('[data-testid="aiondx-group-dialog"]')`));
+    let menu = await shownMenu();
+    check('"Add to group" opens its choices inside the same menu (New group…, nothing to remove yet), with no second menu', !!menu && JSON.stringify(menu.items) === JSON.stringify(STOCK.concat(['Add to group', 'New group\u2026']).concat(EXTRA)) && (await js(`document.querySelectorAll('.aiondx-gmenu').length`)) === 0, JSON.stringify(menu));
+    await lclick(await line('New group\u2026'));   // a real press, as a person's
+    await sleep(400);
+    check('"New group…" opens a dialog for the name', await js(`!!document.querySelector('[data-testid="aiondx-group-dialog"]')`));
     await setName('Alpha');
     await sleep(900);
     s = await state();
     check('the group holds the chat with the agent logo; AionUi\'s own row of it is hidden', s.heads.join() === 'Alpha' && s.rows.length === 1 && /^c:grpchat1\|GRP ALPHA CHAT\|img\|Alpha$/.test(s.rows[0]) && s.stockHidden.alpha === true && s.stockHidden.beta === false, JSON.stringify(s));
     check('"New Group +" is still the last line', s.newLast && s.last && s.line, JSON.stringify(s));
+    check("AionUi's menu is closed once the choice is made", (await stockMenus()).length === 0, JSON.stringify(await stockMenus()));
 
-    // 2. the same chat, now in a group: the same menu, shown at the pointer
+    // 2. the same chat, now in a group: the same menu, under its row
     p = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
     await rclick(p);
-    const inGroup = await shownMenu();
-    const raw = await js(`(() => Array.from(document.querySelectorAll('.arco-dropdown-menu:not(.aiondx-gmenu)')).map((m) => { const t = m.closest('.arco-trigger') || m; const cs = getComputedStyle(t); const r = t.getBoundingClientRect(); return { n: m.querySelectorAll('.arco-dropdown-menu-item').length, display: cs.display, vis: cs.visibility, rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], peek: document.querySelectorAll('[data-aiondx-peek]').length }; }))()`);
-    check('right-click on a grouped chat shows the same AionUi menu (only the group line reads "Group: Alpha")', !!inGroup && JSON.stringify(inGroup.items) === JSON.stringify(STOCK.concat(['Group: Alpha']).concat(EXTRA)), JSON.stringify({ items: inGroup && inGroup.items, raw }));
-    // the group line with a real click (it was below AionUi's 200 px fold, and a click went through to the row behind it)
-    const groupLine = await where('Group: Alpha');
-    await lclick(groupLine);
+    menu = await anyMenu();
+    check('right-click on a grouped chat shows the same AionUi menu (the group line reads "Group: Alpha")', !!menu && !menu.own && JSON.stringify(menu.items) === JSON.stringify(STOCK.concat(['Group: Alpha']).concat(EXTRA)), JSON.stringify(menu));
+    check('and it comes up under the row, its right edge at the row\'s, not in the corner of the window', under(menu, await rowBox('GRP ALPHA CHAT')), JSON.stringify({ menu, row: await rowBox('GRP ALPHA CHAT') }));
+    await lclick(await line('Group: Alpha'));
     await sleep(400);
-    const chooser = await js(`Array.from(document.querySelectorAll('.aiondx-gmenu-item')).map((e) => e.textContent.replace(/^\\u2713/, ''))`);
-    check('a real click on the group line opens the group chooser (Alpha, New Group +, Remove from group)', JSON.stringify(chooser) === JSON.stringify(['Alpha', 'New Group +', 'Remove from group']), JSON.stringify(chooser));
+    menu = await anyMenu();
+    check('the group line opens its choices in place: Alpha (ticked), New group…, Remove from group', !!menu && JSON.stringify(menu.items.slice(5, 9)) === JSON.stringify(['Group: Alpha', 'Alpha', 'New group\u2026', 'Remove from group']) && (await js(`!!document.querySelector('.aiondx-gsub.aiondx-gcheck')`)), JSON.stringify(menu));
     await away();
     await rclick(p);
-    check('and it opens where the pointer is, not in the corner of the window', !!inGroup && Math.abs(inGroup.x - p.x) < 260 && Math.abs(inGroup.y - p.y) < 140, JSON.stringify({ menu: inGroup && [inGroup.x, inGroup.y], pointer: [p.x, p.y] }));
-    await js(`(() => { const it = Array.from(document.querySelectorAll('.arco-dropdown-menu-item')).find((e) => e.textContent.trim() === 'Rename'); it.click(); return 0; })()`);
+    await lclick(await line('Rename'));
     await sleep(700);
     check("AionUi's Rename works on it (its dialog shows the chat's name)", await js(`(() => { const m = document.querySelector('.arco-modal'); return !!m && /Rename/.test(m.textContent) && Array.from(m.querySelectorAll('input')).some((i) => i.value === 'GRP ALPHA CHAT'); })()`));
     await js(`(() => { const b = Array.from(document.querySelectorAll('.arco-modal button')).find((x) => /Cancel/.test(x.textContent)); if (b) b.click(); return 0; })()`);
     await sleep(500);
     await away();
-    // the three dots on the row give the same menu
+    // the three dots on the row give the same menu, in the same place
     p = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
     await mouse(p, 'none', false);
     const dots = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-group-row-c-grpchat1"] .aiondx-grow-more'); const b = r.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
     await lclick(dots);
-    const viaDots = await shownMenu();
-    check("the row's three dots open the same menu", !!viaDots && JSON.stringify(viaDots.items) === JSON.stringify(STOCK.concat(['Group: Alpha']).concat(EXTRA)), JSON.stringify(viaDots));
+    menu = await anyMenu();
+    check("the row's three dots open the same menu, under the row", !!menu && JSON.stringify(menu.items) === JSON.stringify(STOCK.concat(['Group: Alpha']).concat(EXTRA)) && under(menu, await rowBox('GRP ALPHA CHAT')), JSON.stringify(menu));
     await away();
 
     // 2b. a grouped chat keeps what AionUi's own row shows: the unread dot, the icon states, and a click goes to AionUi's row
@@ -183,47 +197,47 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     p = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
     check('(setup) no unread dot yet', (await dot()) === false);
     await rclick(p);
-    await js(`(() => { const it = Array.from(document.querySelectorAll('.arco-dropdown-menu-item')).find((e) => e.textContent.trim() === 'Mark as unread'); it.click(); return 0; })()`);
+    await lclick(await line('Mark as unread'));
     await sleep(1200);
     check('"Mark as unread" from the grouped row puts AionUi\'s blue unread dot on it', await dot());
     p = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
     await rclick(p);
-    const asRead = await shownMenu();
-    check('and its menu then offers "Mark as read", as AionUi\'s own does', !!asRead && asRead.items.indexOf('Mark as read') >= 0, JSON.stringify(asRead));
-    await js(`(() => { const it = Array.from(document.querySelectorAll('.arco-dropdown-menu-item')).find((e) => e.textContent.trim() === 'Mark as read'); it.click(); return 0; })()`);
+    menu = await anyMenu();
+    check('and its menu then offers "Mark as read", as AionUi\'s own does', !!menu && menu.items.indexOf('Mark as read') >= 0, JSON.stringify(menu));
+    await lclick(await line('Mark as read'));
     await sleep(1200);
     check('marking it read takes the dot off', (await dot()) === false);
-    // what AionUi draws in its row (a spinner, the waiting-for-you icon...) shows in the group's row as it changes
     await js(`(() => { const ic = document.getElementById('c-grpchat1').firstElementChild; const b = document.createElement('span'); b.className = 'aiondx-test-state'; b.textContent = 'working'; ic.appendChild(b); return 0; })()`);
     await sleep(1500);
     check("a change in AionUi's own row (its icon states) is drawn in the group's row", await js(`!!document.querySelector('[data-testid="aiondx-group-row-c-grpchat1"] .aiondx-test-state')`));
     await js(`(() => { const b = document.querySelector('#c-grpchat1 .aiondx-test-state'); if (b) b.remove(); return 0; })()`);
     await sleep(1200);
     check('and gone again when it goes', await js(`!document.querySelector('[data-testid="aiondx-group-row-c-grpchat1"] .aiondx-test-state')`));
-    // a click on the group's row is a click on AionUi's own row
     await js(`(() => { window.__rowClicks = 0; const r = document.getElementById('c-grpchat1'); r.addEventListener('click', (e) => { window.__rowClicks++; e.stopPropagation(); }, true); return 0; })()`);
     await lclick(await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]'));
     check("a click on the group's row clicks AionUi's own row (its behaviour, not a copy of it)", (await js(`window.__rowClicks`)) === 1, await js(`window.__rowClicks`));
+    await js(`(() => { const r = document.getElementById('c-grpchat1'); const n = r.cloneNode(true); return 0; })()`);
 
-    // 3. a team: its three dots menu (Pin, Rename, Archive) with the group line, from a right-click
+    // 3. a team: its three dots menu (Pin, Rename, Archive) with AionDX's lines, from a right-click
     //    (AionUi swaps a team's icon for a spinner while it has a run: that team must be found too)
     await js(`(() => { const i = document.querySelector('[data-testid="team-icon-grp-test-team"]'); i.setAttribute('data-testid', 'team-spinner-grp-test-team'); return 0; })()`);
     p = await where('GRP TEAM');
     await rclick(p);
-    const tmenu = await shownMenu();
+    menu = await anyMenu();
     const TEXTRA = ['Compact every member\u2019s context', 'Start fresh contexts (1 member, not the lead)', 'Restart every member\u2019s agent (contexts kept)', 'Clear disk caches\u2026'];
-    check('right-click on a team whose icon is a spinner opens its menu (Pin, Rename, Archive), then "Add to group" and the team\'s context and cache actions', !!tmenu && JSON.stringify(tmenu.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Add to group'].concat(TEXTRA)), JSON.stringify(tmenu));
-    await clickText('Add to group', '.aiondx-gitem');
-    await sleep(500);
-    check("the team's chooser lists Alpha and \"New Group +\"", (await js(`Array.from(document.querySelectorAll('.aiondx-gmenu-item')).map((e) => e.textContent.replace(/^\\u2713/, ''))`)).join() === 'Alpha,New Group +');
-    await lclick(await where('Alpha', '.aiondx-gmenu'));
+    check('right-click on a team whose icon is a spinner (working) opens its menu (Pin, Rename, Archive), then "Add to group", Stop, and the team\'s context and cache actions', !!menu && !menu.own && JSON.stringify(menu.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Add to group', 'Stop every member that is working'].concat(TEXTRA)), JSON.stringify(menu));
+    await lclick(await line('Add to group'));
+    await sleep(400);
+    menu = await anyMenu();
+    check("the team's choices open in the same menu: Alpha, New group…", !!menu && JSON.stringify(menu.items.slice(3, 6)) === JSON.stringify(['Add to group', 'Alpha', 'New group\u2026']), JSON.stringify(menu));
+    await lclick(await line('Alpha'));
     await sleep(900);
     s = await state();
     check('the team is in the group, with the team icon, after the chat', JSON.stringify(names(s)) === JSON.stringify(['GRP ALPHA CHAT', 'GRP TEAM']) && /svg/.test(s.rows[1]), JSON.stringify(s.rows));
     p = await where('GRP TEAM', '[data-testid="aiondx-groups"]');
     await rclick(p);
-    const tIn = await shownMenu();
-    check("right-click on the team in the group gives the same team menu, and the line reads \"Group: Alpha\"", !!tIn && JSON.stringify(tIn.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Group: Alpha'].concat(TEXTRA)) && Math.abs(tIn.y - p.y) < 160, JSON.stringify(tIn));
+    menu = await anyMenu();
+    check('right-click on the team in the group gives the same team menu, under its row, the line reading "Group: Alpha"', !!menu && JSON.stringify(menu.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Group: Alpha', 'Stop every member that is working'].concat(TEXTRA)) && under(menu, await rowBox('GRP TEAM')), JSON.stringify(menu));
     await away();
     // with the Teams list closed, the grouped team keeps its live row (and so its states and its own menu); the list still looks closed
     await js(`document.querySelector('[data-testid="team-section-toggle"]').click(); 0`);
@@ -232,40 +246,28 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     check('closing the Teams list with a grouped team: it looks closed and the team\'s row stays on the page', closed.looksClosed && closed.rowOnPage, JSON.stringify(closed));
     p = await where('GRP TEAM', '[data-testid="aiondx-groups"]');
     await rclick(p);
-    const tClosed = await shownMenu();
-    check('the grouped team\'s right-click is still its own full menu, Archive included', !!tClosed && tClosed.items.indexOf('Archive') >= 0 && tClosed.items.indexOf('Group: Alpha') >= 0, JSON.stringify(tClosed));
+    menu = await anyMenu();
+    check('the grouped team\'s right-click is still its own full menu, Archive included', !!menu && !menu.own && menu.items.indexOf('Archive') >= 0 && menu.items.indexOf('Group: Alpha') >= 0, JSON.stringify(menu));
     await away();
     await js(`document.querySelector('[data-testid="team-section-toggle"]').click(); 0`);
     await sleep(800);
     check('opening it again shows the teams', !(await js(`document.querySelector('[data-testid="team-section-toggle"]').parentElement.classList.contains('aiondx-tvc')`)));
     await away();
 
-    // 3b. the chat window's own menu button opens the same menu
-    await js(`(() => { const old = location.href; history.replaceState(null, '', '#/conversation/grpchat1'); window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: old, newURL: location.href })); return 0; })()`);
-    await sleep(1500);
-    const hb = await js(`(() => { const b = document.querySelector('[data-testid="aiondx-chat-menu"]'); if (!b) return null; const r = b.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), inHeader: !!b.closest('header') }; })()`);
-    check('the chat window has its own menu button in its header', !!hb && hb.inHeader, JSON.stringify(hb));
-    if (hb) {
-      await lclick(hb);
-      const hm = await shownMenu();
-      check('it opens the same menu as the sidebar, next to the button', !!hm && JSON.stringify(hm.items) === JSON.stringify(STOCK.concat(['Group: Alpha']).concat(EXTRA)) && Math.abs(hm.y - hb.y) < 120 && hm.x + 60 > hb.x - 300, JSON.stringify({ hm, hb }));
-      await away();
-    }
     // remove from group, all through real clicks: the chat goes back to AionUi's list, not to the archive
     p = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
     await rclick(p);
-    await lclick(await where('Group: Alpha'));
+    await lclick(await line('Group: Alpha'));
     await sleep(300);
-    await lclick(await where('Remove from group', '.aiondx-gmenu'));
+    await lclick(await line('Remove from group'));
     await sleep(1200);
-    const arch = await js(`(async () => { const r = await fetch('http://127.0.0.1:' + window.__backendPort + '/api/conversations/grpchat1', { credentials: 'include' }); const j = await r.json(); const d = j.data !== undefined ? j.data : j; return { status: r.status, archived: !!(d && d.archived_at) }; })()`);
     s = await state();
-    check('"Remove from group" through the menu puts the chat back in AionUi\'s list and does not archive it', !arch.archived && s.stockHidden.alpha === false && !s.rows.some((x) => /^c:grpchat1/.test(x)), JSON.stringify({ arch, rows: s.rows }));
+    check('"Remove from group" through the menu puts the chat back in AionUi\'s list and does not archive it', (await listed('/api/conversations?limit=500', 'grpchat1')) && s.stockHidden.alpha === false && !s.rows.some((x) => /^c:grpchat1/.test(x)), JSON.stringify(s.rows));
     // back into the group for the drags below
     await rclick(await where('GRP ALPHA CHAT'));
-    await lclick(await where('Add to group'));
+    await lclick(await line('Add to group'));
     await sleep(300);
-    await lclick(await where('Alpha', '.aiondx-gmenu'));
+    await lclick(await line('Alpha'));
     await sleep(900);
     check('(setup) the chat is back in the group', (await state()).rows.some((x) => /^c:grpchat1/.test(x)));
 
@@ -313,8 +315,8 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     // 5. the group's own menu, and rename and collapse
     await rclick(await where('Alpha', '[data-testid="aiondx-groups"]'));
     const gm = await js(`Array.from(document.querySelectorAll('.aiondx-gmenu-item')).map((e) => e.textContent)`);
-    check('the group\'s menu says its chats and teams are kept when it is deleted', gm.indexOf('Delete group (its chats and teams are kept)') >= 0 && gm.indexOf('Rename group…') >= 0, JSON.stringify(gm));
-    await clickText('Rename group…', '.aiondx-gmenu-item');
+    check('the group\'s menu says its chats and teams are kept when it is deleted', gm.indexOf('Delete group (its chats and teams are kept)') >= 0 && gm.indexOf('Rename group') >= 0, JSON.stringify(gm));
+    await clickText('Rename group', '.aiondx-gmenu-item');
     await sleep(400);
     await setName('Work');
     await sleep(700);
@@ -370,6 +372,38 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     await drag(from, to);
     check('(Gamma first again)', (await state()).heads.join() === 'Gamma,Work');
 
+    // 6c. Archive from the menu takes a grouped chat or team out of its group (2026-11-10: it stayed in the group)
+    p = await where('GRP BETA CHAT', '[data-testid="aiondx-groups"]');
+    await rclick(p);
+    await lclick(await line('Archive'));
+    await sleep(5000);
+    s = await state();
+    check('Archive in a grouped chat\'s menu archives it, and it leaves its group', !(await listed('/api/conversations?limit=500', 'grpchat2')) && !s.rows.some((x) => /^c:grpchat2/.test(x)), JSON.stringify(s.rows));
+    await js(`document.querySelector('[data-testid="team-section-toggle"]').click(); 0`);
+    await sleep(1000);
+    p = await where('GRP TEAM', '[data-testid="aiondx-groups"]');
+    await rclick(p);
+    await lclick(await line('Archive'));
+    await sleep(5000);
+    s = await state();
+    check('Archive in a grouped team\'s menu, with the Teams list closed, archives it, and it leaves its group', !(await listed('/api/teams', 'grp-test-team')) && !s.rows.some((x) => /^t:grp-test-team/.test(x)), JSON.stringify(s.rows));
+    await js(`document.querySelector('[data-testid="team-section-toggle"]').click(); 0`);
+    await sleep(800);
+    // a grouped chat whose AionUi row is folded away in its project folder: AionDX draws its menu, from the same parts, under the row
+    await js(`(() => { const t = Array.from(document.querySelectorAll('*')).find((x) => x.children.length === 0 && (x.textContent || '').trim() === 'Temp' && x.getClientRects().length); if (t) t.click(); return 0; })()`);
+    await sleep(1200);
+    check('(setup) the project folder is folded: no AionUi row for the chat', !(await js(`!!document.getElementById('c-grpchat3')`)));
+    p = await where('GRP GAMMA CHAT', '[data-testid="aiondx-groups"]');
+    await rclick(p);
+    menu = await anyMenu();
+    check('its menu has Rename and Archive, the group line and the actions, under the row', !!menu && JSON.stringify(menu.items.slice(0, 2)) === JSON.stringify(['Rename', 'Archive']) && /^Group: /.test(menu.items[2]) && JSON.stringify(menu.items.slice(3)) === JSON.stringify(EXTRA) && under(menu, await rowBox('GRP GAMMA CHAT')), JSON.stringify(menu));
+    await lclick(await line('Archive'));
+    await sleep(2500);
+    s = await state();
+    check('and its Archive archives it and takes it out of the group', !(await listed('/api/conversations?limit=500', 'grpchat3')) && !s.rows.some((x) => /^c:grpchat3/.test(x)), JSON.stringify(s.rows));
+    await js(`(() => { const t = Array.from(document.querySelectorAll('*')).find((x) => x.children.length === 0 && (x.textContent || '').trim() === 'Temp' && x.getClientRects().length); if (t) t.click(); return 0; })()`);
+    await sleep(800);
+
     // 7. kept across a reload, in the order the user put them
     const before = (await state()).rows;
     // (from the new-chat page: a short seeded chat can stop AionUi's page in this harness, so the reload is not made on one)
@@ -379,7 +413,39 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     await js("(() => { const s = document.createElement('style'); s.textContent = '.aiondx-welcome-backdrop{display:none !important}'; document.head.appendChild(s); return 0; })()");
     await sleep(2500);
     s = await state();
-    check('after a reload the groups, their chats, the order and the hidden rows are as they were', JSON.stringify(s.rows) === JSON.stringify(before) && s.heads.join() === 'Gamma,Work' && s.newLast, JSON.stringify({ before, after: s.rows }));
+    const reloaded = true;
+    check('after a reload the groups, their chats, the order and the hidden rows are as they were', JSON.stringify(s.rows) === JSON.stringify(before) && s.heads.join() === 'Gamma,Work' && s.newLast && s.rows.length >= 1, JSON.stringify({ before, after: s.rows }));
+
+    // 8. the menu button in the chat's own header and in the team's (2026-11-10: it had gone into the sidebar's header, by the logo)
+    await js(`location.hash = '#/team/grp-other-team'; 0`);
+    await sleep(3500);
+    let hb = await js(`(() => { const b = document.querySelector('[data-testid="aiondx-chat-menu"]'); if (!b) return null; const r = b.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom), inSider: !!b.closest('.arco-layout-sider'), withTitle: !!b.closest('header') && !!b.closest('header').querySelector('[data-testid="chat-title-editor-trigger"]') }; })()`);
+    check("the team page's menu button is in the team's own header (with its title), not the sidebar's", !!hb && !hb.inSider && hb.withTitle, JSON.stringify(hb));
+    if (hb) {
+      await lclick(hb);
+      menu = await anyMenu();
+      check("it opens the team's menu, the same as its row's, right under the button", !!menu && !menu.own && JSON.stringify(menu.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Add to group'].concat(TEXTRA)) && under(menu, hb), JSON.stringify({ menu, hb }));
+      await away();
+    }
+    // the chat page, in one step inside the page (a seeded chat can stop this test's page a few seconds after it opens)
+    const chatHdr = await Promise.race([app.js(`new Promise((res) => {
+      location.hash = '#/conversation/grpchat1';
+      const t0 = Date.now();
+      const tick = () => {
+        const h = Array.from(document.querySelectorAll('header.arco-layout-header')).find((x) => !x.closest('.arco-layout-sider') && x.textContent.indexOf('GRP ALPHA CHAT') >= 0);
+        const b = h && h.querySelector('[data-testid="aiondx-chat-menu"]');
+        if (!b) { if (Date.now() - t0 > 8000) res({ err: 'no button', h: !!h, sider: !!document.querySelector('.arco-layout-sider [data-testid="aiondx-chat-menu"]') }); else setTimeout(tick, 200); return; }
+        const br = b.getBoundingClientRect();
+        b.click();
+        setTimeout(() => {
+          const m = Array.from(document.querySelectorAll('.arco-dropdown-menu')).filter((x) => { const t = x.closest('.arco-trigger') || x; const cs = getComputedStyle(t); return cs.display !== 'none' && cs.visibility !== 'hidden' && t.getBoundingClientRect().height > 0; }).pop();
+          const t = m && (m.closest('.arco-trigger') || m), r = t && t.getBoundingClientRect();
+          res({ btn: { left: br.left, right: br.right, top: br.top, bottom: br.bottom }, menu: m ? { own: m.classList.contains('aiondx-gmenu'), items: Array.from(m.querySelectorAll('.arco-dropdown-menu-item')).map((e) => e.textContent.trim()), left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom) } : null });
+        }, 900);
+      };
+      tick();
+    })`), sleep(30000).then(() => ({ err: 'the page did not answer' }))]);
+    check("the chat page's menu button is in the chat's own header, and opens the chat's menu (as its row's) right under it", !!chatHdr.menu && !chatHdr.menu.own && JSON.stringify(chatHdr.menu.items) === JSON.stringify(STOCK.concat(['Add to group']).concat(EXTRA)) && under(chatHdr.menu, chatHdr.btn), JSON.stringify(chatHdr));
   } catch (e) {
     check('the test ran', false, e && e.stack || e);
     try {

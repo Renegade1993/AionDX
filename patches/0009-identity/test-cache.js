@@ -88,7 +88,8 @@ check('and keeps the new cache file', has('home/.claude/cache/new.bin'));
 check('and never follows a link out of the cache folder (the file behind it survives)', has('outside/precious.txt'));
 r = cache.clear('claude:main', 'cache', 0);
 check('clearing all of the cache leaves a file in use (touched in the last minute)', has('home/.claude/cache/new.bin') && !has('home/.claude/shell-snapshots/snap.sh') && r.ok, JSON.stringify(r));
-check('and still never the link or what is behind it', has('outside/precious.txt') && fs.existsSync(path.join(HOME, '.claude', 'cache', 'linked')));
+// the link itself, by lstat: existsSync follows a junction, and on November 10th, 2026 it reported a junction whose target is there as missing
+check('and still never the link or what is behind it', has('outside/precious.txt') && (() => { try { return fs.lstatSync(path.join(HOME, '.claude', 'cache', 'linked')).isSymbolicLink(); } catch (e) { return false; } })());
 
 // ---- the second Claude account, reached through the home-folder link: one profile, one set of files
 r = cache.clear('claude:second', 'history', 7);

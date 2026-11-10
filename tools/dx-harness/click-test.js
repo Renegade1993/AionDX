@@ -2963,18 +2963,13 @@ async function pageTarget() {
       await sleep(700);
       check(sc, 'its click cancels with the turn id the server gave', JSON.stringify(await posts2('/api/conversations/harness1/cancel')) === JSON.stringify([{ turn_id: 'turn_X' }]), JSON.stringify(await posts2('/api/conversations/harness1/cancel')));
       check(sc, 'and says so', (await toasts()).some(t => /^Stop sent\./.test(t)), JSON.stringify(await toasts()));
-      // The agent ignores it: 2.6 s on, still working, the button becomes Force stop.
+      // The agent ignores it: 2.6 s on (the force time here), still working. The agent is ended and started again once, with no click,
+      // and the button stays a plain Stop (2026-11-10: the Force stop button that came up at this moment restarted it a second time).
       await sleep(2400);
       await js('window.__aionDx.repaint()');
       b = await stopBtn();
-      check(sc, 'a chat still working after a Stop gets Force stop', b && b.force && /^Force stop: the agent did not stop/.test(b.title), JSON.stringify(b));
-      await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); window.__calls.length = 0; 0');
-      await humanClick('#solo [data-testid="aiondx-stop-btn"]');
-      await sleep(300);
-      check(sc, 'the first click on Force stop only asks to click again', (await toasts()).some(t => /^Click Force stop again to restart the agent\./.test(t)) && (await posts2('/api/conversations/harness1/runtime/restart')).length === 0, JSON.stringify(await toasts()));
-      await humanClick('#solo [data-testid="aiondx-stop-btn"]');
-      await sleep(500);
-      check(sc, 'the second restarts the agent, which ends its turn', (await posts2('/api/conversations/harness1/runtime/restart')).length === 1 && (await toasts()).some(t => /^The agent was restarted\./.test(t)), JSON.stringify(await toasts()));
+      check(sc, 'a chat still working after a Stop keeps a plain Stop button, no Force stop', b && !b.force && /^Stop: AionUi shows no Stop button/.test(b.title), JSON.stringify(b));
+      check(sc, 'and its agent is ended and started again once, with no click', (await posts2('/api/conversations/harness1/runtime/restart')).length === 1, JSON.stringify(await posts2('/api/conversations/harness1/runtime/restart')));
       // It stops: the button goes.
       await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime; window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
       await js('window.__aionDx.repaint()');

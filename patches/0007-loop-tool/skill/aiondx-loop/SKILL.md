@@ -199,8 +199,8 @@ Every choice a user can make in AionDX is a named option, and you can read and c
     aiondx config reset ID        or --all
 
 Today's options: where web links open (the system browser or a tab in AionDX; Alt+click uses the other), spell checking in message boxes,
-whether a reply quote stays with its draft, reading replies with the Windows voice when no ElevenLabs key is set, when the Stop and Force stop
-buttons appear, and how many message rows make a chat "long" (above that AionDX does less work per change so typing stays quick).
+whether a reply quote stays with its draft, reading replies with the Windows voice when no ElevenLabs key is set, when the Stop button appears
+and when a Stop that has not taken ends the agent, and how many message rows make a chat "long" (above that AionDX does less work per change so typing stays quick).
 The open app takes a change within seconds and shows it in Settings > Appearance > AionDX options, so the user sees what you changed and can
 change it back. When the user asks for a behaviour AionDX has an option for, set the option; do not edit files. The list ends with settings
 that have a command of their own (the Loop, usage alerts, MCP servers, colours, cache clearing) and names that command.

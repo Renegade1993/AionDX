@@ -482,8 +482,9 @@ function projectSetup(env, dbPath, convId, facts, label) {
     if (best && !tie) { name = best; how = 'by team name'; }
   }
   const proj = name && projects[name] ? projects[name] : null;
-  // --add-dir is Claude Code's: only when what starts is Claude Code (a stand-in or another program gets none)
-  const isClaude = /^claude(\.exe|\.cmd)?$/i.test(path.basename(String(RESOLVED.exe || '')));
+  // --add-dir is for an agent session only (stream-json in and out), and only when what starts is Claude Code: a subcommand such as
+  // `claude plugin list` refuses it (2026-11-10: AionDX's plugin list failed with "unknown option '--add-dir'"), and a stand-in gets none
+  const isClaude = isStreamSession() && /^claude(\.exe|\.cmd)?$/i.test(path.basename(String(RESOLVED.exe || '')));
   const dirs = isClaude ? roots.slice() : [];
   if (isClaude && proj && proj.root && fs.existsSync(proj.root)) dirs.push(proj.root);
   const have = new Set();

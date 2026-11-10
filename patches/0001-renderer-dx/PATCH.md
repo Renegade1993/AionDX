@@ -924,7 +924,8 @@ member's Stop already pauses the member through AionCore's pause route.)
   and cancels with it. Together with `stopBackstop` (after AionUi's own Stop, the same turn still running 2.5 seconds on gets the cancel again).
 - **Force stop.** A chat or team member still working 12 seconds after a Stop (AionUi's, this one, or the backstop) gets "Force stop": a second click within 5
   seconds posts runtime/restart, which in AionCore cancels the turn, ends the agent process and starts it again; the chat keeps its history. Team members get
-  only the Force stop (their Stop in AionUi pauses the member).
+  only the Force stop (their Stop in AionUi pauses the member). Removed on November 10th, 2026: since November 9th every Stop is watched (`deadHalt`) and
+  the agent restarted with no click after `stop.force` seconds, the moment the button turned to Force stop, so a press restarted it a second time.
 - A bug found by the new test and fixed before it shipped: the fallback's wrapper carried the draft button's anchor class, which `renderSched` uses to find its
   own anchor, so the two buttons moved each other on every repaint and no click could finish. The wrapper has its own class.
 - Tests: click scenario `stop-fallback`; `tools\dx-harness\quick-stop.js` runs it alone, with the raw mouse events, in about 20 seconds.

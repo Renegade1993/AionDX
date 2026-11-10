@@ -108,7 +108,7 @@ function __aiondxIconFile(name) {
     // twelve hours while AionDX runs, aiondx-model-refresh.js asks each agent's CLI what it offers and rewrites the stored pickers. It runs
     // on the Node.js AionDX ships (it reads AionCore's database with node:sqlite), hidden, and ends itself within four minutes.
     // AIONDX_NO_REFRESH=1 skips it (tests).
-    const refresh = () => {
+    const refresh = (quick) => {
       try {
         if (process.env.AIONDX_NO_REFRESH === "1") return;
         // AionDX's own bin folder, or %APPDATA%\\npm where a developer's layout keeps the Claude launcher and its scripts.
@@ -119,7 +119,7 @@ function __aiondxIconFile(name) {
         const base = path__namespace.join(process.resourcesPath, "bundled-aioncore", "win32-x64", "managed-resources", "node");
         const found = fs__namespace.existsSync(base) ? fs__namespace.readdirSync(base).filter((n) => /^node-v[0-9.]+-win-x64$/.test(n) && fs__namespace.existsSync(path__namespace.join(base, n, "node.exe"))).sort().pop() : null;
         const node = found ? path__namespace.join(base, found, "node.exe") : "node";
-        const r = require("child_process").spawn(node, [script], { windowsHide: true, stdio: "ignore", detached: true });
+        const r = require("child_process").spawn(node, quick ? [script, "--quick", "--no-update"] : [script], { windowsHide: true, stdio: "ignore", detached: true });
         r.on("error", () => {});
         r.unref();
       } catch {}
@@ -130,8 +130,11 @@ function __aiondxIconFile(name) {
     // and every twelve hours, so the new model waited half a day. A run that finds nothing new writes nothing.
     // Every 15 minutes: AionCore also rewrites a Claude picker from the live session whenever a chat starts, and on November 9th that
     // session's list lacked the Fable models the catalog has (cause not found), so a start could drop them until the next run.
-    const every = setInterval(refresh, 15 * 60000);
+    // The 15-minute run is --quick: it launches no Claude Code unless a picker lacks a model its account catalog lists; the full run is at the start and every 12 hours.
+    const every = setInterval(() => refresh(true), 15 * 60000);
     if (every.unref) every.unref();
+    const full = setInterval(() => refresh(false), 12 * 3600000);
+    if (full.unref) full.unref();
     const catalogStamp = () => {
       try {
         const profile = process.env.APPDATA ? path__namespace.resolve(process.env.APPDATA, "..", "..") : "";
@@ -141,10 +144,10 @@ function __aiondxIconFile(name) {
       } catch { return ""; }
     };
     let lastStamp = catalogStamp();
-    const watch = setInterval(() => { const s = catalogStamp(); if (s && s !== lastStamp) { lastStamp = s; refresh(); } }, 300000);
+    const watch = setInterval(() => { const s = catalogStamp(); if (s && s !== lastStamp) { lastStamp = s; refresh(true); } }, 300000);
     if (watch.unref) watch.unref();
-    child.on("error", () => { clearTimeout(timer); refresh(); });
-    child.on("exit", () => { clearTimeout(timer); refresh(); });
+    child.on("error", () => { clearTimeout(timer); refresh(false); });
+    child.on("exit", () => { clearTimeout(timer); refresh(false); });
   } catch {}
 })();
 /** Right-click (a request of 2026-09-26, widened 2026-10-20): Cut, Copy, Paste and Select all in a text box, Copy on selected text, spelling
