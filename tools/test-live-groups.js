@@ -131,7 +131,10 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     let p = await where('GRP ALPHA CHAT');
     await rclick(p);
     const plain = await shownMenu();
-    check("a chat's own menu is AionUi's (Pin, Mark as unread, Rename, Create scheduled task, Archive) with \"Add to group\" last", !!plain && JSON.stringify(plain.items) === JSON.stringify(['Pin', 'Mark as unread', 'Rename', 'Create scheduled task', 'Archive', 'Add to group']), JSON.stringify(plain));
+    const STOCK = ['Pin', 'Mark as unread', 'Rename', 'Create scheduled task', 'Archive'];
+    const EXTRA = ['Compact context', 'Restart the agent (context kept)', 'Clear disk caches\u2026'];
+    check("a chat's own menu is AionUi's (Pin, Mark as unread, Rename, Create scheduled task, Archive), then \"Add to group\" and the context and cache actions", !!plain && JSON.stringify(plain.items) === JSON.stringify(STOCK.concat(['Add to group']).concat(EXTRA)), JSON.stringify(plain));
+    check('the menu grew to fit its lines: the last one is inside it and on screen (AionUi caps menus at 200 px)', await js(`(() => { const m = Array.from(document.querySelectorAll('.arco-dropdown-menu:not(.aiondx-gmenu)')).filter((x) => getComputedStyle(x.closest('.arco-trigger') || x).display !== 'none').pop(); if (!m) return false; const items = m.querySelectorAll('.arco-dropdown-menu-item'); const last = items[items.length - 1].getBoundingClientRect(); const box = m.getBoundingClientRect(); return last.bottom <= box.bottom + 1 && last.bottom <= window.innerHeight && document.elementFromPoint(last.left + 20, last.top + last.height / 2) && items[items.length - 1].contains(document.elementFromPoint(last.left + 20, last.top + last.height / 2)); })()`));
     await clickText('Add to group', '.aiondx-gitem');
     await sleep(500);
     const pt = await where('New Group +', '.aiondx-gmenu');
@@ -150,7 +153,15 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     await rclick(p);
     const inGroup = await shownMenu();
     const raw = await js(`(() => Array.from(document.querySelectorAll('.arco-dropdown-menu:not(.aiondx-gmenu)')).map((m) => { const t = m.closest('.arco-trigger') || m; const cs = getComputedStyle(t); const r = t.getBoundingClientRect(); return { n: m.querySelectorAll('.arco-dropdown-menu-item').length, display: cs.display, vis: cs.visibility, rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], peek: document.querySelectorAll('[data-aiondx-peek]').length }; }))()`);
-    check('right-click on a grouped chat shows the same AionUi menu (only the last line reads "Group: Alpha")', !!inGroup && JSON.stringify(inGroup.items.slice(0, 5)) === JSON.stringify(plain.items.slice(0, 5)) && inGroup.items[5] === 'Group: Alpha' && inGroup.items.length === 6, JSON.stringify(raw));
+    check('right-click on a grouped chat shows the same AionUi menu (only the group line reads "Group: Alpha")', !!inGroup && JSON.stringify(inGroup.items) === JSON.stringify(STOCK.concat(['Group: Alpha']).concat(EXTRA)), JSON.stringify({ items: inGroup && inGroup.items, raw }));
+    // the group line with a real click (it was below AionUi's 200 px fold, and a click went through to the row behind it)
+    const groupLine = await where('Group: Alpha');
+    await lclick(groupLine);
+    await sleep(400);
+    const chooser = await js(`Array.from(document.querySelectorAll('.aiondx-gmenu-item')).map((e) => e.textContent.replace(/^\\u2713/, ''))`);
+    check('a real click on the group line opens the group chooser (Alpha, New Group +, Remove from group)', JSON.stringify(chooser) === JSON.stringify(['Alpha', 'New Group +', 'Remove from group']), JSON.stringify(chooser));
+    await away();
+    await rclick(p);
     check('and it opens where the pointer is, not in the corner of the window', !!inGroup && Math.abs(inGroup.x - p.x) < 260 && Math.abs(inGroup.y - p.y) < 140, JSON.stringify({ menu: inGroup && [inGroup.x, inGroup.y], pointer: [p.x, p.y] }));
     await js(`(() => { const it = Array.from(document.querySelectorAll('.arco-dropdown-menu-item')).find((e) => e.textContent.trim() === 'Rename'); it.click(); return 0; })()`);
     await sleep(700);
@@ -164,7 +175,7 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     const dots = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-group-row-c-grpchat1"] .aiondx-grow-more'); const b = r.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
     await lclick(dots);
     const viaDots = await shownMenu();
-    check("the row's three dots open the same menu", !!viaDots && viaDots.items.length === 6 && viaDots.items[5] === 'Group: Alpha', JSON.stringify(viaDots));
+    check("the row's three dots open the same menu", !!viaDots && JSON.stringify(viaDots.items) === JSON.stringify(STOCK.concat(['Group: Alpha']).concat(EXTRA)), JSON.stringify(viaDots));
     await away();
 
     // 2b. a grouped chat keeps what AionUi's own row shows: the unread dot, the icon states, and a click goes to AionUi's row
@@ -200,7 +211,8 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     p = await where('GRP TEAM');
     await rclick(p);
     const tmenu = await shownMenu();
-    check('right-click on a team whose icon is a spinner opens its menu (Pin, Rename, Archive) with "Add to group"', !!tmenu && JSON.stringify(tmenu.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Add to group']), JSON.stringify(tmenu));
+    const TEXTRA = ['Compact every member\u2019s context', 'Start fresh contexts (1 member, not the lead)', 'Restart every member\u2019s agent (contexts kept)', 'Clear disk caches\u2026'];
+    check('right-click on a team whose icon is a spinner opens its menu (Pin, Rename, Archive), then "Add to group" and the team\'s context and cache actions', !!tmenu && JSON.stringify(tmenu.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Add to group'].concat(TEXTRA)), JSON.stringify(tmenu));
     await clickText('Add to group', '.aiondx-gitem');
     await sleep(500);
     check("the team's chooser lists Alpha and \"New Group +\"", (await js(`Array.from(document.querySelectorAll('.aiondx-gmenu-item')).map((e) => e.textContent.replace(/^\\u2713/, ''))`)).join() === 'Alpha,New Group +');
@@ -211,27 +223,71 @@ async function ready(app) { for (let i = 0; i < 120; i++) { const st = await app
     p = await where('GRP TEAM', '[data-testid="aiondx-groups"]');
     await rclick(p);
     const tIn = await shownMenu();
-    check("right-click on the team in the group gives the same team menu, and the line reads \"Group: Alpha\"", !!tIn && JSON.stringify(tIn.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Group: Alpha']) && Math.abs(tIn.y - p.y) < 160, JSON.stringify(tIn));
+    check("right-click on the team in the group gives the same team menu, and the line reads \"Group: Alpha\"", !!tIn && JSON.stringify(tIn.items) === JSON.stringify(['Pin', 'Rename', 'Archive', 'Group: Alpha'].concat(TEXTRA)) && Math.abs(tIn.y - p.y) < 160, JSON.stringify(tIn));
     await away();
+    // with the Teams list closed, the grouped team keeps its live row (and so its states and its own menu); the list still looks closed
+    await js(`document.querySelector('[data-testid="team-section-toggle"]').click(); 0`);
+    await sleep(1200);
+    const closed = await js(`(() => { const sec = document.querySelector('[data-testid="team-section-toggle"]').parentElement; return { looksClosed: sec.classList.contains('aiondx-tvc'), rowOnPage: !!sec.querySelector('[data-testid^="team-spinner-"], [data-testid^="team-icon-"]') }; })()`);
+    check('closing the Teams list with a grouped team: it looks closed and the team\'s row stays on the page', closed.looksClosed && closed.rowOnPage, JSON.stringify(closed));
+    p = await where('GRP TEAM', '[data-testid="aiondx-groups"]');
+    await rclick(p);
+    const tClosed = await shownMenu();
+    check('the grouped team\'s right-click is still its own full menu, Archive included', !!tClosed && tClosed.items.indexOf('Archive') >= 0 && tClosed.items.indexOf('Group: Alpha') >= 0, JSON.stringify(tClosed));
+    await away();
+    await js(`document.querySelector('[data-testid="team-section-toggle"]').click(); 0`);
+    await sleep(800);
+    check('opening it again shows the teams', !(await js(`document.querySelector('[data-testid="team-section-toggle"]').parentElement.classList.contains('aiondx-tvc')`)));
+    await away();
+
+    // 3b. the chat window's own menu button opens the same menu
+    await js(`(() => { const old = location.href; history.replaceState(null, '', '#/conversation/grpchat1'); window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: old, newURL: location.href })); return 0; })()`);
+    await sleep(1500);
+    const hb = await js(`(() => { const b = document.querySelector('[data-testid="aiondx-chat-menu"]'); if (!b) return null; const r = b.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), inHeader: !!b.closest('header') }; })()`);
+    check('the chat window has its own menu button in its header', !!hb && hb.inHeader, JSON.stringify(hb));
+    if (hb) {
+      await lclick(hb);
+      const hm = await shownMenu();
+      check('it opens the same menu as the sidebar, next to the button', !!hm && JSON.stringify(hm.items) === JSON.stringify(STOCK.concat(['Group: Alpha']).concat(EXTRA)) && Math.abs(hm.y - hb.y) < 120 && hm.x + 60 > hb.x - 300, JSON.stringify({ hm, hb }));
+      await away();
+    }
+    // remove from group, all through real clicks: the chat goes back to AionUi's list, not to the archive
+    p = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
+    await rclick(p);
+    await lclick(await where('Group: Alpha'));
+    await sleep(300);
+    await lclick(await where('Remove from group', '.aiondx-gmenu'));
+    await sleep(1200);
+    const arch = await js(`(async () => { const r = await fetch('http://127.0.0.1:' + window.__backendPort + '/api/conversations/grpchat1', { credentials: 'include' }); const j = await r.json(); const d = j.data !== undefined ? j.data : j; return { status: r.status, archived: !!(d && d.archived_at) }; })()`);
+    s = await state();
+    check('"Remove from group" through the menu puts the chat back in AionUi\'s list and does not archive it', !arch.archived && s.stockHidden.alpha === false && !s.rows.some((x) => /^c:grpchat1/.test(x)), JSON.stringify({ arch, rows: s.rows }));
+    // back into the group for the drags below
+    await rclick(await where('GRP ALPHA CHAT'));
+    await lclick(await where('Add to group'));
+    await sleep(300);
+    await lclick(await where('Alpha', '.aiondx-gmenu'));
+    await sleep(900);
+    check('(setup) the chat is back in the group', (await state()).rows.some((x) => /^c:grpchat1/.test(x)));
 
     // 4. drag and drop
     p = await where('GRP BETA CHAT');
     const headPt = await where('Alpha', '[data-testid="aiondx-groups"]');
+    const beforeDrop = names(await state());
     let ok = await drag(p, headPt);
     check('(setup) a drag of the mouse is taken by the page', ok);
     s = await state();
-    check('a chat dragged from AionUi\'s list onto a group\'s heading goes in at the top', JSON.stringify(names(s)) === JSON.stringify(['GRP BETA CHAT', 'GRP ALPHA CHAT', 'GRP TEAM']) && s.stockHidden.beta === true, JSON.stringify(s.rows));
+    check('a chat dragged from AionUi\'s list onto a group\'s heading goes in at the top', JSON.stringify(names(s)) === JSON.stringify(['GRP BETA CHAT'].concat(beforeDrop)) && s.stockHidden.beta === true, JSON.stringify(s.rows));
     // the team onto the upper half of the first row: it takes that place
     let from = await where('GRP TEAM', '[data-testid="aiondx-groups"]');
     let to = await where('GRP BETA CHAT', '[data-testid="aiondx-groups"]');
     await drag(from, { x: to.x, y: to.top + 4 });
     s = await state();
-    check('a team dragged onto the top of the first row goes before it (any place, not only the end)', JSON.stringify(names(s)) === JSON.stringify(['GRP TEAM', 'GRP BETA CHAT', 'GRP ALPHA CHAT']), JSON.stringify(names(s)));
+    check('a team dragged onto the top of the first row goes before it (any place, not only the end)', names(s)[0] === 'GRP TEAM' && names(s)[1] === 'GRP BETA CHAT' && names(s).length === 3, JSON.stringify(names(s)));
     from = await where('GRP TEAM', '[data-testid="aiondx-groups"]');
     to = await where('GRP BETA CHAT', '[data-testid="aiondx-groups"]');
     await drag(from, { x: to.x, y: to.top + to.h - 4 });
     s = await state();
-    check('onto the bottom half of a row it goes after it', JSON.stringify(names(s)) === JSON.stringify(['GRP BETA CHAT', 'GRP TEAM', 'GRP ALPHA CHAT']), JSON.stringify(names(s)));
+    check('onto the bottom half of a row it goes after it', names(s)[0] === 'GRP BETA CHAT' && names(s)[1] === 'GRP TEAM' && names(s).length === 3, JSON.stringify(names(s)));
     // out: onto AionUi's own list
     from = await where('GRP ALPHA CHAT', '[data-testid="aiondx-groups"]');
     to = await where('GRP GAMMA CHAT');

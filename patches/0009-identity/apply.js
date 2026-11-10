@@ -124,8 +124,25 @@ function __aiondxIconFile(name) {
         r.unref();
       } catch {}
     };
-    const every = setInterval(refresh, 12 * 3600000);
+    // Often, and within five minutes of an account's model catalog changing (a request of 2026-11-09: "Fable 5.2 didn't get
+    // auto-loaded into the interface....fix this systemically"). The catalog (aiondx-models.json in each Claude config folder) is rewritten
+    // by the Claude launcher when a chat starts; Fable 5.2 reached it at 14:22 on November 9th, but the pickers were rewritten only at start
+    // and every twelve hours, so the new model waited half a day. A run that finds nothing new writes nothing.
+    // Every 15 minutes: AionCore also rewrites a Claude picker from the live session whenever a chat starts, and on November 9th that
+    // session's list lacked the Fable models the catalog has (cause not found), so a start could drop them until the next run.
+    const every = setInterval(refresh, 15 * 60000);
     if (every.unref) every.unref();
+    const catalogStamp = () => {
+      try {
+        const profile = process.env.APPDATA ? path__namespace.resolve(process.env.APPDATA, "..", "..") : "";
+        if (!profile) return "";
+        return fs__namespace.readdirSync(profile).filter((n) => /^\.claude(-[A-Za-z0-9_]+)?$/.test(n))
+          .map((n) => { try { return n + ":" + fs__namespace.statSync(path__namespace.join(profile, n, "aiondx-models.json")).mtimeMs; } catch { return n + ":0"; } }).join("|");
+      } catch { return ""; }
+    };
+    let lastStamp = catalogStamp();
+    const watch = setInterval(() => { const s = catalogStamp(); if (s && s !== lastStamp) { lastStamp = s; refresh(); } }, 300000);
+    if (watch.unref) watch.unref();
     child.on("error", () => { clearTimeout(timer); refresh(); });
     child.on("exit", () => { clearTimeout(timer); refresh(); });
   } catch {}

@@ -274,6 +274,26 @@ const claudeProvider = {
         try { got = await catalog.askClaude(found.exe, env, work, ctx.exeArgs); } finally { if (catalog.removeScratch) catalog.removeScratch(work); else { try { fs.rmSync(work, { recursive: true, force: true }); } catch (e) { /* in use */ } } }
       } catch (e) { log('claude: the list for ' + names + ' could not be read: ' + e.message); return; }
       if (!got.models.length) { log('claude: Claude Code listed no models for ' + names + ' (not signed in?); rows left alone'); return; }
+      // The account catalog's models too (a request of 2026-11-09: "Fable 5.2 didn't get auto-loaded into the interface....fix this
+      // systemically"). Asked in the account's real config folder, Claude Code lists models from that folder's cached server data, which can
+      // be days old: on November 9th it left out Fable 5.2, Fable 5 and the fable alias, while the catalog (asked with a fresh copy of the same
+      // cache) had them. Each catalog model the answer lacks goes in after the catalog model before it.
+      try {
+        const stamp = JSON.parse(fs.readFileSync(path.join(g.dir, 'aiondx-models.json'), 'utf8'));
+        const cat = Array.isArray(stamp && stamp.models) ? stamp.models.filter((m) => m && m.value && m.value !== 'default') : [];
+        const have = new Set(got.models.map((m) => m.value));
+        const added = [];
+        cat.forEach((m, i) => {
+          if (have.has(m.value)) return;
+          let at = 0;
+          for (let j = i - 1; j >= 0; j--) { const k = got.models.findIndex((x) => x.value === cat[j].value); if (k >= 0) { at = k + 1; break; } }
+          if (!at) at = Math.min(1, got.models.length);
+          got.models.splice(at, 0, { value: m.value, displayName: m.displayName || m.value, description: m.description || '', supportedEffortLevels: Array.isArray(m.efforts) ? m.efforts : [] });
+          have.add(m.value);
+          added.push(m.value);
+        });
+        if (added.length) log('claude: from the account catalog, missing from the CLI\'s answer for ' + names + ': ' + added.join(', '));
+      } catch (e) { /* no catalog yet: the CLI's answer alone */ }
       for (const row of g.rows) {
         const next = shapeRow(row, got.models);
         if (!next) { log('claude: ' + (row.name || row.agent_id) + ': its stored picker is not in the expected shape; left alone'); continue; }

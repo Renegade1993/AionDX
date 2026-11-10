@@ -123,7 +123,7 @@ const lastLog = () => { try { return fs.readFileSync(LOG, 'utf8').trim().split('
     cleanups.push(() => put({ [akey]: null }));
     // What the database says each Claude agent's environment is.
     const { DatabaseSync } = require('node:sqlite');
-    const db = new DatabaseSync(path.join(process.env.APPDATA, 'AionUi', 'aionui', 'aionui-backend.db'), { readOnly: true });
+    const db = new DatabaseSync([path.join(process.env.APPDATA, 'AionDX', 'aionui', 'aiondx-backend.db'), path.join(process.env.APPDATA, 'AionUi', 'aionui', 'aionui-backend.db')].find((p) => fs.existsSync(p)), { readOnly: true });
     const envRows = db.prepare("SELECT agent_id, env FROM agent_metadata WHERE backend = 'claude' AND env LIKE '%CLAUDE_CONFIG_DIR%'").all();
     db.close();
     const pick = envRows.map((r) => ({ id: r.agent_id, env: JSON.parse(r.env) }));

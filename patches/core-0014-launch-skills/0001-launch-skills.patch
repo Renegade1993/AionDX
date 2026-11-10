@@ -1,0 +1,64 @@
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index 49bbde7a..5d7ff70b 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -5617,9 +5617,11 @@ impl ConversationService {
+     ) -> Result<BuildTaskOptions, ConversationError> {
+         reject_deprecated_runtime_row(row)?;
+         let seed = self.load_aionrs_permission_seed(row).await?;
+-        SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo)
++        let mut options = SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo)
+             .build_options(row, seed)
+-            .await
++            .await?;
++        self.refresh_launch_skills(&mut options).await;
++        Ok(options)
+     }
+ 
+     pub async fn build_task_options_for_runtime(
+@@ -5629,9 +5631,43 @@ impl ConversationService {
+     ) -> Result<BuildTaskOptions, ConversationError> {
+         reject_deprecated_runtime_row(row)?;
+         let seed = self.load_aionrs_permission_seed(row).await?;
+-        SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo)
++        let mut options = SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo)
+             .build_options_with_workspace_override(row, workspace_override, seed)
+-            .await
++            .await?;
++        self.refresh_launch_skills(&mut options).await;
++        Ok(options)
++    }
++
++    /// AionDX (core-0014, a request of 2026-11-09, R-084): the skills a session gets are decided again at every launch. A conversation's
++    /// `extra.skills` is a snapshot taken when it was created, so an auto-inject skill added since (AionDX's own `aiondx-loop`,
++    /// `aiondx-config` and the rest) never reached an older conversation or a long-lived team member. Every auto-inject skill the snapshot
++    /// lacks is added for this launch, and the conversation's skill view (layer 1, `--plugin-dir`) is rebuilt from the full list so the
++    /// CLI loads them. The stored snapshot is left as it is. A failure keeps the snapshot as it was: the session still starts.
++    async fn refresh_launch_skills(&self, options: &mut BuildTaskOptions) {
++        let auto = self.skill_resolver.auto_inject_names().await;
++        let missing: Vec<String> = auto
++            .into_iter()
++            .filter(|name| !options.context.skills.iter().any(|have| have == name))
++            .collect();
++        if missing.is_empty() {
++            return;
++        }
++        let mut names = options.context.skills.clone();
++        names.extend(missing.iter().cloned());
++        let user_id = options.context.conversation.user_id.clone();
++        let conversation_id = options.context.conversation.conversation_id.clone();
++        let resolved = self.skill_resolver.resolve_skills_for_user(&user_id, &names).await;
++        if resolved.is_empty() {
++            return;
++        }
++        let linked = self.skill_resolver.sync_skill_view(&user_id, &conversation_id, &resolved).await;
++        info!(
++            conversation_id = %conversation_id,
++            added = missing.len(),
++            linked,
++            "launch skills: auto-inject skills added since this conversation was created"
++        );
++        options.context.skills = names;
+     }
+ 
+     /// Re-read the persisted resume anchor into a turn's `BuildTaskOptions`

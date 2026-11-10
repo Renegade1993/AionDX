@@ -291,7 +291,8 @@ function readChat(dbPath, convId) {
     const row = db.prepare('SELECT extra, user_id FROM conversations WHERE id = ?').get(convId);
     if (row) {
       out.userId = row.user_id;
-      try { out.agentId = (JSON.parse(row.extra || '{}') || {}).agent_id || null; } catch { /* no agent */ }
+      try { const ex = JSON.parse(row.extra || '{}') || {}; out.agentId = ex.agent_id || null; out.teamId = ex.teamId || ex.team_id || null; } catch { /* no agent */ }
+      if (out.teamId) { try { const tr = db.prepare('SELECT name FROM teams WHERE id = ?').get(out.teamId); out.teamName = tr ? String(tr.name || '') : ''; } catch { /* no teams table */ } }
     }
     const pref = (key) => {
       try {
@@ -448,6 +449,56 @@ function keepCatalogCurrent(env, cfg) {
   } catch { /* never in the way of a chat */ }
 }
 
+/** Projects (R-084 and R-083, November 9th, 2026). AionDX's registry, aiondx-projects.json in AionDX's data folder (beside the aionui folder
+ *  that holds the chats database), names the folders whose skills every Claude session loads (skillRoots), each project's root, its domain
+ *  and whether it may use Claude Docs, and which team or chat belongs to which project (bindings: "team:<id>" or "conv:<id>"). A team
+ *  member with no binding is matched to a project by its team's name ("Atlas Team" to "Atlas"), a solo chat only by a binding.
+ *
+ *  R-084: AionUi starts a session in the conversation's own folder, so Claude Code found no project's .claude\skills, and
+ *  permissions.additionalDirectories gives file access only. Each skill root and the bound project's root go in with --add-dir, which loads
+ *  their .claude\skills and watches them during the session (a skill a teammate adds or edits reaches a running agent).
+ *  R-083 (phase 1): closed by default. Unless the bound project has docs "on", the session's account is allowed for it and the account owns
+ *  the project's domain, claude.ai connectors and artifacts are switched off for the launch (ENABLE_CLAUDEAI_MCP_SERVERS=false,
+ *  CLAUDE_CODE_DISABLE_ARTIFACT=1). Today every session signs in with a token, which loads no connector anyway; this keeps it so if that changes.
+ *  No registry: no skill root, nothing bound, everything closed. Any trouble: the launch goes on. */
+function projectSetup(env, dbPath, convId, facts, label) {
+  const dataDir = dbPath ? path.dirname(path.dirname(dbPath)) : '';
+  let reg = null;
+  try { reg = JSON.parse(fs.readFileSync(path.join(dataDir, 'aiondx-projects.json'), 'utf8')); } catch { /* none yet */ }
+  const roots = (reg && Array.isArray(reg.skillRoots) ? reg.skillRoots : []).filter((r) => typeof r === 'string' && r && fs.existsSync(r));
+  const projects = (reg && reg.projects && typeof reg.projects === 'object') ? reg.projects : {};
+  const bindings = (reg && reg.bindings && typeof reg.bindings === 'object') ? reg.bindings : {};
+  let name = (convId && bindings['conv:' + convId]) || (facts.teamId && bindings['team:' + facts.teamId]) || null;
+  let how = name ? 'bound' : '';
+  if (!name && facts.teamName) {
+    // the team's name against each project's folder name: the words of three letters or more, "team" left out
+    const words = facts.teamName.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && w !== 'team' && w !== 'dev' && w !== 'development');
+    let best = null, bestScore = 0, tie = false;
+    for (const [key, p] of Object.entries(projects)) {
+      const hay = String((p && p.root) ? path.basename(p.root) : key).toLowerCase();
+      const score = words.filter((w) => hay.indexOf(w) >= 0).length;
+      if (score > bestScore) { best = key; bestScore = score; tie = false; } else if (score && score === bestScore) tie = true;
+    }
+    if (best && !tie) { name = best; how = 'by team name'; }
+  }
+  const proj = name && projects[name] ? projects[name] : null;
+  // --add-dir is Claude Code's: only when what starts is Claude Code (a stand-in or another program gets none)
+  const isClaude = /^claude(\.exe|\.cmd)?$/i.test(path.basename(String(RESOLVED.exe || '')));
+  const dirs = isClaude ? roots.slice() : [];
+  if (isClaude && proj && proj.root && fs.existsSync(proj.root)) dirs.push(proj.root);
+  const have = new Set();
+  for (let i = 0; i < args.length - 1; i++) if (args[i] === '--add-dir') have.add(String(args[i + 1]).toLowerCase());
+  const added = [];
+  for (const d of dirs) { if (!have.has(d.toLowerCase())) { args.push('--add-dir', d); have.add(d.toLowerCase()); added.push(d); } }
+  // which account this is, by its label, against the project's domain and allowed accounts
+  const acct = /work/i.test(String(label || '')) ? 'work' : 'personal';
+  const owns = proj && ((proj.domain === 'work' && acct === 'work') || (proj.domain === 'personal' && acct === 'personal'));
+  const allowed = proj && (!Array.isArray(proj.accounts) || proj.accounts.indexOf(acct) >= 0);
+  const docs = !!(proj && proj.docs === 'on' && owns && allowed);
+  if (!docs) { env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false'; env.CLAUDE_CODE_DISABLE_ARTIFACT = '1'; }
+  routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'}`);
+}
+
 // ---- everything below is best-effort; any throw lands in the catch and passes through ----
 try {
   let cfg = null;
@@ -521,6 +572,7 @@ try {
   } catch { /* logging must never break a launch */ }
 
   keepCatalogCurrent(env, cfg);
+  try { projectSetup(env, dbPath, convId, facts, label); } catch { /* never in the way of a chat */ }
   if (!(cfg && cfg.streamProxy === false) && isStreamSession()) proxyOff(env, convId, dbPath, usageFor(env, cfg, label), cfg);
   else handOff(env);
 } catch (e) {

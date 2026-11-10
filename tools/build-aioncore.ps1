@@ -133,6 +133,12 @@ try {
     if (-not $list) { Say 'no core patches found' }
     # 4b. The AionDX names: AionUi is renamed to AionDX across the checkout, except what must stay (tools\brand-names.js lists it).
     $nodeExe = (Get-Command node -ErrorAction Stop).Source
+    # The previous run's renamed crate folders: git clean keeps ignored files, and one left behind (crates\aiondx-app\data, November 9th)
+    # made the rename below fail (the folder it renames to was still there).
+    Get-ChildItem -LiteralPath (Join-Path $wt 'crates') -Directory -Filter 'aiondx-*' -ErrorAction SilentlyContinue | ForEach-Object {
+      Say "removing the earlier run's $($_.Name)"
+      Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Say 'renaming AionUi to AionDX in the checkout (tools\brand-names.js, core mode)'
     $c = Run $nodeExe @("`"$root\tools\brand-names.js`"", "`"$wt`"", '--mode', 'core', '--report', "`"$env:TEMP\brand-core-report.json`"") $root $null
     if ($c -ne 0) { throw "brand-names exit $c" }

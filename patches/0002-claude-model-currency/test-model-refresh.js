@@ -87,6 +87,15 @@ try {
   d2.close();
   r = run([]);
   check('a remembered model that no longer exists falls back to default', JSON.parse(rows().r2.available_models).current_model_id === 'default', rows().r2.available_models);
+  // a model the account catalog has and Claude Code's answer in the real folder lacks (November 9th: Fable 5.2) goes in after the catalog's
+  // model before it
+  const catFile = path.join(acctA, 'aiondx-models.json');
+  const cat = JSON.parse(fs.readFileSync(catFile, 'utf8'));
+  cat.models.splice(2, 0, { value: 'claude-fable-5-2', resolvedModel: 'claude-fable-5-2', displayName: 'Fable 5.2', description: '', efforts: ['low', 'high'] });
+  fs.writeFileSync(catFile, JSON.stringify(cat));
+  r = run([]);
+  const ids = JSON.parse(rows().r1.available_models).available_models.map((m) => m.id);
+  check('a model only the account catalog lists reaches the picker, after the catalog model before it', ids.indexOf('claude-fable-5-2') === ids.indexOf('opus') + 1 && /from the account catalog/.test(fs.readFileSync(path.join(root, 'logs', 'model-refresh.log'), 'utf8')), JSON.stringify(ids));
   // the lock
   fs.writeFileSync(path.join(root, 'logs', 'model-refresh.lock'), JSON.stringify({ pid: 999999, at: Date.now() }));
   r = run([]);

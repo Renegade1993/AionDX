@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-03.2';
+  var BUILD = '2026-11-09.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -701,8 +701,8 @@
       label: 'Read replies with the Windows voice when there is no key', desc: 'The speaker button on a reply uses the voice Windows already has (free, offline) until an ElevenLabs key is set.' },
     { id: 'stop.show', group: 'Stop', type: 'number', min: 1, max: 120, unit: 'seconds', default: 3,
       label: 'Show a Stop button after', desc: 'A chat that is working with no Stop button on screen gets AionDX’s own after this many seconds.' },
-    { id: 'stop.force', group: 'Stop', type: 'number', min: 3, max: 300, unit: 'seconds', default: 12,
-      label: 'Offer Force stop after', desc: 'A chat still working this long after Stop was pressed offers Force stop, which restarts the agent.' },
+    { id: 'stop.force', group: 'Stop', type: 'number', min: 2, max: 60, unit: 'seconds', default: 5,
+      label: 'End the agent if Stop has not taken after', desc: 'Stop always halts (a request of 2026-11-09). Pressing it cancels the turn and sends the cancel again; a chat still working this long after the press has its agent ended and started again, history kept, with no second click.' },
     { id: 'lag.bigPage', group: 'Long chats', type: 'number', min: 100, max: 20000, unit: 'rows', default: 400,
       label: 'A long chat starts at', desc: 'Above this many message rows, AionDX does less work per change of the page, so typing stays quick.' },
     { id: 'lag.chainPages', group: 'Long chats', type: 'number', min: 1, max: 50, unit: 'pages', default: 3,
@@ -2680,6 +2680,7 @@
   }
   /** What a message from you does to the Loops, whether you pressed send or a scheduled send went out. */
   function applyUserSent(t, text) {
+    if (t && t.key) userSendAt[t.key] = Date.now();   // a Stop's halt watch leaves the turn this message starts alone
     // Any request for a Loop off, this one's or a teammate's: the Loop tool may act on it for a Loop that runs until you stop it.
     if (text && asksLoopOff(text)) putLoopAsk(t, text);
     // "Turn off your loop" (2026-09-26): that chat's or member's Loop only, whatever its mode.
@@ -2769,8 +2770,10 @@
       if (!t) return;
       // First, before AionUi's own handler cancels the turn: the draft box must not send its next message when it ends.
       holdDraftBox(b, t);
-      if (t.kind === 'conv') stopBackstop(t.convId);
-      else { stopSent[t.key] = Date.now(); hardStop(t).catch(function () {}); }   // a member still working 12 s on gets Force stop; 2026-10-31: AionUi's own Stop for a member does nothing when no team run is active, so the conversation is cancelled and the member paused here too
+      // 2026-10-31: AionUi's own Stop for a member does nothing when no team run is active, so the conversation is cancelled and the member
+      // paused here too. 2026-11-09: then watched until it is idle (deadHalt), for solo chats and members alike.
+      if (t.kind === 'team') { stopSent[t.key] = Date.now(); hardStop(t).catch(function () {}); }
+      deadHalt(t, t.convId).catch(function () {});
       if (!state(t).on) return;
       setOn(t, false, 'you pressed Stop', true);
       notify(t, 'Loop off for {who}: you pressed Stop.', '');
@@ -2995,6 +2998,58 @@
   // cancel itself, with the turn id the server gave. A different turn (a message sent after the press) is left alone.
   var STOP_BACKSTOP_MS = 2500;
   var stopWatch = {};   // conversation id -> a backstop already waiting
+
+  // ---- Stop halts, every time (a request of 2026-11-09: "THE STOP BUTTON NEEDS TO DEAD-HALT THINGS, EVERY TIME")
+  // After any press of Stop (AionUi's, AionDX's, or the chat menu's), the chat is watched until it is idle: the cancel goes again with the
+  // turn the server names (a turn that started from a queue, a Loop nudge or a scheduled send in the meantime is cancelled too), a team
+  // member is paused again, and a chat still working stop.force seconds after the press has its agent process ended and started again
+  // (runtime/restart: whatever it was running ends; the chat keeps its history and session). A message you send after the press is
+  // yours: the watch lets that turn run. One watch per chat; a second press starts the escalation over from the end step.
+  var haltWatch = {};          // target key -> { at, token }
+  var userSendAt = {};         // target key -> when you last sent something from this page
+  function haltNote(text, sub) { toast(text, sub || ''); }
+  async function deadHalt(t, convId) {
+    if (!t) return;
+    if (!convId && t.kind === 'team') { var m = await memberConversation(t); convId = m && m.convId; }
+    if (!convId) return;
+    var key = t.key, start = Date.now(), token = (haltWatch[key] && haltWatch[key].token || 0) + 1;
+    var again = !!haltWatch[key];
+    haltWatch[key] = { at: start, token: token };
+    stopSent[key] = start;
+    var live = function () { return haltWatch[key] && haltWatch[key].token === token; };
+    var resent = again, restarted = false;
+    var cancelNow = async function (turn) {
+      var r = turn ? await postJson('/api/conversations/' + convId + '/cancel', { turn_id: turn }).catch(function () { return null; }) : null;
+      if (t.kind === 'team') postJson('/api/teams/' + t.teamId + '/runs/stop/agents/' + encodeURIComponent(t.slotId) + '/pause', { reason: 'Stopped by the user.' }).catch(function () {});
+      return r;
+    };
+    try {
+      for (var i = 0; i < 40 && live(); i++) {
+        await new Promise(function (res) { setTimeout(res, i === 0 ? 400 : 600); });
+        if (!live()) return;
+        if ((userSendAt[key] || 0) > start) return;          // you sent something after Stop: that turn is yours
+        var g = await getJson('/api/conversations/' + convId);
+        if (!g.data) continue;
+        var busy = convBusy(g.data), rt = g.data.runtime || {};
+        if (!busy) {
+          if (restarted) haltNote('Stopped.', 'The agent did not stop on its own, so it was ended and started again. The chat keeps its history.');
+          return;
+        }
+        var waited = Date.now() - start;
+        // a cancel already under way is not sent again (the end step below still comes if it never ends)
+        if (!resent && waited >= 1200) { resent = true; if (rt.state !== 'cancelling') await cancelNow(rt.turn_id); continue; }
+        if (!restarted && (waited >= stopForceMs() || again)) {
+          restarted = true;
+          var rr = await postJson(t.kind === 'conv' ? '/api/conversations/' + convId + '/runtime/restart'
+            : '/api/teams/' + t.teamId + '/agents/' + encodeURIComponent(t.slotId) + '/runtime/restart', {}).catch(function () { return null; });
+          if (!rr || !rr.ok) haltNote('Stop: the agent could not be ended.', 'HTTP ' + (rr ? rr.status : 'no answer') + '. Stop is sent again until it stops.');
+          continue;
+        }
+        if (restarted && i % 3 === 0 && rt.state !== 'cancelling') await cancelNow(rt.turn_id);
+      }
+      if (live()) haltNote('Stop: the chat still reports working.', 'Cancels and a restart were sent. If it keeps going, close and reopen AionDX.');
+    } finally { if (live()) delete haltWatch[key]; }
+  }
   async function stopBackstop(convId) {
     if (!convId || stopWatch[convId]) return;
     stopWatch[convId] = true;
@@ -6359,9 +6414,20 @@
     // groups in the sidebar
     '[data-aiondx-grouped="1"]{display:none !important}',
     // while AionUi's menu is open for a hidden row, the row is back where the pointer is, out of sight
-    '[data-aiondx-grouped="1"][data-aiondx-peek="hidden"]{position:fixed !important;left:var(--aiondx-px,0) !important;top:var(--aiondx-py,0) !important;width:220px !important;height:34px !important;visibility:hidden !important;pointer-events:none !important}',
-    '.chat-history__item[data-aiondx-grouped="1"][data-aiondx-peek="hidden"]{display:flex !important}',
-    '.relative.group[data-aiondx-grouped="1"][data-aiondx-peek="hidden"]{display:block !important}',
+    '[data-aiondx-peek="hidden"]{position:fixed !important;left:var(--aiondx-px,0) !important;top:var(--aiondx-py,0) !important;width:220px !important;height:34px !important;visibility:hidden !important;pointer-events:none !important;z-index:1 !important}',
+    'div.chat-history__item[data-aiondx-peek="hidden"]{display:flex !important}',
+    'div.relative.group[data-aiondx-peek="hidden"][data-aiondx-peek]{display:block !important}',
+    // AionUi caps a menu at 200 px and scrolls the rest: one with AionDX's lines grows to fit them (they were below the fold)
+    '.arco-dropdown-menu:has(> .arco-dropdown-menu-inner > .aiondx-gitem){max-height:none !important;overflow:visible !important}',
+    '.aiondx-xsep{height:1px;margin:4px 8px;background:var(--color-border-2)}',
+    '.aiondx-xitem--danger .aiondx-gitem-text{color:rgb(var(--danger-6))}',
+    '.aiondx-xitem--armed{background:rgba(var(--danger-6),.12) !important}',
+    '.aiondx-xitem--armed .aiondx-gitem-text,.aiondx-gmenu-item.aiondx-xitem--armed .aiondx-gmenu-label{color:rgb(var(--danger-6));font-weight:600}',
+    '.aiondx-chatmenu-btn{display:inline-flex !important;align-items:center;justify-content:center;width:28px;height:28px;color:var(--color-text-2)}',
+    '.aiondx-chatmenu-btn:hover{color:var(--color-text-1)}',
+    // the Teams list, kept on the page while grouped teams need their rows, looks collapsed when you closed it
+    '.aiondx-tvc > div.relative.group{display:none !important}',
+    '.aiondx-tvc [data-testid="team-section-toggle"] .i-icon-right{transform:none !important}',
     '[data-aiondx-peek] .absolute.end-8px,[data-aiondx-peek] [data-testid="sider-item-menu-trigger"]{display:flex !important}',
     '.aiondx-groups{padding-bottom:12px}',
     '.aiondx-gline{height:1px;margin:10px 10px 2px;background:var(--color-border-2)}',
@@ -6848,7 +6914,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -7238,8 +7304,8 @@
 
   function ours(node) {
     if (!node) return false;
-    if (node.nodeType === 1 && node.closest && node.closest('.aiondx-groups, .aiondx-gmenu, .aiondx-gdlg, .aiondx-gguid-btn')) return true;
-    if (node.nodeType === 1 && node.classList && node.classList.contains('aiondx-gitem')) return true;
+    if (node.nodeType === 1 && node.closest && node.closest('.aiondx-groups, .aiondx-gmenu, .aiondx-gdlg, .aiondx-gguid-btn, .aiondx-chatmenu')) return true;
+    if (node.nodeType === 1 && node.classList && (node.classList.contains('aiondx-gitem') || node.classList.contains('aiondx-xitem') || node.classList.contains('aiondx-xsep') || node.classList.contains('aiondx-cost-line'))) return true;
     if (menu && (node === menu || menu.contains(node))) return true;
     if (tip && (node === tip || tip.contains(node))) return true;
     if (toastBox && (node === toastBox || toastBox.contains(node))) return true;
@@ -7660,7 +7726,8 @@
     // As AionUi's own Stop: the Loop goes off and the draft box does not send its next message.
     if (stopEls[t.key]) holdDraftBox(stopEls[t.key], t);
     var r = await hardStop(t);
-    toast(r.ok ? 'Stop sent.' : r.nothing ? 'Nothing is running in this chat.' : 'Stop could not be sent.', r.ok ? 'If it keeps working, Force stop appears.' : r.nothing ? '' : r.why);
+    deadHalt(t, t.convId).catch(function () {});
+    toast(r.ok ? 'Stop sent.' : r.nothing ? 'Nothing is running in this chat.' : 'Stop could not be sent yet.', r.ok ? 'It is watched until it stops; if it does not, the agent is ended and started again.' : r.nothing ? '' : r.why + '. It is watched and stopped until it is idle.');
   }
   // A bolt for a solo chat (2026-11-01). Team members have one (AionUi's Interrupt & send, and the bolt beside a waiting message); a solo
   // chat had none, so a message you typed while its agent worked could only wait for the agent's next step. While a solo chat works
@@ -7757,8 +7824,10 @@
         var cu = gu && gu.data;
         if (cu && Number(cu.used) > 0) used = Number(cu.used);
         if (cu && Number(cu.size) > 0) limit = Number(cu.size);
+        // the session cost (a request of 2026-11-09: solo chats show it as team members do)
+        var cost = cu && cu.cost && Number(cu.cost.amount) > 0 ? { amount: Number(cu.cost.amount), currency: String(cu.cost.currency || 'USD') } : null;
       } catch (er) {}
-      var info = { used: used, limit: limit, updatedAt: Number(d.updated_at) || old.updatedAt || 0, provider: ctxProvider(d) };
+      var info = { used: used, limit: limit, updatedAt: Number(d.updated_at) || old.updatedAt || 0, provider: ctxProvider(d), cost: cost || old.cost || null };
       ctxInfo[k] = info;
       try { localStorage.setItem('aiondx.ctx.' + convId, JSON.stringify(info)); } catch (er) {}
       renderSched();
@@ -7805,10 +7874,34 @@
     var disp = info.limit > 0 ? '' : 'none';
     if (arc.style.display !== disp) arc.style.display = disp;
     var tip = (info.limit > 0 ? pct.toFixed(1) + '% of the context window used (' + Math.round(info.used / 1000) + 'K of ' + Math.round(info.limit / 1000) + 'K)'
-      : info.used > 0 ? Math.round(info.used / 1000) + 'K tokens used; the window size is not known' : 'No context count yet for this chat');
+      : info.used > 0 ? Math.round(info.used / 1000) + 'K tokens used; the window size is not known' : 'No context count yet for this chat') +
+      (info.cost ? '\nSession cost ≈ ' + costText(info.cost) : '');
     if (el.title !== tip) el.title = tip;
     if (el.parentNode !== send.parentNode || el.nextSibling !== send) send.parentNode.insertBefore(el, send);
     ctxSnow(el, cold);
+  }
+  function costText(c) {
+    var a = Number(c && c.amount) || 0, cur = String((c && c.currency) || 'USD');
+    try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, maximumFractionDigits: a >= 1 ? 2 : 4 }).format(a); } catch (e) { return cur + ' ' + a.toFixed(2); }
+  }
+  /** AionUi's own ring shows "Session cost" in its hover card only when its live usage carried one (a team member's does); a solo chat's
+   *  ring is filled from a saved count with none. The card gets the cost AionCore keeps for the chat (a request of 2026-11-09). */
+  function paintCostCard() {
+    var cards = document.querySelectorAll('.context-usage-popover');
+    if (!cards.length) return;
+    var r = route();
+    if (!r || r.kind !== 'conv') return;
+    var info = ctxInfo['conv:' + r.id];
+    for (var i = 0; i < cards.length; i++) {
+      var inner = cards[i].querySelector('.p-8px') || cards[i];
+      var have = /Session cost/.test(inner.textContent || '');
+      var mine = inner.querySelector('.aiondx-cost-line');
+      if (have && !mine) continue;          // AionUi's own line is there
+      if (!info || !info.cost) { if (mine) mine.remove(); continue; }
+      var text = 'Session cost ≈ ' + costText(info.cost);
+      if (!mine) { mine = document.createElement('div'); mine.className = 'text-12px text-t-secondary mt-4px aiondx-cost-line'; inner.insertBefore(mine, inner.children[1] || null); }
+      if (mine.textContent !== text) mine.textContent = text;
+    }
   }
   /** A hard stop (2026-10-31): the Loop goes off; the conversation's turn is cancelled (AionCore then keeps scheduled tasks out of
    *  that conversation until you write to it again); and a team member is paused, so what it had queued does not start the next
@@ -8222,10 +8315,59 @@
   }
   function gEl(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
 
+  // A grouped team needs its row in AionUi's Teams list (its live states, its own menu, a click that opens it), and AionUi draws no rows
+  // while that list is closed. So while any team is grouped the list stays open on the page, and when you close it AionDX hides its rows
+  // instead (aionui.dx.teams.closed); the arrow shows it closed. With no team grouped, AionUi's own open and closed are used again.
+  var TEAMS_CLOSED = KEY_PREFIX + 'teams.closed';
+  var selfToggle = false;
+  function groupedTeamCount() { var n = 0; for (var k in groupsState.items) if (k.charAt(0) === 't') n++; return n; }
+  function teamsClosed() { try { return localStorage.getItem(TEAMS_CLOSED) === '1'; } catch (e) { return false; } }
+  function setTeamsClosed(v) { try { if (v) localStorage.setItem(TEAMS_CLOSED, '1'); else localStorage.removeItem(TEAMS_CLOSED); } catch (e) {} }
+  function keepTeamRows(scroll) {
+    var toggle = scroll.querySelector('[data-testid="team-section-toggle"]');
+    var section = toggle && toggle.parentElement;
+    if (!section) return;
+    var rows = section.querySelector('[data-testid^="team-icon-"], [data-testid^="team-spinner-"]');
+    if (groupedTeamCount()) {
+      if (!rows && !section.__aiondxOpening) {
+        // AionUi has it closed: open it on the page, and keep it looking closed
+        setTeamsClosed(true);
+        section.__aiondxOpening = true;
+        selfToggle = true;
+        try { toggle.click(); } finally { selfToggle = false; }
+        setTimeout(function () { section.__aiondxOpening = false; schedule(); }, 400);
+      }
+      section.classList.toggle('aiondx-tvc', teamsClosed());
+    } else if (section.classList.contains('aiondx-tvc') || teamsClosed()) {
+      section.classList.remove('aiondx-tvc');
+      if (teamsClosed() && rows) { selfToggle = true; try { toggle.click(); } finally { selfToggle = false; } }
+      setTeamsClosed(false);
+    }
+  }
+  function watchTeamsToggle() {
+    document.addEventListener('click', function (ev) {
+      if (selfToggle || disabled() || !groupedTeamCount()) return;
+      var t = ev.target;
+      var tg = t && t.closest ? t.closest('[data-testid="team-section-toggle"]') : null;
+      if (!tg || t.closest('[data-testid="team-create-btn"]')) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      setTeamsClosed(!teamsClosed());
+      schedule();
+    }, true);
+  }
+
   function renderGroups() {
     var scroll = document.querySelector('[class*="_scrollArea_"]');
     if (disabled() || !scroll || !scroll.querySelector('[data-testid="team-section-toggle"]')) { removeGroupsUi(); return; }
+    keepTeamRows(scroll);
     var idx = sideIndex(scroll);
+    // each team's members read ahead, so its menu has its actions the first time it opens
+    Object.keys(idx).forEach(function (k) {
+      if (k.charAt(0) !== 't') return;
+      var tid = k.slice(2), tc = teamCache[tid];
+      if ((!tc || Date.now() - tc.at > 120000) && !teamReads[tid] && !(teamFailed[tid] && Date.now() - teamFailed[tid] < 30000)) memberConversation({ teamId: tid, slotId: '' }).catch(function () {});
+    });
     var narrow = scroll.clientWidth > 0 && scroll.clientWidth < 140;
     var r = route();
     var activeKey = r ? (r.kind === 'conv' ? 'c:' : 't:') + r.id : '';
@@ -8329,7 +8471,7 @@
 
   // ---- clicks on AionDX's own rows
   /** The row's menu is AionUi's own, whether the chat is in a group or not. */
-  function openRowMenu(key, x, y) { if (!openStockMenu(key, x, y)) openItemMenu(key, x, y); }
+  function openRowMenu(key, x, y, away) { if (!openStockMenu(key, x, y, away)) openItemMenu(key, x, y, true); }
   function openItemFromRow(el, ev, atButton) {
     var rect = el.getBoundingClientRect();
     var row = el.closest('.aiondx-grow');
@@ -8393,8 +8535,16 @@
       el.addEventListener('click', function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
+        // a destructive one asks for a second click, in place
+        if (it.confirm && !el.__armed) {
+          el.__armed = true;
+          el.classList.add('aiondx-xitem--armed');
+          el.querySelector('.aiondx-gmenu-label').textContent = 'Click again: ' + it.label.charAt(0).toLowerCase() + it.label.slice(1);
+          setTimeout(function () { el.__armed = false; el.classList.remove('aiondx-xitem--armed'); var lb = el.querySelector('.aiondx-gmenu-label'); if (lb) lb.textContent = it.label; }, 6000);
+          return;
+        }
         closeGMenu();
-        if (it.run) it.run();
+        if (it.run) Promise.resolve(it.run()).catch(function (e) { toast('That did not go through.', String(e && e.message || e)); });
       });
       gMenu.appendChild(el);
     });
@@ -8408,13 +8558,37 @@
       window.addEventListener('blur', closeGMenu);
     }, 0);
   }
-  /** The group choices for a chat or a team (key "c:<id>" or "t:<id>"). */
-  function openItemMenu(key, x, y) {
+  /** The group choices for a chat or a team (key "c:<id>" or "t:<id>"). full: AionUi's own menu for it is not on the page (its row is not
+   *  drawn), so this one carries the rest as well: AionDX's actions, Rename and Archive, done through the same routes AionUi's menu uses. */
+  function openItemMenu(key, x, y, full) {
     var cur = groupsState.items[key] || '';
     var items = groupsState.groups.map(function (g) { return { label: g.name, check: g.id === cur, run: function () { assignGroup(key, g.id); } }; });
     if (items.length) items.push({ sep: true });
     items.push({ label: 'New Group +', run: function () { askGroupName('New group', '', 'Create', function (name) { var id = createGroup(name); if (id) assignGroup(key, id); }); } });
     if (cur) items.push({ label: 'Remove from group', run: function () { assignGroup(key, null); } });
+    if (full) {
+      var acts = menuActions(key);
+      if (acts.length) items.push({ sep: true });
+      acts.forEach(function (a) { items.push({ label: a.label, confirm: a.confirm, run: a.run }); });
+      var team = key.charAt(0) === 't', id = key.slice(2);
+      items.push({ sep: true });
+      items.push({ label: 'Rename…', run: function () {
+        var nameNow = (groupCache[key] && groupCache[key].name) || '';
+        askGroupName(team ? 'Rename team' : 'Rename chat', nameNow, 'Rename', function (name) {
+          var url = team ? '/api/teams/' + encodeURIComponent(id) + '/name' : '/api/conversations/' + encodeURIComponent(id);
+          fetch(apiUrl(url), { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify({ name: name }) })
+            .then(function (r) { if (!r.ok) toast('Not renamed.', 'HTTP ' + r.status); else { if (groupCache[key]) groupCache[key].name = name; delete groupInfo[key]; schedule(); } }, function () { toast('Not renamed.', ''); });
+        }, '__rename__');
+      } });
+      items.push({ label: 'Archive', confirm: true, run: function () {
+        postJson('/api/sidebar/' + (team ? 'team' : 'conversation') + '/' + encodeURIComponent(id) + '/archive', {}).then(function (r) {
+          if (!r.ok) { toast('Not archived.', 'HTTP ' + r.status); return; }
+          delete groupInfo[key];
+          toast(team ? 'Team archived.' : 'Chat archived.', 'It is kept with the archived chats.');
+          schedule();
+        }, function () { toast('Not archived.', ''); });
+      } });
+    }
     openGMenu(x, y, items);
   }
   function openGroupMenu(gid, x, y) {
@@ -8452,11 +8626,13 @@
     el.style.removeProperty('--aiondx-py');
   }
   /** Opens AionUi's menu for the chat or team of this key at x, y. False when its row is not on the page (the caller shows its own). */
-  function openStockMenu(key, x, y) {
+  function openStockMenu(key, x, y, away) {
     var scroll = document.querySelector('[class*="_scrollArea_"]');
     var live = scroll && key ? sideIndex(scroll)[key] : null;
     if (!live) return false;
-    var el = live.hide, hidden = el.getAttribute('data-aiondx-grouped') === '1';
+    // away: opened from somewhere other than the row (the chat window's own button), so the menu comes up there, not beside the row
+    var el = live.hide, hidden = el.getAttribute('data-aiondx-grouped') === '1' || !!away;
+    if (hidden) x = Math.min(x + 8, window.innerWidth - 8) - 220 + 170;   // the row's right end (its menu button) just left of x
     var team = key.charAt(0) === 't';
     var trg = team ? el.querySelector('[data-testid="sider-item-menu-trigger"]') : null;
     if (team && !trg) return false;
@@ -8481,9 +8657,89 @@
     return true;
   }
 
-  // ---- AionUi's own chat menu gets a group line
-  /** Each menu AionUi opens for a chat or a team (Pin, Rename, Archive...) gets one more line. The menu belongs to the row that was asked for
-   *  (menuFor, set where the right-click or the three dots was); the line is made again for each opening, so its label follows the group. */
+  // ---- AionUi's own chat and team menus get AionDX's lines
+  /** Each menu AionUi opens for a chat or a team (Pin, Rename, Archive...) gets AionDX's lines under its own: the group, and the context
+   *  and cache actions that fit the chat's state now (a request of 2026-11-09: "the same, exhaustive set of pertinent options, depending
+   *  on the state of each chat"). The sidebar, a group's row and the chat window's own menu button all open this same menu, so the three
+   *  never differ. The menu belongs to the row that was asked for (menuFor); the lines are made again at each opening. AionUi caps a menu
+   *  at 200 px and scrolls the rest, which hid these lines below the fold (a click there went to the row behind, or onto Archive): such a
+   *  menu is let grow to fit, and moved up if that runs off the window. */
+  var SVG_X_STOP = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="12" y="12" width="24" height="24" rx="3" stroke="currentColor" stroke-width="3.5"/></svg>';
+  var SVG_X_COMPACT = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M16 6v12H4M32 6v12h12M16 42V30H4M32 42V30h12" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var SVG_X_FRESH = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M40 24a16 16 0 1 1-4.7-11.3M40 6v8h-8" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var SVG_X_RESTART = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 6v18M14 12a16 16 0 1 0 20 0" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg>';
+  var SVG_X_DISK = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M8 12h32M18 12V7h12v5M12 12l2 29h20l2-29M20 20v14M28 20v14" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var xArmed = {};      // action id + key -> until when a second click carries it out
+  /** The Loop and live-state target for a chat key, or every member of a team key. */
+  function targetsForKey(key) {
+    if (key.charAt(0) === 'c') return [{ kind: 'conv', key: 'conv:' + key.slice(2), convId: key.slice(2) }];
+    var teamId = key.slice(2), tc = teamCache[teamId];
+    if (!tc || !tc.ok) { memberConversation({ teamId: teamId, slotId: '' }).then(function () { schedule(); }, function () {}); return []; }
+    return Object.keys(tc.map).map(function (slot) { return { kind: 'team', key: 'team:' + teamId + ':' + slot, teamId: teamId, slotId: slot, role: tc.roles[slot] || '', convId: tc.map[slot] || null }; });
+  }
+  function isWorking(t) { var a = agentLive[t.key]; return !!a && (a.state === 'working' || a.state === 'queued'); }
+  function requestCompact(t) {
+    var s = state(t);
+    s.compactAt = Date.now();
+    save(t, s);
+    try { publishStatus(t); } catch (e) {}
+  }
+  /** The actions offered for a key, as it stands now. Each: { id, label, icon, run, confirm, danger }. */
+  function menuActions(key) {
+    var ts = targetsForKey(key), team = key.charAt(0) === 't';
+    var out = [];
+    var working = ts.filter(isWorking);
+    if (working.length) out.push({ id: 'stop', icon: SVG_X_STOP, danger: true, label: team ? 'Stop every member (' + working.length + ' working)' : 'Stop',
+      run: function () { working.forEach(function (t) { hardStop(t).catch(function () {}); deadHalt(t, t.convId).catch(function () {}); }); toast(team ? 'Stop sent to ' + working.length + ' member' + (working.length === 1 ? '' : 's') + '.' : 'Stop sent.', 'Each is watched until it stops; one that does not is ended and started again.'); } });
+    if (ts.length) out.push({ id: 'compact', icon: SVG_X_COMPACT, label: team ? 'Compact every member’s context' : 'Compact context',
+      run: function () { ts.forEach(requestCompact); render(); toast(team ? 'Compaction asked for every member.' : 'Compaction asked for.', 'It goes out the next time ' + (team ? 'each member' : 'the agent') + ' stops (an agent that offers no compact command is skipped). The chat keeps a summary.'); } });
+    var resettable = team ? ts.filter(function (t) { return !isLeadRole(t.role); }) : [];
+    if (team && resettable.length) out.push({ id: 'fresh', icon: SVG_X_FRESH, confirm: true, danger: true, label: 'Start fresh contexts (' + resettable.length + ' member' + (resettable.length === 1 ? '' : 's') + ', not the lead)',
+      run: async function () {
+        var ok = 0, failed = [];
+        for (var i = 0; i < resettable.length; i++) {
+          var r = await postJson('/api/teams/' + resettable[i].teamId + '/agents/' + encodeURIComponent(resettable[i].slotId) + '/context/reset', {}).catch(function () { return null; });
+          if (r && r.ok) ok++; else failed.push(r ? r.status : 'no answer');
+        }
+        toast('Fresh context for ' + ok + ' of ' + resettable.length + ' members.', failed.length ? 'Not reset: ' + failed.join(', ') + ' (a member that is working cannot be reset; stop it first).' : 'Their chat history stays; their agents start without it.');
+      } });
+    if (ts.length) out.push({ id: 'restart', icon: SVG_X_RESTART, confirm: true, label: team ? 'Restart every member’s agent (contexts kept)' : 'Restart the agent (context kept)',
+      run: async function () {
+        var ok = 0;
+        for (var i = 0; i < ts.length; i++) {
+          var t = ts[i];
+          var r = await postJson(t.kind === 'conv' ? '/api/conversations/' + t.convId + '/runtime/restart' : '/api/teams/' + t.teamId + '/agents/' + encodeURIComponent(t.slotId) + '/runtime/restart', {}).catch(function () { return null; });
+          if (r && r.ok) ok++;
+        }
+        toast(ok === ts.length ? 'Restarted.' : 'Restarted ' + ok + ' of ' + ts.length + '.', 'Whatever was running ended. The session and its context carry on.');
+      } });
+    if (cacheBridge()) out.push({ id: 'disk', icon: SVG_X_DISK, label: 'Clear disk caches…',
+      run: function () {
+        var c = key.charAt(0) === 'c' ? key.slice(2) : (ts[0] && ts[0].convId);
+        var info = c ? convInfo[c] : null, cur = info ? chatAgent(c, info) : null;
+        openCaches(cur ? cacheProfileHint(agentName(cur.id)) : '');
+      } });
+    return out;
+  }
+  function hideStockPopup(node) {
+    var pp = node.closest('.arco-trigger') || node.parentElement;
+    if (pp && pp.style) { pp.setAttribute('data-aiondx-hid', '1'); pp.style.setProperty('visibility', 'hidden', 'important'); pp.style.setProperty('pointer-events', 'none', 'important'); }
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  }
+  function menuLine(cls, icon, testid) {
+    var it = gEl('div', 'arco-dropdown-menu-item ' + cls);
+    it.setAttribute('role', 'menuitem');
+    it.setAttribute('tabindex', '0');
+    if (testid) it.setAttribute('data-testid', testid);
+    var line = gEl('div', 'flex items-center gap-8px');
+    var ic = gEl('span', 'i-icon');
+    ic.innerHTML = icon;
+    line.appendChild(ic);
+    line.appendChild(gEl('span', 'aiondx-gitem-text'));
+    it.appendChild(line);
+    return it;
+  }
   function injectGroupItem() {
     var ask = menuFor && Date.now() - menuFor.at < 5000 ? menuFor : null;
     var menus = document.querySelectorAll('.arco-dropdown-menu-inner');
@@ -8498,38 +8754,87 @@
       var it = m.querySelector(':scope > .aiondx-gitem');
       if (!it) {
         if (!ask) continue;
-        it = gEl('div', 'arco-dropdown-menu-item aiondx-gitem');
-        it.setAttribute('role', 'menuitem');
-        it.setAttribute('tabindex', '0');
-        it.setAttribute('data-testid', 'aiondx-group-menu-item');
-        var line = gEl('div', 'flex items-center gap-8px');
-        var ic = gEl('span', 'i-icon');
-        ic.innerHTML = SVG_G_FOLDER;
-        line.appendChild(ic);
-        line.appendChild(gEl('span', 'aiondx-gitem-text'));
-        it.appendChild(line);
+        it = menuLine('aiondx-gitem', SVG_G_FOLDER, 'aiondx-group-menu-item');
         it.addEventListener('click', function (ev) {
           ev.preventDefault();
           ev.stopPropagation();
-          var k = it.getAttribute('data-gkey'), rect = it.getBoundingClientRect(), pp = it.closest('.arco-trigger') || it.parentElement;
+          var self = ev.currentTarget, k = self.getAttribute('data-gkey'), rect = self.getBoundingClientRect();
           // AionUi's menu is put out of sight now; it closes itself on the next press outside it, which the chooser's first click is
-          if (pp && pp.style) { pp.setAttribute('data-aiondx-hid', '1'); pp.style.setProperty('visibility', 'hidden', 'important'); pp.style.setProperty('pointer-events', 'none', 'important'); }
-          document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-          document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+          hideStockPopup(self);
           openItemMenu(k, rect.right + 4, rect.top);
         });
         m.appendChild(it);
       }
+      var fresh = false;
       if (ask && it.getAttribute('data-gstamp') !== String(ask.at)) {
         it.setAttribute('data-gstamp', String(ask.at));
         it.setAttribute('data-gkey', ask.key);
         menuFor = null;
+        fresh = true;
       }
       var key = it.getAttribute('data-gkey'), cur = key && groupsState.items[key] ? groupById(groupsState.items[key]) : null;
       var tx = it.querySelector('.aiondx-gitem-text');
       var label = cur ? 'Group: ' + cur.name : 'Add to group';
       if (tx.textContent !== label) tx.textContent = label;
+      // the context and cache lines, made again at each opening (the state may have changed since the last)
+      if (fresh && key) {
+        Array.prototype.forEach.call(m.querySelectorAll(':scope > .aiondx-xitem, :scope > .aiondx-xsep'), function (x) { x.remove(); });
+        m.insertBefore(gEl('div', 'aiondx-xsep'), it);
+        menuActions(key).forEach(function (a) {
+          var line = menuLine('aiondx-xitem' + (a.danger ? ' aiondx-xitem--danger' : ''), a.icon, 'aiondx-menu-' + a.id);
+          line.querySelector('.aiondx-gitem-text').textContent = a.label;
+          line.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            var armKey = a.id + '|' + key;
+            if (a.confirm && !(xArmed[armKey] > Date.now())) {
+              xArmed[armKey] = Date.now() + 6000;
+              line.querySelector('.aiondx-gitem-text').textContent = 'Click again: ' + a.label.charAt(0).toLowerCase() + a.label.slice(1);
+              line.classList.add('aiondx-xitem--armed');
+              return;
+            }
+            delete xArmed[armKey];
+            hideStockPopup(line);
+            Promise.resolve(a.run()).catch(function (e) { toast('That did not go through.', String(e && e.message || e)); });
+          });
+          m.appendChild(line);
+        });
+      }
+      fitStockMenu(m);
     }
+  }
+  /** A menu that grew past the window's bottom is moved up so its last line shows. */
+  function fitStockMenu(m) {
+    var pop = m.closest('.arco-trigger');
+    if (!pop) return;
+    var r = pop.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 6 && r.height < window.innerHeight - 12) {
+      var top = parseFloat(pop.style.top) || r.top;
+      pop.style.top = Math.max(6, top - (r.bottom - (window.innerHeight - 6))) + 'px';
+    }
+  }
+
+  // ---- the chat window's own menu button (a request of 2026-11-09: "give a 3-dot menu in the chat window itself")
+  var chatMenuBtn = null;
+  function renderChatMenuButton() {
+    var r = route();
+    var hdr = r && !disabled() ? document.querySelector('.layout-content header.arco-layout-header, header.arco-layout-header') : null;
+    var right = hdr ? hdr.querySelector(':scope > .shrink-0 > .flex.items-center, :scope > .shrink-0') : null;
+    if (!right) { if (chatMenuBtn && chatMenuBtn.parentNode) chatMenuBtn.parentNode.removeChild(chatMenuBtn); return; }
+    if (!chatMenuBtn) {
+      chatMenuBtn = gEl('div', 'shrink-0 aiondx-chatmenu');
+      chatMenuBtn.innerHTML = '<span class="h-28px w-28px"><button type="button" class="arco-btn arco-btn-text arco-btn-size-mini arco-btn-shape-square arco-btn-icon-only aiondx-chatmenu-btn" data-testid="aiondx-chat-menu" aria-haspopup="menu" title="Chat menu">' + SVG_G_MORE + '</button></span>';
+      chatMenuBtn.querySelector('button').addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var rr = route();
+        if (!rr) return;
+        var key = (rr.kind === 'conv' ? 'c:' : 't:') + rr.id;
+        var b = ev.currentTarget.getBoundingClientRect();
+        openRowMenu(key, Math.round(b.right), Math.round(b.bottom + 4), true);
+      });
+    }
+    if (chatMenuBtn.parentNode !== right || right.lastElementChild !== chatMenuBtn) right.appendChild(chatMenuBtn);
   }
   /** A team's row in AionUi's list: its icon, or its spinner while a run is going. */
   function teamRowOf(node) {
@@ -8538,7 +8843,129 @@
     if (!ic || !row.closest('[class*="_scrollArea_"]') || row.closest('.aiondx-groups')) return null;
     return { id: String(ic.getAttribute('data-testid')).replace(/^team-(?:icon|spinner)-/, '') };
   }
+  // ---- question notices: a backstop for the ones the live stream did not bring (patch 0019; a request of 2026-11-09: "i'm not seeing
+  // question notifications pop in time"). AionUi notifies from its live event stream only, and a stream event that is late or dropped
+  // (the backend logged dropped live events when the page's channel was full) gives a late notice or none. Every 4 seconds AionDX asks
+  // AionCore what the busy chats are waiting on (/confirmations): the chats on screen that are working, solo chats active in the last ten
+  // minutes, and the members of teams with a run going. A question the stream has not told of (window.__aionDxOnAsk, from patch 0019)
+  // gets a desktop notice and an in-app notice that opens the chat. Each question once.
+  var askSeen = {};          // conversation id -> when the stream last told of a question in it
+  var askNotified = {};      // conversation id + question id -> when it was notified
+  var qSolo = { at: 0, list: [] }, qTeams = { at: 0, list: [], reading: false }, qTurn = 0, qBusy = false;
+  window.__aionDxOnAsk = function (a) { if (a && a.conversation_id) askSeen[a.conversation_id] = Date.now(); };
+  function noticeAsk(c) {
+    var text = c.label + ' is waiting for you.';
+    var place = { href: c.href, where: c.where || c.label };
+    try {
+      var n = new Notification('AionDX', { body: text, tag: 'aiondx-ask-' + c.convId });
+      n.onclick = function () { try { window.focus(); } catch (e) {} location.hash = c.href; try { n.close(); } catch (e) {} };
+    } catch (e) { /* no desktop notices here */ }
+    toast(text, 'An agent asked a question or wants a permission. Click to open it.', place);
+  }
+  async function questionCandidates() {
+    var now = Date.now(), out = [], seen = {};
+    var add = function (c) { if (c.convId && !seen[c.convId]) { seen[c.convId] = true; out.push(c); } };
+    // on screen and working
+    targets().forEach(function (t) {
+      var a = agentLive[t.key];
+      if (!a || a.state !== 'working') return;
+      if (t.kind === 'conv') add({ convId: t.convId, label: 'This chat', href: '#/conversation/' + t.convId });
+      else { var tc = teamCache[t.teamId]; add({ convId: tc && tc.map[t.slotId], label: (tc && tc.names[t.slotId]) || 'A team member', where: tc && tc.name, href: '#/team/' + t.teamId }); }
+    });
+    if (now - qSolo.at > 30000) {
+      qSolo.at = now;
+      var g = await getJson('/api/conversations?limit=500').catch(function () { return {}; });
+      var items = g && g.data ? (g.data.items || (Array.isArray(g.data) ? g.data : [])) : [];
+      qSolo.list = items.filter(function (x) { return x && x.id && now - Number(x.modified_at || x.updated_at || 0) < 10 * 60000; })
+        .map(function (x) { return { convId: x.id, label: x.name || 'A chat', href: '#/conversation/' + x.id }; });
+    }
+    qSolo.list.forEach(add);
+    if (now - qTeams.at > 15000 && !qTeams.reading) {
+      qTeams.reading = true;
+      try {
+        var tl = await getJson('/api/teams');
+        var teams = tl && tl.data ? (Array.isArray(tl.data) ? tl.data : (tl.data.items || [])) : [];
+        var list = [];
+        for (var i = 0; i < teams.length && i < 20; i++) {
+          var tm = teams[i];
+          if (!tm || !tm.id || tm.archived_at) continue;
+          var rs = await getJson('/api/teams/' + encodeURIComponent(tm.id) + '/run-state').catch(function () { return {}; });
+          var work = rs && rs.data && Array.isArray(rs.data.slot_work) ? rs.data.slot_work : [];
+          var members = tm.agents || tm.assistants || [];
+          work.forEach(function (w) {
+            if (!w || !(w.state === 'running' || w.state === 'starting' || w.active_turn_id)) return;
+            var m = members.filter(function (x) { return x && x.slot_id === w.slot_id; })[0];
+            if (m && m.conversation_id) list.push({ convId: m.conversation_id, label: m.name || 'A team member', where: tm.name, href: '#/team/' + tm.id });
+          });
+        }
+        qTeams.list = list;
+        qTeams.at = Date.now();
+      } catch (e) { qTeams.at = Date.now(); } finally { qTeams.reading = false; }
+    }
+    qTeams.list.forEach(add);
+    return out;
+  }
+  async function questionSweep() {
+    if (disabled() || qBusy) return;
+    qBusy = true;
+    try {
+      var cands = await questionCandidates();
+      if (!cands.length) return;
+      // at most 16 chats a sweep, taken in turn
+      var take = cands.length <= 16 ? cands : cands.slice(qTurn % cands.length).concat(cands).slice(0, 16);
+      qTurn += 16;
+      for (var i = 0; i < take.length; i++) {
+        var c = take[i];
+        var g = await getJson('/api/conversations/' + encodeURIComponent(c.convId) + '/confirmations').catch(function () { return {}; });
+        var list = g && Array.isArray(g.data) ? g.data : [];
+        list.forEach(function (q) {
+          var id = String((q && (q.call_id || q.callId || q.id)) || '');
+          if (!id) return;
+          var k = c.convId + ':' + id;
+          if (askNotified[k]) return;
+          askNotified[k] = Date.now();
+          if (Date.now() - (askSeen[c.convId] || 0) < 45000) return;   // AionUi's own notice went out for it
+          noticeAsk(c);
+        });
+      }
+      // forget old ones
+      var cut = Date.now() - 6 * 3600000;
+      Object.keys(askNotified).forEach(function (k) { if (askNotified[k] < cut) delete askNotified[k]; });
+    } catch (e) { /* the next sweep tries again */ } finally { qBusy = false; }
+  }
+
+  // ---- Reply goes to one message box (patch 0018; a request of 2026-11-09): the box you last typed in or clicked. With none yet on this
+  // page, the box of the lane where the replied-to text was selected. With one box on the page, that box.
+  var lastBox = null;          // the last message box (its textarea) you used
+  function watchLastBox() {
+    var mark = function (ev) {
+      var t = ev.target;
+      var ta = t && t.closest ? (t.closest('[data-testid="sendbox-input"]') || (t.closest('.sendbox-panel') && t.closest('.sendbox-panel').querySelector('textarea'))) : null;
+      if (ta) lastBox = ta.tagName === 'TEXTAREA' ? ta : (ta.querySelector('textarea') || ta);
+    };
+    document.addEventListener('focusin', mark, true);
+    document.addEventListener('mousedown', mark, true);
+    document.addEventListener('keydown', mark, true);
+  }
+  window.__aionDxReplyFor = function (container) {
+    try {
+      if (disabled() || !container || !container.querySelector) return true;
+      var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
+      if (boxes.length <= 1) return true;
+      var mine = container.querySelector('textarea, [data-testid="sendbox-input"]');
+      if (lastBox && document.contains(lastBox)) return !!mine && (mine === lastBox || container.contains(lastBox));
+      // no box used yet: the lane the selection is in
+      var sel = window.getSelection && window.getSelection();
+      var node = sel && sel.anchorNode;
+      var el = node && (node.nodeType === 1 ? node : node.parentElement);
+      var lane = el && el.closest ? el.closest('[data-slot-id]') : null;
+      if (lane) return lane.contains(container);
+      return true;
+    } catch (e) { return true; }
+  };
+
   function watchSidebarMenus() {
+    watchLastBox();
     document.addEventListener('contextmenu', function (ev) {
       var t = ev.target;
       if (!t || !t.closest || t.closest('.aiondx-groups') || disabled()) return;
@@ -8559,6 +8986,7 @@
     }, true);
     window.addEventListener('hashchange', onGroupHash);
     watchGroupDrag();
+    watchTeamsToggle();
   }
 
   // ---- drag and drop: a chat or a team can be dragged into a group, out of it, and to any place in it
@@ -8715,7 +9143,7 @@
     input.type = 'text';
     input.maxLength = 60;
     input.spellcheck = false;
-    input.placeholder = 'Group name';
+    input.placeholder = selfId === '__rename__' ? 'Name' : 'Group name';
     input.value = initial || '';
     input.setAttribute('data-testid', 'aiondx-group-name');
     card.appendChild(input);
@@ -8734,7 +9162,7 @@
     var submit = function () {
       var name = input.value.replace(/\s+/g, ' ').trim();
       if (!name) { err.textContent = 'Type a name for the group.'; return; }
-      var same = groupByName(name);
+      var same = selfId === '__rename__' ? null : groupByName(name);
       if (same && same.id !== selfId && selfId) { err.textContent = 'There is already a group called ' + same.name + '.'; return; }
       closeGroupDialog();
       done(name);
@@ -9586,6 +10014,7 @@
     setInterval(function () { try { decorateLocalLinks(); } catch (e) {} }, PULSE_MS);
     setInterval(function () { scanTeamQueues().catch(function () {}); }, 4000);
     setInterval(function () { try { fireScheduled(); } catch (e) { console.log('[dx] schedule error', e); } }, 5000);
+    setInterval(function () { questionSweep().catch(function () {}); }, 4000);
     // Re-insert pills whenever React rebuilds a composer. Throttled to one check
     // per frame, and changes inside our own nodes are ignored.
     new MutationObserver(function (records) {

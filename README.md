@@ -5,6 +5,9 @@ others [AionUi](https://github.com/iOfficeAI/AionUi) supports) from one window. 
 AionCore 0.2.2 (both Apache-2.0, by iOfficeAI) with AionDX's own changes, and it installs as its own program.
 It is not affiliated with or endorsed by AionUi or iOfficeAI.
 
+> Rebuilding or replacing the backend (AionCore, the planned AionDX Core)? Read [`CORE-CONTRACT.md`](CORE-CONTRACT.md) first; agents:
+> [`AGENTS.md`](AGENTS.md).
+
 **Status: beta.** It runs on Windows 10 (1809 or later) and Windows 11, x64. The installer is not code-signed, so
 Windows SmartScreen asks you to confirm it ("More info", then "Run anyway").
 
@@ -82,6 +85,9 @@ node tools\test-installer-migrate.js                 # the installer, in a sandb
 node tools\smoke-standalone.js                       # the staged app, first run, in a throwaway profile
 node tools\test-live-undo.js                         # message-box undo, in the real app
 ```
+
+Rebuilding the backend: `CORE-CONTRACT.md` lists what AionDX needs from it (the fourteen core patches' behaviour, the routes, the
+environment an agent gets, the database the tools read, and the AionCore behaviours AionDX works around).
 
 ## Contributors
 

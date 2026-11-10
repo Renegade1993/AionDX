@@ -985,26 +985,48 @@ async function pageTarget() {
         b.className = 'arco-btn arco-btn-secondary arco-btn-shape-circle sendbox-stop-button'; b.textContent = 'stop'; a.appendChild(b); return 0; })()`); };
       const runtime = (state, turn) => js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.runtime = { state: '${state}', is_processing: true, turn_id: '${turn}' }; return 0; })()`);
       const cancels = () => js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/cancel').map(c => c.body)`);
+      // Stop halts, every time (2026-11-09): after a press the chat is watched until it is idle. The cancel goes again with the server's turn,
+      // and a chat still working stop.force seconds (5) after the press has its agent ended and started again, with no click.
+      const restarts = () => js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/runtime/restart').length`);
+      const idle = async () => { await js(`(() => { delete window.__stub.routes['GET /api/conversations/harness1'].data.runtime; return 0; })()`); await sleep(1600); };
       await stopBtn();
       await runtime('running', 'turn_A');
       await js('window.__calls.length = 0; document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
       await humanClick('#solo .sendbox-stop-button');
       await sleep(3600);
       let cc = await cancels();
-      check(sc, 'Stop with the same turn still running 2.5 seconds later sends the cancel itself, with the turn id the server gave', cc.length === 1 && cc[0].turn_id === 'turn_A', JSON.stringify(cc));
-      check(sc, 'and says so', (await toasts()).some(t => /^Stop sent again\./.test(t)), JSON.stringify(await toasts()));
+      check(sc, 'Stop with the same turn still running sends the cancel again by itself, with the turn id the server gave', cc.length === 1 && cc[0].turn_id === 'turn_A', JSON.stringify(cc));
+      await sleep(2600);
+      check(sc, 'still working 5 seconds after the press: the agent is ended and started again, with no second click', (await restarts()) === 1, JSON.stringify(await restarts()));
+      await idle();
+      check(sc, 'and once it is idle it says so', (await toasts()).some(t => /^Stopped\./.test(t)), JSON.stringify(await toasts()));
       await runtime('cancelling', 'turn_B');
       await js('window.__calls.length = 0; 0');
       await humanClick('#solo .sendbox-stop-button');
       await sleep(3600);
-      check(sc, 'a cancel already under way is left alone', (await cancels()).length === 0, JSON.stringify(await cancels()));
+      check(sc, 'a cancel already under way is not sent again', (await cancels()).length === 0, JSON.stringify(await cancels()));
+      await idle();
       await runtime('running', 'turn_C');
       await js('window.__calls.length = 0; 0');
       await humanClick('#solo .sendbox-stop-button');
-      await sleep(900);
+      await sleep(600);
       await runtime('running', 'turn_D');
-      await sleep(3000);
-      check(sc, 'a new turn started after the press (a message sent after Stop) is not cancelled', (await cancels()).length === 0, JSON.stringify(await cancels()));
+      await sleep(2400);
+      check(sc, 'a turn that starts by itself in the seconds after Stop (a queue, a nudge, a scheduled send) is halted too', (await cancels()).some(c => c.turn_id === 'turn_D'), JSON.stringify(await cancels()));
+      await idle();
+      await runtime('running', 'turn_E');
+      await js('window.__calls.length = 0; 0');
+      await humanClick('#solo .sendbox-stop-button');
+      await sleep(300);
+      // a message you send after the press
+      await js(`(() => { const box = document.querySelector('#solo [data-testid="sendbox-input"]'); box.value = 'carry on with the other file'; box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })); return 0; })()`);
+      await runtime('running', 'turn_F');
+      await sleep(5600);
+      check(sc, 'a message you send after Stop starts a turn that is left alone (no cancel, no restart)', !(await cancels()).some(c => c.turn_id === 'turn_F') && (await restarts()) === 0, JSON.stringify([await cancels(), await restarts()]));
+      await js(`(() => { const box = document.querySelector('#solo [data-testid="sendbox-input"]'); if (box) box.value = ''; return 0; })()`);
+      await idle();
+      await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 0');
+      await sleep(1500);
       await js(`(() => { delete window.__stub.routes['GET /api/conversations/harness1'].data.runtime; document.querySelector('#solo .sendbox-stop-button').remove(); return 0; })()`);
       // Your words in the chat's history.
       await pickForever('');
