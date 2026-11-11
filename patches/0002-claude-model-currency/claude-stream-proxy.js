@@ -82,6 +82,144 @@ function readUsage(h) {
     five_hour: five, seven_day: week };
 }
 
+// ---------------------------------------------------------------------------
+// The prompt cache, measured (2026-11-11)
+// ---------------------------------------------------------------------------
+/*
+ * The first event of every streamed Messages answer (message_start) carries the call's usage, and that says how long the cache it
+ * wrote lasts: usage.cache_creation.ephemeral_1h_input_tokens or ephemeral_5m_input_tokens. Claude Code marks the requests that are
+ * not the chat's main conversation with x-claude-code-agent-id (a subagent) or x-claude-code-agent-type (subagent, workflow, auxiliary,
+ * side_reply); the main conversation's carry neither (tools\probe-cache-headers.js, measured November 11th: main calls wrote 1-hour
+ * entries, the subagent's call 5-minute ones). On this PC every main-conversation write was 5-minute until October 12th, 2026 and
+ * 1-hour from then on, with the same Claude Code build, so the length is decided on Anthropic's side and can change again: AionDX reads
+ * it from each answer instead of assuming one.
+ *
+ *   watchStart(requestHeaders, upstreamResponse, onCall, log): looks at the answer's first bytes as they pass (decompressed when they are
+ *   gzip, br or deflate) until message_start, then stops looking; the answer itself goes to Claude untouched. onCall gets
+ *   { main, at, model, read, write, w1h, w5m, input }.
+ */
+const zlib = require('zlib');
+const START_RE = /event: message_start\r?\ndata: (\{.*\})\r?\n/;
+const START_MAX = 65536;   // a message_start is a few hundred bytes; give up after this much text
+function watchStart(reqHeaders, ur, onCall, log) {
+  const main = !reqHeaders['x-claude-code-agent-id'] && !reqHeaders['x-claude-code-agent-type'];
+  if (!/event-stream/i.test(String(ur.headers['content-type'] || ''))) return;
+  const enc = String(ur.headers['content-encoding'] || '').trim().toLowerCase();
+  // The answer's first bytes are decompressed in one synchronous step each time a chunk arrives (a sync flush accepts a cut-off
+  // stream), so no zlib stream is left working when the answer or the process ends.
+  const unzip = enc === 'gzip' || enc === 'x-gzip' ? (b) => zlib.gunzipSync(b, { finishFlush: zlib.constants.Z_SYNC_FLUSH })
+    : enc === 'deflate' ? (b) => zlib.inflateSync(b, { finishFlush: zlib.constants.Z_SYNC_FLUSH })
+    : enc === 'br' ? (b) => zlib.brotliDecompressSync(b, { finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH })
+    : !enc || enc === 'identity' ? (b) => b : null;
+  if (!unzip) return;
+  const parts = [];
+  let size = 0;
+  let done = false;
+  const stop = () => { done = true; ur.removeListener('data', onData); };
+  function onData(c) {
+    if (done) return;
+    parts.push(c);
+    size += c.length;
+    let text;
+    try { text = unzip(parts.length === 1 ? parts[0] : Buffer.concat(parts)).toString('utf8'); } catch { stop(); return; }
+    const m = START_RE.exec(text);
+    if (!m) { if (size > START_MAX || text.length > START_MAX) stop(); return; }
+    stop();
+    let msg;
+    try { msg = JSON.parse(m[1]).message || {}; } catch { return; }
+    const u = msg.usage || {};
+    const cc = u.cache_creation || {};
+    const n = (v) => (Number(v) > 0 ? Number(v) : 0);
+    try {
+      onCall({ main, at: Date.now(), model: String(msg.model || ''), read: n(u.cache_read_input_tokens), write: n(u.cache_creation_input_tokens),
+        w1h: n(cc.ephemeral_1h_input_tokens), w5m: n(cc.ephemeral_5m_input_tokens), split: !!u.cache_creation, input: n(u.input_tokens) });
+    } catch (e) { log('tap: onCall failed: ' + e.message); }
+  }
+  ur.on('data', onData);
+  ur.on('end', () => { if (!done) stop(); });
+}
+
+/*
+ * The chat's cache record, from the main conversation's calls:
+ *   aiondx.cache.conv.<conversation> = { at, until, ttl, read, write, ctx, model, calls, rebuilt?, v: 1 }
+ * at: the last main call. until: the latest moment any entry those calls wrote or refreshed can still live (each call: its time plus
+ * the length its writes were given; a call that only read keeps the length the cache had). Past until the cache is gone for certain;
+ * before it, Anthropic may still drop it early, which the next call shows. rebuilt: the last call that wrote most of its context
+ * again (a cold cache, or a changed prefix): { at, tokens, afterMin, early } where early means it came before the record's until.
+ * Written at the end of each turn, when the length changes or a rebuild happens, and otherwise at most once a minute.
+ */
+const CACHE_TTL_MS = { '1h': 3600000, '5m': 300000 };
+const CACHE_KEY = 'aiondx.cache.conv.';
+const CACHE_WRITE_GAP_MS = 60000;
+const REBUILD_MIN_CTX = 20000;
+function startCache(opts, log) {
+  const noop = { record() {}, flush() {}, stop() { return Promise.resolve(); } };
+  if (!opts.convId || !opts.apiBase || !opts.apiHeaders) return noop;
+  const key = CACHE_KEY + opts.convId;
+  // Every request still out is kept, so the process can wait for them before it exits (an exit with a request in flight lost the last
+  // record and, on Windows, could end the process on a libuv assertion instead of Claude's exit code).
+  const inflight = new Set();
+  const api = (method, route, body) => {
+    const p = fetch(opts.apiBase + route, {
+      method, headers: Object.assign({ 'Content-Type': 'application/json' }, opts.apiHeaders),
+      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(8000),
+    });
+    const settled = p.then(() => {}, () => {});
+    inflight.add(settled);
+    settled.then(() => inflight.delete(settled));
+    return p;
+  };
+  let rec = null;            // the record as this process knows it
+  let dirty = false, lastPut = 0, timer = null, stopped = false;
+  // The record an earlier process of this chat left: its until still bounds the cache.
+  api('GET', '/api/settings/client?keys=' + encodeURIComponent(key)).then((r) => (r.ok ? r.json() : null)).then((j) => {
+    const old = j && (j.data || j)[key];
+    if (!old || typeof old !== 'object' || !(Number(old.until) > 0)) return;
+    if (!rec) rec = Object.assign({}, old);
+    else if (Number(old.until) > rec.until && Number(old.at) <= rec.at) rec.until = Number(old.until);
+  }).catch(() => { /* no earlier record */ });
+  function put() {
+    if (!rec || stopped) return;
+    dirty = false; lastPut = Date.now();
+    if (timer) { clearTimeout(timer); timer = null; }
+    const body = {};
+    body[key] = rec;
+    api('PUT', '/api/settings/client', body).then((r) => { if (!r.ok) log('cache record not saved: ' + r.status); }, (e) => log('cache record not saved: ' + e.message));
+  }
+  function record(c) {
+    if (stopped || !c || !c.main) return;
+    const prev = rec;
+    const bucket = c.w1h > 0 ? '1h' : c.w5m > 0 ? '5m' : c.write > 0 ? null : (prev && prev.ttl) || null;
+    const ctx = c.read + c.write + c.input;
+    const next = { v: 1, at: c.at, until: prev && prev.until > c.at ? prev.until : 0, ttl: bucket, read: c.read, write: c.write, ctx, model: c.model,
+      calls: ((prev && prev.calls) || 0) + 1, rebuilt: (prev && prev.rebuilt) || null };
+    if (bucket) next.until = Math.max(next.until, c.at + CACHE_TTL_MS[bucket]);
+    // A call that wrote with no length given cannot be bounded: the record says so (until 0) and the page shows no cache state.
+    if (!bucket && c.write > 0) next.until = 0;
+    let important = !prev || (prev.ttl !== bucket);
+    if (ctx >= REBUILD_MIN_CTX && c.read < ctx / 2 && prev && prev.at) {
+      next.rebuilt = { at: c.at, tokens: c.write, afterMin: Math.round((c.at - prev.at) / 60000), early: !!(prev.until && prev.until > c.at) };
+      important = true;
+      log(`cache rebuilt: ${c.write} tokens written ${next.rebuilt.afterMin} min after the last call${next.rebuilt.early ? ', before its time was up' : ''}`);
+    }
+    rec = next;
+    dirty = true;
+    if (important || Date.now() - lastPut >= CACHE_WRITE_GAP_MS) put();
+    else if (!timer) timer = setTimeout(() => { timer = null; if (dirty) put(); }, CACHE_WRITE_GAP_MS - (Date.now() - lastPut));
+  }
+  return {
+    record,
+    flush() { if (dirty) put(); },
+    /** Writes what is left; resolves when every request is answered or after 2 s. */
+    stop() {
+      if (dirty) put();
+      stopped = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      return Promise.race([Promise.all([...inflight]), new Promise((r) => setTimeout(r, 2000).unref())]);
+    },
+  };
+}
+
 function startTap(opts) {
   const log = opts.log || function () {};
   const up = new URL(opts.upstream || 'https://api.anthropic.com');
@@ -108,6 +246,9 @@ function startTap(opts) {
           opts.onResponse({ status: ur.statusCode, path: req.url.split('?')[0], headers: ur.headers, usage: readUsage(ur.headers) });
         }
       } catch (e) { log('tap: onResponse failed: ' + e.message); }
+      try {
+        if (/^\/v1\/messages(?:\?|$)/.test(req.url) && ur.statusCode === 200 && opts.onCall) watchStart(req.headers, ur, opts.onCall, log);
+      } catch (e) { log('tap: cache reading failed: ' + e.message); }
     });
     pr.on('error', (e) => {
       log('tap: upstream error: ' + e.message);
@@ -390,10 +531,11 @@ function startProxy(opts) {
   const log = opts.log || function () {};
   return new Promise((resolve) => {
     const usage = startUsage(opts, log);
+    const cache = startCache(opts, log);
     // The usage tap first: Claude needs its port at launch. Any trouble starting it: Claude runs without it.
     if (opts.tap === false || !opts.usage || !opts.usage.key) { launch(null); return; }
     const upstream = (opts.env && opts.env.ANTHROPIC_BASE_URL) || undefined;
-    startTap({ upstream, onResponse: (i) => usage.record(i.usage, i), log }).then(launch, (e) => { log('usage tap not started: ' + e.message); launch(null); });
+    startTap({ upstream, onResponse: (i) => usage.record(i.usage, i), onCall: (c) => cache.record(c), log }).then(launch, (e) => { log('usage tap not started: ' + e.message); launch(null); });
 
     function launch(tap) {
     const env = tap ? Object.assign({}, opts.env, { ANTHROPIC_BASE_URL: tap.url }) : opts.env;
@@ -512,7 +654,7 @@ function startProxy(opts) {
         if (!complete && headLen < PREFIX) break;   // the chunk ended inside a short head: wait for more
         const h = head.length === 1 ? head[0] : Buffer.concat(head);
         head = []; headLen = 0;
-        if (h.indexOf(RESULT) >= 0) usage.turnEnded();
+        if (h.indexOf(RESULT) >= 0) { usage.turnEnded(); cache.flush(); }
         if (h.indexOf(CONTROL) >= 0 && h.indexOf(OURS) >= 0) {
           swallowKind = 'ours';
           if (complete) answer(h); else { swallow = [h]; mode = 'swallow'; }
@@ -569,7 +711,8 @@ function startProxy(opts) {
       if (tap) tap.close();
       if (headLen) { toOut(Buffer.concat(head)); head = []; headLen = 0; }
       const done = () => resolve(code);
-      if (output.writableLength) output.once('drain', done); else done();
+      // The cache record's last write goes out before the exit (bounded at 2 s by stop()).
+      cache.stop().then(() => { if (output.writableLength) output.once('drain', done); else done(); }, done);
     };
     child.on('error', (e) => { log('claude failed to run: ' + e.message); finish(1); });
     child.on('close', (code) => finish(typeof code === 'number' ? code : 1));
@@ -584,4 +727,4 @@ function isStreamSession(args) {
   return i >= 0 && args[i + 1] === 'stream-json';
 }
 
-module.exports = { usageModel, startProxy, isStreamSession, startTap, readUsage };
+module.exports = { usageModel, startProxy, isStreamSession, startTap, readUsage, watchStart, startCache };

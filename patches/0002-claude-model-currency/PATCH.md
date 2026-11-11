@@ -370,3 +370,19 @@ The database had none (`sqlite_stat1`), so SQLite answered AionCore's lookup of 
 scanning every message of that type through the type index: up to 16 s, 166 times on November 11th, stalling the backend for every chat.
 `PRAGMA analysis_limit = 400; ANALYZE;` makes it use the `msg_id` index: 1,381 ms to 0.2 ms on the live database, in 0.8 s, writing only
 the statistics. `aiondx-model-refresh.js` (`dbUpkeep`) now does it once a day, and at once when the statistics are missing. Tests: 30.
+
+## November 11th, 2026 (second release): the prompt cache, measured from each answer
+
+The usage tap already sees every Messages call Claude makes. `watchStart` now also looks at each answer's first bytes (decompressed
+in one synchronous step per chunk when gzip, br or deflate; a sync flush accepts a cut-off stream, and no zlib stream is left running)
+until `message_start`, then stops looking; the answer goes to Claude untouched. A request with `x-claude-code-agent-id` or
+`x-claude-code-agent-type` is not the main conversation and is left out. `startCache` keeps
+`aiondx.cache.conv.<chat>` = { at, until, ttl, read, write, ctx, model, calls, rebuilt } in AionUi's settings store: until is the latest
+moment the cache can still exist (each call's time plus the length it wrote; a read-only call keeps the length), rebuilt is the last
+call that wrote most of its context again (with the minutes since the call before, and early when the record's until had not passed).
+Written when the length changes, on a rebuild, at each turn's end, otherwise at most once a minute; a new process starts from the
+chat's earlier record; the process waits up to 2 s for its last write before it exits. Measured first with `tools\probe-cache-headers.js`.
+Tests: `test-stream-proxy.js` 60 (12 new: a gzip answer, a subagent's left out, a read-only call written at the turn's end, a 5-minute
+write keeping the later until, a rebuild, a gzip answer cut inside `message_start`, brotli, a new process continuing the record, a
+plain JSON answer writing nothing). The stand-in Claude in that test now reads answers with plain http and a synchronous unzip: Node's
+fetch decompresses with zlib streams and printed a libuv assertion on exit.

@@ -67,7 +67,10 @@ msgs(solo); session(solo, *usage[2])
 # the Claude account reading the launcher records (the usage meter), for the lead only: the other member and the solo chat have no record of
 # their own and run on the same agent
 acct = {"label": "test account (Pro)", "plan": "Ultra", "at": now, "status": "allowed", "five_hour": {"u": None, "reset": None, "status": None}, "seven_day": {"u": 0.2, "reset": int(now / 1000) + 86400, "status": "allowed"}}
-for key, val in (("aiondx.usage.acct.ctxacct", acct), ("aiondx.usage.conv." + convs[0], {"acct": "ctxacct", "at": now})):
+# the launcher's measured cache records (2026-11-11.2): the lead's last call 10 minutes ago (warm), the other member's 75 minutes ago (cold)
+cache = lambda ago: {"v": 1, "at": now - ago, "until": now - ago + 3600000, "ttl": "1h", "read": 40000, "write": 900, "ctx": 40903, "calls": 5, "rebuilt": None}
+for key, val in (("aiondx.usage.acct.ctxacct", acct), ("aiondx.usage.conv." + convs[0], {"acct": "ctxacct", "at": now}),
+                 ("aiondx.cache.conv." + convs[0], cache(600000)), ("aiondx.cache.conv." + convs[1], cache(4500000))):
     c.execute("insert or replace into client_preferences (user_id, key, value, updated_at) values (?,?,?,?)", (uid, key, json.dumps(val), now))
 c.commit()
 print("seeded", n)
@@ -146,7 +149,12 @@ const READ = (hash, want) => `new Promise((resolve) => {
         cards.push(text);
       }
       await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
-      check('each member\'s ring (hovered with the pointer) says when its prompt cache runs out or ran out', cards.length === 2 && cards.every((c) => /Prompt cache (warm until \d\d:\d\d \(Anthropic keeps it 1 hour\)|cold since \d\d:\d\d)/.test(c || '')), JSON.stringify(cards));
+      check('each member\'s ring (hovered with the pointer) says its own measured cache state: the lead warm, the other member cold', cards.length === 2 &&
+        /Prompt cache warm until \d\d:\d\d at the latest \(the last call, \d\d:\d\d, kept it 1 hour\)/.test(cards[0] || '') &&
+        /Prompt cache cold since \d\d:\d\d \(the last call, \d\d:\d\d, kept it 1 hour\)/.test(cards[1] || ''), JSON.stringify(cards));
+      const snowSel = (slot) => JSON.stringify('[data-slot-id="' + slot + '"] .aiondx-snow');
+      const snow = await app.js('(() => ({ lead: !!document.querySelector(' + snowSel(SLOTS[0]) + '), mate: !!document.querySelector(' + snowSel(SLOTS[1]) + ') }))()');
+      check('the snowflake is on the cold member only', snow && snow.mate === true && snow.lead === false, JSON.stringify(snow));
     }
     const solo = await wait(app.js(READ('#/conversation/' + SOLO, 1)));
     check('a solo chat that has run draws its ring at 50% (100K of 200K)', Array.isArray(solo) && solo[0] && Math.abs(solo[0].pct - 50) <= 1, JSON.stringify(solo));

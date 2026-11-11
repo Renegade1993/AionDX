@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { PassThrough } = require('stream');
 const { startProxy } = require('./claude-stream-proxy.js');
 
@@ -42,9 +43,22 @@ process.stdin.on('data', (d) => {
     else if (j.type === 'exit') process.exit(j.code);
     else if (j.type === 'turn') out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, result: 'done' });
     else if (j.type === 'api') {
-      fetch(process.env.ANTHROPIC_BASE_URL + '/v1/messages?beta=true', { method: 'POST', headers: { authorization: 'Bearer client-token', 'content-type': 'application/json', 'x-test': j.mode || '' }, body: JSON.stringify({ hello: 'world' }) })
-        .then(async (r) => { const t = await r.text(); out({ type: 'api_result', id: j.id, status: r.status, ctype: r.headers.get('content-type'), body: t }); })
-        .catch((e) => out({ type: 'api_result', id: j.id, error: String(e.message) }));
+      // Plain http and a synchronous unzip: Node's fetch decompresses with zlib streams, and a process that exits right after one
+      // prints a libuv assertion on Windows (seen November 11th; it was this stand-in, not the proxy).
+      const u = new URL(process.env.ANTHROPIC_BASE_URL + '/v1/messages?beta=true');
+      const hdr = Object.assign({ authorization: 'Bearer client-token', 'content-type': 'application/json', 'accept-encoding': 'gzip, br', 'x-test': j.mode || '' }, j.agent ? { 'x-claude-code-agent-id': j.agent } : {});
+      const rq = require('http').request({ host: u.hostname, port: u.port, path: u.pathname + u.search, method: 'POST', headers: hdr }, (r) => {
+        const parts = [];
+        r.on('data', (c) => parts.push(c));
+        r.on('end', () => {
+          const zl = require('zlib'); const raw = Buffer.concat(parts); const enc = r.headers['content-encoding'] || '';
+          let t;
+          try { t = (enc === 'gzip' ? zl.gunzipSync(raw) : enc === 'br' ? zl.brotliDecompressSync(raw) : raw).toString('utf8'); } catch (e) { t = 'UNZIP FAILED ' + e.message; }
+          out({ type: 'api_result', id: j.id, status: r.statusCode, ctype: r.headers['content-type'], body: t });
+        });
+      });
+      rq.on('error', (e) => out({ type: 'api_result', id: j.id, error: String(e.message) }));
+      rq.end(JSON.stringify({ hello: 'world' }));
     }
     else if (j.type === 'ask') out({ type: 'control_request', request_id: j.id, request: { subtype: 'can_use_tool', tool_name: j.tool, input: j.input, decision_reason: j.reason } });
     else if (j.type === 'env') out({ type: 'env', base: process.env.ANTHROPIC_BASE_URL || '' });
@@ -76,6 +90,7 @@ const putPref = (key, value) => {
 // Stub API: records every PUT to /api/settings/client. /v1/messages stands in for Anthropic's Messages API and
 // answers with the unified rate-limit headers.
 const puts = [];
+const seedRec = { v: 1, at: Date.now() - 30 * 60000, until: Date.now() + 30 * 60000, ttl: '1h', read: 90000, write: 500, ctx: 90503, model: 'claude-test-1', calls: 40, rebuilt: null };
 const anthropic = [];
 const server = http.createServer((req, res) => {
   let body = '';
@@ -88,6 +103,18 @@ const server = http.createServer((req, res) => {
         'anthropic-ratelimit-unified-5h-reset': '1790453400', 'anthropic-ratelimit-unified-5h-status': tm === 'limit' ? 'rejected' : 'allowed',
         'anthropic-ratelimit-unified-7d-utilization': '0.3', 'anthropic-ratelimit-unified-7d-reset': '1790852400',
         'anthropic-ratelimit-unified-7d-status': 'allowed', 'anthropic-ratelimit-unified-status': tm === 'limit' ? 'rejected' : 'allowed' };
+      // 'sse:<read>:<w1h>:<w5m>[:gz]': a streamed answer whose message_start carries that cache usage, gzip-compressed with :gz.
+      if (tm.startsWith('sse:')) {
+        const p = tm.split(':');
+        const sse = 'event: message_start\ndata: ' + JSON.stringify({ type: 'message_start', message: { model: 'claude-test-1', usage: { input_tokens: 3,
+          cache_read_input_tokens: +p[1], cache_creation_input_tokens: +p[2] + +p[3], cache_creation: { ephemeral_1h_input_tokens: +p[2], ephemeral_5m_input_tokens: +p[3] } } } }) +
+          '\n\nevent: content_block_delta\ndata: {"type":"content_block_delta"}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n';
+        // :gz gzip in one piece, :gzsplit gzip cut in the middle of message_start (the rest 80 ms later), :br brotli.
+        const hh = Object.assign({ 'Content-Type': 'text/event-stream' }, H, /^gz/.test(p[4] || '') ? { 'Content-Encoding': 'gzip' } : p[4] === 'br' ? { 'Content-Encoding': 'br' } : {});
+        res.writeHead(200, hh);
+        if (p[4] === 'gzsplit') { const z = zlib.gzipSync(sse); res.write(z.subarray(0, 30)); setTimeout(() => res.end(z.subarray(30)), 80); return; }
+        res.end(p[4] === 'gz' ? zlib.gzipSync(sse) : p[4] === 'br' ? zlib.brotliCompressSync(sse) : sse); return;
+      }
       if (tm === 'stream') { res.writeHead(200, Object.assign({ 'Content-Type': 'text/event-stream' }, H)); res.write('data: one\n\n'); setTimeout(() => { res.write('data: two\n\n'); res.end(); }, 120); return; }
       if (tm === 'limit') { res.writeHead(429, Object.assign({ 'Content-Type': 'application/json' }, H)); res.end('{"type":"error"}'); return; }
       if (tm === 'high' || tm === 'plain') { res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, H)); res.end('{"type":"message","content":[],"echo":' + JSON.stringify(body) + '}'); return; }
@@ -96,6 +123,12 @@ const server = http.createServer((req, res) => {
         'anthropic-ratelimit-unified-7d-utilization': '0.3', 'anthropic-ratelimit-unified-7d-reset': '1790852400',
         'anthropic-ratelimit-unified-7d-status': 'allowed', 'anthropic-ratelimit-unified-status': 'allowed' });
       res.end('{"type":"message","content":[]}');
+      return;
+    }
+    // A chat's earlier cache record: c9 has one, every other chat none. Not counted among the writes.
+    if (req.method === 'GET' && req.url.indexOf('aiondx.cache.conv.') >= 0) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, data: req.url.indexOf('aiondx.cache.conv.c9') >= 0 ? { 'aiondx.cache.conv.c9': seedRec } : {} }));
       return;
     }
     puts.push({ method: req.method, url: req.url, token: req.headers['x-aiondx-runtime-token'], body: body ? JSON.parse(body) : null });
@@ -392,6 +425,71 @@ server.listen(0, '127.0.0.1', async () => {
     O.input.end();
     await Promise.race([O.done, sleep(5000)]);
     setExtra({});
+
+
+    // ---- The prompt cache, measured (2026-11-11): message_start of the main conversation's answers -> aiondx.cache.conv.<chat>.
+    {
+      puts.length = 0;
+      const C = run({ usage: { key: 'tapkey000005', label: 'Cache', probe: false }, env: Object.assign({}, process.env, { ANTHROPIC_BASE_URL: base }) });
+      const cachePuts = (conv) => puts.filter((x) => x.method === 'PUT' && x.body && x.body['aiondx.cache.conv.' + conv]).map((x) => x.body['aiondx.cache.conv.' + conv]);
+      const call = async (id, mode, agent) => { C.input.write(frame({ type: 'api', id, mode, agent })); await waitFor(() => C.json().some((x) => x.type === 'api_result' && x.id === id)); return C.json().find((x) => x.type === 'api_result' && x.id === id); };
+      const t0 = Date.now();
+      const r1 = await call('k1', 'sse:1000:30000:0:gz');
+      await waitFor(() => cachePuts('c1').length >= 1);
+      let cp = cachePuts('c1');
+      const c1 = cp[0] || {};
+      check('a main-conversation answer that wrote a 1-hour cache is recorded at once: length, until an hour on, the context', cp.length === 1 && c1.ttl === '1h' &&
+        c1.until >= t0 + 3600000 && c1.until <= Date.now() + 3600000 && c1.ctx === 31003 && c1.read === 1000 && c1.write === 30000 && c1.calls === 1 && c1.model === 'claude-test-1', JSON.stringify(cp));
+      check('the gzip-compressed event stream still reaches Claude whole (Claude decompresses it as before)', r1 && r1.status === 200 && /^event: message_start/.test(r1.body) && /message_stop/.test(r1.body), JSON.stringify(r1).slice(0, 200));
+      await call('k2', 'sse:500:0:4000', 'agent-abc');
+      await sleep(400);
+      check("a subagent's answer (x-claude-code-agent-id) leaves the chat's record alone", cachePuts('c1').length === 1, JSON.stringify(cachePuts('c1')));
+      await call('k3', 'sse:31000:0:0');
+      await sleep(400);
+      check('a main call that only read, inside a minute of the last write, is not written yet', cachePuts('c1').length === 1, cachePuts('c1').length);
+      C.input.write(frame({ type: 'turn' }));
+      await waitFor(() => cachePuts('c1').length >= 2);
+      cp = cachePuts('c1');
+      const c3 = cp[1] || {};
+      check("the turn's end writes it: the cache keeps its 1-hour length, until moves on from this call", cp.length === 2 && c3.ttl === '1h' && c3.calls === 2 && c3.read === 31000 && c3.until > c1.until - 1000 && c3.until >= c3.at + 3600000 - 5, JSON.stringify(c3));
+      await call('k4', 'sse:31000:0:200');
+      await waitFor(() => cachePuts('c1').length >= 3);
+      const c4 = cachePuts('c1')[2] || {};
+      check('a main call that wrote 5-minute entries is written at once and keeps the later until (the 1-hour entries outlive it)', c4.ttl === '5m' && c4.until === c3.until, JSON.stringify(c4));
+      await call('k5', 'sse:0:52000:0');
+      await waitFor(() => cachePuts('c1').length >= 4);
+      const c5 = cachePuts('c1')[3] || {};
+      check('a main call that wrote most of its context again is a rebuild, and early when the record said the cache was still there', c5.rebuilt && c5.rebuilt.tokens === 52000 &&
+        c5.rebuilt.early === true && c5.rebuilt.afterMin === 0 && c5.ttl === '1h', JSON.stringify(c5));
+      check('the log says so', C.logs.some((l) => /cache rebuilt: 52000 tokens/.test(l)), C.logs.join(' | ').slice(0, 300));
+      const r6 = await call('k6', 'sse:52000:0:0:gzsplit');
+      await call('k7', 'sse:52000:0:0:br');
+      C.input.write(frame({ type: 'turn' }));
+      await waitFor(() => cachePuts('c1').length >= 5);
+      const c7 = cachePuts('c1').slice(-1)[0] || {};
+      check('a gzip answer cut inside message_start and a brotli answer are both read (two more main calls: 6 in all, not the subagent call)', c7.calls === 6 && c7.read === 52000, JSON.stringify(cachePuts('c1').map((x) => x.calls + ':' + x.read + ':' + x.ttl)) + ' ' + C.json().filter((x) => x.type === 'api_result').map((x) => x.id + ':' + x.status + ':' + (x.error || '')).join(','));
+      check('and the cut gzip answer reaches Claude whole', r6 && /message_stop/.test(r6.body), JSON.stringify(r6).slice(0, 200));
+      C.input.end();
+      await Promise.race([C.done, sleep(5000)]);
+      // A new process of a chat that already has a record (an idle stop and restart): the record carries on.
+      const D = run({ convId: 'c9', usage: { key: 'tapkey000006', label: 'Cache', probe: false }, env: Object.assign({}, process.env, { ANTHROPIC_BASE_URL: base }) });
+      await sleep(300);
+      D.input.write(frame({ type: 'api', id: 'd1', mode: 'sse:0:91000:0' }));
+      await waitFor(() => cachePuts('c9').length >= 1);
+      const d1 = cachePuts('c9')[0] || {};
+      check("a new process reads the chat's earlier record: the call count goes on, and a rebuild names the gap since that record's last call", d1.calls === 41 &&
+        d1.rebuilt && d1.rebuilt.afterMin >= 30 && d1.rebuilt.afterMin <= 32 && d1.rebuilt.early === true && d1.ttl === '1h', JSON.stringify(d1));
+      D.input.end();
+      await Promise.race([D.done, sleep(5000)]);
+      const E = run({ convId: 'c8', usage: { key: 'tapkey000007', label: '', probe: false }, env: Object.assign({}, process.env, { ANTHROPIC_BASE_URL: base }) });
+      E.input.write(frame({ type: 'api', id: 'e1', mode: 'plain' }));
+      await waitFor(() => E.json().some((x) => x.type === 'api_result' && x.id === 'e1'));
+      E.input.write(frame({ type: 'turn' }));
+      await sleep(400);
+      check('an answer that is not an event stream writes no cache record', cachePuts('c8').length === 0, JSON.stringify(cachePuts('c8')));
+      E.input.end();
+      await Promise.race([E.done, sleep(5000)]);
+    }
 
     // A program that will not start: exit 1, no hang.
     const r = run({ exe: path.join(scratch, 'no-such-claude.exe') });

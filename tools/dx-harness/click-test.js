@@ -428,7 +428,7 @@ async function pageTarget() {
       check(sc, 'a warm agent: a ring showing the cache time left', ring.warm && Math.abs(ring.frac - 0.8) < 0.02 && ring.content !== 'none' && ring.width === '34px', JSON.stringify(ring));
       await hover('[data-slot-id="slotB"] .aiondx-loop button');
       const tipWarm = await js(`(document.querySelector('.aiondx-tip .aiondx-tip-cache') || {}).textContent`);
-      check(sc, 'the hover card says until when its cache is warm', /^Cache: warm until \d\d:\d\d \(4\smin\)\.$/.test(tipWarm || ''), tipWarm);
+      check(sc, 'the hover card says until when its cache is warm', /^Cache: warm until \d\d:\d\d \(4\smin, not measured, counted at 5\smin\)\.$/.test(tipWarm || ''), tipWarm);
       await unhover();
       // Resting: on, not nudging, a dashed ring.
       await js(`(() => { const k = 'aionui.dx.team.team1.slotB'; const s = JSON.parse(localStorage.getItem(k));
@@ -722,6 +722,87 @@ async function pageTarget() {
       check(sc, 'the menu sets the hold to 90 min, marked, and writes it for the tool', st.holdMin === 90 && rec && rec.holdMin === 90 &&
         (await js(`document.querySelector('.aiondx-menu .aiondx-hold-btn[data-hold="90"]').getAttribute('aria-checked')`)) === 'true', JSON.stringify([st.holdMin, rec && rec.holdMin]));
       await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+    }
+
+    // The cache window, measured (2026-11-11, second build). The launcher's record of the chat's cache (aiondx.cache.conv.<chat>) decides
+    // when the Loop keeps it warm and when it rests. Before, it counted 5 minutes from the last message, so a nudge held up a few minutes
+    // put the lane to rest with its cache warm for most of an hour.
+    {
+      const sc = 'keep-warm-measured';
+      await load('theme=light');
+      await armVia('');
+      await js('window.__aionDx.tickNow()');
+      const K = 'aionui.dx.harness1';
+      const count = async () => (await posts('/api/conversations/harness1/messages')).length;
+      // The agent's last message replyAgo ms ago, after a nudge a minute before it; the Loop at the given short-reply level, not resting.
+      const scene = (replyAgoMs, level) => js(`(() => { const s = JSON.parse(localStorage.getItem('${K}'));
+        const h = window.__stub.histories.harness1; const t = Date.now() - ${replyAgoMs};
+        h.forEach(m => { if (m.created_at > t - 60000) m.created_at = t - 60000; });
+        h.push({ id: 'm' + Math.random(), position: 'left', type: 'text', hidden: false, created_at: t, content: { content: 'Tournament still running; nothing to do yet.' } });
+        s.lastFired = t - 60000; s.onAt = t - 120000; s.nudgeScored = s.fires; s.nudgeLevel = ${level}; s.shortSince = ${level} ? Date.now() - 10 * 60000 : 0;
+        s.restingSince = 0; s.restKind = ''; s.nextNudgeAt = 0; s.stalls = 0; delete s.why;
+        localStorage.setItem('${K}', JSON.stringify(s)); return 0; })()`);
+      const cacheRec = async (atAgoMs, ttl) => {
+        await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - atAgoMs, until: Date.now() - atAgoMs + (ttl === '1h' ? 3600000 : 300000), ttl, read: 90000, write: 400, ctx: 90403, calls: 12, rebuilt: null });
+        await js('window.__aionDx.pullNow()');
+      };
+      const noRec = async () => { await js(`(() => { delete window.__stub.store['aiondx.cache.conv.harness1']; return 0; })()`); await js('window.__aionDx.pullNow()'); };
+      // 1. Its last message 6 minutes ago, no record: counted at 5 minutes, it rests (the old behaviour, kept for a chat with no reading).
+      await noRec();
+      await scene(6 * 60000, 0);
+      await js('window.__calls.length = 0; 0');
+      await js('window.__aionDx.tickNow()');
+      let st = await saved(K);
+      check(sc, 'with no measured record, a last message 6 min ago counts as cold (5 minutes): it rests', (await count()) === 0 && st.restKind === 'cold' && st.cacheMeasured === false, JSON.stringify([st.restKind, st.cacheMeasured, st.why]));
+      // 2. The same, with the launcher's record of an hour cache written by that last call: warm for 54 more minutes, so it is nudged.
+      await scene(6 * 60000, 0);
+      await cacheRec(6 * 60000, '1h');
+      await js('window.__calls.length = 0; 0');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      check(sc, 'with a measured hour cache, the same lane is nudged, not put to rest', (await count()) === 1 && !st.restingSince && st.cacheMeasured === true, JSON.stringify([await count(), st.restKind, st.why]));
+      const rec0 = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.cache.conv.harness1'];
+      check(sc, 'the Loop keeps the measured window: cold at the record\'s until, an hour long', st.coldAt === rec0.until && st.cacheTtl === 3600000, JSON.stringify([st.coldAt - rec0.until, st.cacheTtl]));
+      // 3. Short replies on an hour cache: the waits grow (level 3: 8 minutes), still before the keep-warm time.
+      await scene(60000, 3);
+      await cacheRec(60000, '1h');
+      await js('window.__calls.length = 0; 0');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      check(sc, 'a third short reply on an hour cache: the next nudge 8 min after it', (await count()) === 0 && Math.abs(st.nextNudgeAt - (Date.now() - 60000 + 8 * 60000)) < 5000, JSON.stringify([await count(), st.nextNudgeAt - Date.now(), st.why]));
+      await humanClick('.aiondx-loop button');
+      const status = await js('(document.querySelector(".aiondx-status") || {}).textContent');
+      check(sc, 'the menu says the window is measured', /Cache: warm until \d\d:\d\d \(\d+\smin, measured\)\./.test(status || ''), status);
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      const pub = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.loopstatus.conv.harness1'];
+      check(sc, 'loop_status gets the measured until', pub && pub.cacheMeasured === true && Math.abs(pub.warmUntil - (Date.now() - 60000 + 3600000)) < 5000, JSON.stringify(pub));
+      // 4. Level 5 (30 minutes) where the cache ends sooner: capped 6 minutes before its end.
+      await scene(60000, 5);
+      await cacheRec(40 * 60000, '1h');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      const until4 = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.cache.conv.harness1'].until;
+      check(sc, 'a 30 min wait that would pass the keep-warm time is moved to 6 min before the cache ends', Math.abs(st.nextNudgeAt - (until4 - 6 * 60000)) < 2000, JSON.stringify([st.nextNudgeAt - until4]));
+      // 5. A measured 5-minute cache (extra usage) keeps the old timing: the third short reply waits 4 min, not 8.
+      await scene(60000, 3);
+      await cacheRec(60000, '5m');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      check(sc, 'on a measured 5-minute cache the wait is capped at 4 min after the call', Math.abs(st.nextNudgeAt - (Date.now() - 60000 + 4 * 60000)) < 5000 && st.cacheTtl === 300000, JSON.stringify([st.nextNudgeAt - Date.now(), st.cacheTtl]));
+      // 6. The record says the hour is over: it rests, and says when it ran out.
+      await scene(63 * 60000, 0);
+      await cacheRec(63 * 60000, '1h');
+      await js('window.__calls.length = 0; 0');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      check(sc, 'a measured cache past its hour: no nudge, it rests', (await count()) === 0 && st.restKind === 'cold' && /^Resting: its cache ran out at \d\d:\d\d/.test(st.why || ''), JSON.stringify([st.restKind, st.why]));
+      // 7. A record the chat's messages have outrun (a message well after its until) is not trusted.
+      await scene(60000, 0);
+      await cacheRec(3 * 3600000, '1h');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      check(sc, 'a record older than the chat\'s last message is not used', st.cacheMeasured === false, JSON.stringify([st.cacheMeasured, st.coldAt - Date.now()]));
+      await noRec();
     }
 
     // Resume at a set time (2026-09-26): a team lead, told to slow down until 12:10, answered each nudge
@@ -3047,8 +3128,15 @@ async function pageTarget() {
       check(sc, 'and then sends the message, once', JSON.stringify(await posts3()) === JSON.stringify(['answer me now']), JSON.stringify(await posts3()));
       await js(`(() => { window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
 
-      // The context meter is always there; a snowflake says the provider's prompt cache has gone cold (2026-11-01).
+      // The context meter is always there; a snowflake says the chat's prompt cache is gone (2026-11-01), and since the second build of
+      // 2026-11-11 only from the launcher's measured record (aiondx.cache.conv.<chat>), never from an estimate.
       await load('theme=light');
+      const snowRec = async (atAgoMs, ttl, extra) => {
+        await putStore('aiondx.cache.conv.harness1', Object.assign({ v: 1, at: Date.now() - atAgoMs, until: Date.now() - atAgoMs + (ttl === '1h' ? 3600000 : 300000), ttl,
+          read: 80000, write: 4000, ctx: 84003, calls: 30, rebuilt: null }, extra || {}));
+        await js('window.__aionDx.pullNow()');
+      };
+      await snowRec(75 * 60000, '1h');
       await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime;
         r.data.extra = Object.assign({}, r.data.extra, { backend: 'claude', last_token_usage: { total_tokens: 84000 }, last_context_limit: 200000 });
         r.data.modified_at = Date.now() - 75 * 60000; window.__aionDx.resetCtx(); window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
@@ -3061,27 +3149,41 @@ async function pageTarget() {
       await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
       const ring = () => js(`(() => { const e = document.querySelector('#solo [data-testid="aiondx-ctx"]'); if (!e) return null; const c = e.querySelectorAll('circle')[1];
         return { snow: !!e.querySelector('.aiondx-snow'), title: e.title, snowTitle: (e.querySelector('.aiondx-snow') || {}).title || '', off: c.getAttribute('stroke-dashoffset'), dash: c.getAttribute('stroke-dasharray') }; })()`);
+      const again = async () => { await js('window.__aionDx.resetCtx(); 0'); await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()'); return ring(); };
       let rg = await ring();
       check(sc, 'a chat with no AionUi ring still shows the context meter', !!rg, JSON.stringify(rg));
       check(sc, 'it is 42% full (84K of 200K)', rg && Math.abs(1 - Number(rg.off) / Number(rg.dash) - 0.42) < 0.01 && /42\.0% of the context window used \(84K of 200K\)/.test(rg.title), JSON.stringify(rg));
-      check(sc, 'a Claude chat idle for 75 minutes (Claude Code asks a subscriber\'s cache for 1 hour) has the snowflake, with the reason', rg && rg.snow && /Cold: Anthropic keeps a prompt cache about 1 hour after/.test(rg.snowTitle) && /Prompt cache cold since \d\d:\d\d/.test(rg.title), JSON.stringify(rg));
+      check(sc, 'a measured hour cache whose last call was 75 min ago has the snowflake, saying when it went and why',
+        rg && rg.snow && /^Cold: the last call, at \d\d:\d\d, kept the prompt cache 1 hour, so it was gone by \d\d:\d\d \(measured from Anthropic's answer\)\./.test(rg.snowTitle) &&
+        /Prompt cache cold since \d\d:\d\d \(the last call, \d\d:\d\d, kept it 1 hour\): the next message writes the whole context again/.test(rg.title), JSON.stringify(rg));
       // the team's run-state (agentLive) saying working does not hide it: the chat's own conversation is finished (2026-11-11)
-      await js(`(() => { window.__aionDx.setLive('conv:harness1', 'working'); window.__aionDx.resetCtx(); return 0; })()`);
-      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
-      rg = await ring();
+      await js(`(() => { window.__aionDx.setLive('conv:harness1', 'working'); return 0; })()`);
+      rg = await again();
       check(sc, 'a live state of working with the conversation finished still shows the snowflake', rg && rg.snow, JSON.stringify(rg));
-      await js(`(() => { window.__aionDx.setLive('conv:harness1', 'idle'); const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.modified_at = Date.now() - 22 * 60000; window.__aionDx.resetCtx(); return 0; })()`);
-      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
-      rg = await ring();
-      check(sc, 'idle 22 minutes: still warm, no snowflake, and the meter says until when', rg && !rg.snow && /Prompt cache warm until \d\d:\d\d \(Anthropic keeps it 1 hour\)/.test(rg.title), JSON.stringify(rg));
-      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.modified_at = Date.now() - 60000; window.__aionDx.resetCtx(); return 0; })()`);
-      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
-      rg = await ring();
-      check(sc, 'a turn a minute ago: the meter stays, no snowflake', rg && !rg.snow, JSON.stringify(rg));
-      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.modified_at = Date.now() - 20 * 60000; r.data.extra.backend = 'devin'; window.__aionDx.resetCtx(); return 0; })()`);
-      await sleep(700); await js('window.__aionDx.repaint()'); await sleep(900); await js('window.__aionDx.repaint()');
-      rg = await ring();
-      check(sc, 'a provider with no verified cache time is never shown cold', rg && !rg.snow, JSON.stringify(rg));
+      await js(`(() => { window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
+      await snowRec(22 * 60000, '1h');
+      rg = await again();
+      check(sc, 'last call 22 min ago on an hour cache: warm, no snowflake, and the meter says until when', rg && !rg.snow &&
+        /Prompt cache warm until \d\d:\d\d at the latest \(the last call, \d\d:\d\d, kept it 1 hour\)/.test(rg.title), JSON.stringify(rg));
+      await snowRec(7 * 60000, '5m');
+      rg = await again();
+      check(sc, 'a measured 5-minute cache (extra usage) 7 min after its last call: the snowflake, saying 5 minutes', rg && rg.snow && /kept the prompt cache 5 minutes/.test(rg.snowTitle), JSON.stringify(rg));
+      await snowRec(30 * 60000, '1h', { rebuilt: { at: Date.now() - 30 * 60000, tokens: 182000, afterMin: 75, early: false } });
+      rg = await again();
+      check(sc, 'the meter names the last rebuild: when, after how long, how much was written', rg && !rg.snow && /\nLast rebuilt \d\d:\d\d, 75 min after the call before \(182K tokens written\)/.test(rg.title), JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.status = 'running'; return 0; })()`);
+      await snowRec(75 * 60000, '1h');
+      rg = await again();
+      check(sc, 'a turn in flight: no snowflake and no cache line, whatever the record says', rg && !rg.snow && !/Prompt cache/.test(rg.title), JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.status = 'finished'; return 0; })()`);
+      // No record: idle for two hours, but nothing measured it, so no snowflake and no cache line (2026-11-11: only a sure reading shows).
+      await js(`(() => { delete window.__stub.store['aiondx.cache.conv.harness1']; const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.modified_at = Date.now() - 120 * 60000; return 0; })()`);
+      await js('window.__aionDx.pullNow()');
+      rg = await again();
+      check(sc, 'a chat with no measured record shows no snowflake and no cache line, however long it has been idle', rg && !rg.snow && !/Prompt cache/.test(rg.title), JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.backend = 'devin'; return 0; })()`);
+      rg = await again();
+      check(sc, 'another provider with no record is never shown cold', rg && !rg.snow, JSON.stringify(rg));
       await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.backend = 'claude'; delete r.data.modified_at; return 0; })()`);
     }
 

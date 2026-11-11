@@ -42,18 +42,27 @@
  * timer).
  *
  * IT KEEPS A WAITING AGENT'S CACHE WARM, AND NEVER WAKES A COLD ONE (since 2026-09-25). Anthropic
- * keeps a prompt cached for 5 minutes and refreshes that free each time it is read. A nudge inside
- * the window reads the cache (0.1x the input price; 0.05x on Opus 5.5); a nudge after it writes the
- * whole context again (1.25x). Until build 2026-09-25.4 a short reply ("nothing to do yet") pushed
+ * keeps a prompt cached for a set time after its last use and refreshes that free each time it is read:
+ * 5 minutes for every AionDX chat until October 12th, 2026, and one hour for a subscriber's main
+ * conversation since then (5 minutes on extra usage). The length is decided on Anthropic's side, so
+ * AionDX measures it: the launcher reads each answer's cache write (claude-stream-proxy.js) into
+ * aiondx.cache.conv.<chat>, and the Loop counts from that record (cacheWindow). A chat without one
+ * is counted at 5 minutes. A nudge inside the window reads the cache (0.1x the input price); a nudge
+ * after it writes the whole context again (1.25x, 2x for an hour cache). Until build 2026-09-25.4 a short reply ("nothing to do yet") pushed
  * the next nudge to 5, 10, 20 and 30 minutes after the last one, so almost every nudge after the
  * second paid a full reload. A team lead logged it (AionDX dev log, September 25th), and the owner reported the same: usage burned on
  * re-caching. Now, counted from the agent's own last message:
  *   - after real work the next nudge goes once the chat is quiet (20 s);
  *   - after a short reply (under 3 minutes, fewer than 6 tool-call records) it goes at 2 minutes,
- *     and after two or more at 4 minutes, always inside the window;
+ *     then 4, 8, 15 and 30 after more of them, never later than its keep-warm time (6 minutes before an
+ *     hour cache runs out, 1 minute before a 5-minute one);
  *   - after 45 minutes of short replies (the hold; 12 warm reads cost about one reload) it RESTS:
  *     no more nudges, and the cache is allowed to expire;
- *   - an agent whose cache has already expired is never nudged. It rests until someone else gives
+ *   - an agent whose cache has already expired (2 minutes before an hour cache's end, 20 s before a
+ *     5-minute one's) is never nudged. Until November 11th, 2026 this counted 5 minutes from the last
+ *     message whatever the real length, so a lane whose nudge was held up a few minutes (team spacing,
+ *     a draft, your message) was put to rest with its cache still warm for most of an hour, and its next
+ *     turn paid to write it again. It rests until someone else gives
  *     it work; the Loop carries on after that turn. Switching a Loop on for a cold agent sends one
  *     nudge, because someone asked for exactly that.
  * So a Loop left on overnight, or on after AionUi was closed, does nothing to a cold agent.
@@ -143,11 +152,10 @@
   var DEFAULT_MSG = 'CONTINUE WORKING. Re-check the project plan and queue files, take the next unfinished item, and keep going until the user interrupts.';
 
   // The cache window; see the header.
-  var CACHE_TTL_MS = 5 * 60000;           // Anthropic's prompt cache: 5 minutes, refreshed on each read
-  var WARM_LATEST_MS = CACHE_TTL_MS - 20000; // a nudge later than this after the agent's last message would miss it
+  var CACHE_TTL_MS = 5 * 60000;           // the length counted for a chat with no measured record (cacheWindow)
   var SHORT_TURN_MS = 3 * 60000;          // a turn after a nudge shorter than this ...
   var SHORT_TURN_TOOL_RECORDS = 6;        // ... with fewer tool-call records than this is "nothing to do"
-  var NUDGE_WAITS_MS = [2, 4].map(function (m) { return m * 60000; });  // after 1, then 2+ short replies, from its last message
+  var NUDGE_WAITS_MS = [2, 4, 8, 15, 30].map(function (m) { return m * 60000; });  // after 1, 2, 3... short replies, from its last message; capped by the cache
   var HOLD_MIN = 45;                      // minutes of short replies kept warm before the Loop rests
   var HOLD_CHOICES = [0, 45, 90, 180];    // the menu's choices; 0 rests after the first short reply
   var HOLD_MIN_MAX = 240;
@@ -245,7 +253,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-11.1';
+  var BUILD = '2026-11-11.2';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -945,7 +953,7 @@
       compactAt: s.compactAt || 0, compactSentAt: s.compactSentAt || 0, compactNote: s.compactNote || '',
       // The cache window (build 2026-09-25.4): the agent's last message, when the cache runs out,
       // and whether the Loop is resting.
-      lastAt: s.lastAt || 0, warmUntil: s.lastAt ? s.lastAt + CACHE_TTL_MS : 0, holdMin: holdMinutes(s),
+      lastAt: s.lastAt || 0, warmUntil: coldAtOf(s), cacheMeasured: !!s.cacheMeasured, holdMin: holdMinutes(s),
       shortSince: s.shortSince || 0, restingSince: s.restingSince || 0, restKind: s.restKind || '',
       wakeAt: s.on ? s.wakeAt || 0 : 0, wokeAt: s.wokeAt || 0 };
     var k = statusKey(t);
@@ -2122,7 +2130,7 @@
     why(t, s, restText(s));
   }
   function restText(s) {
-    var warmTo = s.lastAt ? s.lastAt + CACHE_TTL_MS : 0;
+    var warmTo = coldAtOf(s);
     if (s.restKind === 'resume' && s.wakeAt) {
       return 'Resting until ' + hhmm(s.wakeAt) + ', the resume time: keeping the cache warm that long would cost more than ' +
         'one reload, so it runs out' + (warmTo > Date.now() ? ' at ' + hhmm(warmTo) : '') + '. The resume nudge goes at ' + hhmm(s.wakeAt) + '.';
@@ -2258,10 +2266,13 @@
     var msgs = await getMessages(convId, 40);
     if (!msgs) return;
     var lastAny = msgs[msgs.length - 1];
-    // The agent's last message dates its prompt cache: the cache was read for it, so it runs out
-    // CACHE_TTL_MS later. Kept for the button's warmth ring and the tool's loop_status.
+    // The agent's last message, and its cache window: measured by the launcher when it can be (cacheWindow), else the last message
+    // plus CACHE_TTL_MS. Kept for the button's warmth ring and the tool's loop_status.
     var lastAt = lastAny ? (lastAny.created_at || 0) : 0;
-    if (lastAt !== (s.lastAt || 0)) { s.lastAt = lastAt; save(t, s); }
+    var cw = cacheWindow(convId, lastAt);
+    if (lastAt !== (s.lastAt || 0) || cw.coldAt !== (s.coldAt || 0) || cw.ttl !== (s.cacheTtl || 0) || cw.measured !== !!s.cacheMeasured) {
+      s.lastAt = lastAt; s.coldAt = cw.coldAt; s.cacheTtl = cw.ttl; s.cacheMeasured = cw.measured; save(t, s);
+    }
     // Resting, and something happened since (you or its lead wrote, or it worked on its own): the
     // agent is warm again, so the Loop carries on after this turn.
     if (s.restingSince && lastAt > s.restingSince) {
@@ -2366,19 +2377,21 @@
         // Never wake a cold agent: that nudge would pay to write its whole context again. Unless the
         // Loop was switched on after the cache had already run out and has not nudged since: then
         // someone asked for exactly that.
-        var coldAt = lastAt + CACHE_TTL_MS;
-        var wakeAsked = s.onAt && s.onAt >= lastAt + WARM_LATEST_MS && !((s.lastFired || 0) > s.onAt);
+        var coldAt = cw.coldAt;
+        var restFrom = coldAt - warmMargin(cw.ttl);
+        var warmBy = coldAt - warmLead(cw.ttl);
+        var wakeAsked = s.onAt && s.onAt >= restFrom && !((s.lastFired || 0) > s.onAt);
         // Until the user stops it: never rests, so a cold agent is woken too.
-        if (lastAt && now > lastAt + WARM_LATEST_MS && !wakeAsked && !s.forever) { rest(t, s, 'cold', coldAt); return; }
+        if (lastAt && now > restFrom && !wakeAsked && !s.forever) { rest(t, s, 'cold', coldAt); return; }
         // A resume time far off: one reload then costs less than keeping the cache warm until it.
-        if (holding && wake - now > RESUME_WARM_MAX_MS) { rest(t, s, 'resume', coldAt); return; }
+        if (holding && wake - now > resumeWarmMax(cw.ttl)) { rest(t, s, 'resume', coldAt); return; }
         // Nothing to do for the whole hold: stop keeping the cache warm. A near resume time keeps it warm
         // to the end instead.
         if (!holding && !s.forever && s.nudgeLevel && s.shortSince && now - s.shortSince >= holdMinutes(s) * 60000) { rest(t, s, 'hold', coldAt); return; }
-        // Short replies: the next nudge 2, then 4 minutes after the agent's last message, inside the window.
-        // Holding for a resume time: 4 minutes each time.
-        s.nextNudgeAt = holding ? lastAt + NUDGE_WAITS_MS[NUDGE_WAITS_MS.length - 1]
-                                : s.nudgeLevel ? lastAt + NUDGE_WAITS_MS[s.nudgeLevel - 1] : 0;
+        // Short replies: the next nudge 2, 4, 8, 15, then 30 minutes after the agent's last message, and never after the keep-warm
+        // time. Holding for a resume time: one keep-warm nudge per cache window.
+        s.nextNudgeAt = holding ? warmBy
+                                : s.nudgeLevel ? Math.min(lastAt + NUDGE_WAITS_MS[s.nudgeLevel - 1], warmBy) : 0;
         if (now < s.nextNudgeAt) {
           save(t, s);
           why(t, s, (holding ? 'Holding until ' + hhmm(wake) + ', the resume time. The next keep-warm nudge goes at '
@@ -3955,21 +3968,53 @@
     // The meter and the alert check follow the refresh rate the owner chose (a reading can only be as new as the last one AionCore's tap wrote).
     if (usageCfg.pollSec > 3 && Date.now() - usageTaken < usageCfg.pollSec * 1000 - 400) return;
     usageTaken = Date.now();
-    var a = {}, c = {}, al = {}, fi = {};
+    var a = {}, c = {}, al = {}, fi = {}, cc = {};
     Object.keys(data).forEach(function (k) {
       var v = data[k];
       if (!v || typeof v !== 'object') return;
-      if (k.indexOf(USAGE_ACCT) === 0) a[k.slice(USAGE_ACCT.length)] = v;
+      if (k.indexOf(CACHE_CONV) === 0) cc[k.slice(CACHE_CONV.length)] = v;
+      else if (k.indexOf(USAGE_ACCT) === 0) a[k.slice(USAGE_ACCT.length)] = v;
       else if (k.indexOf(USAGE_CONV) === 0) c[k.slice(USAGE_CONV.length)] = v;
       else if (k.indexOf(USAGE_ALERT) === 0) al[k.slice(USAGE_ALERT.length)] = v;
       else if (k.indexOf(USAGE_FIRED) === 0) fi[k.slice(USAGE_FIRED.length)] = v;
     });
     usageAcct = a;
     usageConv = c;
+    cacheConv = cc;
     usageAlerts = al;
     usageFired = fi;
     try { checkUsageAlerts(); } catch (e) { console.log('[dx] usage alert check failed', e); }
   }
+  // The prompt cache, measured (2026-11-11). AionDX's Claude launcher reads the first event of every answer to the chat's main
+  // conversation, which says how much was read from the cache and how long what it wrote is kept (1 hour or 5 minutes), and keeps
+  // aiondx.cache.conv.<chat> = { at, until, ttl, read, write, ctx, rebuilt? } (claude-stream-proxy.js, startCache). until: the latest
+  // moment the cache can still exist; past it the cache is gone for certain. Anthropic can still drop one earlier, which the next call
+  // shows as a rebuild.
+  var CACHE_CONV = 'aiondx.cache.conv.';
+  var cacheConv = {};        // conversation id -> record
+  /** The chat's measured cache record, or null. */
+  function cacheRecord(convId) {
+    var r = convId ? cacheConv[convId] : null;
+    return r && Number(r.until) > 0 && Number(r.at) > 0 ? r : null;
+  }
+  function ttlMsOf(r) { return r.ttl === '1h' ? 3600000 : r.ttl === '5m' ? 300000 : Math.max(60000, Number(r.until) - Number(r.at)); }
+  /** The window the Loop counts with: { coldAt, ttl, measured }. A record the chat's messages have outrun (a message more than a minute
+   *  after its until: the chat ran without the launcher's reading) is not used. */
+  function cacheWindow(convId, lastAt) {
+    var r = cacheRecord(convId);
+    if (r && !(lastAt && lastAt > Number(r.until) + 60000)) return { coldAt: Number(r.until), ttl: ttlMsOf(r), measured: true };
+    return { coldAt: lastAt ? lastAt + CACHE_TTL_MS : 0, ttl: CACHE_TTL_MS, measured: false };
+  }
+  /** How long before coldAt the last keep-warm nudge is planned, and how long before it the Loop rests instead (a nudge then could land
+   *  after the cache is gone). An hour cache leaves room for a team's send spacing; a 5-minute one keeps the old timing. */
+  function warmLead(ttl) { return ttl >= 30 * 60000 ? 6 * 60000 : 60000; }
+  function warmMargin(ttl) { return ttl >= 30 * 60000 ? 2 * 60000 : 20000; }
+  /** A resume time further off than this lets the cache run out: three hour-cache nudges, or 50 minutes of 5-minute ones, cost less
+   *  than one reload. */
+  function resumeWarmMax(ttl) { return Math.max(RESUME_WARM_MAX_MS, 3 * ttl); }
+  /** The Loop's saved window: when its cache runs out, and how long it is. */
+  function coldAtOf(s) { return s.coldAt || (s.lastAt ? s.lastAt + CACHE_TTL_MS : 0); }
+  function ttlOf(s) { return s.cacheTtl || CACHE_TTL_MS; }
   function usageScope(t) { return t.kind === 'team' ? 'team.' + t.teamId : 'conv.' + t.convId; }
   /** The chats a usage alert scope covers: [{ convId, slotId, teamId, role, name }], or null while the team is not read yet. */
   function alertMembers(scope) {
@@ -6588,8 +6633,8 @@
     var a = agentLive[t.key];
     if (a && (a.state === 'working' || a.state === 'queued')) return 1;
     if (!s.lastAt) return -1;
-    var left = s.lastAt + CACHE_TTL_MS - Date.now();
-    return left > 0 ? Math.min(1, left / CACHE_TTL_MS) : 0;
+    var left = coldAtOf(s) - Date.now();
+    return left > 0 ? Math.min(1, left / ttlOf(s)) : 0;
   }
 
   function paintPill(p) {
@@ -6677,10 +6722,11 @@
     var a = agentLive[t.key];
     if (a && a.state === 'working') return 'Cache: in use while it works.';
     if (!s.lastAt) return 'Cache: not read yet.';
-    var until = s.lastAt + CACHE_TTL_MS;
+    var until = coldAtOf(s);
     var now = Date.now();
-    if (until <= now) return 'Cache: ran out at ' + hhmm(until) + '.';
-    return 'Cache: warm until ' + hhmm(until) + ' (' + Math.max(1, Math.round((until - now) / 60000)) + ' min).' +
+    var how = s.cacheMeasured ? 'measured' : 'not measured, counted at ' + Math.round(ttlOf(s) / 60000) + ' min';
+    if (until <= now) return 'Cache: ran out at ' + hhmm(until) + ' (' + how + ').';
+    return 'Cache: warm until ' + hhmm(until) + ' (' + Math.max(1, Math.round((until - now) / 60000)) + ' min, ' + how + ').' +
       (!s.restingSince && s.nextNudgeAt > now ? ' Next nudge ' + hhmm(s.nextNudgeAt) + '.' : '');
   }
 
@@ -7746,16 +7792,12 @@
   // last_context_limit, which AionCore keeps) and draws the ring itself whenever AionUi's is missing. A provider keeps a prompt
   // cache for a limited time after its last use (research: Research/2026-11-01_provider-prompt-cache-lifetimes.md); once that
   // has passed with the agent idle, the next turn pays to write the whole context again, and the ring carries a snowflake.
-  // Claude: one hour (2026-11-11). Claude Code asks Anthropic for a 1-hour cache when the account is a subscriber (Pro, Max, Team: every
-  // AionDX Claude chat signs in that way) and is not on extra usage, for the query sources in its tengu_prompt_cache_1h_config list, which
-  // has "sdk", the source of an AionUi chat (Claude Code 2.1.322 returns {ttl:"1h", reason:"subscriber"}). On extra usage it asks for 5
-  // minutes, so a chat whose account has hit a limit (accountLimit) is counted at 5. The 5 minutes used here before made the snowflake
-  // wrong for 55 minutes of every hour.
-  var CACHE_TTL_BY_PROVIDER = { claude: 60 * 60000, codex: 10 * 60000, gemini: 60 * 60000 };   // Claude Code for a subscriber, the top of OpenAI's 5 to 10 minute window, Google's explicit-cache default
-  var CLAUDE_OVERAGE_TTL_MS = 5 * 60000;
-  var CACHE_PROVIDER_NAME = { claude: 'Anthropic', codex: 'OpenAI', gemini: 'Google' };
+  // Measured only (2026-11-11, second build): the snowflake shows when the chat's measured record (cacheRecord) says its cache is gone,
+  // and never from an estimate. Before, it counted a length per provider from the conversation's last change; Anthropic's length changed
+  // under it (5 minutes to an hour on October 12th) and the field it counted from was the wrong one. A chat with no record (another
+  // provider, or a Claude chat that ran without AionDX's launcher) shows no cache state.
   var ICON_SNOW = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.2 7l15.6 10M19.8 7 4.2 17M9 3.8l3 2.4 3-2.4M9 20.2l3-2.4 3 2.4"/></svg>';
-  var ctxInfo = {}, ctxAsk = {}, ctxState = {}, ctxWorked = {}, ctxEls = {};
+  var ctxInfo = {}, ctxAsk = {}, ctxState = {}, ctxEls = {};
   function ctxProvider(d) {
     var e = (d && d.extra) || {};
     var b = String(e.backend || e.acp_backend || (d && d.type) || '').toLowerCase();
@@ -7798,41 +7840,47 @@
       // busy: this chat's own conversation has a turn in flight. The cache state reads this, not the team's run-state, which can disagree
       // with the conversation (2026-11-11: a team lead idle for 22 minutes showed no cache state at all).
       var busy = convBusy(d);
-      if (busy) ctxWorked[k] = Date.now();
       var info = { used: used, limit: limit, updatedAt: Number(d.modified_at) || old.updatedAt || 0, provider: ctxProvider(d), cost: cost || old.cost || null, busy: busy, convId: convId };
       ctxInfo[k] = info;
       try { localStorage.setItem('aiondx.ctx.' + convId, JSON.stringify(info)); } catch (er) {}
       renderSched();
     })().catch(function () {});
   }
-  /** { since, name, minutes } when the prompt cache of this chat's provider has run out with the agent idle; null otherwise. */
+  /** { since, at, minutes } when this chat's measured prompt cache has run out with the agent idle; null otherwise. */
   function ctxCold(t, info) {
     var c = ctxCache(t, info);
-    return c && !c.warm ? { since: c.until, name: c.name, minutes: c.minutes, why: c.why } : null;
+    return c && !c.warm ? { since: c.until, at: c.at, minutes: c.minutes } : null;
   }
-  /** This chat's prompt cache: { warm, until, name, minutes, why } (until: when it runs out or ran out); null when its provider's cache
-   *  time is not known or a turn is running. */
+  /** This chat's prompt cache from its measured record: { warm, until, at, minutes, rebuilt } (until: when it runs out or ran out); null
+   *  while a turn runs or when there is no record. */
   function ctxCache(t, info) {
-    var ttl = CACHE_TTL_BY_PROVIDER[info.provider];
-    if (!ttl || info.busy) return null;
-    var why = '';
-    if (info.provider === 'claude' && info.convId && accountLimit(info.convId)) { ttl = CLAUDE_OVERAGE_TTL_MS; why = 'extra usage'; }
-    var last = Math.max(info.updatedAt || 0, ctxWorked[t.key] || 0);
-    if (!last) return null;
-    return { warm: Date.now() - last <= ttl, until: last + ttl, name: CACHE_PROVIDER_NAME[info.provider], minutes: Math.round(ttl / 60000), why: why };
+    if (info.busy) return null;
+    var r = cacheRecord(info.convId);
+    if (!r) return null;
+    var until = Number(r.until);
+    return { warm: Date.now() < until, until: until, at: Number(r.at), minutes: Math.round(ttlMsOf(r) / 60000), rebuilt: r.rebuilt || null };
   }
   function spanText(minutes) { return minutes >= 60 && minutes % 60 === 0 ? (minutes / 60) + ' hour' + (minutes > 60 ? 's' : '') : minutes + ' minutes'; }
-  /** The hover line: "Prompt cache warm until 08:33 (Anthropic keeps it 1 hour)" or "Prompt cache cold since 08:33 ...". */
+  /** The hover line: "Prompt cache warm until 09:12 at the latest (the last call, 08:12, kept it 1 hour)" or "Prompt cache cold since
+   *  09:12 ...", and the last rebuild when there was one in the last day. */
   function promptCacheLine(c) {
     if (!c) return '';
-    return c.warm ? 'Prompt cache warm until ' + hhmm(c.until) + ' (' + c.name + ' keeps it ' + spanText(c.minutes) + (c.why ? ' on ' + c.why : '') + ')'
-      : 'Prompt cache cold since ' + hhmm(c.until) + ': the next message pays to write the whole context again';
+    var kept = '(the last call, ' + hhmm(c.at) + ', kept it ' + spanText(c.minutes) + ')';
+    var line = c.warm ? 'Prompt cache warm until ' + hhmm(c.until) + ' at the latest ' + kept
+      : 'Prompt cache cold since ' + hhmm(c.until) + ' ' + kept + ': the next message writes the whole context again';
+    var rb = c.rebuilt;
+    if (rb && Number(rb.at) > Date.now() - 86400000) {
+      line += '\nLast rebuilt ' + hhmm(Number(rb.at)) + (rb.afterMin !== null && rb.afterMin !== undefined ? ', ' + rb.afterMin + ' min after the call before' : '') +
+        ' (' + Math.round((Number(rb.tokens) || 0) / 1000) + 'K tokens written' + (rb.early ? ', before its time was up' : '') + ')';
+    }
+    return line;
   }
   function ctxSnow(host, cold) {
     var s = host.querySelector(':scope > .aiondx-snow');
     if (!cold) { if (s) s.parentNode.removeChild(s); return; }
     if (!s) { s = document.createElement('span'); s.className = 'aiondx-snow'; s.innerHTML = ICON_SNOW; host.appendChild(s); }
-    var tip = 'Cold: ' + cold.name + ' keeps a prompt cache about ' + spanText(cold.minutes) + (cold.why ? ' on ' + cold.why : '') + ' after the last turn, and that ran out at ' + hhmm(cold.since) + '. The next message pays to write the whole context again.';
+    var tip = 'Cold: the last call, at ' + hhmm(cold.at) + ', kept the prompt cache ' + spanText(cold.minutes) + ', so it was gone by ' + hhmm(cold.since) +
+      ' (measured from Anthropic\'s answer). The next message writes the whole context again.';
     if (s.title !== tip) s.title = tip;
   }
   function paintCtx(t, wrap) {
@@ -10142,7 +10190,7 @@
     spinReset: function () { spinVerdict = {}; schedule(); },
     fireSched: function () { return fireScheduled(); },
     schedState: function (id) { return schedStore[id] || null; },
-    resetCtx: function () { ctxInfo = {}; ctxAsk = {}; ctxState = {}; ctxWorked = {}; },
+    resetCtx: function () { ctxInfo = {}; ctxAsk = {}; ctxState = {}; },
     ctxLines: function () { return targets().map(function (t) { var i = ctxInfo[t.key]; return { key: t.key, info: i || null, line: i ? promptCacheLine(ctxCache(t, i)) : '' }; }); },
     accountLimit: function (convId) { return accountLimit(convId); },
     unsend: function () { return { results: unsendResults, pending: unsendPending }; },

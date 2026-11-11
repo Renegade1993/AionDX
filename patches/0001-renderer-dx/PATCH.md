@@ -1012,3 +1012,26 @@ The agent control's menu (switch agent, continue in a new chat, swap a member) o
   repaints. Click test: a deleted chat with a usage record is asked about exactly once over 12 repaints.
 - `pathInfo` (is a linked path a folder, how big): a path the backend refuses (outside its sandbox, 403) was not cached, so every
   repaint asked again (101 times that day). Refusals are cached for the same 5 minutes as answers.
+
+## Build `2026-11-11.2`: the Loop and the snowflake count from the measured cache
+
+Anthropic's cache length for an AionDX chat changed on its side on October 12th, 2026 (5 minutes to an hour, same Claude Code build;
+`tools\cache-ttl-by-day.js --switches`). The launcher now reads the length from each answer and keeps `aiondx.cache.conv.<chat>`
+(patch 0002, `claude-stream-proxy.js`); the page counts from that record.
+- `cacheWindow(convId, lastAt)`: { coldAt, ttl, measured } from the record; a record the chat's messages outran (a message more than a
+  minute after its until) is not used; no record: the last message plus `CACHE_TTL_MS` (5 minutes), as before.
+- The Loop rests as cold only from `coldAt - warmMargin` (2 minutes before an hour cache ends, 20 s before a 5-minute one). Before,
+  it rested 4 m 40 s after the last message, so a lane whose nudge was held up (team spacing, a draft, a minute after the owner's
+  message) went to rest with its cache warm for most of an hour, and its next turn paid to write it again.
+- Keep-warm: short-reply waits 2, 4, 8, 15, 30 minutes from the last message, each capped at `coldAt - warmLead` (6 minutes before an
+  hour cache ends, 1 minute before a 5-minute one, which gives the old 2 and 4); holding for a resume time sends one keep-warm per
+  window; a resume time further than `max(50 min, 3 x ttl)` lets the cache run out.
+- The Loop's state keeps `coldAt`, `cacheTtl`, `cacheMeasured`; loop_status gets `warmUntil` from it and `cacheMeasured`; the menu and
+  hover card say "measured" or "not measured, counted at 5 min".
+- The context ring: the snowflake and the "Prompt cache" line come only from the record ("warm until 09:12 at the latest (the last
+  call, 08:12, kept it 1 hour)", "cold since ..."), with the last rebuild when there was one that day. No record (another provider, a
+  chat that ran without the launcher): no cache state at all. The per-provider estimate (`CACHE_TTL_BY_PROVIDER`) is gone.
+- Click tests (new scenario keep-warm-measured, snowflake block rewritten): with no record a 6-minute-old last message rests; with a
+  measured hour cache the same lane is nudged; waits 8 min at the third short reply; a 30 min wait capped 6 min before the end; a
+  measured 5-minute cache keeps 4 min; past the hour it rests; an outrun record is not used; snowflake from the record only, none with
+  no record however long idle, none during a turn, the rebuild line.
