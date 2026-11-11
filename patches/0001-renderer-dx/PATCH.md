@@ -988,3 +988,18 @@ Requests of October 20th (K's morning list). Everything below is in `aiondx-ui.j
 ## October 24th, 2026 (later): build `2026-10-24.2`, the agent menu fits a short window
 
 The agent control's menu (switch agent, continue in a new chat, swap a member) opened below the control or above it, and when it fitted neither way it simply ran off the bottom of the window: on a 514-pixel-tall page its last items were out of reach, and a click there closed it. `placeAcctMenu` now puts it on the side with more room, as tall as that room, scrolling inside. Found by the click suite after Edge's window lost height; the suite now checks the menu stays inside the window, and its clicks scroll an item into view first, as a person would.
+
+## Build `2026-11-11.1`: the cache ring counts Claude's real cache lifetime, and says until when
+
+- Claude's prompt cache in an AionUi chat lives 1 hour, not 5 minutes: Claude Code asks for a 1-hour cache for a subscriber not on extra
+  usage when the query source is in its `tengu_prompt_cache_1h_config` list, which has `sdk` (Claude Code 2.1.322; evidence in
+  `! LLM Files\2026-11-11_Claude-Code-frozen-model-offer-and-1h-cache.md`). The ring's snowflake now comes at 60 minutes, at 5 when the
+  account reading shows a reached limit (extra usage). With 5 it was wrong for 55 minutes of every hour.
+- The real reason the snowflake rarely showed: the ring read the chat's last activity from `updated_at`, and AionCore's conversation
+  answer has no such field (`ConversationResponse` sends `modified_at`). With no time it never went cold, except for a chat the page had
+  itself seen working since it loaded. Found by the live context test (`updatedAt: 0` for every member); the click suite's stub had
+  carried the same wrong field, so it passed. The stub now sends `modified_at`, and the page has no `updated_at` fallback.
+- Whether a turn is running is read from the chat's own conversation (`convBusy`), not the team's run-state.
+- The ring's hover card (AionUi's and AionDX's own) has a line: "Prompt cache warm until 08:33 (Anthropic keeps it 1 hour)", or "Prompt
+  cache cold since 08:33: the next message pays to write the whole context again". For a team, the member whose ring is under the pointer.
+- Not changed: the Loop's own `CACHE_TTL_MS` (5 minutes: nudge timing, rest-when-cold, its "Cache: warm until" line). Left for a separate decision.

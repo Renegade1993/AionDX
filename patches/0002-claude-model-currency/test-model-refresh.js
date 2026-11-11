@@ -106,6 +106,31 @@ try {
   dq.close();
   r = run(['--quick', '--no-update']);
   check('a quick run with a picker short of a catalog model asks Claude Code and puts it back', fs.readFileSync(LOG, 'utf8').trim() !== '' && JSON.parse(rows().r1.available_models).available_models.some((m) => m.id === 'claude-fable-5-2'), rows().r1.available_models);
+  // the frozen model offer (November 11th: Fable 5.2 hidden behind an offer from October 12th that a token sign-in can never renew)
+  const offer = [{ value: 'claude-fable-5-1[1m]', label: 'Fable', description: 'Fable 5.1' }];
+  const old = Date.now() - 30 * 86400000;
+  const gcB = path.join(acctB, '.claude.json'), gcA = path.join(acctA, '.claude.json');
+  const bodyB = { numStartups: 7, oauthAccount: { accountUuid: 'u' }, projects: { 'C:/x': { allowedTools: ['a'] } }, additionalModelOptionsCache: offer, additionalModelOptionsAnsweredAt: old, cachedGrowthBookFeaturesAt: 5 };
+  fs.writeFileSync(gcB, JSON.stringify(bodyB, null, 2));
+  fs.writeFileSync(gcA, JSON.stringify({ additionalModelOptionsCache: offer, additionalModelOptionsAnsweredAt: old }));
+  const gcAText = fs.readFileSync(gcA, 'utf8');
+  fs.mkdirSync(gcB + '.lock');
+  r = run(['--quick', '--no-update']);
+  check('a folder Claude Code holds locked is not written; the offer waits for the next run', JSON.parse(fs.readFileSync(gcB, 'utf8')).additionalModelOptionsCache.length === 1 && /stayed locked/.test(fs.readFileSync(path.join(root, 'logs', 'model-refresh.log'), 'utf8')), r.stdout + r.stderr);
+  fs.rmdirSync(gcB + '.lock');
+  r = run(['--quick', '--no-update', '--dry-run']);
+  check('a dry run only says it would empty the offer', JSON.parse(fs.readFileSync(gcB, 'utf8')).additionalModelOptionsCache.length === 1 && /would empty the model offer/.test(fs.readFileSync(path.join(root, 'logs', 'model-refresh.log'), 'utf8')));
+  fs.writeFileSync(LOG, '');
+  r = run(['--quick', '--no-update']);
+  const gB = JSON.parse(fs.readFileSync(gcB, 'utf8'));
+  const keep = Object.assign({}, bodyB, { additionalModelOptionsCache: [] });
+  check('a token-signed folder\'s offer older than a day is emptied, and every other key is kept as it was', JSON.stringify(gB) === JSON.stringify(keep), JSON.stringify(gB));
+  check('a copy of the file is kept beside it', fs.readdirSync(acctB).some((n) => /^\.claude\.json\.aiondx-bak-\d{14}$/.test(n)) && !fs.readdirSync(acctB).some((n) => /aiondx-tmp|\.lock$/.test(n)), fs.readdirSync(acctB).join());
+  check('a folder whose chats sign in without a token is not touched', fs.readFileSync(gcA, 'utf8') === gcAText);
+  check('emptying an offer makes even a quick run ask Claude Code again', fs.readFileSync(LOG, 'utf8').trim() !== '' && /emptied the model offer/.test(fs.readFileSync(path.join(root, 'logs', 'model-refresh.log'), 'utf8')));
+  fs.writeFileSync(gcB, JSON.stringify(Object.assign({}, bodyB, { additionalModelOptionsAnsweredAt: Date.now() - 3600000 })));
+  r = run(['--quick', '--no-update']);
+  check('an offer answered within the day (a full sign-in) is left alone', JSON.parse(fs.readFileSync(gcB, 'utf8')).additionalModelOptionsCache.length === 1);
   // the lock
   fs.writeFileSync(path.join(root, 'logs', 'model-refresh.lock'), JSON.stringify({ pid: 999999, at: Date.now() }));
   r = run([]);

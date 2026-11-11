@@ -245,7 +245,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-10.2';
+  var BUILD = '2026-11-11.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -7740,7 +7740,13 @@
   // last_context_limit, which AionCore keeps) and draws the ring itself whenever AionUi's is missing. A provider keeps a prompt
   // cache for a limited time after its last use (research: Research/2026-11-01_provider-prompt-cache-lifetimes.md); once that
   // has passed with the agent idle, the next turn pays to write the whole context again, and the ring carries a snowflake.
-  var CACHE_TTL_BY_PROVIDER = { claude: 5 * 60000, codex: 10 * 60000, gemini: 60 * 60000 };   // Anthropic default, the top of OpenAI's 5 to 10 minute window, Google's explicit-cache default
+  // Claude: one hour (2026-11-11). Claude Code asks Anthropic for a 1-hour cache when the account is a subscriber (Pro, Max, Team: every
+  // AionDX Claude chat signs in that way) and is not on extra usage, for the query sources in its tengu_prompt_cache_1h_config list, which
+  // has "sdk", the source of an AionUi chat (Claude Code 2.1.322 returns {ttl:"1h", reason:"subscriber"}). On extra usage it asks for 5
+  // minutes, so a chat whose account has hit a limit (accountLimit) is counted at 5. The 5 minutes used here before made the snowflake
+  // wrong for 55 minutes of every hour.
+  var CACHE_TTL_BY_PROVIDER = { claude: 60 * 60000, codex: 10 * 60000, gemini: 60 * 60000 };   // Claude Code for a subscriber, the top of OpenAI's 5 to 10 minute window, Google's explicit-cache default
+  var CLAUDE_OVERAGE_TTL_MS = 5 * 60000;
   var CACHE_PROVIDER_NAME = { claude: 'Anthropic', codex: 'OpenAI', gemini: 'Google' };
   var ICON_SNOW = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.2 7l15.6 10M19.8 7 4.2 17M9 3.8l3 2.4 3-2.4M9 20.2l3-2.4 3 2.4"/></svg>';
   var ctxInfo = {}, ctxAsk = {}, ctxState = {}, ctxWorked = {}, ctxEls = {};
@@ -7757,7 +7763,6 @@
     var k = t.key, st = (agentLive[k] || {}).state || '';
     var changed = ctxState[k] !== st;
     ctxState[k] = st;
-    if (st === 'working') ctxWorked[k] = Date.now();
     if (!changed && ctxAsk[k] && Date.now() - ctxAsk[k] < 20000) return;
     ctxAsk[k] = Date.now();
     (async function () {
@@ -7784,7 +7789,11 @@
         // the session cost (a request of 2026-11-09: solo chats show it as team members do)
         var cost = cu && cu.cost && Number(cu.cost.amount) > 0 ? { amount: Number(cu.cost.amount), currency: String(cu.cost.currency || 'USD') } : null;
       } catch (er) {}
-      var info = { used: used, limit: limit, updatedAt: Number(d.updated_at) || old.updatedAt || 0, provider: ctxProvider(d), cost: cost || old.cost || null };
+      // busy: this chat's own conversation has a turn in flight. The cache state reads this, not the team's run-state, which can disagree
+      // with the conversation (2026-11-11: a team lead idle for 22 minutes showed no cache state at all).
+      var busy = convBusy(d);
+      if (busy) ctxWorked[k] = Date.now();
+      var info = { used: used, limit: limit, updatedAt: Number(d.modified_at) || old.updatedAt || 0, provider: ctxProvider(d), cost: cost || old.cost || null, busy: busy, convId: convId };
       ctxInfo[k] = info;
       try { localStorage.setItem('aiondx.ctx.' + convId, JSON.stringify(info)); } catch (er) {}
       renderSched();
@@ -7792,17 +7801,32 @@
   }
   /** { since, name, minutes } when the prompt cache of this chat's provider has run out with the agent idle; null otherwise. */
   function ctxCold(t, info) {
+    var c = ctxCache(t, info);
+    return c && !c.warm ? { since: c.until, name: c.name, minutes: c.minutes, why: c.why } : null;
+  }
+  /** This chat's prompt cache: { warm, until, name, minutes, why } (until: when it runs out or ran out); null when its provider's cache
+   *  time is not known or a turn is running. */
+  function ctxCache(t, info) {
     var ttl = CACHE_TTL_BY_PROVIDER[info.provider];
-    if (!ttl || (agentLive[t.key] || {}).state === 'working') return null;
+    if (!ttl || info.busy) return null;
+    var why = '';
+    if (info.provider === 'claude' && info.convId && accountLimit(info.convId)) { ttl = CLAUDE_OVERAGE_TTL_MS; why = 'extra usage'; }
     var last = Math.max(info.updatedAt || 0, ctxWorked[t.key] || 0);
-    if (!last || Date.now() - last <= ttl) return null;
-    return { since: last + ttl, name: CACHE_PROVIDER_NAME[info.provider], minutes: Math.round(ttl / 60000) };
+    if (!last) return null;
+    return { warm: Date.now() - last <= ttl, until: last + ttl, name: CACHE_PROVIDER_NAME[info.provider], minutes: Math.round(ttl / 60000), why: why };
+  }
+  function spanText(minutes) { return minutes >= 60 && minutes % 60 === 0 ? (minutes / 60) + ' hour' + (minutes > 60 ? 's' : '') : minutes + ' minutes'; }
+  /** The hover line: "Prompt cache warm until 08:33 (Anthropic keeps it 1 hour)" or "Prompt cache cold since 08:33 ...". */
+  function promptCacheLine(c) {
+    if (!c) return '';
+    return c.warm ? 'Prompt cache warm until ' + hhmm(c.until) + ' (' + c.name + ' keeps it ' + spanText(c.minutes) + (c.why ? ' on ' + c.why : '') + ')'
+      : 'Prompt cache cold since ' + hhmm(c.until) + ': the next message pays to write the whole context again';
   }
   function ctxSnow(host, cold) {
     var s = host.querySelector(':scope > .aiondx-snow');
     if (!cold) { if (s) s.parentNode.removeChild(s); return; }
     if (!s) { s = document.createElement('span'); s.className = 'aiondx-snow'; s.innerHTML = ICON_SNOW; host.appendChild(s); }
-    var tip = 'Cold: ' + cold.name + ' keeps a prompt cache about ' + cold.minutes + ' minutes after the last turn, and that ran out at ' + hhmm(cold.since) + '. The next message pays to write the whole context again.';
+    var tip = 'Cold: ' + cold.name + ' keeps a prompt cache about ' + spanText(cold.minutes) + (cold.why ? ' on ' + cold.why : '') + ' after the last turn, and that ran out at ' + hhmm(cold.since) + '. The next message pays to write the whole context again.';
     if (s.title !== tip) s.title = tip;
   }
   function paintCtx(t, wrap) {
@@ -7833,6 +7857,8 @@
     var tip = (info.limit > 0 ? pct.toFixed(1) + '% of the context window used (' + Math.round(info.used / 1000) + 'K of ' + Math.round(info.limit / 1000) + 'K)'
       : info.used > 0 ? Math.round(info.used / 1000) + 'K tokens used; the window size is not known' : 'No context count yet for this chat') +
       (info.cost ? '\nSession cost ≈ ' + costText(info.cost) : '');
+    var cl = promptCacheLine(ctxCache(t, info));
+    if (cl) tip += '\n' + cl;
     if (el.title !== tip) el.title = tip;
     if (el.parentNode !== send.parentNode || el.nextSibling !== send) send.parentNode.insertBefore(el, send);
     ctxSnow(el, cold);
@@ -7847,13 +7873,30 @@
     var cards = document.querySelectorAll('.context-usage-popover');
     if (!cards.length) return;
     var r = route();
-    if (!r || r.kind !== 'conv') return;
+    if (!r) return;
+    // The cache line (2026-11-11), for the chat whose ring the card belongs to: the solo chat, or the team member whose ring is under the
+    // pointer.
+    var ct = null;
+    var hovered = document.querySelector('.context-usage-indicator:hover');
+    targets().forEach(function (x) { if (!ct && (r.kind === 'conv' || (hovered && x.actions && x.actions.contains(hovered)))) ct = x; });
+    var ctInfo = ct ? ctxInfo[ct.key] : null;
+    var line = ctInfo ? promptCacheLine(ctxCache(ct, ctInfo)) : '';
+    for (var ci = 0; ci < cards.length; ci++) {
+      var cin = cards[ci].querySelector('.p-8px') || cards[ci];
+      var cl = cin.querySelector('.aiondx-cache-line');
+      if (!line) { if (cl) cl.remove(); continue; }
+      if (!cl) { cl = document.createElement('div'); cl.className = 'text-12px text-t-secondary mt-4px aiondx-cache-line'; cin.appendChild(cl); }
+      if (cl.textContent !== line) cl.textContent = line;
+    }
+    if (r.kind !== 'conv') return;
     var info = ctxInfo['conv:' + r.id];
     for (var i = 0; i < cards.length; i++) {
       var inner = cards[i].querySelector('.p-8px') || cards[i];
       var mine = inner.querySelector('.aiondx-cost-line');
       var all = inner.textContent || '';
       if (mine) all = all.replace(mine.textContent || '', '');
+      var cacheEl = inner.querySelector('.aiondx-cache-line');
+      if (cacheEl) all = all.replace(cacheEl.textContent || '', '');
       if (/Session cost/.test(all)) { if (mine) mine.remove(); continue; }   // AionUi's own line is there (perhaps since ours went in)
       if (!info || !info.cost) { if (mine) mine.remove(); continue; }
       var text = 'Session cost ≈ ' + costText(info.cost);
@@ -10094,6 +10137,7 @@
     fireSched: function () { return fireScheduled(); },
     schedState: function (id) { return schedStore[id] || null; },
     resetCtx: function () { ctxInfo = {}; ctxAsk = {}; ctxState = {}; ctxWorked = {}; },
+    ctxLines: function () { return targets().map(function (t) { var i = ctxInfo[t.key]; return { key: t.key, info: i || null, line: i ? promptCacheLine(ctxCache(t, i)) : '' }; }); },
     accountLimit: function (convId) { return accountLimit(convId); },
     unsend: function () { return { results: unsendResults, pending: unsendPending }; },
     runUnsend: function () { try { renderUnsend(); return 'ok'; } catch (e) { return String((e && e.stack) || e); } },

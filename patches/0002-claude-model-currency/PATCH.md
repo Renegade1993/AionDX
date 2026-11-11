@@ -344,3 +344,22 @@ From two reports from another PC (a model-refresh package built there, and a tea
 ## October 24th, 2026: no scratch folders left in %TEMP%
 
 The model check at AionDX's start (`aiondx-model-refresh.js`, and the catalog it calls) made `%TEMP%\aiondx-refresh-*` and `aiondx-catalog-*` scratch folders and removed them with one `rmSync`, which failed while Claude Code still held its working folder; one folder stayed per start (more than 150 on the development PC). `removeScratch` in `claude-model-catalog.js` now tries for up to two seconds (8 tries, 250 ms apart), and each refresh run removes such folders older than an hour (`sweepScratch`). Tests: `test-model-refresh.js` 18/18, `test-model-catalog.js` 31/31, and neither leaves anything in `%TEMP%`.
+
+## November 11th, 2026: the model offer a token sign-in can never renew
+
+Fable 5.2 never reached a chat, although the catalog saw it on November 9th. Claude Code's Fable entry comes from the account's saved
+model offer (`additionalModelOptionsCache` in the config folder's `.claude.json`). Every AionDX chat signs in with the account's token
+file, a token without the user:profile scope, and for such a token Claude Code keeps the saved offer forever (the server's answer is
+narrowed and carries none). The main account's offer was from October 12th and named Fable 5.1; the second account's named Fable 5. AionCore rewrites the
+stored picker from Claude Code's answer at every chat start, so the November 9th merge of catalog models into the picker was undone
+within minutes.
+
+`aiondx-model-refresh.js` now empties an offer older than a day in every config folder whose chats sign in with a token, under Claude
+Code's own lock (`.claude.json.lock`), keeping `.claude.json.aiondx-bak-<time>` (the newest three). Claude Code then lists its built-in
+aliases, which follow each Claude Code update: `fable > claude-fable-5-2` on both accounts, and a call on Fable was answered by
+claude-fable-5-2. An offer answered within the day (a full `/login`) is left alone. Emptying one makes even the 15-minute quick run ask
+Claude Code and rewrite the pickers. The evidence and Claude Code's code: `! LLM Files\2026-11-11_Claude-Code-frozen-model-offer-and-1h-cache.md`.
+
+Tools: `tools\probe-model-allowlist.js` (the list four ways), `tools\probe-model-options-renewal.js` (does the offer renew, and the
+list without it), `tools\probe-model-call.js MODEL` (one one-word call, as a chat signs in), `tools\grep-binary.js` (text around a string
+in a large binary). Tests: `test-model-refresh.js` 28 (7 new).

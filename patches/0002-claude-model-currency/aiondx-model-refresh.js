@@ -242,6 +242,81 @@ function updateNpmClaude(cfg) {
   return results;
 }
 
+// ---- the account's model offer that Claude Code can no longer renew (2026-11-11: Fable 5.2 never reached a chat; a request for a fix
+// that holds for every future model)
+//
+// Claude Code's own list has the aliases (fable, opus, sonnet, haiku), each pointing at the newest build its version knows. One entry can be
+// replaced by the account's model offer: `additionalModelOptionsCache` in the config folder's .claude.json, which Claude Code fetches from
+// Anthropic at start (/api/claude_cli/bootstrap). A chat AionDX starts signs in with the account's token file (CLAUDE_CODE_OAUTH_TOKEN, a
+// `claude setup-token` token without the user:profile scope). For such a token the server sends a narrowed answer with no offer, and Claude
+// Code then keeps the offer it saved last, with no end date (Claude Code 2.1.322: `C = narrowed && additional_model_options == null`, and
+// the saved offer is kept). Measured on November 11th: the main account's offer was last answered on October 12th and named Fable 5.1, so every
+// chat listed `claude-fable-5-1[1m]` and never `fable` (Fable 5.2); the second account's named Fable 5. With the offer emptied, the same Claude Code
+// listed `fable > claude-fable-5-2` on both accounts.
+//
+// So in every config folder whose chats sign in with a token, an offer older than a day (no answer can renew it) is emptied, under Claude
+// Code's own lock (<file>.lock, a folder), with a copy of the file kept beside it. Claude Code then uses its built-in list, which moves with
+// each Claude Code update. An offer answered within the day (a full sign-in, /login) is left alone. Every other key is kept as it was.
+const OFFER_FROZEN_MS = 24 * 3600000;
+const pauseMs = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* no wait */ } };
+function withConfigLock(file, fn) {
+  const lock = file + '.lock';
+  for (let i = 0; ; i++) {
+    try { fs.mkdirSync(lock); break; } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      // proper-lockfile (Claude Code's) refreshes its lock every few seconds and treats one older than 10 s as abandoned
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > 10000) { fs.rmdirSync(lock); continue; } } catch (x) { /* gone */ }
+      if (i >= 20) return { busy: true };
+      pauseMs(250);
+    }
+  }
+  try { return fn(); } finally { try { fs.rmdirSync(lock); } catch (e) { /* gone */ } }
+}
+function thawModelOffer(dir) {
+  const file = path.join(dir, '.claude.json');
+  const peek = readJson(file);
+  if (!peek) return { state: 'none' };
+  const offer = peek.additionalModelOptionsCache;
+  if (!Array.isArray(offer) || !offer.length) return { state: 'none' };
+  const at = typeof peek.additionalModelOptionsAnsweredAt === 'number' ? peek.additionalModelOptionsAnsweredAt : 0;
+  if (Date.now() - at < OFFER_FROZEN_MS) return { state: 'fresh' };
+  const had = offer.map((o) => o && o.value).filter(Boolean);
+  const since = at ? new Date(at).toISOString().slice(0, 10) : 'an unknown date';
+  if (DRY) { log('claude: would empty the model offer in ' + file + ' (' + had.join(', ') + ', last answered ' + since + ')'); return { state: 'would-clear', had }; }
+  try {
+    const r = withConfigLock(file, () => {
+      const text = fs.readFileSync(file, 'utf8');
+      const c = JSON.parse(text);
+      if (!Array.isArray(c.additionalModelOptionsCache) || !c.additionalModelOptionsCache.length) return { state: 'none' };
+      const bak = file + '.aiondx-bak-' + new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      fs.writeFileSync(bak, text);
+      const baks = fs.readdirSync(dir).filter((n) => /^\.claude\.json\.aiondx-bak-\d{14}$/.test(n)).sort();
+      baks.slice(0, Math.max(0, baks.length - 3)).forEach((n) => { try { fs.unlinkSync(path.join(dir, n)); } catch (e) { /* in use */ } });
+      c.additionalModelOptionsCache = [];
+      const tmp = file + '.aiondx-tmp-' + process.pid;
+      fs.writeFileSync(tmp, JSON.stringify(c, null, 2));
+      fs.renameSync(tmp, file);
+      return { state: 'cleared', had };
+    });
+    if (r.busy) { log('claude: ' + file + ' stayed locked; its model offer is emptied next run'); return { state: 'busy' }; }
+    if (r.state === 'cleared') log('claude: emptied the model offer in ' + file + ' (' + had.join(', ') + ', last answered ' + since + '; a token sign-in cannot renew it), so Claude Code lists its own newest models');
+    return r;
+  } catch (e) { log('claude: emptying the model offer in ' + file + ' failed: ' + e.message); return { state: 'failed' }; }
+}
+/** Each config folder whose chats sign in with a token, once. */
+function thawOffers(rows, cfg) {
+  const seen = new Set(), out = [];
+  for (const row of rows) {
+    const e = envFor(row, cfg);
+    if (!e.env.CLAUDE_CODE_OAUTH_TOKEN) continue;
+    const k = path.resolve(e.dir).toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(Object.assign({ dir: e.dir }, thawModelOffer(e.dir)));
+  }
+  return out;
+}
+
 // ---- the Claude provider
 const claudeProvider = {
   id: 'claude',
@@ -251,10 +326,11 @@ const claudeProvider = {
     const found = ctx.exe ? { exe: ctx.exe, version: '?' } : newestClaude();
     if (!found) { log('claude: no Claude Code on this PC; nothing to refresh'); return { updates: [] }; }
     const cfg = routerConfig();
+    const thawed = thawOffers(ctx.rows, cfg).filter((t) => t.state === 'cleared');
     // --quick (AionDX's runs every 15 minutes): no Claude Code launch when every picker already has every model its account's catalog lists;
     // the full run (at AionDX's start and every 12 hours) asks Claude Code. Added 2026-11-10: the 15-minute run launched Claude Code for each
     // account every time, about 190 launches a day that found nothing.
-    if (args.includes('--quick') && !FORCE) {
+    if (args.includes('--quick') && !FORCE && !thawed.length) {
       const short = [];
       for (const row of ctx.rows) {
         if (row.enabled === 0) continue;
@@ -280,7 +356,8 @@ const claudeProvider = {
     await Promise.all([...groups.values()].map(async (g) => {
       const names = g.rows.map((r) => r.name || r.agent_id).join(', ');
       try {
-        const c = await catalog.refresh({ configDir: g.dir, exe: found.exe, env: g.env, force: FORCE, dryRun: DRY, exeArgs: ctx.exeArgs });
+        const thawedHere = thawed.some((t) => path.resolve(t.dir).toLowerCase() === path.resolve(g.dir).toLowerCase());
+        const c = await catalog.refresh({ configDir: g.dir, exe: found.exe, env: g.env, force: FORCE || thawedHere, dryRun: DRY, exeArgs: ctx.exeArgs });
         if (c.skipped) log('claude: catalog for ' + g.dir + ' ' + c.skipped);
         else log('claude: catalog for ' + g.dir + (c.changed ? ', new in the picker list: ' + c.added.join(', ') : ', no new models'));
       } catch (e) { log('claude: catalog for ' + g.dir + ' failed: ' + e.message); }
@@ -381,7 +458,7 @@ async function main(opts) {
   }
 }
 
-module.exports = { main, shapeRow, envFor, claudeCandidates, updateNpmClaude, npmPrefixes, PROVIDERS };
+module.exports = { main, shapeRow, envFor, claudeCandidates, updateNpmClaude, npmPrefixes, thawModelOffer, PROVIDERS };
 
 if (require.main === module) {
   const hard = setTimeout(() => { log('stopped at the 4-minute deadline'); process.exit(4); }, DEADLINE_MS);

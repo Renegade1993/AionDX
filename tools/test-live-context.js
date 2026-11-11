@@ -131,6 +131,22 @@ const READ = (hash, want) => `new Promise((resolve) => {
       check('both members show the account usage meter, though only the first has a record of its own', a && b && a.meter && b.meter, JSON.stringify({ first: a && a.meter, second: b && b.meter }));
       check('an account with no 5-hour figure shows the week alone: no "5h" in the text, no 5-hour bar', a && b && a.mtext === 'wk 20%' && b.mtext === 'wk 20%' && a.bar5 === 'none', JSON.stringify({ a: a && [a.mtext, a.bar5], b: b && [b.mtext, b.bar5] }));
       check('its tip names the plan read from the credentials in place of the label\'s own, and says there is no 5-hour limit', a && /test account · Ultra/.test(a.mtip) && !/\(Pro\)/.test(a.mtip) && /no 5-hour limit/.test(a.mtip), a && a.mtip);
+      // 2026-11-11: each member's ring says its own prompt cache state (Claude: 1 hour), read from its own conversation. AionUi's ring
+      // has it in its hover card; AionDX's own ring in its title. The pointer really moves over each ring (CDP mouse), as a person's would.
+      const cards = [];
+      for (const slot of SLOTS) {
+        const at = await app.js(`(() => { const e = document.querySelector('[data-slot-id="${slot}"] .sendbox-actions .context-usage-indicator'); if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, ours: e.classList.contains('aiondx-ctx'), title: e.title }; })()`);
+        if (!at) { cards.push(null); continue; }
+        if (at.ours) { cards.push(at.title); continue; }
+        await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await sleep(400);
+        await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+        let text = '';
+        for (let i = 0; i < 20 && !/Prompt cache/.test(text); i++) { await sleep(250); text = String(await app.js(`(() => { const c = [...document.querySelectorAll('.context-usage-popover')].filter((x) => x.offsetParent); return c.length ? c[c.length - 1].textContent : ''; })()`) || ''); }
+        if (!/Prompt cache/.test(text)) text += ' || hovered: ' + JSON.stringify(await app.js(`(() => { const h = document.querySelector('.context-usage-indicator:hover'); return { hovered: !!h, slot: h && h.closest('[data-slot-id]') && h.closest('[data-slot-id]').getAttribute('data-slot-id'), lines: window.__aionDx && window.__aionDx.ctxLines ? window.__aionDx.ctxLines() : 'no hook' }; })()`));
+        cards.push(text);
+      }
+      await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      check('each member\'s ring (hovered with the pointer) says when its prompt cache runs out or ran out', cards.length === 2 && cards.every((c) => /Prompt cache (warm until \d\d:\d\d \(Anthropic keeps it 1 hour\)|cold since \d\d:\d\d)/.test(c || '')), JSON.stringify(cards));
     }
     const solo = await wait(app.js(READ('#/conversation/' + SOLO, 1)));
     check('a solo chat that has run draws its ring at 50% (100K of 200K)', Array.isArray(solo) && solo[0] && Math.abs(solo[0].pct - 50) <= 1, JSON.stringify(solo));

@@ -13,7 +13,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 const src = fs.readFileSync(path.join(__dirname, 'claude-account-router.js'), 'utf8');
-const m = src.match(/function usageFor\(env, cfg, label\) \{[\s\S]*?\n\}\n/);
+// usageFor() became a wrapper that adds the plan (planOf); the store key, label and token logic tested here is usageFor0().
+const m = src.match(/function usageFor0\(env, cfg, label\) \{[\s\S]*?\r?\n\}\r?\n/);
 let pass = 0, fail = 0;
 const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok || detail === undefined ? '' : '   [' + String(detail).slice(0, 300) + ']'}`); };
 check('usageFor is found in the router', !!m);
@@ -22,7 +23,7 @@ if (!m) { console.log(`\n${pass}/${pass + fail} passed`); process.exit(1); }
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-usagefor-'));
 const profile = path.join(scratch, 'profile');
 // eslint-disable-next-line no-new-func
-const usageFor = new Function('fs', 'path', 'require', 'process', 'realProfileDir', m[0] + '\nreturn usageFor;')(
+const usageFor = new Function('fs', 'path', 'require', 'process', 'realProfileDir', m[0] + '\nreturn usageFor0;')(
   fs, path, require, { env: {} }, () => profile);
 const hash = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 12);
 const writeCred = (dir, o) => { fs.mkdirSync(dir, { recursive: true }); const f = path.join(dir, '.credentials.json'); fs.writeFileSync(f, JSON.stringify(o)); return f; };
