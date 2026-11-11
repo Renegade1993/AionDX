@@ -131,6 +131,14 @@ try {
   fs.writeFileSync(gcB, JSON.stringify(Object.assign({}, bodyB, { additionalModelOptionsAnsweredAt: Date.now() - 3600000 })));
   r = run(['--quick', '--no-update']);
   check('an offer answered within the day (a full sign-in) is left alone', JSON.parse(fs.readFileSync(gcB, 'utf8')).additionalModelOptionsCache.length === 1);
+  // the database's planner statistics (November 11th: a message lookup scanned the whole table without them)
+  {
+    const dd = new DatabaseSync(dbFile, { readOnly: true });
+    const has = !!dd.prepare("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'").get(); dd.close();
+    const logText = fs.readFileSync(path.join(root, 'logs', 'model-refresh.log'), 'utf8');
+    check('the database gets planner statistics', has && /refreshed the database planner statistics/.test(logText));
+    check('and only once a day', (logText.match(/refreshed the database planner statistics/g) || []).length === 1, (logText.match(/refreshed the database planner statistics/g) || []).length);
+  }
   // the lock
   fs.writeFileSync(path.join(root, 'logs', 'model-refresh.lock'), JSON.stringify({ pid: 999999, at: Date.now() }));
   r = run([]);

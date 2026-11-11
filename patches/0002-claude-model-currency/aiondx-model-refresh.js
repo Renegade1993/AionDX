@@ -417,6 +417,25 @@ function sweepScratch() {
   if (n) log('removed ' + n + ' scratch folder(s) earlier runs left in ' + tmp);
 }
 
+/** The database's planner statistics, refreshed once a day (and at once when there are none). Without them SQLite answered AionCore's
+ *  lookup of one streamed message (conversation, msg_id, type) by scanning every message of that type: up to 16 s on November 11th, 2026,
+ *  166 times that day, stalling the backend for every chat; with them it uses the msg_id index (1,381 ms to 0.2 ms, measured live).
+ *  `analysis_limit` keeps it under a second on a 2 GB database. Only sqlite_stat1 is written; no chat data. */
+function dbUpkeep() {
+  const stamp = path.join(LOG_DIR, 'db-analyze.json');
+  const last = (readJson(stamp) || {}).at || 0;
+  let have = true;
+  try { const d0 = db(true); try { have = !!d0.prepare("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'").get(); } finally { d0.close(); } } catch (e) { return; }
+  if (have && !FORCE && Date.now() - last < 24 * 3600000) return;
+  if (DRY) { log('would refresh the database planner statistics'); return; }
+  try {
+    const d = db(false);
+    try { const t = Date.now(); d.exec('PRAGMA analysis_limit = 400; ANALYZE;'); log('refreshed the database planner statistics (' + (Date.now() - t) + ' ms)'); }
+    finally { d.close(); }
+    fs.writeFileSync(stamp, JSON.stringify({ at: Date.now() }));
+  } catch (e) { log('database planner statistics not refreshed: ' + e.message); }
+}
+
 async function main(opts) {
   opts = opts || {};
   if (!fs.existsSync(DB)) { log('no AionUi database at ' + DB + '; nothing to do'); return 0; }
@@ -426,6 +445,7 @@ async function main(opts) {
   if (lock && lock.at && Date.now() - lock.at < DEADLINE_MS + 30000 && lock.pid !== process.pid) { log('another refresh is running (pid ' + lock.pid + ')'); return 0; }
   fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, at: Date.now() }));
   sweepScratch();
+  dbUpkeep();
   try {
     const d0 = db(true);
     let cols, rows;

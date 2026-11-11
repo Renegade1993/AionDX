@@ -1003,3 +1003,12 @@ The agent control's menu (switch agent, continue in a new chat, swap a member) o
 - The ring's hover card (AionUi's and AionDX's own) has a line: "Prompt cache warm until 08:33 (Anthropic keeps it 1 hour)", or "Prompt
   cache cold since 08:33: the next message pays to write the whole context again". For a team, the member whose ring is under the pointer.
 - Not changed: the Loop's own `CACHE_TTL_MS` (5 minutes: nudge timing, rest-when-cold, its "Cache: warm until" line). Left for a separate decision.
+
+## Build `2026-11-11.1`, continued: two repeat-request loops (bug sweep of the backend log)
+
+- `agentRead` (which agent a chat runs on, for the usage meter): a failed read cleared its mark and repainted, and the repaint asked
+  again. For a deleted chat that still had a usage record that ran at render speed: 7,360 requests for four deleted chats in 24 seconds
+  on November 11th. Now a 404 means gone and is never asked again, other failures wait a minute, only a read that found something
+  repaints. Click test: a deleted chat with a usage record is asked about exactly once over 12 repaints.
+- `pathInfo` (is a linked path a folder, how big): a path the backend refuses (outside its sandbox, 403) was not cached, so every
+  repaint asked again (101 times that day). Refusals are cached for the same 5 minutes as answers.

@@ -4063,15 +4063,21 @@
   // account, so a chat without a record borrows the account of the newest chat that has one and uses the same agent.
   var agentOf = {};      // conversation id -> its agent's id ('' when it has none), read from the conversation
   var agentAsked = {};
+  var agentAskFailed = {};   // conversation id -> when its last read failed (asked again a minute later at the earliest)
+  // A failed read used to clear its mark and repaint, and the repaint asked again: for a deleted chat that still had a usage record, a loop
+  // at render speed (2026-11-11: 7,360 requests for four deleted chats in 24 seconds). A chat the backend no longer has (404) is never
+  // asked again; any other failure waits a minute; only a read that found something repaints.
   function agentRead(convId) {
     if (agentOf[convId] !== undefined || agentAsked[convId]) return;
+    if (agentAskFailed[convId] && Date.now() - agentAskFailed[convId] < 60000) return;
     agentAsked[convId] = true;
     getJson('/api/conversations/' + convId).then(function (g) {
       var e = g && g.data && g.data.extra;
-      if (g && g.data) agentOf[convId] = String((e && e.agent_id) || '');
-      else delete agentAsked[convId];
-      schedule();
-    }, function () { delete agentAsked[convId]; });
+      if (g && g.data) { agentOf[convId] = String((e && e.agent_id) || ''); schedule(); return; }
+      delete agentAsked[convId];
+      if (g && g.err === 404) agentOf[convId] = '';
+      else agentAskFailed[convId] = Date.now();
+    }, function () { delete agentAsked[convId]; agentAskFailed[convId] = Date.now(); });
   }
   function usageGuess(convId) {
     // the agent a chat runs on: the one picked for it in the account menu, else the one it was made with
@@ -9408,7 +9414,7 @@
     return postJson('/api/fs/metadata', { path: path }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
       var d = j ? unwrap(j) : null;
       var inf = { at: Date.now(), dir: !!(d && (d.is_directory || d.isDirectory)), size: d && Number(d.size) > 0 ? Number(d.size) : 0 };
-      if (d) dirCache[path] = inf;
+      dirCache[path] = inf;   // a refusal too (outside the sandbox, 403): it was asked again on every repaint (101 times on 2026-11-11)
       return inf;
     }, function () { return { dir: false, size: 0 }; });
   }

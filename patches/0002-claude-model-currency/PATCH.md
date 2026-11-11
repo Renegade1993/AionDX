@@ -363,3 +363,10 @@ Claude Code and rewrite the pickers. The evidence and Claude Code's code: `! LLM
 Tools: `tools\probe-model-allowlist.js` (the list four ways), `tools\probe-model-options-renewal.js` (does the offer renew, and the
 list without it), `tools\probe-model-call.js MODEL` (one one-word call, as a chat signs in), `tools\grep-binary.js` (text around a string
 in a large binary). Tests: `test-model-refresh.js` 28 (7 new).
+
+## November 11th, 2026 (later): the database's planner statistics
+
+The database had none (`sqlite_stat1`), so SQLite answered AionCore's lookup of one streamed message (conversation, `msg_id`, type) by
+scanning every message of that type through the type index: up to 16 s, 166 times on November 11th, stalling the backend for every chat.
+`PRAGMA analysis_limit = 400; ANALYZE;` makes it use the `msg_id` index: 1,381 ms to 0.2 ms on the live database, in 0.8 s, writing only
+the statistics. `aiondx-model-refresh.js` (`dbUpkeep`) now does it once a day, and at once when the statistics are missing. Tests: 30.

@@ -1455,6 +1455,19 @@ async function pageTarget() {
       const q = await posts('/api/conversations/harness1/messages');
       check(sc, 'a nudge ends with the account usage, and warns near a limit', q.length === 1 && /\n\[Usage: 5-hour 93% \(resets \d\d:\d\d\), week 75% \(resets .+\)\. Close to a limit: plan the work to fit\.\]$/.test(q[0].body.content), JSON.stringify(q));
 
+      // A usage record for a chat the backend no longer has (404): asked about once, not on every repaint (2026-11-11: 7,360 requests in
+      // 24 seconds for four deleted chats).
+      // The open chat has no record of its own, so the page borrows one from a chat on the same agent and reads each recorded chat's agent.
+      await load('theme=light');
+      await js(`(() => { delete window.__stub.store['aiondx.usage.conv.harness1']; return 0; })()`);
+      await putStore('aiondx.usage.acct.k9', { label: 'Main', at: Date.now() - 20000, status: 'allowed', seven_day: { u: 0.2, reset: nowS + 2 * 86400, status: 'allowed' } });
+      await putStore('aiondx.usage.conv.gonechat', { acct: 'k9', at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await js('window.__calls.length = 0; 0');
+      for (let i = 0; i < 12; i++) { await js('window.__aionDx.repaint()'); await sleep(250); }
+      const goneAsks = await js(`window.__calls.filter(c => c.method === 'GET' && c.path === '/api/conversations/gonechat').length`);
+      check(sc, 'a deleted chat with a usage record is asked about once over 12 repaints, not on each', goneAsks === 1, goneAsks);
+
       // Claude's own limit message, with no usage reading to go by: waited out to the time it states.
       await load('theme=light');
       await armVia('');
