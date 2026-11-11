@@ -8,3 +8,6 @@ dist/
 *.exe
 __pycache__/
 *.pyc
+
+# scratch space for sessions; never published
+.tmp/
