@@ -66,6 +66,29 @@ try {
     ok(`${mode}: the ownership key stays aionui in the minified catalog and its colour map`, out.includes('ownership:{aionui:"应用"') && out.includes('Rr={aionui:"red"'));
     ok(`${mode}: an aionui: that is not an object key (a link scheme) is still renamed`, out.includes('"aiondx://open"'));
   }
+
+  // Core mode on a tree: aionui-session is also AionCore's crate. In Cargo files the crate (its folder is renamed) must be
+  // renamed with it, or cargo can't find crates/aionui-session; in Rust source the cookie literal keeps its name.
+  const core = path.join(tmp, 'core');
+  const put = (rel, text) => { fs.mkdirSync(path.dirname(path.join(core, rel)), { recursive: true }); fs.writeFileSync(path.join(core, rel), text); };
+  put('Cargo.toml', '[workspace]\nmembers = [\n    "crates/aionui-session",\n    "crates/aionui-common",\n]\n\n[workspace.dependencies]\naionui-session = { path = "crates/aionui-session" }\n');
+  put('Cargo.lock', '[[package]]\nname = "aionui-session"\nversion = "0.2.2"\n');
+  put('crates/aionui-session/Cargo.toml', '[package]\nname = "aionui-session"\nversion = "0.2.2"\n');
+  put('crates/aionui-common/Cargo.toml', '[package]\nname = "aionui-common"\n\n[dependencies]\naionui-session.workspace = true\n');
+  put('crates/aionui-common/src/constants.rs', 'pub const COOKIE_NAME: &str = "aionui-session";\npub const CSRF_COOKIE_NAME: &str = "aionui-csrf-token";\n');
+  const run = spawnSync(process.execPath, [path.join(__dirname, 'brand-names.js'), core, '--mode', 'core'], { encoding: 'utf8' });
+  ok('core tree: brand-names ran', run.status === 0, run.stderr);
+  const read = (rel) => (fs.existsSync(path.join(core, rel)) ? fs.readFileSync(path.join(core, rel), 'utf8') : '');
+  ok('core tree: the aionui-session crate folder is renamed', fs.existsSync(path.join(core, 'crates/aiondx-session')) && !fs.existsSync(path.join(core, 'crates/aionui-session')));
+  const ws = read('Cargo.toml');
+  ok('core tree: Cargo.toml names the renamed crate (members and dependency)',
+    ws.includes('"crates/aiondx-session"') && ws.includes('aiondx-session = { path = "crates/aiondx-session" }') && !ws.includes('aionui-session'), ws);
+  ok('core tree: Cargo.lock names the renamed crate', read('Cargo.lock').includes('name = "aiondx-session"'), read('Cargo.lock'));
+  ok('core tree: the crate\'s own package name is renamed', read('crates/aiondx-session/Cargo.toml').includes('name = "aiondx-session"'));
+  ok('core tree: a dependent\'s key is renamed', read('crates/aiondx-common/Cargo.toml').includes('aiondx-session.workspace = true'));
+  const rs = read('crates/aiondx-common/src/constants.rs');
+  ok('core tree: the COOKIE_NAME literal in Rust stays aionui-session (and the CSRF one)',
+    rs.includes('COOKIE_NAME: &str = "aionui-session"') && rs.includes('CSRF_COOKIE_NAME: &str = "aionui-csrf-token"'), rs);
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

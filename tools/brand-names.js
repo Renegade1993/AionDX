@@ -64,7 +64,8 @@ function brand(text, rel) {
   mask(/aionui-(?:encryption-key|secret-fingerprint):/g, 'key-prefix');
   // AionCore's session and CSRF cookie names: a contract between the app and AionCore, kept in both modes so a stock AionCore
   // and AionDX's own build both match the app (renamed in the app alone, the app never found its session cookie: every write was refused)
-  mask(/aionui-(?:session|csrf-token)(?![A-Za-z0-9_-])/g, 'cookie-name');
+  // (not in Cargo files: there aionui-session is the crate of that name, whose folder is renamed with the rest)
+  if (!/\.(toml|lock)$/i.test(rel)) mask(/aionui-(?:session|csrf-token)(?![A-Za-z0-9_-])/g, 'cookie-name');
   // the directories the app hands AionCore at start-up, by environment variable: the same contract (renamed in the app alone,
   // AionCore reported no cache or log folder at all)
   mask(/AIONUI_(?:CACHE|WORK|LOG)_DIR(?![A-Z0-9_])/g, 'core-env');
