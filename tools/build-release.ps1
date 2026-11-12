@@ -112,12 +112,25 @@ if ($idx -notmatch 'aiondx-voice\.js') {
 Copy-Item "$root\patches\0011-voice\aiondx-voice.js" "$ext\out\renderer\aiondx-voice.js" -Force
 Copy-Item "$root\patches\0011-voice\aiondx-voice-ui.js" "$ext\out\renderer\aiondx-voice-ui.js" -Force
 Say "patch 0011: aiondx-voice.js, aiondx-voice-ui.js and their script tags"
+# Patch 0018: Settings > Mobile (pairing, paired phones, the bridge's switches). qrcodegen.js (window.AionDxQrcodegen, vendored
+# from the qrcode.react the app already ships) loads before aiondx-mobile-settings.js, which draws the pairing QR with it.
+if ($idx -notmatch 'aiondx-mobile-settings\.js') {
+  $idx = $idx -replace '(<script src="\./aiondx-ui\.js" defer></script>)', "`$1`r`n    <script src=`"./aiondx-qrcodegen.js`" defer></script>`r`n    <script src=`"./aiondx-mobile-settings.js`" defer></script>"
+  if ($idx -notmatch 'aiondx-mobile-settings\.js') { throw 'patch 0018: the aiondx-ui.js script tag to insert after was not found' }
+  Set-Content "$ext\out\renderer\index.html" $idx -NoNewline -Encoding utf8
+}
+Copy-Item "$root\patches\0018-mobile-settings\qrcodegen.js" "$ext\out\renderer\aiondx-qrcodegen.js" -Force
+Copy-Item "$root\patches\0018-mobile-settings\aiondx-mobile-settings.js" "$ext\out\renderer\aiondx-mobile-settings.js" -Force
+Say "patch 0018: aiondx-qrcodegen.js, aiondx-mobile-settings.js and their script tags"
 foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-identity', '0012-no-builtin-browser', '0013-chat-anchors', '0014-mcp-oauth-ui-state', '0017-dollar-text', '0018-reply-lane', '0019-question-notice')) {
   Run $node @("$root\patches\$p\apply.js", $ext) "patch $p"
   Say "patch $p applied"
 }
 Run $node @("$root\patches\0010-official-identity\apply.js", $ext, $Version, '--report', "$work\0010-report.txt") 'patch 0010'
 Say "patch 0010 applied (report: $work\0010-report.txt)"
+# Patch 0018's main-process side: one narrow IPC handler for the Windows Firewall rule (built in main, run through
+# resources\elevate.exe on the user's click) and window.aiondxMobile in the preload. After 0010, which edits the same preload line.
+Run $node @("$root\patches\0018-mobile-settings\apply.js", $ext) 'patch 0018 (main, preload)'
 # The AionDX names (a request of 2026-11-01): AionUi is renamed to AionDX across the app, except the licence notices, web addresses and the stored values
 # tools\brand-names.js lists. Patch 0015 goes after it: it holds the old data folder's name, which must stay as written.
 # The two unpacked scripts stay stock here (the pack step refuses changes to unpacked files); they are renamed in the stage below.
@@ -247,6 +260,9 @@ Files AionDX changed or added:
        reply (text to speech), and a Settings > Appearance section to pick the provider, API key and
        voice, backed by ElevenLabs (out/renderer/aiondx-voice.js, out/renderer/aiondx-voice-ui.js and
        two script tags in out/renderer/index.html)
+  0018 mobile settings: Settings > Mobile, the PC side of the AionDX phone app - turning phone access on,
+       pairing a phone (a QR code, then a code to compare), paired phones, the bridge's options
+       (out/renderer/aiondx-qrcodegen.js, out/renderer/aiondx-mobile-settings.js and two script tags)
 - resources\aiondx\: AionDX's own programs, skills and icon.
 - resources\bundled-aioncore\win32-x64\managed-resources\node\node-v$NODE_VER-win-x64\: Node.js $NODE_VER from
   nodejs.org, unchanged (MIT; its LICENSE is in that folder), for a PC without Node.
@@ -273,7 +289,7 @@ $release = [ordered]@{
   files = [ordered]@{ 'AionDX.exe' = $exeSha; 'resources/app.asar' = $asarSha; 'resources/bundled-aioncore/win32-x64/aioncore.exe' = $coreSha }
   appBytes = $stageBytes
   patches = @('0001-renderer-dx', '0002-claude-model-currency', '0003-local-account', '0004-setup-butler', '0005-claude-exe-shim',
-    '0006-butler-to-antigravity', '0007-loop-tool', '0008-agy-signin', '0009-identity', '0010-official-identity', '0011-voice') + @($(if ($coreRec) { @($coreRec.patches) } else { @() }))
+    '0006-butler-to-antigravity', '0007-loop-tool', '0008-agy-signin', '0009-identity', '0010-official-identity', '0011-voice', '0018-mobile-settings') + @($(if ($coreRec) { @($coreRec.patches) } else { @() }))
   userFiles = @($userFiles)
 }
 [IO.File]::WriteAllText("$payload\release.json", ($release | ConvertTo-Json -Depth 6), $utf8)
@@ -333,7 +349,7 @@ Copy-Item "$dist\README.txt" "$stage\README.txt"
 # 7b. Nothing about this PC, its user, their accounts, people or other projects ships (a request of 2026-09-27, after team
 # names, a tester's name and this PC's name were found in the shipped comments and release.json). Every file AionDX
 # adds to the app: its renderer scripts, its block of the main process, the payload, the README. Any hit stops the build.
-Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aiondx-ui.js", "$ext\out\renderer\aiondx-themes.js", "$ext\out\renderer\aiondx-voice.js", "$ext\out\renderer\aiondx-voice-ui.js", "$stage\README.txt") 'privacy check: renderer and README'
+Run $node @("$root\tools\privacy-check.js", '--files', "$ext\out\renderer\aiondx-ui.js", "$ext\out\renderer\aiondx-themes.js", "$ext\out\renderer\aiondx-voice.js", "$ext\out\renderer\aiondx-voice-ui.js", "$ext\out\renderer\aiondx-qrcodegen.js", "$ext\out\renderer\aiondx-mobile-settings.js", "$stage\README.txt") 'privacy check: renderer and README'
 Run $node @("$root\tools\privacy-check.js", '--block', "$ext\out\main\index.js") 'privacy check: main process block'
 Run $node @("$root\tools\privacy-check.js", '--dir', $payload) 'privacy check: payload'
 

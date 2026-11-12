@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "conventions": "See header of gen-vectors.js and CONTRACT.md Appendix A.",
+  "inputs": {
+    "S_h": {
+      "priv": "77c7a6834512767fdaa2098e05104b29288a9dded68965e9c24cdd1e8fe0d8a3",
+      "pub": "4de5eaedf7b2948e6a1cc7a3c1f7db3ab511c7a8c088a5a70a83cc2917393901",
+      "pubB64u": "TeXq7feylI5qHMejwffbOrURx6jAiKWnCoPMKRc5OQE"
+    },
+    "S_c": {
+      "priv": "a7cc053797bb5461b732a0521573a033c48500e1fb2bfa21f1900d819361cf2f",
+      "pub": "77272ea395081d2788a3665a99aad09d8808cdd412e05feb6354a72b9bed8806",
+      "pubB64u": "dycuo5UIHSeIo2ZamarQnYgIzdQS4F_rY1SnK5vtiAY"
+    },
+    "e_c": {
+      "priv": "d0c979500739405d92e38e3efb2d05ab89346fcddb8f6ddb1a1aa5b721ecd088",
+      "pub": "2405ab92a162f61388c609b77e4adb94eab0274d2a749d1c4a60634841765511",
+      "pubB64u": "JAWrkqFi9hOIxgm3fkrblOqwJ00qdJ0cSmBjSEF2VRE"
+    },
+    "e_h": {
+      "priv": "9a5b0b1011117002c38184c997c5678eea95f1d54fa1b6919141a0c436ef18ca",
+      "pub": "98c5fac96d75eaac943145c8e205200123c57e0db1cc35d5fb7396578e8a133c",
+      "pubB64u": "mMX6yW116qyUMUXI4gUgASPFfg2xzDXV-3OWV46KEzw"
+    },
+    "hostId": "5ilY6IgiyJtyu2xIg0xJGQ",
+    "deviceId": "ei0ohvJ3gKjjutsuzEKl4g",
+    "pairingSecret": "5e95a12a665f830a5183f41f4859498b31ea3248b4deea10ab0e9fcd19099396",
+    "ts": 1794023000000
+  },
+  "pairing": {
+    "dh_Sc_Sh": "d9dc21d7220ba640ad8a43b4ae7d698347f87f43ce9c51e193ee3ba09b88bf75",
+    "k_pair": "278c295fc7faf9998de4596d8f6ed82a6cf21076757aa3e780f4d52b324afe9c",
+    "sasBytes": "c2d89240",
+    "sas": "973 120",
+    "request": {
+      "plaintext": "{\"deviceName\":\"Test Phone\",\"platform\":\"ios\",\"appVersion\":\"1.0.0\",\"ts\":1794023000000,\"confirmMode\":\"biometric\",\"wait\":false}",
+      "aad": "61696f6e64782f76312f706169722d7265717c35696c5936496769794a7479753278496730784a47517c6569306f68764a33674b6a6a757473757a454b6c3467",
+      "nonce": "DplRPuZm8iJ5qAmKkDgoBVHY_w7Bqfh4",
+      "ct": "ZRNGKfVY-9w4VaOgX5r1lQunvtMmXYdCpi7Tc8TerXWN5NvlaPU609zS8v0fi31DkMKOaW2vcvAzJEAQqOIh7tAo_Mc4MtfJyAtGtmO0EaG6BwedjBZWRiEyyN6UnMtRo8RP436z8GvWNAdN_IirzQSMz8kiuFNkxEAainDMfbPFg87tPopdroUiRw"
+    },
+    "response": {
+      "plaintext": "{\"status\":\"approved\",\"hostId\":\"5ilY6IgiyJtyu2xIg0xJGQ\",\"hostName\":\"Test PC\",\"ts\":1794023001000,\"reqTs\":1794023000000,\"confirmKey\":\"UuUoSPKtbocH8Q1E20-B-bHKxVhCOELoAPGdfIL1dmo\"}",
+      "aad": "61696f6e64782f76312f706169722d7265737c35696c5936496769794a7479753278496730784a47517c6569306f68764a33674b6a6a757473757a454b6c3467",
+      "nonce": "4v9epQ1iY3HdJI8Gjmx-qT5urfFiWAhn",
+      "ct": "G66Su2GLd6zSv39j-41JkEnRq0BLzpQhy0BSrVw5ukEB6k-LDNKqjxji-OxKGnuRJJg31w5SdY04ZcZA-GKBqKI9DzOIeSzzf9qkwSz-DkechYteNzrDX8b1L2aFjvtFKJFN4eHGS8mDfJiH7BR5QO-SHNBhWsWu0PsCT1m6aQ-vmlJpLwWQXqTn2rHP-TrLm839BA63OtUDQSIurtZQ1IYtu7ei90KmSjKQjpGfGvFcvyAUamvbrYliAveHD4tW"
+    },
+    "confirmKey": "52e52848f2ad6e8707f10d44db4f81f9b1cac558423842e800f19d7c82f5766a"
+  },
+  "handshake": {
+    "dh_ec_Sh": "493b3152b165f2167a5618109e1ab028b43bb842e06ee2a5000931271d2fc747",
+    "dh_Sc_Sh": "d9dc21d7220ba640ad8a43b4ae7d698347f87f43ce9c51e193ee3ba09b88bf75",
+    "dh_ec_eh": "9e3d172de99b01f131ecd719f9867aa1eb1a581ec95aa5ba933ba6684121e752",
+    "dh_Sc_eh": "aecfdee34c286147f0b8d5ceef82ea7459f33df6a58ba3b3ff9f68369b11fe76",
+    "initSalt": "98940aee42ee7d8d8285f26c252e17d5abeae0f0f44e3c129040884f9b9e40f0",
+    "k_init": "e48f526bd72c80d115480dc40bc85f5f7af37cd3060229a501304ee42e03c566",
+    "init": {
+      "plaintext": "{\"ts\":1794023000000}",
+      "aad": "61696f6e64782f76312f68732d696e69747c35696c5936496769794a7479753278496730784a47517c6569306f68764a33674b6a6a757473757a454b6c34677c2405ab92a162f61388c609b77e4adb94eab0274d2a749d1c4a60634841765511",
+      "nonce": "0rxlQC_uHcDzVM6IYq0raNR8VkiEmW2v",
+      "ct": "EJNZ2dNKlGDurpL-wsX1e092Hyv6yJGLygJ3E9wGntV0vqe2"
+    },
+    "transcript": "8b6614f8a6e12e4525a5592d898f83dc2b69a813539b6db52499424b9dce32a7",
+    "okm": "c017b8fcc06bc85190ba675c94681f3bbdb4a9763c62b569ea17edce7cda47d66399831f8b8421765185267f9d1fc803931f71f0d0e35ad0153366d6860cd5d851e6656b1d4f32582e415ebbd36027ef",
+    "c2s": "c017b8fcc06bc85190ba675c94681f3bbdb4a9763c62b569ea17edce7cda47d6",
+    "s2c": "6399831f8b8421765185267f9d1fc803931f71f0d0e35ad0153366d6860cd5d8",
+    "sid": "51e6656b1d4f32582e415ebbd36027ef",
+    "sidB64u": "UeZlax1PMlguQV6702An7w",
+    "response": {
+      "plaintext": "{\"expiresAt\":1794066200000,\"idleTimeoutMs\":1800000}",
+      "aad": "8b6614f8a6e12e4525a5592d898f83dc2b69a813539b6db52499424b9dce32a7",
+      "nonce": "VOyktW0zUrjh89qur-z9NS8BSfD727M2",
+      "ct": "NsPVUZD01QtYkFHgjEK0Qn8DmsoTr6dB2YE67LgtBrjK5NkP1GwrW7PeG_Ie6CDe77t-K2Qd4R15UIBGJQwzSgjIlA"
+    }
+  },
+  "rpc": {
+    "seq": 1,
+    "request": {
+      "plaintext": "{\"method\":\"GET\",\"path\":\"/v1/teams\",\"rid\":\"00000000-0000-4000-8000-000000000001\"}",
+      "aad": "61696f6e64782f76312f7270632d72657151e6656b1d4f32582e415ebbd36027ef0000000000000001",
+      "nonce": "xUrEXHUEcv7myE4Sl9p4g2nfFQiAm5SK",
+      "ct": "V3U-_CTAgQF-7JPaEadAiGgdMfDI6pR6Xgh3QMt_aNtxOHEr4cCWu3IaiHDAp6qwHzOrdjwDg68EA7RrK3e13l09WjXU-YLFyel0wysOEf2xTOzyoEzuBQ3fR8xK0g8T"
+    },
+    "response": {
+      "plaintext": "{\"status\":200,\"body\":[]}",
+      "aad": "61696f6e64782f76312f7270632d72657351e6656b1d4f32582e415ebbd36027ef0000000000000001",
+      "nonce": "NfjTOedmZ2hdoO6aJHbOriMn3pwppKo1",
+      "ct": "1rz4VQ8lWSEvBwhn1tAjP0_7n3roMo3xJr_PNblNyA7zatJzyMhgOw"
+    }
+  },
+  "revocation": {
+    "dh_Sh_ec": "493b3152b165f2167a5618109e1ab028b43bb842e06ee2a5000931271d2fc747",
+    "salt": "f304520b33c9dde5461c33cccbb975629a18e8243bee1549f1250f84832982fd",
+    "k_rev": "2047aa5dc2721875c86efcc55b524da53815cdd9eb753d067d3f717533030a2d",
+    "notice": {
+      "plaintext": "{\"deviceId\":\"ei0ohvJ3gKjjutsuzEKl4g\",\"ts\":1794023000000,\"reason\":\"revoked\"}",
+      "aad": "61696f6e64782f76312f7265766f6b65647c35696c5936496769794a7479753278496730784a47517c6569306f68764a33674b6a6a757473757a454b6c34677c2405ab92a162f61388c609b77e4adb94eab0274d2a749d1c4a60634841765511",
+      "nonce": "aUknd0b_sgbp-aOsWjhlSGb6QbiKQkFm",
+      "ct": "CH7iNgE6qqV6ySOZGa2juNqO99J0IL6E5xuew-83ZX92g3ZVMkSNwk2UjeknHOErOwjgDGJlYPdyvYZTvrkf3kycslW8TeoHsouWiHLxt8bllH3TgQwTF2-A4Q"
+    }
+  },
+  "confirm": [
+    {
+      "method": "POST",
+      "path": "/v1/approvals/YWJjZDEyMzQ6Y2FsbC0x/answer",
+      "rid": "00000000-0000-4000-8000-000000000002",
+      "seq": 7,
+      "body": {
+        "decision": "allow_once"
+      },
+      "jcs": "{\"decision\":\"allow_once\"}",
+      "jcsHex": "7b226465636973696f6e223a22616c6c6f775f6f6e6365227d",
+      "bodySha256": "ec61fad1ffee573da5294fa8129f8110d6b6fd5de21a7f2a86b0b78ac9330b70",
+      "macInput": "61696f6e64782f76312f636f6e6669726d51e6656b1d4f32582e415ebbd36027ef0000000000000007504f5354002f76312f617070726f76616c732f59574a6a5a4445794d7a513659324673624330782f616e7377657200ec61fad1ffee573da5294fa8129f8110d6b6fd5de21a7f2a86b0b78ac9330b7030303030303030302d303030302d343030302d383030302d303030303030303030303032",
+      "confirm": "Ft38sDQLFZ6y5lautY1dVAx7prxLWRVSVeNA3pOrul4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/teams/t1/agents",
+      "rid": "00000000-0000-4000-8000-000000000003",
+      "seq": 8,
+      "body": {
+        "name": "Reviewer é中",
+        "assistantId": "asst-1",
+        "model": null,
+        "flags": [
+          true,
+          2
+        ]
+      },
+      "jcs": "{\"assistantId\":\"asst-1\",\"flags\":[true,2],\"model\":null,\"name\":\"Reviewer é中\"}",
+      "jcsHex": "7b22617373697374616e744964223a22617373742d31222c22666c616773223a5b747275652c325d2c226d6f64656c223a6e756c6c2c226e616d65223a22526576696577657220c3a9e4b8ad227d",
+      "bodySha256": "65a12c76fdc06b72fc1ab9d2e3922629bfc079ec96a8d07c2336b4ff9796edb5",
+      "macInput": "61696f6e64782f76312f636f6e6669726d51e6656b1d4f32582e415ebbd36027ef0000000000000008504f5354002f76312f7465616d732f74312f6167656e74730065a12c76fdc06b72fc1ab9d2e3922629bfc079ec96a8d07c2336b4ff9796edb530303030303030302d303030302d343030302d383030302d303030303030303030303033",
+      "confirm": "-2De3meoCTcartmUP9w4Oit5uUf289VbTi72CAQ8IVg"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/teams/t1/agents/slot-9",
+      "rid": "00000000-0000-4000-8000-000000000004",
+      "seq": 9,
+      "body": "(absent)",
+      "jcs": "null",
+      "jcsHex": "6e756c6c",
+      "bodySha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "macInput": "61696f6e64782f76312f636f6e6669726d51e6656b1d4f32582e415ebbd36027ef000000000000000944454c455445002f76312f7465616d732f74312f6167656e74732f736c6f742d390074234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b30303030303030302d303030302d343030302d383030302d303030303030303030303034",
+      "confirm": "R-2llu3jRKSFtlytl2wpRUMpzu0jMhlV9HWOod4CWzs"
+    }
+  ],
+  "rekey": {
+    "rekeySecret": "dbb09977c924936433bdca4079150972f78d217092c2b9faa50ce2fa49a01c17",
+    "rekeySecretB64u": "27CZd8kkk2QzvcpAeRUJcveNIXCSwrn6pQzi-kmgHBc",
+    "macInput": "61696f6e64782f76312f72656b657951e6656b1d4f32582e415ebbd36027ef6569306f68764a33674b6a6a757473757a454b6c3467",
+    "proof": "wZNouRaVUApm4tri6v47vpQVAZiXkPQvGwg2Yhxk3M4"
+  }
+}

@@ -1,0 +1,597 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 94ed1f9f..b05f590b 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -369,6 +369,7 @@ dependencies = [
+  "libc",
+  "mime_guess",
+  "regex",
++ "reqwest",
+  "rusqlite",
+  "serde",
+  "serde_json",
+@@ -1037,6 +1038,7 @@ dependencies = [
+  "tempfile",
+  "thiserror 2.0.18",
+  "tokio",
++ "tower",
+  "tracing",
+  "tracing-subscriber",
+ ]
+diff --git a/crates/aionui-auth/src/lib.rs b/crates/aionui-auth/src/lib.rs
+index ac067b34..bb30e230 100644
+--- a/crates/aionui-auth/src/lib.rs
++++ b/crates/aionui-auth/src/lib.rs
+@@ -64,7 +64,7 @@ pub use csrf::csrf_middleware;
+ 
+ // Auth middleware
+ pub use middleware::{
+-    AuthIdentityMode, AuthState, CurrentUser, IRuntimeTokenVerifier, RUNTIME_CONVERSATION_ID_HEADER,
++    AuthChannel, AuthIdentityMode, AuthState, CurrentUser, IRuntimeTokenVerifier, RUNTIME_CONVERSATION_ID_HEADER,
+     RUNTIME_TOKEN_HEADER, RUNTIME_USER_ID_HEADER, auth_middleware, local_auth_middleware,
+ };
+ 
+diff --git a/crates/aionui-auth/src/middleware.rs b/crates/aionui-auth/src/middleware.rs
+index 0945b406..f6c09a09 100644
+--- a/crates/aionui-auth/src/middleware.rs
++++ b/crates/aionui-auth/src/middleware.rs
+@@ -54,6 +54,22 @@ pub struct CurrentUser {
+     pub status: UserStatus,
+ }
+ 
++/// How the request in hand was authenticated. Inserted next to [`CurrentUser`]
++/// by [`auth_middleware`] so that a handler can tell the user's own clients
++/// (a browser session) from an agent subprocess acting on the user's behalf
++/// with its conversation-runtime token. `CurrentUser` alone is identical for
++/// both, which is what let a non-lead teammate call lead-only team routes.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum AuthChannel {
++    /// Local identity mode: the embedded desktop backend, no credentials.
++    Local,
++    /// A JWT from the `Authorization` header or the session cookie.
++    Session,
++    /// The conversation-runtime helper token of an agent subprocess, bound to
++    /// this conversation.
++    RuntimeToken { conversation_id: String },
++}
++
+ impl CurrentUser {
+     pub fn local_default() -> Self {
+         Self {
+@@ -96,9 +112,18 @@ pub async fn auth_middleware(
+     // In local mode, skip JWT verification and inject a fixed default user.
+     if state.identity_mode == AuthIdentityMode::Local {
+         request.extensions_mut().insert(CurrentUser::local_default());
++        request.extensions_mut().insert(AuthChannel::Local);
+         return Ok(next.run(request).await);
+     }
+ 
++    // A request that names a runtime token is authenticated by that token and
++    // nothing else. The CSRF layer exempts any request carrying the header, so
++    // letting it fall through to an ambient session cookie would authenticate a
++    // cookie-bearing request with no CSRF check at all.
++    if request.headers().contains_key(RUNTIME_TOKEN_HEADER) {
++        return runtime_token_channel(&state, request, next).await;
++    }
++
+     let Some(token) = extract_token_from_headers(request.headers()) else {
+         // No JWT/cookie: fall back to the conversation-helper runtime-token
+         // channel used by agent subprocess CLIs.
+@@ -141,6 +166,7 @@ pub async fn auth_middleware(
+         user_type: user.user_type,
+         status: user.status,
+     });
++    request.extensions_mut().insert(AuthChannel::Session);
+ 
+     Ok(next.run(request).await)
+ }
+@@ -200,6 +226,9 @@ async fn runtime_token_channel(state: &AuthState, mut request: Request, next: Ne
+         user_type: user.user_type,
+         status: user.status,
+     });
++    request
++        .extensions_mut()
++        .insert(AuthChannel::RuntimeToken { conversation_id });
+ 
+     Ok(next.run(request).await)
+ }
+@@ -210,6 +239,7 @@ async fn runtime_token_channel(state: &AuthState, mut request: Request, next: Ne
+ /// Used when the server runs as an embedded subprocess inside Electron.
+ pub async fn local_auth_middleware(mut request: Request, next: Next) -> Response {
+     request.extensions_mut().insert(CurrentUser::local_default());
++    request.extensions_mut().insert(AuthChannel::Local);
+     next.run(request).await
+ }
+ 
+diff --git a/crates/aionui-auth/tests/middleware_tests.rs b/crates/aionui-auth/tests/middleware_tests.rs
+index 0a4cc912..0f9a5313 100644
+--- a/crates/aionui-auth/tests/middleware_tests.rs
++++ b/crates/aionui-auth/tests/middleware_tests.rs
+@@ -10,8 +10,8 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode}
+ use tower::ServiceExt;
+ 
+ use aionui_auth::{
+-    AuthIdentityMode, AuthState, CookieConfig, CurrentUser, IRuntimeTokenVerifier, JwtService, RateLimiter,
+-    TokenPayload, api_rate_limit_middleware, auth_middleware, auth_rate_limit_middleware,
++    AuthChannel, AuthIdentityMode, AuthState, CookieConfig, CurrentUser, IRuntimeTokenVerifier, JwtService,
++    RateLimiter, TokenPayload, api_rate_limit_middleware, auth_middleware, auth_rate_limit_middleware,
+     authenticated_action_rate_limit_middleware, csrf_middleware, security_headers_middleware,
+ };
+ use aionui_db::{IUserRepository, SqliteUserRepository, UserStatus, UserType, init_database_memory};
+@@ -859,3 +859,127 @@ async fn csrf_exempts_requests_bearing_runtime_token_header() {
+         .unwrap();
+     assert_eq!(resp.status(), StatusCode::OK);
+ }
++
++// ============================================================
++// AionDX core-0014: AuthChannel marks how a request authenticated
++// ============================================================
++
++fn channel_echo_app(
++    jwt_service: Arc<JwtService>,
++    user_repo: Arc<dyn IUserRepository>,
++    runtime_token_verifier: Option<Arc<dyn IRuntimeTokenVerifier>>,
++) -> Router {
++    let state = AuthState {
++        jwt_service,
++        user_repo,
++        identity_mode: AuthIdentityMode::UserSession,
++        runtime_token_verifier,
++    };
++    Router::new()
++        .route(
++            "/whoami",
++            get(|channel: axum::Extension<AuthChannel>| async move { format!("{:?}", channel.0) }),
++        )
++        .route_layer(middleware::from_fn_with_state(state, auth_middleware))
++}
++
++fn conv1_verifier() -> Option<Arc<dyn IRuntimeTokenVerifier>> {
++    Some(Arc::new(MatchVerifier {
++        token: "tok-1",
++        user_id: "system_default_user",
++        conversation_id: "conv-1",
++    }))
++}
++
++#[tokio::test]
++async fn auth_channel_is_session_for_a_jwt() {
++    let jwt_service = Arc::new(JwtService::new("middleware_test_secret".into()));
++    let token = jwt_service.sign("system_default_user", "system_default_user").unwrap();
++    let db = init_database_memory().await.unwrap();
++    let repo = Arc::new(SqliteUserRepository::new(db.pool().clone())) as Arc<dyn IUserRepository>;
++    let app = channel_echo_app(jwt_service, repo, conv1_verifier());
++
++    let resp = app
++        .oneshot(
++            Request::get("/whoami")
++                .header(header::AUTHORIZATION, format!("Bearer {token}"))
++                .body(Body::empty())
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++
++    assert_eq!(resp.status(), StatusCode::OK);
++    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
++    assert_eq!(&body[..], b"Session");
++}
++
++#[tokio::test]
++async fn auth_channel_is_runtime_token_with_its_conversation() {
++    let jwt_service = Arc::new(JwtService::new("middleware_test_secret".into()));
++    let db = init_database_memory().await.unwrap();
++    let repo = Arc::new(SqliteUserRepository::new(db.pool().clone())) as Arc<dyn IUserRepository>;
++    let app = channel_echo_app(jwt_service, repo, conv1_verifier());
++
++    let resp = app
++        .oneshot(helper_request(Some("tok-1"), "system_default_user", "conv-1"))
++        .await
++        .unwrap();
++
++    assert_eq!(resp.status(), StatusCode::OK);
++    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
++    assert_eq!(&body[..], br#"RuntimeToken { conversation_id: "conv-1" }"#);
++}
++
++/// The CSRF layer exempts any request carrying the runtime-token header. Such a
++/// request must not then authenticate through an ambient session cookie.
++#[tokio::test]
++async fn runtime_token_header_never_falls_back_to_the_session_cookie() {
++    let jwt_service = Arc::new(JwtService::new("middleware_test_secret".into()));
++    let token = jwt_service.sign("system_default_user", "system_default_user").unwrap();
++    let db = init_database_memory().await.unwrap();
++    let repo = Arc::new(SqliteUserRepository::new(db.pool().clone())) as Arc<dyn IUserRepository>;
++    let app = channel_echo_app(jwt_service, repo, conv1_verifier());
++
++    let resp = app
++        .oneshot(
++            Request::get("/whoami")
++                .header(header::COOKIE, format!("aionui-session={token}"))
++                .header("x-aionui-runtime-token", "forged")
++                .header("x-aionui-user-id", "system_default_user")
++                .header("x-aionui-conversation-id", "conv-1")
++                .body(Body::empty())
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++
++    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
++}
++
++/// (e) Both a valid runtime token and a session cookie: the token wins.
++#[tokio::test]
++async fn runtime_token_header_with_a_cookie_authenticates_as_the_token() {
++    let jwt_service = Arc::new(JwtService::new("middleware_test_secret".into()));
++    let token = jwt_service.sign("system_default_user", "system_default_user").unwrap();
++    let db = init_database_memory().await.unwrap();
++    let repo = Arc::new(SqliteUserRepository::new(db.pool().clone())) as Arc<dyn IUserRepository>;
++    let app = channel_echo_app(jwt_service, repo, conv1_verifier());
++
++    let resp = app
++        .oneshot(
++            Request::get("/whoami")
++                .header(header::COOKIE, format!("aionui-session={token}"))
++                .header("x-aionui-runtime-token", "tok-1")
++                .header("x-aionui-user-id", "system_default_user")
++                .header("x-aionui-conversation-id", "conv-1")
++                .body(Body::empty())
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++
++    assert_eq!(resp.status(), StatusCode::OK);
++    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
++    assert_eq!(&body[..], br#"RuntimeToken { conversation_id: "conv-1" }"#);
++}
+diff --git a/crates/aionui-team/Cargo.toml b/crates/aionui-team/Cargo.toml
+index f04205ae..fbcc8f23 100644
+--- a/crates/aionui-team/Cargo.toml
++++ b/crates/aionui-team/Cargo.toml
+@@ -25,6 +25,7 @@ agent-client-protocol = "2.0.0"
+ futures-util.workspace = true
+ 
+ [dev-dependencies]
++tower.workspace = true
+ sqlx.workspace = true
+ tokio = { workspace = true, features = ["test-util"] }
+ futures-util.workspace = true
+diff --git a/crates/aionui-team/src/lib.rs b/crates/aionui-team/src/lib.rs
+index e8674b2d..973b22f2 100644
+--- a/crates/aionui-team/src/lib.rs
++++ b/crates/aionui-team/src/lib.rs
+@@ -7,6 +7,7 @@ pub mod crash_detection;
+ pub mod error;
+ pub mod event_loop;
+ pub mod events;
++pub mod lifecycle_guard;
+ pub mod mailbox;
+ pub mod mcp;
+ mod member_runtime;
+diff --git a/crates/aionui-team/src/lifecycle_guard.rs b/crates/aionui-team/src/lifecycle_guard.rs
+new file mode 100644
+index 00000000..dcf67442
+--- /dev/null
++++ b/crates/aionui-team/src/lifecycle_guard.rs
+@@ -0,0 +1,295 @@
++#![allow(clippy::disallowed_types)] // HTTP middleware: maps to ApiError at the boundary
++
++//! AionDX core-0014: lead-only team lifecycle routes over HTTP.
++//!
++//! The MCP tools behind spawn, shutdown, interrupt, rename and clear-context
++//! are lead-only, but their HTTP twins checked only that the user owns the
++//! team. Every agent subprocess holds a conversation-runtime token that
++//! authenticates as the full user, so a non-lead teammate could call those
++//! routes directly and skip the rule. This layer closes that: a caller on the
++//! runtime-token channel may use a lifecycle route only when its conversation
++//! is the lead of that same team. The user's own clients (a session, or local
++//! mode) are not affected.
++
++use std::sync::Arc;
++
++use async_trait::async_trait;
++use axum::extract::{Request, State};
++use axum::http::Method;
++use axum::middleware::Next;
++use axum::response::Response;
++
++use aionui_auth::{AuthChannel, CurrentUser};
++use aionui_common::ApiError;
++
++use crate::error::TeamError;
++use crate::service::TeamSessionService;
++use crate::types::TeammateRole;
++
++/// Resolves which team slot a runtime-token conversation belongs to.
++#[async_trait]
++pub trait LifecycleAuthority: Send + Sync {
++    /// `(team_id, role)` of the conversation's slot, or `None` when the
++    /// conversation is not a team member of this user.
++    async fn caller_slot(&self, user_id: &str, conversation_id: &str) -> Option<(String, TeammateRole)>;
++}
++
++#[async_trait]
++impl LifecycleAuthority for TeamSessionService {
++    async fn caller_slot(&self, user_id: &str, conversation_id: &str) -> Option<(String, TeammateRole)> {
++        let resolved = self.resolve_team_tool_context(user_id, conversation_id).await.ok()?;
++        resolved.context.map(|ctx| (ctx.team_id, ctx.caller_role))
++    }
++}
++
++/// The team id a lifecycle route acts on, or `None` for any other route.
++pub(crate) fn lifecycle_target<'a>(method: &Method, path: &'a str) -> Option<&'a str> {
++    let rest = path.strip_prefix("/api/teams/")?;
++    let mut parts = rest.split('/');
++    let team_id = parts.next().filter(|id| !id.is_empty())?;
++    let tail: Vec<&str> = parts.collect();
++    let lifecycle = matches!(
++        (method, tail.as_slice()),
++        (&Method::DELETE, [])
++            | (&Method::PATCH, ["name"])
++            | (&Method::POST, ["agents"])
++            | (&Method::DELETE, ["agents", _])
++            | (&Method::POST, ["agents", _, "replace"])
++            | (&Method::PATCH, ["agents", _, "name"])
++            | (&Method::POST, ["agents", _, "interrupt"])
++            | (&Method::POST, ["agents", _, "context", "reset"])
++            | (&Method::DELETE, ["session"])
++    );
++    lifecycle.then_some(team_id)
++}
++
++/// Whether a runtime-token caller resolved to `slot` may act on `team_id`.
++pub(crate) fn runtime_caller_allowed(slot: Option<&(String, TeammateRole)>, team_id: &str) -> bool {
++    matches!(slot, Some((caller_team, TeammateRole::Lead)) if caller_team == team_id)
++}
++
++pub async fn lifecycle_guard(
++    State(authority): State<Arc<dyn LifecycleAuthority>>,
++    request: Request,
++    next: Next,
++) -> Result<Response, ApiError> {
++    let Some(AuthChannel::RuntimeToken { conversation_id }) = request.extensions().get::<AuthChannel>().cloned() else {
++        return Ok(next.run(request).await);
++    };
++    let Some(team_id) = lifecycle_target(request.method(), request.uri().path()).map(str::to_owned) else {
++        return Ok(next.run(request).await);
++    };
++    let user_id = request
++        .extensions()
++        .get::<CurrentUser>()
++        .map(|user| user.id.clone())
++        .ok_or_else(|| ApiError::Unauthorized("Authentication required".into()))?;
++    let slot = authority.caller_slot(&user_id, &conversation_id).await;
++    if !runtime_caller_allowed(slot.as_ref(), &team_id) {
++        tracing::warn!(
++            team_id,
++            conversation_id,
++            "lifecycle route refused for a non-lead runtime token"
++        );
++        return Err(TeamError::LeaderOnly("Only the team lead can do this from an agent runtime".into()).into());
++    }
++    Ok(next.run(request).await)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use axum::Router;
++    use axum::body::Body;
++    use axum::http::StatusCode;
++    use tower::ServiceExt;
++
++    struct FakeAuthority(Option<(String, TeammateRole)>);
++
++    #[async_trait]
++    impl LifecycleAuthority for FakeAuthority {
++        async fn caller_slot(&self, _user_id: &str, _conversation_id: &str) -> Option<(String, TeammateRole)> {
++            self.0.clone()
++        }
++    }
++
++    fn user() -> CurrentUser {
++        CurrentUser::local_default()
++    }
++
++    /// Every guarded route, plus the routes agents use day to day.
++    const GUARDED: &[(&str, &str)] = &[
++        ("DELETE", "/api/teams/t1"),
++        ("PATCH", "/api/teams/t1/name"),
++        ("POST", "/api/teams/t1/agents"),
++        ("DELETE", "/api/teams/t1/agents/s2"),
++        ("POST", "/api/teams/t1/agents/s2/replace"),
++        ("PATCH", "/api/teams/t1/agents/s2/name"),
++        ("POST", "/api/teams/t1/agents/s2/interrupt"),
++        ("POST", "/api/teams/t1/agents/s2/context/reset"),
++        ("DELETE", "/api/teams/t1/session"),
++    ];
++    const EVERYDAY: &[(&str, &str)] = &[
++        ("GET", "/api/teams/t1"),
++        ("GET", "/api/teams/t1/run-state"),
++        ("GET", "/api/teams/t1/tasks"),
++        ("GET", "/api/teams/t1/mailbox"),
++        ("POST", "/api/teams/t1/messages"),
++        ("POST", "/api/teams/t1/agents/s2/messages"),
++        ("POST", "/api/teams/t1/agents/s2/steer"),
++        ("POST", "/api/teams/t1/agents/s2/attach"),
++        ("PATCH", "/api/teams/t1/agents/s2/model"),
++        ("POST", "/api/teams/t1/session"),
++        ("POST", "/api/teams/t1/runs/r1/agents/s2/cancel"),
++    ];
++
++    fn app(authority: FakeAuthority, channel: AuthChannel) -> Router {
++        let authority: Arc<dyn LifecycleAuthority> = Arc::new(authority);
++        let ok = axum::routing::any(|| async { "ok" });
++        Router::new()
++            .route("/api/teams/{id}", ok.clone())
++            .route("/api/teams/{id}/{a}", ok.clone())
++            .route("/api/teams/{id}/{a}/{b}", ok.clone())
++            .route("/api/teams/{id}/{a}/{b}/{c}", ok.clone())
++            .route("/api/teams/{id}/{a}/{b}/{c}/{d}", ok.clone())
++            .route("/api/teams/{id}/{a}/{b}/{c}/{d}/{e}", ok)
++            .route_layer(axum::middleware::from_fn_with_state(authority, lifecycle_guard))
++            .layer(axum::middleware::from_fn(move |mut req: Request, next: Next| {
++                let channel = channel.clone();
++                async move {
++                    req.extensions_mut().insert(user());
++                    req.extensions_mut().insert(channel);
++                    next.run(req).await
++                }
++            }))
++    }
++
++    async fn statuses(
++        slot: Option<(&str, TeammateRole)>,
++        channel: AuthChannel,
++        routes: &[(&str, &str)],
++    ) -> Vec<(String, StatusCode)> {
++        let mut out = Vec::new();
++        for (method, uri) in routes {
++            let app = app(FakeAuthority(slot.map(|(t, r)| (t.to_owned(), r))), channel.clone());
++            let method = Method::from_bytes(method.as_bytes()).unwrap();
++            out.push((format!("{method} {uri}"), status(app, method, uri).await));
++        }
++        out
++    }
++
++    fn all(results: &[(String, StatusCode)], want: StatusCode) {
++        for (route, got) in results {
++            assert_eq!(*got, want, "{route}");
++        }
++    }
++
++    async fn status(app: Router, method: Method, uri: &str) -> StatusCode {
++        app.oneshot(Request::builder().method(method).uri(uri).body(Body::empty()).unwrap())
++            .await
++            .unwrap()
++            .status()
++    }
++
++    fn runtime() -> AuthChannel {
++        AuthChannel::RuntimeToken {
++            conversation_id: "conv-1".into(),
++        }
++    }
++
++    #[test]
++    fn lifecycle_target_matches_only_lifecycle_routes() {
++        let yes = [
++            (Method::DELETE, "/api/teams/t1"),
++            (Method::PATCH, "/api/teams/t1/name"),
++            (Method::POST, "/api/teams/t1/agents"),
++            (Method::DELETE, "/api/teams/t1/agents/s1"),
++            (Method::POST, "/api/teams/t1/agents/s1/replace"),
++            (Method::PATCH, "/api/teams/t1/agents/s1/name"),
++            (Method::POST, "/api/teams/t1/agents/s1/interrupt"),
++            (Method::POST, "/api/teams/t1/agents/s1/context/reset"),
++            (Method::DELETE, "/api/teams/t1/session"),
++        ];
++        for (method, path) in yes {
++            assert_eq!(lifecycle_target(&method, path), Some("t1"), "{method} {path}");
++        }
++        let no = [
++            (Method::GET, "/api/teams/t1"),
++            (Method::GET, "/api/teams"),
++            (Method::POST, "/api/teams"),
++            (Method::POST, "/api/teams/t1/session"),
++            (Method::POST, "/api/teams/t1/agents/s1/messages"),
++            (Method::POST, "/api/teams/t1/agents/s1/steer"),
++            (Method::POST, "/api/teams/t1/agents/s1/attach"),
++            (Method::GET, "/api/teams/t1/run-state"),
++            (Method::PATCH, "/api/teams/t1/agents/s1/model"),
++            (Method::DELETE, "/api/conversations/t1"),
++        ];
++        for (method, path) in no {
++            assert_eq!(lifecycle_target(&method, path), None, "{method} {path}");
++        }
++    }
++
++    #[test]
++    fn only_the_lead_of_the_same_team_is_allowed() {
++        assert!(runtime_caller_allowed(Some(&("t1".into(), TeammateRole::Lead)), "t1"));
++        assert!(!runtime_caller_allowed(
++            Some(&("t1".into(), TeammateRole::Teammate)),
++            "t1"
++        ));
++        assert!(!runtime_caller_allowed(Some(&("t2".into(), TeammateRole::Lead)), "t1"));
++        assert!(!runtime_caller_allowed(None, "t1"));
++    }
++
++    /// (a) A lead's own runtime token keeps every lifecycle route in its own team.
++    #[tokio::test]
++    async fn lead_runtime_token_keeps_every_lifecycle_route_in_its_team() {
++        all(
++            &statuses(Some(("t1", TeammateRole::Lead)), runtime(), GUARDED).await,
++            StatusCode::OK,
++        );
++        all(
++            &statuses(Some(("t1", TeammateRole::Lead)), runtime(), EVERYDAY).await,
++            StatusCode::OK,
++        );
++    }
++
++    /// (b) A teammate's token keeps the routes agents use day to day.
++    #[tokio::test]
++    async fn teammate_runtime_token_keeps_everyday_routes() {
++        all(
++            &statuses(Some(("t1", TeammateRole::Teammate)), runtime(), EVERYDAY).await,
++            StatusCode::OK,
++        );
++    }
++
++    #[tokio::test]
++    async fn teammate_runtime_token_is_refused_on_every_lifecycle_route() {
++        all(
++            &statuses(Some(("t1", TeammateRole::Teammate)), runtime(), GUARDED).await,
++            StatusCode::FORBIDDEN,
++        );
++    }
++
++    /// (c) Team A's lead is refused on team B's lifecycle routes.
++    #[tokio::test]
++    async fn lead_of_another_team_is_refused() {
++        all(
++            &statuses(Some(("t2", TeammateRole::Lead)), runtime(), GUARDED).await,
++            StatusCode::FORBIDDEN,
++        );
++    }
++
++    #[tokio::test]
++    async fn solo_chat_runtime_token_is_refused() {
++        all(&statuses(None, runtime(), GUARDED).await, StatusCode::FORBIDDEN);
++    }
++
++    /// (d) The user's own clients are untouched on every guarded route.
++    #[tokio::test]
++    async fn session_and_local_callers_are_not_affected() {
++        for channel in [AuthChannel::Session, AuthChannel::Local] {
++            all(&statuses(None, channel, GUARDED).await, StatusCode::OK);
++        }
++    }
++}
+diff --git a/crates/aionui-team/src/routes.rs b/crates/aionui-team/src/routes.rs
+index 542bf83c..9532c567 100644
+--- a/crates/aionui-team/src/routes.rs
++++ b/crates/aionui-team/src/routes.rs
+@@ -177,6 +177,8 @@ impl From<TeamError> for ApiError {
+ }
+ 
+ pub fn team_routes(state: TeamRouterState) -> Router {
++    // core-0014: lead-only lifecycle routes for runtime-token callers.
++    let lifecycle_authority: Arc<dyn crate::lifecycle_guard::LifecycleAuthority> = state.service.clone();
+     Router::new()
+         .route("/api/teams", post(create_team).get(list_teams))
+         .route("/api/teams/{id}", get(get_team).delete(remove_team))
+@@ -229,6 +231,10 @@ pub fn team_routes(state: TeamRouterState) -> Router {
+         .route("/api/teams/{id}/session", post(ensure_session).delete(stop_session))
+         .route("/api/teams/{id}/active-lease", post(active_lease))
+         .route("/api/teams/{id}/session-mode", post(set_session_mode))
++        .route_layer(axum::middleware::from_fn_with_state(
++            lifecycle_authority,
++            crate::lifecycle_guard::lifecycle_guard,
++        ))
+         .with_state(state)
+ }
+ 
