@@ -1,0 +1,187 @@
+<!doctype html>
+<!--
+  Hands-free conversation mode, end to end against the real aiondx-voice.js (window.AionDxVoice,
+  including its wake-phrase listener and utterance capture) and the real aiondx-voice-ui.js. No
+  real microphone and no real network: window.fetch is stubbed (the settings store, and
+  ElevenLabs' speech-to-text/text-to-speech so synthesize()/transcribe() still run their real
+  code paths end to end), and the VAD's mic is a fake level source + fake recorder - the same
+  injection technique test-wake.js uses for aiondx-voice.js itself, wired in here through
+  window.__aionDxVoiceUI.setHfTestOpts (aiondx-voice-ui.js's own test-only hook).
+
+  window.__hf.level: 0 (silence) or 1 (speaking) - the test drives this directly to move the VAD
+  through its speech/pause timing.
+  window.__sttQueue: strings, consumed in order by the stubbed speech-to-text endpoint - one per
+  transcribe() call (a wake-phrase utterance, then each conversation turn).
+  window.__conv: { status } - the stubbed GET /api/conversations/conv1 answer; the test flips
+  status to "finished" once it wants waitForReplyThenPlay()'s poll to find the reply.
+  window.__agentReply(text): appends a new agent message row with a real play button attached, as
+  if the agent's turn had just finished - what hands-free mode auto-plays.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; padding: 24px; background: #fff; color: #1d2129; }
+  .sendbox-panel { border: 1px solid #e5e6eb; border-radius: 12px; padding: 12px; max-width: 480px; }
+  .sendbox-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  textarea { width: 100%; box-sizing: border-box; border: none; outline: none; resize: none; font: inherit; font-size: 14px; }
+  .arco-btn { border: 1px solid #c9cdd4; background: #fff; cursor: pointer; }
+  .arco-btn-shape-circle { border-radius: 50%; }
+  .arco-btn-size-small { width: 28px; height: 28px; }
+  .arco-btn-size-mini { width: 22px; height: 22px; }
+  [id^="message-"] { max-width: 480px; margin: 16px 0; padding: 8px 10px; background: #f2f3f5; border-radius: 8px; }
+  #messages { min-height: 10px; }
+  #settings-area { margin-top: 24px; }
+  [data-testid^="theme-card-"] { display: inline-block; width: 40px; height: 40px; background: #eee; }
+</style>
+<script>
+  location.hash = '#/conversation/conv1';
+
+  window.__hf = { level: 0 };
+  window.__sttQueue = [];
+  window.__sttFailNext = 0;   // number of upcoming speech-to-text calls to answer with an error instead
+  window.__conv = { status: 'running' };
+
+  function wavBlob(seconds) {
+    var sampleRate = 8000, dataSize = Math.round(sampleRate * (seconds || 1));
+    var buf = new ArrayBuffer(44 + dataSize);
+    var view = new DataView(buf);
+    var writeStr = function (offset, s) { for (var i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); };
+    writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
+    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate, true); view.setUint16(32, 1, true); view.setUint16(34, 8, true);
+    writeStr(36, 'data'); view.setUint32(40, dataSize, true);
+    new Uint8Array(buf, 44).fill(128);
+    return buf;
+  }
+
+  var store = {};
+  window.fetch = function (url, opts) {
+    opts = opts || {};
+    var u = String(url);
+    if (u.indexOf('/api/settings/client') === 0) {
+      if (opts.method === 'PUT') {
+        var body = JSON.parse(opts.body || '{}');
+        Object.keys(body).forEach(function (k) { if (body[k] === null) delete store[k]; else store[k] = body[k]; });
+        return Promise.resolve(new Response(JSON.stringify({ success: true }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: store }), { status: 200 }));
+    }
+    if (u.indexOf('/api/conversations/conv1') === 0 && (!opts.method || opts.method === 'GET')) {
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: { id: 'conv1', status: window.__conv.status } }), { status: 200 }));
+    }
+    if (u.indexOf('https://api.elevenlabs.io/v1/text-to-speech/') === 0) {
+      window.__ttsKeys = (window.__ttsKeys || []).concat([((opts.headers || {})['xi-api-key']) || null]);
+      var said = null; try { said = JSON.parse(opts.body).text; } catch (e) { said = null; }
+      window.__ttsTexts = (window.__ttsTexts || []).concat([said]);
+      if (window.__ttsFailNext > 0) { window.__ttsFailNext--; return Promise.resolve(new Response('invalid api key', { status: 401 })); }
+      return Promise.resolve(new Response(wavBlob(0.3), { status: 200, headers: { 'Content-Type': 'audio/wav' } }));
+    }
+    if (u === 'https://api.elevenlabs.io/v1/speech-to-text') {
+      if (window.__sttFailNext > 0) {
+        window.__sttFailNext--;
+        return Promise.resolve(new Response('quota exceeded', { status: 429 }));
+      }
+      var text = window.__sttQueue.length ? window.__sttQueue.shift() : '';
+      return Promise.resolve(new Response(JSON.stringify({ text: text }), { status: 200 }));
+    }
+    return Promise.reject(new Error('unstubbed fetch: ' + u));
+  };
+
+  // The VAD's mic: a level the test sets directly, and a recorder that just marks start/stop -
+  // its blob's content is irrelevant since the stubbed speech-to-text endpoint above ignores it
+  // and answers from window.__sttQueue instead.
+  window.__hfLevelSource = { getLevel: function () { return window.__hf.level; } };
+  window.__hfCreateRecorder = function () {
+    return {
+      start: function () {},
+      stop: function () { return Promise.resolve(new Blob(['clip'])); },
+    };
+  };
+
+  // A fake speechSynthesis/SpeechSynthesisUtterance, overriding whatever headless Edge's own
+  // (voice-less, unreliable to wait on) implementation would do - deterministic and fast, like
+  // the fake mic above. Forced on with defineProperty: speechSynthesis is a getter-only property
+  // on window in most engines, so plain assignment silently no-ops instead of throwing.
+  window.__systemSpeechCalls = [];
+  window.__systemSpeechCancelled = 0;
+  Object.defineProperty(window, 'speechSynthesis', { configurable: true, writable: true, value: {
+    cancel: function () { window.__systemSpeechCancelled++; },
+    speak: function (u) { window.__systemSpeechCalls.push(u.text); setTimeout(function () { if (u.onend) u.onend(); }, 1500); },
+  } });
+  Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, writable: true, value: function (text) {
+    this.text = text; this.onend = null; this.onerror = null;
+  } });
+
+  window.__agentReply = function (text) {
+    var list = document.getElementById('messages');
+    var row = document.createElement('div');
+    row.id = 'message-a' + (list.children.length + 1);
+    row.setAttribute('data-message-type', 'text');
+    row.setAttribute('data-message-position', 'left');
+    var content = document.createElement('div');
+    content.setAttribute('data-testid', 'message-text-content');
+    content.textContent = text;
+    row.appendChild(content);
+    list.appendChild(row);
+  };
+</script>
+</head>
+<body>
+  <div class="sendbox-panel">
+    <textarea data-testid="sendbox-input" rows="2" placeholder="Message..."></textarea>
+    <div class="sendbox-actions">
+      <span class="sendbox-draft-tooltip-anchor"><button type="button" data-testid="sendbox-add-to-draft-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8801;</button></span>
+      <span class="sendbox-send-tooltip-anchor"><button type="button" data-testid="sendbox-send-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8593;</button></span>
+    </div>
+  </div>
+  <script>
+    // Captured before aiondx-voice-ui.js's own script tags below even load, so this is the bare
+    // markup only - none of its own injected badges/buttons. __replaceComposer() rebuilds a fresh
+    // composer from this, the same way React replacing its own render output would: starting clean,
+    // not carrying this script's own prior nodes along for the ride (React owns none of those and
+    // would not preserve them through a real re-render of this subtree).
+    window.__composerTemplate = document.querySelector('.sendbox-panel').outerHTML;
+    window.__replaceComposer = function () {
+      var old = document.querySelector('.sendbox-panel');
+      var wrapper = document.createElement('div');
+      wrapper.innerHTML = window.__composerTemplate;
+      var fresh = wrapper.firstElementChild;
+      old.parentNode.replaceChild(fresh, old);
+      return fresh;
+    };
+  </script>
+
+  <div id="messages"></div>
+
+  <div id="settings-area">
+    <div data-testid="theme-card-dark"></div>
+  </div>
+
+  <script src="aiondx-voice.js"></script>
+  <script src="aiondx-voice-ui.js"></script>
+  <script>
+    // Wire the fake mic in as soon as the UI script has set window.__aionDxVoiceUI up, and keep
+    // the send button actually "sending": clearing the box and appending a "you" row is enough for
+    // hands-free mode's own logic (it never reads that row), but AionUi's real send button would
+    // also clear the box, so this harness does too, to prove sendComposerText() actually fires it.
+    window.__aionDxVoiceUI.setHfTestOpts({
+      levelSource: window.__hfLevelSource,
+      createRecorder: window.__hfCreateRecorder,
+      pollMs: 10, minSpeechMs: 30, silenceMs: 50, threshold: 0.5, maxSegmentMs: 4000
+    });
+    // Delegated, not attached to one specific button: survives __replaceComposer() swapping in a
+    // fresh node the same way a real send button would survive React re-rendering its own markup
+    // (React re-attaches its own handlers on every render; this stands in for that).
+    document.addEventListener('click', function (ev) {
+      if (!ev.target.closest || !ev.target.closest('[data-testid="sendbox-send-btn"]')) return;
+      var ta = document.querySelector('[data-testid="sendbox-input"]');
+      window.__sentMessages = window.__sentMessages || [];
+      window.__sentMessages.push(ta.value);
+      var d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+      d.set.call(ta, '');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  </script>
+</body>
+</html>

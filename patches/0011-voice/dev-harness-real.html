@@ -32,7 +32,9 @@
     window.fetch = function (url, opts) {
       opts = opts || {};
       var u = String(url);
-      window.__fetchCalls.push({ url: u, method: opts.method || 'GET' });
+      var said = null;
+      if (u.indexOf('https://api.elevenlabs.io/v1/text-to-speech/') === 0) { try { said = JSON.parse(opts.body).text; } catch (e) { said = null; } }
+      window.__fetchCalls.push({ url: u, method: opts.method || 'GET', key: (opts.headers || {})['xi-api-key'] || null, text: said, at: Date.now() });
 
       if (u.indexOf('/api/settings/client') === 0) {
         if (opts.method === 'PUT') {

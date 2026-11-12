@@ -1,0 +1,157 @@
+<!doctype html>
+<!--
+  Hands-free conversation mode on a team page, targeting the lead's own column
+  (div[data-slot-id][data-role="leader"], TeamPage.tsx's own attribute) - the scenario reported
+  after the first version of this feature only ever matched #/conversation/<id>: a user talking
+  hands-free "to the lead agent" is usually on #/team/<id>, not a solo conversation. Same real
+  aiondx-voice.js/aiondx-voice-ui.js, fake mic and stubbed fetch as dev-harness-handsfree.html;
+  only the page shape and the turn-finished signal (GET /api/teams/team1/run-state's slot_work,
+  not GET /api/conversations/<id>) differ.
+
+  window.__hf.level, window.__sttQueue, window.__hfLevelSource/__hfCreateRecorder: same as
+  dev-harness-handsfree.html.
+  window.__runState: { leadState, memberState } - the stubbed run-state answer's two slot_work
+  entries; the test flips leadState to 'idle' once it wants the poll to find the reply.
+  window.__agentReply(text): appends a reply row inside the lead's own column specifically.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; padding: 24px; background: #fff; color: #1d2129; }
+  .team { display: flex; gap: 16px; }
+  .col { flex: 1 1 360px; border: 1px solid #e5e6eb; border-radius: 8px; padding: 12px; }
+  .colname { font-size: 12px; color: #888; margin-bottom: 8px; }
+  .sendbox-panel { border: 1px solid #e5e6eb; border-radius: 12px; padding: 12px; }
+  .sendbox-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  textarea { width: 100%; box-sizing: border-box; border: none; outline: none; resize: none; font: inherit; font-size: 14px; }
+  .arco-btn { border: 1px solid #c9cdd4; background: #fff; cursor: pointer; }
+  .arco-btn-shape-circle { border-radius: 50%; }
+  .arco-btn-size-small { width: 28px; height: 28px; }
+  .arco-btn-size-mini { width: 22px; height: 22px; }
+  [id^="message-"] { max-width: 100%; margin: 16px 0; padding: 8px 10px; background: #f2f3f5; border-radius: 8px; }
+  #settings-area { margin-top: 24px; }
+  [data-testid^="theme-card-"] { display: inline-block; width: 40px; height: 40px; background: #eee; }
+</style>
+<script>
+  location.hash = '#/team/team1';
+
+  window.__hf = { level: 0 };
+  window.__sttQueue = [];
+  window.__runState = { leadState: 'running', memberState: 'idle' };
+
+  function wavBlob(seconds) {
+    var sampleRate = 8000, dataSize = Math.round(sampleRate * (seconds || 1));
+    var buf = new ArrayBuffer(44 + dataSize);
+    var view = new DataView(buf);
+    var writeStr = function (offset, s) { for (var i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); };
+    writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
+    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate, true); view.setUint16(32, 1, true); view.setUint16(34, 8, true);
+    writeStr(36, 'data'); view.setUint32(40, dataSize, true);
+    new Uint8Array(buf, 44).fill(128);
+    return buf;
+  }
+
+  var store = {};
+  window.fetch = function (url, opts) {
+    opts = opts || {};
+    var u = String(url);
+    if (u.indexOf('/api/settings/client') === 0) {
+      if (opts.method === 'PUT') {
+        var body = JSON.parse(opts.body || '{}');
+        Object.keys(body).forEach(function (k) { if (body[k] === null) delete store[k]; else store[k] = body[k]; });
+        return Promise.resolve(new Response(JSON.stringify({ success: true }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: store }), { status: 200 }));
+    }
+    if (u.indexOf('/api/teams/team1/run-state') === 0 && (!opts.method || opts.method === 'GET')) {
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: { slot_work: [
+        { slot_id: 'slotA', role: 'lead', state: window.__runState.leadState },
+        { slot_id: 'slotB', role: 'teammate', state: window.__runState.memberState },
+      ] } }), { status: 200 }));
+    }
+    if (u.indexOf('https://api.elevenlabs.io/v1/text-to-speech/') === 0) {
+      return Promise.resolve(new Response(wavBlob(0.3), { status: 200, headers: { 'Content-Type': 'audio/wav' } }));
+    }
+    if (u === 'https://api.elevenlabs.io/v1/speech-to-text') {
+      var text = window.__sttQueue.length ? window.__sttQueue.shift() : '';
+      return Promise.resolve(new Response(JSON.stringify({ text: text }), { status: 200 }));
+    }
+    return Promise.reject(new Error('unstubbed fetch: ' + u));
+  };
+
+  window.__hfLevelSource = { getLevel: function () { return window.__hf.level; } };
+  window.__hfCreateRecorder = function () {
+    return {
+      start: function () {},
+      stop: function () { return Promise.resolve(new Blob(['clip'])); },
+    };
+  };
+
+  window.__agentReply = function (text) {
+    var list = document.getElementById('lead-messages');
+    var row = document.createElement('div');
+    row.id = 'message-lead' + (list.children.length + 1);
+    row.setAttribute('data-message-type', 'text');
+    row.setAttribute('data-message-position', 'left');
+    var content = document.createElement('div');
+    content.setAttribute('data-testid', 'message-text-content');
+    content.textContent = text;
+    row.appendChild(content);
+    list.appendChild(row);
+  };
+</script>
+</head>
+<body>
+  <div class="team">
+    <div class="col" data-slot-id="slotA" data-role="leader">
+      <div class="colname">Lead</div>
+      <div id="lead-messages"></div>
+      <div class="sendbox-panel">
+        <textarea data-testid="sendbox-input" rows="2" placeholder="Message the lead..."></textarea>
+        <div class="sendbox-actions">
+          <span class="sendbox-draft-tooltip-anchor"><button type="button" data-testid="sendbox-add-to-draft-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8801;</button></span>
+          <span class="sendbox-send-tooltip-anchor"><button type="button" data-testid="sendbox-send-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8593;</button></span>
+        </div>
+      </div>
+    </div>
+    <div class="col" data-slot-id="slotB" data-role="member">
+      <div class="colname">Teammate</div>
+      <div class="sendbox-panel">
+        <textarea data-testid="sendbox-input" rows="2" placeholder="Message the teammate..."></textarea>
+        <div class="sendbox-actions">
+          <span class="sendbox-send-tooltip-anchor"><button type="button" data-testid="sendbox-send-btn" class="arco-btn arco-btn-shape-circle arco-btn-size-small">&#8593;</button></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-area">
+    <div data-testid="theme-card-dark"></div>
+  </div>
+
+  <script src="aiondx-voice.js"></script>
+  <script src="aiondx-voice-ui.js"></script>
+  <script>
+    window.__aionDxVoiceUI.setHfTestOpts({
+      levelSource: window.__hfLevelSource,
+      createRecorder: window.__hfCreateRecorder,
+      pollMs: 10, minSpeechMs: 30, silenceMs: 50, threshold: 0.5, maxSegmentMs: 4000
+    });
+    // Both composers' send buttons behave the same way the real one does for this test's
+    // purposes: clear the box, record what was sent. window.__sentMessages[0] is always the
+    // lead's (there is only ever one composer hands-free mode sends through on this page).
+    Array.prototype.forEach.call(document.querySelectorAll('[data-testid="sendbox-send-btn"]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var ta = btn.closest('.sendbox-panel').querySelector('[data-testid="sendbox-input"]');
+        window.__sentMessages = window.__sentMessages || [];
+        window.__sentMessages.push(ta.value);
+        var d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+        d.set.call(ta, '');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    });
+  </script>
+</body>
+</html>

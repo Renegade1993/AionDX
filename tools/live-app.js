@@ -56,6 +56,12 @@ async function launch(opts) {
   const env = Object.assign({}, process.env, { AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONDX_E2E_TEST: '1', AIONDX_E2E_USER_DATA_DIR: profile }, opts.env || {});
   // The Claude Code session this runs in must not be mistaken for the app's own: no runtime variables of an AionDX (or an earlier AionUi) go in.
   Object.keys(env).forEach((k) => { if (/^AION(DX|UI)_(RUNTIME_TOKEN|BASE_URL|USER_ID|CONVERSATION_ID|CDP_)/.test(k)) delete env[k]; });
+  // Nor the installed AionDX's helpers on the inherited PATH: the app's agent detection runs what it finds there. Not enough on
+  // its own: at start-up the app re-reads PATH from HKCU\Environment (hydrateWindowsProcessPath), so a helper folder listed in
+  // the registry comes back. The real agy shim still logs one "--version" line per launch (2026-11-08).
+  Object.keys(env).forEach((k) => {
+    if (k.toUpperCase() === 'PATH') env[k] = String(env[k]).split(';').filter((p) => !/[\\/]AionDX[\\/]bin[\\/]?$/i.test(p.trim())).join(';');
+  });
   // On a desktop nobody sees (tools\hidden-run.cs), so a test never puts a window on the user's screen. AIONDX_VISIBLE_TESTS=1 shows it.
   const appArgs = (opts.noUserDataDir ? [] : ['--user-data-dir=' + profile]).concat(['--remote-debugging-port=' + port]).concat(opts.args || []);   // noUserDataDir: the data-folder test, where the app picks its own folder under the APPDATA given in opts.env
   const quiet = process.env.AIONDX_VISIBLE_TESTS !== '1' ? hiddenRun() : null;

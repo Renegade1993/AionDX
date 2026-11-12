@@ -44,6 +44,10 @@
 
   var BUILD = '2026-10-11.1';
   var ERROR_HOLD_MS = 2600;   // how long a mic/playback button shows its error state before resetting
+  var DEFAULT_WAKE_PHRASE = 'Hey AionDX';
+  // Checked against a whole captured utterance, the same simple case-insensitive-substring rule
+  // AionDxVoice.startWakeListener uses for its own wake phrase - not a fuzzy matcher.
+  var HF_STOP_PHRASES = ['stop listening', 'stop conversation', 'exit voice mode', 'stop hands-free'];
 
   // ---------------------------------------------------------------- the provider module
 
@@ -59,6 +63,18 @@
   function apiUrl(path) {
     var port = window.__backendPort;
     return (port ? 'http://127.0.0.1:' + port : '') + path;
+  }
+  /** Which conversation or team is open, for hands-free mode's polling. Reimplemented rather than
+   *  shared with aiondx-ui.js's own route(), same reasoning as apiUrl()/csrf() above. A team page
+   *  (#/team/<id>) targets the lead's own column specifically - a user testing hands-free "on the
+   *  lead agent" is on this route, not #/conversation/<id>, which is what the first version of
+   *  this feature matched exclusively; a teammate's column is still out of scope. */
+  function route() {
+    var m = location.hash.match(/^#\/conversation\/([^/?#]+)/);
+    if (m) return { kind: 'conv', id: m[1] };
+    m = location.hash.match(/^#\/team\/([^/?#]+)/);
+    if (m) return { kind: 'team', id: m[1] };
+    return null;
   }
   /** window.AionDxVoice is aiondx-voice.js's module (its own script tag, loaded alongside this
    *  one). Building window.__aionDxVoice from it is deferred to here, rather than done inside
@@ -80,25 +96,36 @@
   // ---------------------------------------------------------------- style
 
   var CSS = [
-    '.aiondx-voice-mic,.aiondx-voice-play{display:inline-flex;align-items:center;justify-content:center}',
-    '.aiondx-voice-mic-btn,.aiondx-voice-play-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1;position:relative}',
-    '.aiondx-voice-mic-btn .aiondx-voice-icon,.aiondx-voice-play-btn .aiondx-voice-icon{width:14px;height:14px;display:inline-flex;color:var(--text-secondary)}',
+    '.aiondx-voice-mic,.aiondx-voice-play,.aiondx-voice-stopall{display:inline-flex;align-items:center;justify-content:center}',
+    '.aiondx-voice-mic-btn,.aiondx-voice-play-btn,.aiondx-voice-stopall-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1;position:relative}',
+    '.aiondx-voice-mic-btn .aiondx-voice-icon,.aiondx-voice-play-btn .aiondx-voice-icon,.aiondx-voice-stopall-btn .aiondx-voice-icon{width:14px;height:14px;display:inline-flex;color:var(--text-secondary)}',
     '.aiondx-voice-play-btn .aiondx-voice-icon{width:12px;height:12px}',
-    '.aiondx-voice-mic-btn .aiondx-voice-icon svg,.aiondx-voice-play-btn .aiondx-voice-icon svg{width:100%;height:100%;display:block}',
+    '.aiondx-voice-mic-btn .aiondx-voice-icon svg,.aiondx-voice-play-btn .aiondx-voice-icon svg,.aiondx-voice-stopall-btn .aiondx-voice-icon svg{width:100%;height:100%;display:block}',
     '.aiondx-voice-mic-btn[data-state="recording"]{color:#fff;background-color:rgb(var(--danger-6)) !important;border-color:rgb(var(--danger-6)) !important}',
     '.aiondx-voice-mic-btn[data-state="recording"] .aiondx-voice-icon{color:#fff}',
     '.aiondx-voice-mic-btn[data-state="recording"]{animation:aiondx-voice-pulse 1.4s ease-out infinite}',
     '.aiondx-voice-mic-btn[data-state="error"]{color:rgb(var(--danger-6)) !important}',
     '.aiondx-voice-mic-btn[data-state="transcribing"],.aiondx-voice-play-btn[data-state="loading"]{cursor:default}',
     '.aiondx-voice-mic-btn[data-state="transcribing"] .aiondx-voice-icon svg,.aiondx-voice-play-btn[data-state="loading"] .aiondx-voice-icon svg{animation:aiondx-voice-spin 0.9s linear infinite}',
-    '.aiondx-voice-mic-btn[disabled],.aiondx-voice-play-btn[disabled]{opacity:.45;cursor:not-allowed}',
+    '.aiondx-voice-mic-btn[disabled],.aiondx-voice-play-btn[disabled],.aiondx-voice-stopall-btn[disabled]{opacity:.45;cursor:not-allowed}',
     '.aiondx-voice-play-btn[data-state="playing"]{color:rgb(var(--primary-6)) !important}',
     '.aiondx-voice-play-btn[data-state="playing"] .aiondx-voice-icon{color:rgb(var(--primary-6))}',
     '.aiondx-voice-play-btn[data-state="playing"]{animation:aiondx-voice-pulse-soft 1.6s ease-out infinite}',
+    '.aiondx-voice-stopall-btn[data-state="active"]{color:rgb(var(--primary-6)) !important}',
+    '.aiondx-voice-stopall-btn[data-state="active"] .aiondx-voice-icon{color:rgb(var(--primary-6))}',
+    '.aiondx-voice-stopall-btn[data-state="active"]{animation:aiondx-voice-pulse-soft 1.6s ease-out infinite}',
     '@keyframes aiondx-voice-pulse{0%{box-shadow:0 0 0 0 rgba(var(--danger-6),.45)}70%{box-shadow:0 0 0 7px rgba(var(--danger-6),0)}100%{box-shadow:0 0 0 0 rgba(var(--danger-6),0)}}',
     '@keyframes aiondx-voice-pulse-soft{0%{box-shadow:0 0 0 0 rgba(var(--primary-6),.35)}70%{box-shadow:0 0 0 6px rgba(var(--primary-6),0)}100%{box-shadow:0 0 0 0 rgba(var(--primary-6),0)}}',
     '@keyframes aiondx-voice-spin{to{transform:rotate(360deg)}}',
     '.aiondx-voice-playrow{margin-top:2px}',
+    // The hands-free badge: a small status pill, never a button - it only ever reflects state.
+    '.aiondx-voice-hf{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--color-text-3);white-space:nowrap;padding:0 4px;max-width:180px;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-voice-hf-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--color-text-3);flex:0 0 auto}',
+    '.aiondx-voice-hf[data-state="wake"] .aiondx-voice-hf-dot{background:rgb(var(--primary-6));animation:aiondx-voice-pulse-soft 2.2s ease-out infinite}',
+    '.aiondx-voice-hf[data-state="listening"] .aiondx-voice-hf-dot{background:rgb(var(--danger-6));animation:aiondx-voice-pulse 1.4s ease-out infinite}',
+    '.aiondx-voice-hf[data-state="waiting-reply"] .aiondx-voice-hf-dot{background:rgb(var(--warning-6))}',
+    '.aiondx-voice-hf[data-state="speaking"] .aiondx-voice-hf-dot{background:rgb(var(--primary-6))}',
+    '.aiondx-voice-toggle{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-1);flex:1 1 auto}',
     // The settings panel, styled like patch 0001's accent picker (.aiondx-accent) so it reads as
     // the same product: a titled block under the AionDX colours card.
     '.aiondx-voice-panel{margin-top:16px;padding-top:16px;border-top:1px solid var(--color-fill-3)}',
@@ -137,6 +164,9 @@
     '<path d="M6 18v12h8l12 10V8L14 18H6Z" fill="currentColor"/>' +
     '<path d="M34 16a12 12 0 0 1 0 16" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>' +
     '<path d="M39 10a20 20 0 0 1 0 28" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>';
+  var ICON_SPEAKER_MUTE = '<svg viewBox="0 0 48 48" fill="none" aria-hidden="true">' +
+    '<path d="M6 18v12h8l12 10V8L14 18H6Z" fill="currentColor"/>' +
+    '<path d="M30 16l12 16M42 16L30 32" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>';
 
   // ---------------------------------------------------------------- shared helpers
 
@@ -158,12 +188,83 @@
     try { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (e) {}
   }
 
-  /** A reply's text sits in an open shadow root (ShadowView), not the host's own light DOM, so
-   *  content.textContent alone is empty for a rendered agent message. */
+  /** Hands-free mode's turn: the mic button's own insertion path, then a click on the send button -
+   *  "reuse that path, don't duplicate it" for the text landing in the box, plus the one extra step
+   *  (send button, not just a click button) that only auto-send needs. */
+  function sendComposerText(ta, text) {
+    insertTranscript(ta, text);
+    var panel = ta.closest('.sendbox-panel') || ta.parentElement;
+    var actions = panel && panel.querySelector('.sendbox-actions');
+    var sendBtn = actions && actions.querySelector('[data-testid="sendbox-send-btn"]');
+    if (sendBtn && !sendBtn.disabled) sendBtn.click();
+  }
+
+  /** What a reply shows, as text to read aloud. Its text sits in an open shadow root (ShadowView), and textContent of that root
+   *  also returns the <style> AionUi puts there - whose CSS comments ("Shadow DOM CSS variable definitions", "Code block horizontal
+   *  scrollbar") were read out after the reply (a user's report: "shadow DOM and other code"). So the rendered nodes are walked
+   *  instead, keeping only what is on screen: no style/script/template/svg, no buttons (a code block's Copy), nothing hidden
+   *  (checkVisibility: display:none, visibility:hidden, a closed <details>), nothing another patch injected (aiondx-*). A rendered
+   *  code block (<pre>) is named, not read; blocks are separated so sentences do not run together. */
+  var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, TEMPLATE: 1, NOSCRIPT: 1, SVG: 1, BUTTON: 1, TEXTAREA: 1, INPUT: 1, SELECT: 1 };
+  var BLOCK_TAGS = /^(P|DIV|LI|UL|OL|H[1-6]|TR|TABLE|BLOCKQUOTE|SECTION|ARTICLE|HEADER|FOOTER|DETAILS|SUMMARY|HR|BR|DD|DT|FIGCAPTION)$/;
+  function isShown(el) {
+    if (el.hidden || el.getAttribute('aria-hidden') === 'true') return false;
+    if (typeof el.checkVisibility === 'function') return el.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true });
+    var cs = window.getComputedStyle ? getComputedStyle(el) : null;
+    return !cs || (cs.display !== 'none' && cs.visibility !== 'hidden');
+  }
+  function codeLanguage(pre) {
+    var el = pre.querySelector('code[class*="language-"]') || pre;
+    var m = /(?:^|\s)language-([\w+#-]+)/.exec(el.className || '') || /(?:^|\s)language-([\w+#-]+)/.exec(pre.className || '');
+    return m ? m[1] : (pre.getAttribute('data-language') || '');
+  }
+  function visibleText(root) {
+    var out = [];
+    (function walk(node) {
+      for (var c = node.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) { out.push(c.nodeValue); continue; }
+        if (c.nodeType !== 1) continue;
+        var tag = c.tagName.toUpperCase();
+        if (SKIP_TAGS[tag]) continue;
+        if (typeof c.className === 'string' && /(?:^|\s)aiondx-/.test(c.className)) continue;
+        if (!isShown(c)) continue;
+        if (tag === 'PRE') { var lang = codeLanguage(c); out.push(lang ? '\n a snippet of ' + lang + ' code. \n' : '\n a code block. \n'); continue; }
+        var block = BLOCK_TAGS.test(tag);
+        if (block) out.push('\n');
+        walk(c);
+        if (block) out.push('\n');
+      }
+    })(root);
+    return out.join('').replace(/[ \t]+\n/g, '\n').replace(/\n{2,}/g, '\n').trim();
+  }
   function messageText(content) {
     var sh = content.querySelector('.markdown-shadow');
-    if (sh && sh.shadowRoot) return (sh.shadowRoot.textContent || '').trim();
-    return (content.textContent || '').trim();
+    if (sh && sh.shadowRoot) return visibleText(sh.shadowRoot);
+    return visibleText(content);
+  }
+
+  /** Markdown read character-by-character sounds broken (a user's report: a fenced code block came
+   *  out as ElevenLabs sounding out punctuation and symbols). This turns a reply's raw markdown into
+   *  something that reads naturally, before it ever reaches synthesize() - the TTS module stays a
+   *  dumb client and knows nothing about markdown.
+   *  Order matters: fenced blocks first (their own backticks would otherwise look like inline code
+   *  spans), then inline code, then the line-level markers, then links, then whitespace. */
+  function spokenText(raw) {
+    var text = String(raw || '');
+    text = text.replace(/```(\w+)?[^\n]*\n?[\s\S]*?```/g, function (m, lang) {
+      return lang ? ' a snippet of ' + lang + ' code. ' : ' a code block. ';
+    });
+    text = text.replace(/`([^`\n]+)`/g, '$1');            // inline code: usually a short identifier, read plainly
+    text = text.replace(/^\s{0,3}#{1,6}\s+/gm, '');        // headings
+    text = text.replace(/(\*\*\*|___)(.+?)\1/g, '$2');     // bold+italic, longest marker first
+    text = text.replace(/(\*\*|__)(.+?)\1/g, '$2');        // bold
+    text = text.replace(/(\*|_)(.+?)\1/g, '$2');           // italic
+    text = text.replace(/^\s{0,3}[-*+]\s+/gm, '');         // bullet lists
+    text = text.replace(/^\s{0,3}\d+[.)]\s+/gm, '');       // numbered lists
+    text = text.replace(/^\s{0,3}>\s?/gm, '');             // blockquotes
+    text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');   // links: read the text, not the brackets or URL
+    text = text.replace(/\s+/g, ' ').trim();               // collapse structural newlines into natural pauses
+    return text;
   }
 
   function audioBlobFrom(result) {
@@ -226,7 +327,7 @@
   function foreignChange(records) {
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
-      if (!t.closest || !t.closest('.aiondx-voice-mic, .aiondx-voice-play, .aiondx-voice-panel')) return true;
+      if (!t.closest || !t.closest('.aiondx-voice-mic, .aiondx-voice-play, .aiondx-voice-stopall, .aiondx-voice-hf, .aiondx-voice-panel')) return true;
     }
     return false;
   }
@@ -292,7 +393,7 @@
         stopMicStream(st);
         if (!blob.size) { setMicState(wrap, 'idle'); activeMic = null; return; }
         setMicState(wrap, 'transcribing');
-        var p = call('transcribe', blob);
+        var p = call('transcribe', blob, { languageCode: speechLanguage() });
         (p || Promise.reject(new Error('no voice module'))).then(function (text) {
           activeMic = null;
           insertTranscript(ta, text);
@@ -361,9 +462,20 @@
 
   // ---------------------------------------------------------------- playback button (agent messages)
 
-  var currentPlayback = null;   // { wrap, audio, url }
+  var currentPlayback = null;   // { wrap, audio, url }, once audio exists (the "playing" phase)
+  var loadingWrap = null;       // the wrap waiting on synthesize(), before audio exists
+  // Bumped by every startPlayback() and stopPlayback(): a synthesize() call started before the bump
+  // checks this before touching the DOM or creating an Audio element, so a reply superseded by a
+  // second click (or a stop) while still "loading" cannot clobber whatever plays next. Before this,
+  // clicking a second message's speaker while the first was still loading left the first stuck in
+  // "loading" forever (nothing ever reset it) and, once its request eventually resolved, could start
+  // a second Audio element fighting the one already playing - a real bug, not just a UI nit: a
+  // dangling fetch plus a button with no way to escape "loading" looks exactly like the app hanging.
+  var playGen = 0;
 
   function stopPlayback() {
+    playGen++;
+    if (loadingWrap) { setPlayState(loadingWrap, 'idle'); loadingWrap = null; }
     if (!currentPlayback) return;
     var cp = currentPlayback;
     currentPlayback = null;
@@ -377,6 +489,7 @@
     st.state = state;
     st.detail = detail || '';
     paintPlay(wrap);
+    paintStopAllButtons();   // every message's play state feeds the one global "stop all reading" control
     if (state === 'error') {
       if (st.errTimer) clearTimeout(st.errTimer);
       st.errTimer = setTimeout(function () { if (wrap.__st === st && st.state === 'error') setPlayState(wrap, 'idle'); }, ERROR_HOLD_MS);
@@ -392,23 +505,89 @@
     else if (st.state === 'loading') html = ICON_SPINNER;
     if (icon.__shown !== html) { icon.innerHTML = html; icon.__shown = html; }
     var canUse = !!(voice() && typeof voice().synthesize === 'function');
-    btn.disabled = !canUse || st.state === 'loading';
+    // "loading" is clickable too (it cancels), unlike the mic's "transcribing": there is no way to
+    // retry a stuck play from anywhere else, so the same button has to be its own escape hatch.
+    btn.disabled = !canUse;
     var label = !canUse ? 'Play this reply: the voice module is not loaded'
       : st.state === 'playing' ? 'Stop playback'
-      : st.state === 'loading' ? 'Preparing audio...'
+      : st.state === 'loading' ? 'Preparing audio... click to cancel'
       : st.state === 'error' ? 'Could not play this reply: ' + (st.detail || 'synthesis failed') + '. Click to try again.'
       : 'Play this reply aloud';
     if (btn.getAttribute('aria-label') !== label) btn.setAttribute('aria-label', label);
     if (btn.hasAttribute('title')) btn.removeAttribute('title');
   }
 
+  /** A provider failure, or nothing to start with: with no key saved (no provider, no key, no voice module) the reply is read with
+   *  the voice the PC already has (free, offline), so the button does something on a fresh install. Never with a key saved: then the
+   *  user chose their provider, and its failure is shown, not covered by another voice. */
+  function playbackFailed(wrap, text, e) {
+    console.log('[dx-voice] synthesize error', e);
+    var hasKey = !!(settingsCache.data || {}).apiKey;
+    if (!hasKey && canSpeakSystem() && /no provider configured|no API key|no voice module/i.test((e && e.message) || '')) {
+      try { systemSpeak(wrap, text); return; } catch (x) { console.log('[dx-voice] system voice failed', x); }
+    }
+    setPlayState(wrap, 'error', (e && e.message) || 'synthesis failed');
+  }
+
+  /** synthesize()'s answer as a Blob, which playChunked plays: a Blob, { blob }, an ArrayBuffer, or a URL (a stand-in client's). */
+  function toAudioBlob(result) {
+    var blob = audioBlobFrom(result);
+    if (blob) return blob;
+    var url = audioUrlFrom(result);
+    if (url) return fetch(url).then(function (r) { return r.blob(); });
+    throw new Error('unexpected synthesize() result');
+  }
+
   function startPlayback(wrap, content) {
     stopPlayback();
-    var text = messageText(content);
+    var text = spokenText(messageText(content));
     if (!text) { setPlayState(wrap, 'error', 'nothing to read'); return; }
+    var m = window.AionDxVoice;
+    if (!m || typeof m.playChunked !== 'function' || !voice()) { startWholePlayback(wrap, text); return; }
+    ++playGen;
+    loadingWrap = wrap;
+    setPlayState(wrap, 'loading');
+    // Piece by piece (aiondx-voice.js playChunked): the first sound comes after one short piece is synthesized, not the whole reply,
+    // and the next piece is fetched while the current one plays. Its pause() stands in for an Audio element's, so stopPlayback() and
+    // stop-all stop it unchanged: the request in flight is aborted and no further piece plays. The button stays "playing" across
+    // pieces and goes idle only after the last one - hands-free waits for exactly that before it listens again.
+    var voiceId = (settingsCache.data || {}).voiceId;
+    var started = false;
+    var cp = { wrap: wrap, url: null, audio: null };
+    cp.audio = m.playChunked({
+      text: text,
+      synthesize: function (piece, o) {
+        var p = call('synthesize', piece, voiceId, o);
+        return (p || Promise.reject(new Error('no voice module'))).then(toAudioBlob);
+      },
+      onStart: function () {
+        started = true;
+        if (currentPlayback !== cp) return;
+        if (loadingWrap === wrap) loadingWrap = null;
+        setPlayState(wrap, 'playing');
+      },
+      onEnd: function () { if (currentPlayback === cp) stopPlayback(); },
+      onError: function (e) {
+        if (currentPlayback !== cp) return;
+        currentPlayback = null;
+        if (loadingWrap === wrap) loadingWrap = null;
+        // Once a piece has played, a later failure is shown as an error; the fall-back would start the reply over.
+        if (started) { console.log('[dx-voice] playback failed partway', e); setPlayState(wrap, 'error', (e && e.message) || 'playback failed'); }
+        else playbackFailed(wrap, text, e);
+      }
+    });
+    currentPlayback = cp;
+  }
+
+  /** The whole reply in one synthesize() call: only where the voice module offers no playChunked (a stand-in client). */
+  function startWholePlayback(wrap, text) {
+    var myGen = ++playGen;
+    loadingWrap = wrap;
     setPlayState(wrap, 'loading');
     var p = call('synthesize', text, (settingsCache.data || {}).voiceId);
     (p || Promise.reject(new Error('no voice module'))).then(function (result) {
+      if (myGen !== playGen) return;   // superseded by a newer play, or stopped, while this was in flight
+      loadingWrap = null;
       var url = audioUrlFrom(result);
       var ownUrl = false;
       if (!url) {
@@ -427,12 +606,9 @@
         if (currentPlayback === cp) { currentPlayback = null; setPlayState(wrap, 'error', 'playback was blocked'); }
       });
     }, function (e) {
-      console.log('[dx-voice] synthesize error', e);
-      // No provider or no key: read it with the voice the PC already has (free, offline), so the button does something on a fresh install.
-      if (canSpeakSystem() && /no provider configured|no API key|no voice module/i.test((e && e.message) || '')) {
-        try { systemSpeak(wrap, text); return; } catch (x) { console.log('[dx-voice] system voice failed', x); }
-      }
-      setPlayState(wrap, 'error', (e && e.message) || 'synthesis failed');
+      if (myGen !== playGen) return;   // superseded; do not paint a stale error over whatever is current now
+      loadingWrap = null;
+      playbackFailed(wrap, text, e);
     });
   }
 
@@ -484,8 +660,8 @@
       ev.preventDefault();
       ev.stopPropagation();
       var st = wrap.__st;
-      if (st.state === 'playing') stopPlayback();
-      else if (st.state === 'idle' || st.state === 'error') startPlayback(wrap, content);
+      if (st.state === 'playing' || st.state === 'loading') stopPlayback();
+      else if (st.state === 'idle' || st.state === 'error') { startPlayback(wrap, content); speakWhileHandsFree(wrap); }
     });
     wrap.appendChild(btn);
     paintPlay(wrap);
@@ -540,6 +716,614 @@
     }, true);
   }
 
+  // ------------------------------------------------- global "stop all reading" button (composer)
+
+  /** One button per composer (the mic button's neighbour), all of them reflecting and controlling
+   *  the same page-wide playback state: only one reply ever plays at a time (startPlayback() always
+   *  calls stopPlayback() first), so stopping "all" is just stopping that one - but a single
+   *  discoverable control beats hunting down whichever message's speaker button is lit. */
+  function buildStopAllButton() {
+    var wrap = document.createElement('span');
+    wrap.className = 'aiondx-voice-stopall';
+    wrap.setAttribute('data-testid', 'aiondx-voice-stopall');
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'arco-btn arco-btn-secondary arco-btn-size-small arco-btn-shape-circle aiondx-voice-stopall-btn';
+    btn.setAttribute('data-testid', 'aiondx-voice-stopall-btn');
+    btn.innerHTML = '<span class="aiondx-voice-icon">' + ICON_SPEAKER_MUTE + '</span>';
+    btn.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      stopPlayback();
+      hf.lastError = '';   // a deliberate stop, not a failure: nothing to explain
+      stopHandsFreeForGood();   // the exit control for hands-free mode too: stop reading AND stop listening, for good
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  /** active covers hands-free mode too, not just an in-flight synthesize()/playback: it is the
+   *  button's one exit control for a conversation that is only listening right now, nothing
+   *  playing yet, so it has to be clickable (and so enabled) through every stage of that, not just
+   *  while something is actually reading aloud. A disabled button never receives a real click at
+   *  all, so this was a genuine bug, not just a label: hands-free had no way to stop by this
+   *  button except during the "speaking" stage. */
+  function paintStopAllButtons() {
+    var active = !!(loadingWrap || currentPlayback || hf.active);
+    var btns = document.querySelectorAll('.aiondx-voice-stopall-btn');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      b.disabled = !active;
+      var want = active ? 'active' : 'idle';
+      if (b.getAttribute('data-state') !== want) b.setAttribute('data-state', want);
+      var label = active ? 'Stop all reading' : 'Nothing is being read aloud';
+      if (b.getAttribute('aria-label') !== label) b.setAttribute('aria-label', label);
+      if (b.hasAttribute('title')) b.removeAttribute('title');
+    }
+  }
+
+  function ensureStopAllButtons() {
+    var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
+    for (var i = 0; i < boxes.length; i++) {
+      var ta = boxes[i].tagName === 'TEXTAREA' ? boxes[i] : boxes[i].querySelector('textarea');
+      if (!ta || !ta.getClientRects().length) continue;
+      var panel = ta.closest('.sendbox-panel') || ta.parentElement;
+      var actions = panel && panel.querySelector('.sendbox-actions');
+      if (!actions || actions.querySelector('.aiondx-voice-stopall')) continue;
+      var mic = actions.querySelector('.aiondx-voice-mic');
+      actions.insertBefore(buildStopAllButton(), mic ? mic.nextSibling : actionsInsertAnchor(actions));
+    }
+    paintStopAllButtons();
+  }
+
+  // ---------------------------------------------------------------- hands-free conversation mode
+  //
+  // Say a wake phrase, then talk back and forth with an agent without touching a button each turn.
+  // Built entirely on top of AionDxVoice's wake-phrase listener and utterance capture
+  // (startWakeListener/stopWakeListener/captureUtterance) - this file only sequences those calls
+  // and reuses its own existing pieces: insertTranscript/sendComposerText for landing a turn in the
+  // composer, startPlayback/spokenText for reading a reply back, stopPlayback (via the stop-all
+  // button) for stopping it. One cycle: wake phrase -> captureUtterance() -> send -> poll the
+  // conversation until the turn finishes -> auto-play the newest reply -> once that playback ends,
+  // captureUtterance() again - never back to the wake phrase, per the user's own framing of it as a
+  // continuous conversation, not a wake-once-per-turn assistant. A spoken stop phrase (checked the
+  // same simple substring way the wake phrase is) or the stop-all button ends it.
+  //
+  // hf.gen is bumped by every teardown and every stage transition's own start; every async step
+  // (a captureUtterance() resolve/reject, a status poll, the playback watcher) checks it against
+  // the value it captured before beginning, the same stale-result guard startPlayback's playGen
+  // uses - so a stop (or a conversation switch) mid-flight can never have a late callback restart
+  // a stage, land a message, or kick off a playback that the user already asked to stop.
+
+  // lastError: set only when a real failure stopped hands-free mode (a mic permission denial, the
+  // module missing, ...), and surfaced in the settings panel (see handsFreeStatusText) since the
+  // badge that would otherwise show it lives in a conversation's composer - easy for the user to
+  // never be looking at when hands-free stops itself. Cleared on a fresh, deliberate start or stop
+  // so a stale error does not linger and read as still-current.
+  // key: a string identifying what hf is currently running for ('conv:<id>' or 'team:<id>'), so
+  // ensureHandsFree() can tell "already running for this exact target, leave it alone" apart from
+  // "switched to a different one, restart" without caring about conv vs team itself.
+  var hf = { active: false, state: 'off', key: null, target: null, wakeStop: null, abort: null, pollTimer: null, gen: 0, lastError: '', sawActivity: false, wakeStartedAt: 0, transcribeErrorMsg: '', transcribeErrorAt: 0, heardText: '', heardAt: 0, heardReason: '', stageStartedAt: 0, bargeStop: null, capturing: false, interrupted: false };
+  // Test-only: {levelSource, createRecorder} to hand startWakeListener/captureUtterance a fake mic
+  // instead of the real one, the same injection test-wake.js uses for aiondx-voice.js itself. Set
+  // through window.__aionDxVoiceUI.setHfTestSource, never touched in production.
+  var hfInjectedOpts = {};
+
+  function hfModule() { return window.AionDxVoice || null; }
+  // Speech language: a short sound left to auto-detection came back in another language (a user's test: "え？", then "[打鼓声]",
+  // from English speech). The settings record's `languageCode` (aiondx-voice.js reads the same field) is an ISO 639-1 code, or empty for "the same as the app"; every
+  // transcribe() call gets a concrete code either way.
+  var SPEECH_LANGUAGES = [['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'],
+    ['nl', 'Dutch'], ['pl', 'Polish'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['tr', 'Turkish'], ['ar', 'Arabic'], ['hi', 'Hindi'],
+    ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese']];
+  function appLanguage() {
+    var tag = document.documentElement.getAttribute('lang') || '';
+    if (!tag) { try { tag = localStorage.getItem('i18nextLng') || localStorage.getItem('language') || ''; } catch (e) { tag = ''; } }
+    if (!tag) tag = navigator.language || 'en';
+    var code = String(tag).toLowerCase().split(/[-_]/)[0];
+    return /^[a-z]{2}$/.test(code) ? code : 'en';
+  }
+  function speechLanguage() {
+    var chosen = (settingsCache.data || {}).languageCode;
+    return chosen && /^[a-z]{2}$/.test(chosen) ? chosen : appLanguage();
+  }
+  function languageName(code) {
+    for (var i = 0; i < SPEECH_LANGUAGES.length; i++) if (SPEECH_LANGUAGES[i][0] === code) return SPEECH_LANGUAGES[i][1];
+    return code;
+  }
+  function hfTranscribe(blob, opts) { return call('transcribe', blob, Object.assign({ languageCode: speechLanguage() }, opts || {})); }
+  function saysStopHF(text) {
+    var t = String(text || '').toLowerCase();
+    return HF_STOP_PHRASES.some(function (p) { return t.indexOf(p) >= 0; });
+  }
+  function setHfState(state) { hf.state = state; paintHandsFreeBadge(); paintStopAllButtons(); paintHandsFreeNote(); }
+
+  // Why aiondx-voice.js's cleanTranscript dropped a clip, in words (a user's test sent "[打鼓声]", a drum sound, and "it and").
+  function droppedReason(code) {
+    if (code === 'sound-tag') return 'not speech';
+    if (code === 'empty') return 'nothing said';
+    if (code === 'wrong-language') return 'not ' + languageName(speechLanguage());
+    if (code === 'too-short') return 'too short';
+    if (code === 'fragment') return 'cut off';
+    return String(code);
+  }
+  /** Every clip the wake listener, the message capture or the barge-in listener transcribed: shown as "Heard: …" in the badge's
+   *  tooltip and the settings status line, with the reason when it was not used, so a phrase that is never accepted, or a sound
+   *  that is ignored, shows what happened instead of looking like nothing did. */
+  function noteHeard(myGen, text, info) {
+    if (myGen !== hf.gen) return;
+    hf.sawActivity = true;
+    var t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+    if (t) {
+      hf.heardText = t.length > 80 ? t.slice(0, 79) + '…' : t;
+      hf.heardAt = Date.now();
+      hf.heardReason = info && info.dropped ? droppedReason(info.dropped) : '';
+    }
+    hf.transcribeErrorMsg = '';   // a clip that transcribed: an earlier failure is no longer the state to show
+    paintHandsFreeBadge(); paintHandsFreeNote();
+  }
+  function startStage(state) {
+    hf.stageStartedAt = Date.now();
+    hf.heardText = '';
+    hf.heardAt = 0;
+    hf.heardReason = '';
+    setHfState(state);
+  }
+
+  /** A solo conversation's lone composer (r.kind === 'conv'), or a team page's lead column
+   *  specifically (r.kind === 'team') - a user talking hands-free "to the lead agent" is on this
+   *  route, not #/conversation/<id>, which the first version of this feature matched exclusively.
+   *  A teammate's own column is still out of scope: picking which of several members a wake phrase
+   *  should address is a bigger design question than this build takes on.
+   *  Returns { kind, id, ta, scope } (scope is where a reply's message rows are looked for - the
+   *  whole document for a solo chat, just the lead's column on a team page) or null when the
+   *  composer is not in the DOM yet this frame (ensureHandsFree() tries again next render). */
+  function findHfTarget(r) {
+    if (r.kind === 'conv') {
+      var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
+      for (var i = 0; i < boxes.length; i++) {
+        var cand = boxes[i].tagName === 'TEXTAREA' ? boxes[i] : boxes[i].querySelector('textarea');
+        if (cand && cand.getClientRects().length && !cand.closest('[data-slot-id]')) {
+          return { kind: 'conv', id: r.id, ta: cand, scope: document };
+        }
+      }
+      return null;
+    }
+    if (r.kind === 'team') {
+      var col = document.querySelector('[data-slot-id][data-role="leader"]');   // TeamPage.tsx's own attribute for the lead's column
+      if (!col) return null;
+      var box = col.querySelector('[data-testid="sendbox-input"]');
+      var ta = box ? (box.tagName === 'TEXTAREA' ? box : box.querySelector('textarea')) : null;
+      if (!ta || !ta.getClientRects().length) return null;
+      return { kind: 'team', id: r.id, ta: ta, scope: col };
+    }
+    return null;
+  }
+
+  /** Stops the running listeners only, leaving the "hands-free enabled" setting untouched: used
+   *  for a conversation switch or a page unload, where the feature should pick back up on
+   *  whichever conversation is open next, not be switched off outright. ensureHandsFree() calls
+   *  this itself before restarting fresh, so it must never flip the setting - that would be
+   *  indistinguishable from the user turning the whole feature off. */
+  function teardownHandsFree() {
+    hf.gen++;
+    if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }
+    if (hf.abort) { try { hf.abort.abort(); } catch (e) {} hf.abort = null; }
+    if (hf.pollTimer) { clearTimeout(hf.pollTimer); hf.pollTimer = null; }
+    stopBargeIn();   // a capture in progress too: stop-all ends everything
+    hf.capturing = false;
+    hf.interrupted = false;
+    var m = hfModule();
+    if (m && typeof m.stopWakeListener === 'function') { try { m.stopWakeListener(); } catch (e) {} }
+    hf.active = false;
+    hf.key = null;
+    hf.target = null;
+    setHfState('off');
+  }
+
+  /** The user's own "stop" - the stop-all button or a spoken stop phrase. Unlike teardownHandsFree
+   *  alone, this also switches the setting off, so ensureHandsFree() does not just start the wake
+   *  listener right back up on its next pass (which runs within the same render tick, since
+   *  nothing else changed). The settings panel's checkbox updates on its own next refresh. */
+  function stopHandsFreeForGood() {
+    teardownHandsFree();
+    saveSettings({ handsFree: false });
+  }
+
+  // startWakeStage/startListenStage/waitForReplyThenPlay/watchPlaybackThenListenAgain all read
+  // hf.target fresh at the point they actually touch the DOM (a composer's textarea, its send
+  // button, its message rows), rather than taking it as a parameter closed over once when the
+  // stage started. They used to take `target` as an argument; a long wake/listen cycle easily
+  // outlives one render pass, and React can replace the composer's own DOM nodes (a busy page
+  // re-rendering) without hf.key ever changing, which ensureHandsFree() already re-detects and
+  // refreshes hf.target for - but a captured parameter from several stages back would still point
+  // at whatever was live when that stage first began. Concretely: sendComposerText(target.ta, ...)
+  // against a since-detached textarea dispatches its 'input' event to nothing, and the click on a
+  // detached send button reaches no listener - the call "succeeds" (nothing throws) and nothing
+  // happens, which is indistinguishable from the wake phrase doing nothing at all.
+
+  function startWakeStage() {
+    var myGen = hf.gen;
+    var m = hfModule();
+    if (!m || typeof m.startWakeListener !== 'function') { teardownHandsFree(); return; }
+    hf.sawActivity = false;
+    hf.wakeStartedAt = Date.now();
+    hf.transcribeErrorMsg = '';
+    hf.transcribeErrorAt = 0;
+    hf.interrupted = false;
+    startStage('wake');
+    var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
+    var opts = Object.assign({
+      phrase: phrase,
+      transcribe: hfTranscribe,
+      languageCode: speechLanguage(),   // for the module's junk filter too (a clip not in this language is dropped, not woken on)
+      // "Hey AionDX, what's the weather" in one breath: the request is in the wake clip itself, and is sent from it instead of
+      // being lost (a lone word after the phrase, "uh", is not a request: then it listens for the message as before).
+      onWake: function (text) {
+        if (myGen !== hf.gen) return;
+        var rest = stripWakePhrase(text);
+        if (rest && rest.split(/\s+/).length >= 2 && !saysStopHF(rest) && hf.target) {
+          if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }
+          sendComposerText(hf.target.ta, rest);
+          waitForReplyThenPlay(myGen);
+          return;
+        }
+        startListenStage();
+      },
+      // Any candidate, matched or not, is proof the mic + VAD pipeline is actually alive - see
+      // hfStageLabel's stall hint, which is otherwise the only way to tell "it's listening and
+      // just hasn't heard the phrase" apart from "it isn't really listening at all."
+      // The text is what the wake listener heard (matched or not): shown as "Heard: …" in the badge's tooltip and the settings
+      // status line, so a phrase that is never accepted shows how it was heard instead of looking like nothing happened.
+      onCandidate: function (text, info) { noteHeard(myGen, text, info); },
+      // A failed transcribe() still proves the mic/VAD recorded and sent a real clip - that is
+      // "activity" too, and a sharper signal than the stall hint: this is the exact bug a user
+      // report traced to "every clip was failing to transcribe, with nothing ever saying so."
+      // The wake listener keeps running regardless (Core Engineer's own design, symmetric with
+      // onCandidate) - one bad clip says nothing about the next one.
+      onTranscribeError: function (e) {
+        if (myGen !== hf.gen) return;
+        console.log('[dx-voice] wake transcribe error', e);
+        hf.sawActivity = true;
+        hf.transcribeErrorMsg = (e && e.message) || 'transcription failed';
+        hf.transcribeErrorAt = Date.now();
+        paintHandsFreeBadge();
+        paintHandsFreeNote();
+      },
+      onError: function (e) {
+        if (myGen !== hf.gen) return;
+        console.log('[dx-voice] wake listener error', e);
+        hf.lastError = (e && e.message) || 'could not start the microphone';
+        stopHandsFreeForGood();
+      }
+    }, hfInjectedOpts);
+    hf.wakeStop = m.startWakeListener(opts);
+  }
+
+  /** A message's text with the wake phrase taken off its start, the way matchWakePhrase hears it ("Hey, Aeon DX, what's next"
+   *  -> "what's next"). Only at the start: the shortest run of leading words that matches, and only if the match begins at the
+   *  first word ("tell me what hey aiondx means" is left alone). Unchanged when the module has no matchWakePhrase. */
+  function stripWakePhrase(text) {
+    var m = hfModule();
+    var raw = String(text || '').trim();
+    if (!raw || !m || typeof m.matchWakePhrase !== 'function') return raw;
+    var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
+    var tokens = raw.split(/\s+/);
+    var most = Math.min(tokens.length, phrase.split(/\s+/).length + 3);   // a name can come back as several words ("AMD X")
+    for (var k = 1; k <= most; k++) {
+      if (!m.matchWakePhrase(tokens.slice(0, k).join(' '), phrase).matched) continue;
+      if (k > 1 && m.matchWakePhrase(tokens.slice(1, k).join(' '), phrase).matched) return raw;   // it starts after the first word
+      return tokens.slice(k).join(' ').replace(/^[\s,.;:!?—–-]+/, '');
+    }
+    return raw;
+  }
+
+  /** A message the user said (the listen stage's capture, or the capture after a barge-in): a stop phrase ends hands-free; "stop"
+   *  or "wait" said over a reply, nothing, or only the wake phrase is not sent and it listens again; anything else is sent, with
+   *  the wake phrase said at its start taken off ("Hey AionDX, …"), and the reply is waited for. */
+  function sendSpoken(myGen, text) {
+    if (saysStopHF(text)) { hf.lastError = ''; stopHandsFreeForGood(); return; }   // a deliberate stop, not a failure
+    var m = hfModule();
+    if (m && typeof m.isStopCommand === 'function' && m.isStopCommand(String(text || ''))) { startListenStage(); return; }
+    var clean = stripWakePhrase(text);
+    if (!clean) { startListenStage(); return; }
+    sendComposerText(hf.target.ta, clean);   // hf.target read now, not whatever was current when this stage started
+    waitForReplyThenPlay(myGen);
+  }
+
+  function startListenStage() {
+    var myGen = hf.gen;
+    if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }   // release the wake mic before opening a fresh one
+    var m = hfModule();
+    if (!m || typeof m.captureUtterance !== 'function') { teardownHandsFree(); return; }
+    hf.interrupted = false;
+    startStage('listening');
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    hf.abort = controller;
+    var opts = Object.assign({
+      transcribe: hfTranscribe,
+      languageCode: speechLanguage(),
+      onCandidate: function (text, info) { noteHeard(myGen, text, info); },   // a dropped clip ("[drum sound]") shows why, and listening goes on
+      signal: controller ? controller.signal : undefined
+    }, hfInjectedOpts);
+    m.captureUtterance(opts).then(function (text) {
+      hf.abort = null;
+      if (myGen !== hf.gen) return;
+      sendSpoken(myGen, text);
+    }, function (e) {
+      hf.abort = null;
+      if (myGen !== hf.gen) return;
+      console.log('[dx-voice] captureUtterance error', e);
+      startListenStage();   // a timeout with nothing said, or a hiccup: keep listening, the conversation stays live
+    });
+  }
+
+  /** Has the turn finished? A solo chat's own status; a team's lead checked through run-state,
+   *  the same source and the same "idle means done" rule patch 0001's Loop uses for a team member -
+   *  a solo conversation's GET has no equivalent slot_work to read, so the two need their own call. */
+  function hfTurnFinished(target) {
+    if (target.kind === 'team') {
+      return fetch(apiUrl('/api/teams/' + target.id + '/run-state'), { credentials: 'include' })
+        .then(function (r) { return r.ok ? r.json() : null; }, function () { return null; })
+        .then(function (j) {
+          var data = j && (j.data || j);
+          var slots = data && Array.isArray(data.slot_work) ? data.slot_work : null;
+          if (!slots) return false;   // no answer yet: do not guess it is done
+          var lead = slots.filter(function (s) { return s.role === 'lead'; })[0];
+          return !lead || lead.state === 'idle';
+        });
+    }
+    return fetch(apiUrl('/api/conversations/' + target.id), { credentials: 'include' })
+      .then(function (r) { return r.ok ? r.json() : null; }, function () { return null; })
+      .then(function (j) {
+        var data = j && (j.data || j);
+        var status = data && data.status;
+        return !status || status === 'finished';
+      });
+  }
+
+  /** Polls until the agent's turn finishes, then auto-plays the newest reply - the same play
+   *  button a manual click would use, just triggered here instead of by the user. Re-reads
+   *  hf.target on every poll tick (both for hfTurnFinished's id and for where to look for the
+   *  reply), not just once at the start - this can run for a while. */
+  function waitForReplyThenPlay(myGen) {
+    setHfState('waiting-reply');
+    function poll() {
+      if (myGen !== hf.gen) return;
+      var target = hf.target;
+      hfTurnFinished(target).then(function (done) {
+        if (myGen !== hf.gen) return;
+        if (!done) { hf.pollTimer = setTimeout(poll, 1000); return; }
+        var scope = hf.target ? hf.target.scope : target.scope;
+        var rows = Array.prototype.filter.call(scope.querySelectorAll('[id^="message-"][data-message-type="text"]'), isAgentRow);
+        var row = rows[rows.length - 1];
+        var wrap = row && row.querySelector('.aiondx-voice-play');
+        var content = row && row.querySelector('[data-testid="message-text-content"]');
+        if (!wrap || !content) { hf.pollTimer = setTimeout(poll, 500); return; }   // the reply's row exists but ensurePlayButtons() has not reached it yet this frame
+        setHfState('speaking');
+        startPlayback(wrap, content);
+        watchPlaybackThenListenAgain(wrap, myGen);
+      });
+    }
+    poll();
+  }
+
+  /** Not back to the wake phrase - the user's own framing of this as a continuous conversation, so
+   *  every turn after the first starts straight at captureUtterance(). While the reply plays, the
+   *  user can talk over it (startBargeIn); then that path takes over and this one stands down.
+   *  `after` replaces the listen stage (a manual speaker playback returns to the stage it paused). */
+  function watchPlaybackThenListenAgain(wrap, myGen, after) {
+    startBargeIn(myGen);
+    var tick = setInterval(function () {
+      if (myGen !== hf.gen || hf.capturing) { clearInterval(tick); return; }   // stopped, or interrupted: the barge-in path goes on
+      var st = wrap.__st.state;
+      if (st === 'idle' || st === 'error') {
+        clearInterval(tick);
+        if (myGen !== hf.gen) return;
+        stopBargeIn();   // its microphone is released before the next stage opens one
+        (after || startListenStage)();
+      }
+    }, 150);
+  }
+
+  /** Interrupting a reply by talking over it (aiondx-voice.js startBargeInListener: speech on top of the reply's own sound, not
+   *  the reply leaking into the microphone). On a barge-in the reply stops at once, through the same stopPlayback() as the stop
+   *  button, and what the user says is captured as their next message - no wake phrase. */
+  function stopBargeIn() {
+    if (hf.bargeStop) { try { hf.bargeStop(); } catch (e) {} hf.bargeStop = null; }
+  }
+  function startBargeIn(myGen) {
+    var m = hfModule();
+    if (!m || typeof m.startBargeInListener !== 'function') return;
+    stopBargeIn();
+    hf.capturing = false;
+    hf.bargeStop = m.startBargeInListener(Object.assign({
+      transcribe: hfTranscribe,
+      languageCode: speechLanguage(),
+      onCandidate: function (text, info) { noteHeard(myGen, text, info); },
+      onError: function (e) { console.log('[dx-voice] barge-in listener error (the reply plays on, uninterruptible)', e); },
+      onBargeIn: function (ev) {
+        if (myGen !== hf.gen || !hf.active) { try { ev.cancel(); } catch (e) {} return; }
+        hf.capturing = true;   // first: the playback watcher must not start a listen stage when stopPlayback() idles the button
+        hf.interrupted = true;
+        stopPlayback();
+        startStage('listening');
+        ev.capture().then(function (text) {
+          hf.capturing = false;
+          hf.bargeStop = null;
+          if (myGen !== hf.gen) return;
+          sendSpoken(myGen, text);
+        }, function (e) {
+          hf.capturing = false;
+          hf.bargeStop = null;
+          if (myGen !== hf.gen) return;
+          console.log('[dx-voice] barge-in capture error', e);
+          startListenStage();
+        });
+      }
+    }, hfInjectedOpts));
+  }
+
+  /** The speaker button pressed while hands-free waits for the wake phrase or a message: the wake/listen stage pauses (one
+   *  microphone user at a time), the reply can be talked over like an auto-played one, and the paused stage resumes after. */
+  function speakWhileHandsFree(wrap) {
+    if (!hf.active || (hf.state !== 'wake' && hf.state !== 'listening')) return;
+    var back = hf.state === 'listening' ? startListenStage : startWakeStage;
+    hf.gen++;   // the paused stage's own callbacks (a capture aborted below) must not restart anything
+    if (hf.wakeStop) { try { hf.wakeStop(); } catch (e) {} hf.wakeStop = null; }
+    if (hf.abort) { try { hf.abort.abort(); } catch (e) {} hf.abort = null; }
+    setHfState('speaking');
+    watchPlaybackThenListenAgain(wrap, hf.gen, back);
+  }
+
+  /** The entry point from render(): starts, restarts (on a conversation/team switch) or tears down
+   *  hands-free mode to match the setting and the page, without ever touching an already-running
+   *  cycle for the target it is already running on. */
+  function ensureHandsFree() {
+    var settings = settingsCache.data || {};
+    var enabled = !!settings.handsFree;
+    var r = route();
+    if (!enabled || !r) { if (hf.active) teardownHandsFree(); return; }
+    var target = findHfTarget(r);
+    if (!target) return;   // the composer is not rendered yet this frame; ensureHandsFree() runs again next render
+    var key = target.kind + ':' + target.id;
+    if (hf.active && hf.key === key) {
+      // Same target by id, but React can replace the composer's own DOM nodes (a team page in
+      // particular re-renders often) without the route ever changing - findHfTarget() above
+      // already re-searched the live DOM and found this frame's real nodes; keep them, not
+      // whatever was live when startWakeStage first captured hf.target. Skipping this update (an
+      // earlier version did) left hf.target.ta pointing at a node React could since have detached,
+      // which silently breaks every badge repaint and the send button sendComposerText() clicks -
+      // the listener itself keeps running underneath (it owns no DOM), so nothing here looked
+      // wrong from inside aiondx-voice.js, but the whole UI side goes stale and inert.
+      if (hf.target !== target) { hf.target = target; paintHandsFreeBadge(); }
+      return;
+    }
+    if (hf.active) teardownHandsFree();
+    var m = hfModule();
+    if (!m || typeof m.startWakeListener !== 'function' || typeof m.captureUtterance !== 'function') return;
+    hf.active = true;
+    hf.key = key;
+    hf.target = target;   // which composer the badge belongs to - a team page has more than one on screen at once
+    hf.lastError = '';   // a fresh start (the checkbox just turned on, or a target switch): any previous error is stale now
+    startWakeStage();
+  }
+
+  function buildHandsFreeBadge() {
+    var el = document.createElement('span');
+    el.className = 'aiondx-voice-hf';
+    el.setAttribute('data-testid', 'aiondx-voice-hf-badge');
+    el.innerHTML = '<span class="aiondx-voice-hf-dot" aria-hidden="true"></span><span class="aiondx-voice-hf-text"></span>';
+    return el;
+  }
+  /** The one state->words mapping, shared by the composer badge and the settings panel's status
+   *  line - so the two can never drift apart on what "waiting-reply" or "speaking" is called. */
+  var HF_STALL_MS = 8000;   // long enough to not false-positive on a quiet room, short enough to be useful
+  /** What the wake listener last heard in this wake stage, for the tooltip and status line (not the badge itself: it is narrow). */
+  function hfHeardLine() {
+    if ((hf.state !== 'wake' && hf.state !== 'listening') || !hf.heardText || hf.heardAt < hf.stageStartedAt) return '';
+    return 'Heard: “' + hf.heardText + '”' + (hf.heardReason ? ' (ignored: ' + hf.heardReason + ')' : '');
+  }
+  function hfStageLabel() {
+    var phrase = (settingsCache.data || {}).wakePhrase || DEFAULT_WAKE_PHRASE;
+    if (hf.state === 'wake') {
+      // A failed transcribe() takes priority over the plain stall hint below: it is strictly more
+      // informative (proof the mic/VAD recorded and sent a real clip, plus the actual reason it
+      // did not turn into a wake) and, bug-for-bug, is exactly the case the stall hint alone would
+      // have gotten backwards - every clip failing to transcribe still counts as real activity
+      // (onTranscribeError sets sawActivity too), so without this check the badge would have kept
+      // saying "no microphone activity detected" while the mic was demonstrably working.
+      if (hf.transcribeErrorMsg && hf.transcribeErrorAt >= hf.wakeStartedAt) {
+        // The reason first: the badge is a narrow, ellipsized chip, and the old order ("Listening for “…” — trans…") hid exactly
+        // the part a user needed. The full text is also the badge's tooltip and the settings panel's status line.
+        return 'Transcription failed: ' + hf.transcribeErrorMsg + ' (listening for “' + phrase + '”)';
+      }
+      // sawActivity is set by onCandidate or onTranscribeError - proof the VAD actually heard
+      // *something* and sent it to transcribe(), matched or not, successful or not. Silent since
+      // this stage started points at the mic/VAD pipeline itself, not "the phrase wasn't
+      // understood" - worth telling apart, since the badge otherwise looks identical
+      // ("Listening...") whether the mic is live or not. ensureHandsFreeBadges() repaints this
+      // every ~2s regardless of a state change, so the hint appears without extra wiring.
+      var stalled = !hf.sawActivity && hf.wakeStartedAt && (Date.now() - hf.wakeStartedAt > HF_STALL_MS);
+      return 'Listening for “' + phrase + '”' + (stalled ? ' — no microphone activity detected yet' : '');
+    }
+    return hf.state === 'listening' ? (hf.interrupted ? 'Listening (interrupted)…' : 'Listening for your message…')
+      : hf.state === 'waiting-reply' ? 'Waiting for the reply…'
+      : hf.state === 'speaking' ? 'Reading the reply aloud…'
+      : '';
+  }
+  /** The .sendbox-actions row a composer's textarea lives in - shared by the badge scoping below
+   *  and ensureMicButtons/ensureStopAllButtons/ensureHandsFreeBadges' own insertion logic. */
+  function actionsFor(ta) {
+    var panel = ta.closest('.sendbox-panel') || ta.parentElement;
+    return panel && panel.querySelector('.sendbox-actions');
+  }
+  function paintHandsFreeBadge() {
+    var show = hf.active && hf.state !== 'off';
+    var label = hfStageLabel();
+    // On a team page every column gets its own badge element (ensureHandsFreeBadges inserts one
+    // per composer, not knowing yet which one hf will end up targeting), but hf only ever runs for
+    // one of them: show it there and nowhere else, or every other member's column would flash the
+    // lead's "listening" state too.
+    var mineActions = show && hf.target && hf.target.ta ? actionsFor(hf.target.ta) : null;
+    var badges = document.querySelectorAll('.aiondx-voice-hf');
+    for (var i = 0; i < badges.length; i++) {
+      var b = badges[i];
+      var mine = !!mineActions && b.closest('.sendbox-actions') === mineActions;
+      b.hidden = !mine;
+      if (b.getAttribute('data-state') !== hf.state) b.setAttribute('data-state', hf.state);
+      var text = b.querySelector('.aiondx-voice-hf-text');
+      if (text.textContent !== label) text.textContent = label;
+      var tip = label + (hfHeardLine() ? ' — ' + hfHeardLine() : '');
+      if (b.title !== tip) b.title = tip;   // the badge ellipsizes; the whole text on hover, with what was heard
+      var aria ='Hands-free conversation mode' + (mine && label ? ': ' + label : ' is off');
+      if (b.getAttribute('aria-label') !== aria) b.setAttribute('aria-label', aria);
+    }
+  }
+  /** For the settings panel's own status line - the composer badge is easy to never be looking at
+   *  (it is not even on screen while the user is on the Settings page itself), so this is the one
+   *  place that always says what hands-free mode is actually doing, including why it stopped if a
+   *  real failure is what stopped it, instead of a checkbox that just quietly reverted. */
+  function handsFreeStatusText(settings) {
+    // lastError checked first, ahead of the setting itself: a real failure (stopHandsFreeForGood)
+    // also switches handsFree off, so checking the setting first would blank this note in the same
+    // instant it has something to say - the user would never get to read why it stopped, which was
+    // the whole point of adding it. It only goes quiet once something deliberately clears
+    // lastError (a fresh start, or the user unchecking the box themselves).
+    if (hf.lastError) return 'Hands-free mode stopped: ' + hf.lastError + '. Turn it back on to try again.';
+    if (!settings.handsFree) return '';
+    if (!hf.active) return 'Hands-free mode is on, but it only runs inside a conversation — open one to start it.';
+    return 'Hands-free mode is running: ' + hfStageLabel() + (hfHeardLine() ? ' — ' + hfHeardLine() : '');
+  }
+  /** Called from refreshVoicePanel() (the settings panel's own render pass) and directly from
+   *  setHfState() (so a user sitting on the Settings page watching sees it change the instant a
+   *  stage transition happens, not up to 2 s later on the next poll). A no-op off the Settings
+   *  page, since pickerEl only exists while that page is open. */
+  function paintHandsFreeNote() {
+    if (!pickerEl) return;
+    var hfNote = pickerEl.querySelector('[data-testid="aiondx-voice-hf-status"]');
+    if (!hfNote) return;
+    var settings = settingsCache.data || {};
+    var hfText = handsFreeStatusText(settings);
+    hfNote.hidden = !hfText;
+    if (hfNote.textContent !== hfText) hfNote.textContent = hfText;
+    var hfOk = !hf.lastError ? '1' : '0';
+    if (hfNote.getAttribute('data-ok') !== hfOk) hfNote.setAttribute('data-ok', hfOk);
+  }
+  function ensureHandsFreeBadges() {
+    var boxes = document.querySelectorAll('[data-testid="sendbox-input"]');
+    for (var i = 0; i < boxes.length; i++) {
+      var ta = boxes[i].tagName === 'TEXTAREA' ? boxes[i] : boxes[i].querySelector('textarea');
+      if (!ta || !ta.getClientRects().length) continue;
+      var panel = ta.closest('.sendbox-panel') || ta.parentElement;
+      var actions = panel && panel.querySelector('.sendbox-actions');
+      if (!actions || actions.querySelector('.aiondx-voice-hf')) continue;
+      var stopall = actions.querySelector('.aiondx-voice-stopall');
+      actions.insertBefore(buildHandsFreeBadge(), stopall ? stopall.nextSibling : actionsInsertAnchor(actions));
+    }
+    paintHandsFreeBadge();
+  }
+
   // ---------------------------------------------------------------- settings panel (Settings > Appearance)
 
   var pickerEl = null;
@@ -549,21 +1333,55 @@
   // record behind /api/settings/client), so the panel reads from this cache instead of blocking
   // a render pass on a network round trip. A save updates it optimistically, then again from the
   // module's own merged record once the request resolves.
-  var SETTINGS_TTL_MS = 5000;
+  var SETTINGS_TTL_MS = 5000;           // while the settings panel is on screen
+  var SETTINGS_TTL_IDLE_MS = 30000;     // everywhere else (a save updates the cache directly anyway)
+  var SETTINGS_RETRY_MS = 1000;         // an empty answer while AionCore's session is not ready yet
   var settingsCache = { data: {}, loading: false, at: 0 };
-  function ensureSettingsLoaded() {
-    if (settingsCache.loading || (settingsCache.at && Date.now() - settingsCache.at < SETTINGS_TTL_MS)) return;
+  function coreSessionReady() {
+    var st = window.__coreUserState;
+    return !st || st.status === 'ready';   // no bridge state at all (WebUI, the dev harnesses): nothing to wait for
+  }
+  // Loaded on every page, not only Settings > Appearance: hands-free (handsFree, wakePhrase) and auto-play (voiceId) read this cache
+  // on chat and team pages too, and it used to stay empty there until the settings page had been opened once in that window.
+  // The settings store answers a GET that fails (401 before AionCore's session is up) with null, the same as "nothing saved", so an
+  // empty answer before the session is ready is retried after a second, and the session turning ready reloads it straight away.
+  function ensureSettingsLoaded(ttl) {
+    if (settingsCache.loading || (settingsCache.at && Date.now() - settingsCache.at < (ttl || SETTINGS_TTL_MS))) return;
     settingsCache.loading = true;
+    var sessionWasReady = coreSessionReady();
     Promise.resolve(call('getSettings') || {}).then(function (s) {
       settingsCache.loading = false;
       settingsCache.data = s || {};
-      settingsCache.at = Date.now();
+      var empty = !Object.keys(settingsCache.data).length;
+      settingsCache.at = (empty && !sessionWasReady) ? Date.now() - (ttl || SETTINGS_TTL_MS) + SETTINGS_RETRY_MS : Date.now();
+      healMissingProvider(settingsCache.data);
       schedule();
     }, function (e) {
       console.log('[dx-voice] getSettings error', e);
       settingsCache.loading = false;
-      settingsCache.at = Date.now();
+      settingsCache.at = Date.now() - (ttl || SETTINGS_TTL_MS) + SETTINGS_RETRY_MS;
     });
+  }
+  window.addEventListener('core-user-state-changed', function (ev) {
+    if (ev && ev.detail && ev.detail.status === 'ready') { settingsCache.at = 0; schedule(); }
+  });
+
+  /** The provider the panel shows when none is saved yet (the first one the module offers). */
+  function defaultProviderId() {
+    return (providerCache.list && providerCache.list[0] && providerCache.list[0].id) || 'elevenlabs';
+  }
+  // 0.26.6 and earlier: the panel showed ElevenLabs in its provider list without saving it, so typing a key saved {apiKey} alone, and
+  // every call then failed "voice: no provider configured" - the speaker button fell back to the Windows voice with a key saved, and
+  // hands-free's wake phrase failed to transcribe. A record left that way is given the provider the panel showed, once.
+  var healing = false;
+  function healMissingProvider(s) {
+    if (healing || !s || !s.apiKey || s.provider || !voice() || typeof voice().setSettings !== 'function') return;
+    healing = true;
+    var id = defaultProviderId();
+    Promise.resolve(call('setSettings', { provider: id })).then(function (merged) {
+      healing = false;
+      if (merged && typeof merged === 'object') { settingsCache.data = merged; settingsCache.at = Date.now(); schedule(); }
+    }, function (e) { healing = false; console.log('[dx-voice] could not save the provider for a stored key', e); });
   }
 
   function voiceAnchor() {
@@ -599,12 +1417,22 @@
       '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-voice">Voice</label>' +
         '<select id="aiondx-voice-voice" data-testid="aiondx-voice-voice"></select></div>' +
       '<div class="aiondx-voice-note" data-testid="aiondx-voice-note" hidden></div>' +
+      '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-language">Speech language</label>' +
+        '<select id="aiondx-voice-language" data-testid="aiondx-voice-language"></select></div>' +
+      '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-handsfree">Hands-free</label>' +
+        '<label class="aiondx-voice-toggle"><input type="checkbox" id="aiondx-voice-handsfree" data-testid="aiondx-voice-handsfree"> Hands-free conversation mode</label></div>' +
+      '<div class="aiondx-voice-note">Say the wake phrase, then talk back and forth without touching the mic or speaker buttons. Off by default; the stop-all button (or saying a stop phrase) ends it.</div>' +
+      '<div class="aiondx-voice-row"><label class="aiondx-voice-label" for="aiondx-voice-wakephrase">Wake phrase</label>' +
+        '<input type="text" id="aiondx-voice-wakephrase" data-testid="aiondx-voice-wakephrase" placeholder="' + DEFAULT_WAKE_PHRASE + '"></div>' +
+      '<div class="aiondx-voice-status" data-testid="aiondx-voice-hf-status" data-ok="1" hidden></div>' +
       '<div class="aiondx-voice-status" data-testid="aiondx-voice-status"></div>';
 
     var providerSel = el.querySelector('#aiondx-voice-provider');
     var keyInput = el.querySelector('#aiondx-voice-apikey');
     var reveal = el.querySelector('.aiondx-voice-reveal');
     var voiceSel = el.querySelector('#aiondx-voice-voice');
+    var handsFreeBox = el.querySelector('#aiondx-voice-handsfree');
+    var wakeInput = el.querySelector('#aiondx-voice-wakephrase');
 
     providerSel.addEventListener('change', function () {
       saveSettings({ provider: providerSel.value });
@@ -623,6 +1451,17 @@
       reveal.textContent = show ? 'Hide' : 'Show';
     });
     voiceSel.addEventListener('change', function () { saveSettings({ voiceId: voiceSel.value }); });
+    var languageSel = el.querySelector('#aiondx-voice-language');
+    languageSel.addEventListener('change', function () { saveSettings({ languageCode: languageSel.value }); });   // '' = the same as the app
+    handsFreeBox.addEventListener('change', function () {
+      if (!handsFreeBox.checked) hf.lastError = '';   // the user's own deliberate off: any earlier error is no longer the reason
+      saveSettings({ handsFree: handsFreeBox.checked });
+    });
+    var wakeTimer = null;
+    wakeInput.addEventListener('input', function () {
+      if (wakeTimer) clearTimeout(wakeTimer);
+      wakeTimer = setTimeout(function () { wakeTimer = null; saveSettings({ wakePhrase: wakeInput.value.trim() || DEFAULT_WAKE_PHRASE }); }, 400);
+    });
     return el;
   }
 
@@ -646,7 +1485,20 @@
 
   function saveSettings(patch) {
     if (!voice() || typeof voice().setSettings !== 'function') { setStatus('Voice module not loaded: nothing was saved.', false); return; }
+    // A key saved with no provider chosen yet goes with the provider the panel is showing (see healMissingProvider).
+    if (patch.provider === undefined && !(settingsCache.data || {}).provider && (patch.apiKey || (settingsCache.data || {}).apiKey)) {
+      patch = Object.assign({ provider: defaultProviderId() }, patch);
+    }
     settingsCache.data = Object.assign({}, settingsCache.data, patch);   // optimistic, so the panel does not flicker back while the request is in flight
+    // Also bumped here, not only after the save resolves: ensureSettingsLoaded() runs on every
+    // render pass the settings panel is visible for, and if settingsCache.at was already more than
+    // SETTINGS_TTL_MS old (easy - the user can sit on the page for a while before touching
+    // anything), a render in between this optimistic write and the save resolving would fire its
+    // own getSettings() and could land after the save's own resolve, overwriting the just-saved
+    // value with whatever the server still had queued to answer. A real bug this surfaced: the
+    // hands-free checkbox could revert itself to unchecked moments after being checked, with
+    // nothing in the UI explaining why - indistinguishable from "the toggle did nothing."
+    settingsCache.at = Date.now();
     setStatus('Saving...');
     Promise.resolve(call('setSettings', patch)).then(function (merged) {
       if (merged && typeof merged === 'object') settingsCache.data = merged;
@@ -687,14 +1539,26 @@
     var keyInput = pickerEl.querySelector('#aiondx-voice-apikey');
     var voiceSel = pickerEl.querySelector('#aiondx-voice-voice');
     var note = pickerEl.querySelector('[data-testid="aiondx-voice-note"]');
+    var handsFreeBox = pickerEl.querySelector('#aiondx-voice-handsfree');
+    var wakeInput = pickerEl.querySelector('#aiondx-voice-wakephrase');
+    var languageSel = pickerEl.querySelector('#aiondx-voice-language');
 
     var disabled = !v;
-    [providerSel, keyInput, voiceSel, pickerEl.querySelector('.aiondx-voice-reveal')].forEach(function (c) { c.disabled = disabled; });
+    [providerSel, keyInput, voiceSel, pickerEl.querySelector('.aiondx-voice-reveal'), handsFreeBox, wakeInput, languageSel].forEach(function (c) { c.disabled = disabled; });
     if (disabled) { setStatus('Voice module not loaded yet.', false); return; }
 
     ensureSettingsLoaded();
     var settings = settingsCache.data || {};
     if (document.activeElement !== keyInput && typeof settings.apiKey === 'string' && keyInput.value !== settings.apiKey) keyInput.value = settings.apiKey;
+    if (handsFreeBox.checked !== !!settings.handsFree) handsFreeBox.checked = !!settings.handsFree;
+    if (document.activeElement !== wakeInput) {
+      var wantWake = settings.wakePhrase || DEFAULT_WAKE_PHRASE;
+      if (wakeInput.value !== wantWake) wakeInput.value = wantWake;
+    }
+    var langItems = [{ id: '', name: 'Same as the app (' + languageName(appLanguage()) + ')' }].concat(SPEECH_LANGUAGES.map(function (l) { return { id: l[0], name: l[1] }; }));
+    fillSelect(languageSel, langItems, settings.languageCode || '', null);
+    if (!settings.languageCode && languageSel.value !== '') languageSel.value = '';
+    paintHandsFreeNote();
 
     // Providers: cached 30 s, since listProviders() is likely a plain in-memory list, not a network call.
     if (!providerCache.list && !providerCache.loading) {
@@ -747,9 +1611,30 @@
 
   function render() {
     try { ensureVoiceClient(); } catch (e) { console.log('[dx-voice] voice client init failed', e); }
-    if (due('mic', 400)) try { ensureMicButtons(); } catch (e) { console.log('[dx-voice] mic render failed', e); }
+    try { ensureSettingsLoaded(pickerEl && pickerEl.isConnected ? SETTINGS_TTL_MS : SETTINGS_TTL_IDLE_MS); } catch (e) { console.log('[dx-voice] settings load failed', e); }
+    // due() is keyed by name and stamps "last ran" the instant it returns true, so calling it
+    // twice for two different checks in the same pass would make the second call see its own
+    // first call as "already ran a moment ago" and skip - each distinct gate gets its own due()
+    // call, stored once, then reused for every ensure*() that should share that cadence.
+    var micDue = due('mic', 400);
+    if (micDue) {
+      try { ensureMicButtons(); } catch (e) { console.log('[dx-voice] mic render failed', e); }
+      try { ensureStopAllButtons(); } catch (e) { console.log('[dx-voice] stop-all render failed', e); }
+    }
     if (due('play', 400)) try { ensurePlayButtons(); } catch (e) { console.log('[dx-voice] play render failed', e); }
     if (due('panel', 1000)) try { ensureVoicePanel(); } catch (e) { console.log('[dx-voice] settings render failed', e); }
+    // Its own due() key, not mic's: hands-free's stale-DOM-reference recovery (ensureHandsFree)
+    // and badge repaint matter enough to keep on the composer buttons' own 400 ms cadence rather
+    // than the settings panel's slower one, but gating it at all (on a big page only - due()
+    // returns true unconditionally off one) keeps a long, busy hands-free conversation from
+    // adding back the per-render cost the pacing above exists to avoid. After the settings panel,
+    // so settingsCache (which ensureHandsFree reads) is as fresh as this pass can make it; after
+    // the mic/stop-all/play buttons, so the composer/play-button lookups inside it find what this
+    // same pass just ensured exists.
+    if (due('handsfree', 400)) {
+      try { ensureHandsFree(); } catch (e) { console.log('[dx-voice] hands-free render failed', e); }
+      try { ensureHandsFreeBadges(); } catch (e) { console.log('[dx-voice] hands-free badge render failed', e); }
+    }
   }
 
   function start() {
@@ -759,8 +1644,11 @@
     new MutationObserver(function (records) { if (foreignChange(records)) schedule(); })
       .observe(document.body, { childList: true, subtree: true });
     window.addEventListener('resize', schedule);
-    window.addEventListener('hashchange', function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); schedule(); });
-    window.addEventListener('pagehide', function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); });
+    // Leaving the conversation: ensureHandsFree() would tear down and restart on the next render
+    // pass anyway (it checks hf.convId against the new route()), but a stop here is immediate
+    // rather than waiting a frame, and pagehide has no "next frame" to rely on at all.
+    window.addEventListener('hashchange', function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); teardownHandsFree(); schedule(); });
+    window.addEventListener('pagehide', function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); teardownHandsFree(); });
     setInterval(render, 2000);   // a fallback poll, same resiliency margin patch 0001 keeps against a missed mutation
   }
 
@@ -772,6 +1660,18 @@
     repaint: function () { render(); },
     micState: function () { return activeMic ? activeMic.__st.state : 'idle'; },
     playing: function () { return !!currentPlayback; },
-    stopAll: function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); }
+    playbackActive: function () { return !!(loadingWrap || currentPlayback); },
+    stopAll: function () { if (activeMic) stopRecording(activeMic, true); stopPlayback(); hf.lastError = ''; stopHandsFreeForGood(); },
+    spokenText: spokenText,
+    // Hands-free: hf.state for a test to assert against, and a way to hand startWakeListener/
+    // captureUtterance a fake mic plus faster VAD timing (the same injection test-wake.js uses
+    // for aiondx-voice.js itself: levelSource, createRecorder, pollMs, minSpeechMs, silenceMs,
+    // threshold, maxSegmentMs) - test-only, never touched outside dev-smoke-test-handsfree.js.
+    hfState: function () { return { active: hf.active, state: hf.state, key: hf.key }; },
+    setHfTestOpts: function (opts) { hfInjectedOpts = Object.assign({}, hfInjectedOpts, opts || {}); },
+    clearHfTestOpts: function () { hfInjectedOpts = {}; },
+    // The settings this page is working from, and a re-read of them now (for settings changed outside this page's own panel).
+    settings: function () { return Object.assign({}, settingsCache.data); },
+    reloadSettings: function () { settingsCache.at = 0; render(); }
   };
 })();

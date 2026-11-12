@@ -78,8 +78,31 @@ async function pageTarget() {
       await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
       await sleep(200);
     };
+    // A plain scripted .click(), for the one spot where two clicks need to land closer together
+    // than humanClick's ~320ms of press/settle overhead allows (racing a second message's play
+    // against the stub's 150ms synthesize() delay on the first).
+    const fastClick = (sel) => js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.click(); return true; })()`);
 
     await sleep(600);   // first render pass
+
+    // ---- spokenText(): markdown stripped so ElevenLabs reads naturally, not literal syntax ----
+    const spoken = (raw) => js(`window.__aionDxVoiceUI.spokenText(${JSON.stringify(raw)})`);
+    check('a fenced code block becomes a short spoken placeholder, not read verbatim',
+      await spoken('Here is the fix:\n\n```js\nfunction add(a, b) {\n  return a + b;\n}\n```\n\nThat should do it.')
+        .then((s) => /a snippet of js code/i.test(s) && !/function add/.test(s) && /Here is the fix/.test(s) && /That should do it/.test(s)),
+      await spoken('Here is the fix:\n\n```js\nfunction add(a, b) {\n  return a + b;\n}\n```\n\nThat should do it.'));
+    check('a fenced block with no language hint still gets a placeholder',
+      await spoken('```\nraw text\n```').then((s) => /code block/i.test(s) && !/raw text/.test(s)));
+    check('inline code spans are read plainly, backticks stripped',
+      await spoken('Set `maxRetries` to 3.').then((s) => s === 'Set maxRetries to 3.'), await spoken('Set `maxRetries` to 3.'));
+    check('headings, bold, italic and list markers are stripped',
+      await spoken('# Summary\n\nThis is **important** and *urgent*.\n\n- first item\n- second item\n1. step one')
+        .then((s) => s === 'Summary This is important and urgent. first item second item step one'),
+      await spoken('# Summary\n\nThis is **important** and *urgent*.\n\n- first item\n- second item\n1. step one'));
+    check('a markdown link reads its text, not the brackets or URL',
+      await spoken('See [the docs](https://example.com/docs) for more.').then((s) => s === 'See the docs for more.'));
+    check('plain text with no markdown passes through unchanged (aside from whitespace)',
+      await spoken('Just a plain sentence, nothing special.').then((s) => s === 'Just a plain sentence, nothing special.'));
 
     // ---- mic button present, idle ----
     check('mic button is inserted in .sendbox-actions', await js('!!document.querySelector(".sendbox-actions .aiondx-voice-mic-btn")'));
@@ -113,6 +136,66 @@ async function pageTarget() {
     await humanClick('#message-a1 .aiondx-voice-play-btn');
     check('clicking play again while it plays stops it',
       await waitFor('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "idle"', 20));
+
+    // ---- the global "stop all reading" button ----
+    check('a stop-all button is inserted in the composer, next to the mic', await js('!!document.querySelector(".sendbox-actions .aiondx-voice-stopall-btn")'));
+    check('it starts disabled with nothing playing', await js('document.querySelector(".aiondx-voice-stopall-btn").disabled === true'));
+    await humanClick('#message-a1 .aiondx-voice-play-btn');
+    check('it becomes enabled once something is reading', await waitFor('document.querySelector(".aiondx-voice-stopall-btn").disabled === false'));
+    await humanClick('.aiondx-voice-stopall-btn');
+    check('clicking it stops the playback that was in flight',
+      await waitFor('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "idle"', 20));
+    check('and disables itself again once nothing is playing', await js('document.querySelector(".aiondx-voice-stopall-btn").disabled === true'));
+
+    // ---- regression: a second message's play button must not leave the first stuck "loading" ----
+    // Before the fix, clicking message 2 while message 1 was still waiting on synthesize() never
+    // touched message 1's button (nothing reset it), and message 1's request, once it resolved,
+    // could go on to fight message 2's for the one Audio element - a real bug this project's user
+    // hit during live testing, not just a cosmetic one: a dangling request plus a button with no
+    // way out looks exactly like a hang.
+    const synthBeforeRace = await js('window.__aionDxVoiceStubCalls.filter(c => c.name === "synthesize").length');
+    await fastClick('#message-a1 .aiondx-voice-play-btn');
+    check('message 1 starts loading', await js('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "loading"'));
+    await fastClick('#message-a2 .aiondx-voice-play-btn');   // landed well inside the stub's 150ms synthesize() delay on message 1
+    check('message 1 is released back to idle, not left stuck loading',
+      await waitFor('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "idle"', 10));
+    check('message 2 goes on to play and then settle, unaffected by message 1\'s stale request',
+      await waitFor('["loading", "playing"].includes(document.querySelector("#message-a2 .aiondx-voice-play-btn").dataset.state)'));
+    check('message 2 settles back to idle once its clip ends',
+      await waitFor('document.querySelector("#message-a2 .aiondx-voice-play-btn").dataset.state === "idle"', 60));
+    check('message 1 never re-entered loading/playing once superseded (no stale resolve fired)',
+      await waitFor('document.querySelector("#message-a1 .aiondx-voice-play-btn").dataset.state === "idle"', 5));
+    const synthAfterRace = await js('window.__aionDxVoiceStubCalls.filter(c => c.name === "synthesize").length');
+    check('both requests reached the module (message 1\'s discarded client-side, message 2\'s honoured)',
+      synthAfterRace - synthBeforeRace === 2, `before=${synthBeforeRace} after=${synthAfterRace}`);
+    check('only one playback is ever active at once: the stop-all button is idle again at the end',
+      await js('document.querySelector(".aiondx-voice-stopall-btn").disabled === true'));
+
+    // ---- only what a reply shows is read: its shadow root also holds ShadowView's <style> ----
+    // 0.26.7: the speaker read a team member's reply, then went on with "shadow DOM and other code" - the CSS comments of the
+    // stylesheet AionUi puts in each reply's shadow root, along with a code block's raw text, its Copy button and collapsed output.
+    await js(`(() => {
+      const row = document.createElement('div'); row.id = 'message-shadow1'; row.setAttribute('data-message-type', 'text'); row.setAttribute('data-message-position', 'left');
+      const content = document.createElement('div'); content.setAttribute('data-testid', 'message-text-content');
+      const host = document.createElement('div'); host.className = 'markdown-shadow'; content.appendChild(host); row.appendChild(content);
+      const root = host.attachShadow({ mode: 'open' });
+      const body = document.createElement('div'); body.className = 'markdown-shadow-body';
+      body.innerHTML = '<p>Here is the fix.</p><div><button>Copy</button><pre><code class="language-js">console.log("raw code")</code></pre></div>' +
+        '<details><summary>Ran 2 tools</summary><div>collapsed tool output</div></details><span style="display:none">hidden debug</span>' +
+        '<span aria-hidden="true">decorative</span><span class="aiondx-loop-pill">Loop</span><p>That is all.</p>';
+      const st = document.createElement('style'); st.textContent = '/* Shadow DOM CSS variable definitions */ :host { color: red } /* Code block horizontal scrollbar */';
+      root.appendChild(body); root.appendChild(st);
+      document.querySelector('#message-a2').after(row); return 0; })()`);
+    await waitFor('!!document.querySelector("#message-shadow1 .aiondx-voice-play-btn")', 40);
+    const synthBeforeShadow = await js('window.__aionDxVoiceStubCalls.filter(c => c.name === "synthesize").length');
+    await humanClick('#message-shadow1 .aiondx-voice-play-btn');
+    await waitFor(`window.__aionDxVoiceStubCalls.filter(c => c.name === "synthesize").length > ${synthBeforeShadow}`, 30);
+    const shadowSaid = await js('window.__aionDxVoiceStubCalls.filter(c => c.name === "synthesize").pop().args[0]');
+    check('a reply in a shadow root is read as it shows: its text, the code block named', /^Here is the fix\. a snippet of js code\. Ran 2 tools That is all\.$/.test(shadowSaid), shadowSaid);
+    check('and nothing it does not show: no stylesheet, raw code, Copy button, collapsed or hidden text, or another patch\'s pill',
+      !/Shadow DOM|scrollbar|:host|raw code|Copy|collapsed|hidden debug|decorative|Loop/.test(shadowSaid), shadowSaid);
+    await humanClick('.aiondx-voice-stopall-btn');
+    await waitFor('document.querySelector("#message-shadow1 .aiondx-voice-play-btn").dataset.state === "idle"', 40);
 
     // ---- settings panel ----
     check('the settings panel was inserted after the theme card', await js('!!document.querySelector("[data-testid=\\"aiondx-voice-panel\\"]")'));

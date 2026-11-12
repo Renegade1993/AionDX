@@ -31,7 +31,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+(\.\d+){1,3}(-[0-9A-Za-z.]+)?$') { throw "-Version must look like 0.1.0 (got '$Version')" }
-$root = 'C:\AI Projects\AionDX'
+$root = Split-Path -Parent $PSScriptRoot   # the repo root (this script lives in tools\); was a hardcoded 'C:\AI Projects\AionDX' junction, which an untrusted-mount-point restriction now blocks for child processes
 # The base: an installed AionUi, else the copy unpacked from its official installer (tools\fetch-aionui-base.js).
 if (-not (Test-Path (Join-Path $AionUiDir 'AionUi.exe'))) { $AionUiDir = Join-Path $root 'vendor\aionui-base' }
 $STOCK_SHA = '95b6352bca6400e2990781398a0644f185e5b1b9f42706125ddeee21e72c7d73'   # AionUi 2.2.2's app.asar
@@ -166,6 +166,9 @@ if ($AionDxCore) {
   Say 'AionCore: an AionDX build is in vendor\aioncore, left out (pass -AionDxCore to ship it)'
 }
 if (-not $coreRec) { Say 'AionCore: the stock binary' }
+# The app and the AionCore it ships with must agree on the session and CSRF cookie names, or no session is ever made and
+# every write is refused with no error at start-up (0.26.0's rename pass shipped exactly that).
+Run $node @("$root\tools\check-core-contract.js", $ext, (Join-Path $stageCoreDir 'aioncore.exe')) 'core contract'
 # Node.js for a PC without it (2026-09-26, a tester's install: AionUi's browser tool runs npx by name, and that PC had
 # no Node on PATH). AionUi 2.2.2's own installer already puts Node's Windows build where AionCore's managed runtime
 # takes it (managed-resources\node\<dir>, MANAGED_NODE_VERSION in aionui-runtime managed.rs), but not on PATH. Here the
