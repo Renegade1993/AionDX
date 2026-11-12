@@ -1,7 +1,7 @@
 # Mobile bridge: implementation plan and build prerequisites
 
-Written 2026-11-07 by the Bridge/API Engineer. It covers `core-0014-auth-channel` (the K1 fix) and
-`core-0015-mobile-bridge` (CONTRACT.md rev 4). This is a plan only. Nothing has been installed or built.
+Written 2026-11-07 by the Bridge/API Engineer. It covers `core-0015-auth-channel` (the K1 fix) and
+`core-0016-mobile-bridge` (CONTRACT.md rev 4). This is a plan only. Nothing has been installed or built.
 
 ## 1. Build prerequisites, as checked on this PC (2026-11-07)
 
@@ -49,8 +49,8 @@ That's about 32 MB of working tree plus history. A quicker build-only fallback i
 
 **Branch.** The build must run on a branch that already contains `core-0001` to `core-0013`: currently `origin/main`
 and `voice-core-elevenlabs`, but not local `main`. On 2026-11-07, all 13 existing patches applied cleanly to a
-throwaway copy of the v0.2.2 source (91 files, +4606/−259). New patches are numbered after them: **core-0014** (K1)
-and **core-0015** (bridge).
+throwaway copy of the v0.2.2 source (91 files, +4606/−259). New patches are numbered after them: **core-0015** (K1)
+and **core-0016** (bridge).
 
 **What would be installed, and where (needs Nathan's approval before anything happens):** with the findings above,
 **nothing needs installing.** Network activity during a build that isn't an install:
@@ -79,7 +79,7 @@ environment variable, not a reinstall.
 | Rebuild after changing one patch crate | 2–8 min |
 | `cargo test -p <crate>` per crate | 2–10 min the first time |
 
-## 2. core-0014-auth-channel (the K1 fix; small, goes first)
+## 2. core-0015-auth-channel (the K1 fix; small, goes first)
 
 **Problem (§9 K1):** `auth_middleware` turns any agent's runtime token into the full `CurrentUser`. Team lifecycle HTTP
 routes check only team ownership, so a non-lead teammate can spawn or hard-remove agents through HTTP, bypassing the
@@ -100,7 +100,7 @@ MCP lead-only rule.
    - also `DELETE /api/teams/{id}`, `DELETE /session` and `PATCH /name`.
 
    Session callers (the desktop, and later the mobile bridge) are unaffected.
-3. `AuthChannel` is also what core-0015's admin routes use to refuse runtime-token callers (CONTRACT §3.4). That's why
+3. `AuthChannel` is also what core-0016's admin routes use to refuse runtime-token callers (CONTRACT §3.4). That's why
    this patch comes first.
 
 **Tests:**
@@ -117,7 +117,7 @@ MCP lead-only rule.
 
 **Size:** about 1 day of work, plus a build.
 
-## 3. core-0015-mobile-bridge: phased order
+## 3. core-0016-mobile-bridge: phased order
 
 Each phase ends in a buildable, testable state. Phases 1–4 can be run against the mobile team's reference client from
 day one, because the wire format and test vectors are already shared.
@@ -131,7 +131,7 @@ day one, because the wire format and test vectors are already shared.
 | **4. Event-driven state** | Event-bus subscriber: the change journal (epoch/rev, coalescing, `wait` long-poll), message sync cursors (the floor rule), the approvals tracker (live `raw_input` capture, reconciliation, per-backend answer mapping, `freeText`, deny-with-message: native for Claude and aionrs via small changes to `AnswerPermission` and aionrs's reason, follow-up messages otherwise), unread/attention/lastMessage, `send_failed` `messageId` (`turn_id` added to `message.userCreated`). | Event-sequence tests replaying recorded event streams. **Backend-mapping tests are a must:** never a bare string to aionrs; only offered option ids to Claude; `same_as_once` labelling. AionCore's mid-turn mock agent for `pending`/`error`. | 4–5 d |
 | **5. Desktop and packaging** | Renderer patch (Settings > Mobile: enable, QR, SAS approve, devices, re-key, the tasks.write switch). mDNS advertiser. Firewall rule, Private profile only; creating it is a system change on the user's PC, done through the existing `elevate.exe` with a prompt. `build-release.ps1` integration. Privacy check. | `tools\dx-harness\click-test.js` additions; the staged app with a throwaway `--user-data-dir`; a live run on the LAN with the real phone app, then over Tailscale and Private Party Net (see the CONTRACT §8 to-verify items). | 3 d |
 
-**Total:** about 18–21 days of bridge work, plus about 1 day for core-0014. Phases 1 and 4 carry the most risk. Phase 1
+**Total:** about 18–21 days of bridge work, plus about 1 day for core-0015. Phases 1 and 4 carry the most risk. Phase 1
 is helped by the shared vectors; phase 4 depends on event ordering, which is why it relies on recorded-sequence tests
 rather than live agents.
 

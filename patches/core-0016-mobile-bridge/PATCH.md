@@ -1,7 +1,7 @@
-# core-0015: the mobile bridge (encrypted PC ↔ phone API)
+# core-0016: the mobile bridge (encrypted PC ↔ phone API)
 
-Patch: `0001-mobile-bridge.patch` in this folder. Applies after core-0014, and needs its `AuthChannel`.
-Target: AionCore v0.2.2 (tag `v0.2.2`, commit `47e66d0d`). Contract: `docs/mobile-bridge/CONTRACT.md` (rev 4.2). Plan:
+Patch: `0001-mobile-bridge.patch` in this folder. Applies after core-0015, and needs its `AuthChannel`.
+Target: AionCore v0.2.2 (tag `v0.2.2`, commit `47e66d0d`). Contract: `docs/mobile-bridge/CONTRACT.md` (rev 4.5). Plan:
 `docs/mobile-bridge/IMPLEMENTATION-PLAN.md`. Approved by Nathan on 2026-11-07. Built in phases. This file records what
 each phase added; the patch file is always the whole bridge so far.
 
@@ -28,7 +28,7 @@ A new crate, `aionui-mobile`, wired into `aionui-app`:
 | `peer_filter.rs` | Only loopback, RFC 1918, link-local, CGNAT `100.64/10`, IPv6 ULA and link-local peers may reach the listener. |
 | `listener.rs` | The LAN listener on `0.0.0.0:<port>`. It serves only `/api/mobile/v1/*` (this phase: `hello`); every other path is a plaintext 404. Non-private peers get a 403 before routing. |
 | `service.rs` | `MobileBridge`: status, settings updates, and starting/stopping the listener to match. A taken port is reported in the status, not as a crash. |
-| `admin_routes.rs` | `GET /api/mobile/admin/status` and `PUT /api/mobile/admin/settings` on AionCore's 127.0.0.1 server. They **refuse the runtime-token channel** (core-0014's `AuthChannel`), so an agent can't switch the bridge on. |
+| `admin_routes.rs` | `GET /api/mobile/admin/status` and `PUT /api/mobile/admin/settings` on AionCore's 127.0.0.1 server. They **refuse the runtime-token channel** (core-0015's `AuthChannel`), so an agent can't switch the bridge on. |
 | `crypto.rs`, `tests/vectors.*` | Phase 1's pure crypto: X25519, HKDF, XChaCha20-Poly1305, SAS, the handshake, RPC AAD, revocation, confirm and re-key proofs, RFC 8785 JCS. |
 
 **Tests:** `cargo test -p aionui-mobile`, 33 pass.
@@ -158,7 +158,7 @@ the newest row, minus 5 s. A poll re-reads AionCore's `after (floor-1, "~")`, wh
   owner unassign, and `capability_disabled`; broadcast and the new-solo-chat validation.
 - **e2e `confirm_proofs_and_rekey_through_the_tunnel`:** a real tunnel with real proofs, a re-key, and the old key
   then rejected.
-- **Clippy** at `-D warnings` is clean in every file this patch and core-0014 touch. The pre-existing hits were the
+- **Clippy** at `-D warnings` is clean in every file this patch and core-0015 touch. The pre-existing hits were the
   `result_large_err` in outer.rs, `disallowed_types` in admin_routes, mobile_backend and lifecycle_guard (all HTTP
   boundaries, allowed per module the way upstream `routes.rs` does it), and a collapsible `if` in cmd_server. What's
   left is upstream baseline: aionui-team session.rs:142/613/1171 and aionui-app config.rs:95.
@@ -230,8 +230,39 @@ Both need a LAN live check (an approval gate: it listens on the LAN).
 - AP5: a repeat answer within 10 minutes is `409` with `details.resolution`.
 - CONTRACT rev 4.5 notes both.
 
-**Desktop:** Voice UI Engineer's app patch 0018-mobile-settings (branch `mobile-desktop-ui`). It runs the elevated
+**Desktop:** Voice UI Engineer's app patch 0020-mobile-settings (it was 0018 on branch `mobile-desktop-ui`; upstream took
+0018 and 0019). It runs the elevated
 firewall add itself.
+
+## 0.27.0, 2026-11-12: renumbered, audit log, M5b, bounded close
+
+**Renumbered.** Upstream added core-0014-launch-skills, so this patch is core-0016 and the K1 patch core-0015 (they were
+core-0015 and core-0014). The rebase onto launch-skills had no conflicts: it only touches
+`ConversationService::build_task_options*`, and this patch's `service.rs` edits are elsewhere. The comments in the code
+that cite patch numbers were renumbered on the lines this patch adds (launch-skills' own "core-0014" stays).
+
+**Audit log** (`audit.rs`, CONTRACT §3.3):
+- **What's logged:** every mutating phone request is one line in `%LOCALAPPDATA%\AionDX\logs\mobile-bridge.log`: UTC
+  time, device id, method + route with its ids split into `targets`, and the outcome (status + error code). Pairing
+  approvals and revocations are logged too.
+- **What isn't:** bodies, proofs and keys never appear. Fields are sanitized so a value can't forge a second entry. A
+  retried request id isn't logged twice, and reads aren't logged.
+- **Size:** past 1 MiB the file is renamed to `.1` (replacing the old one), so at most about 2 MiB exists.
+- **Tests:** unit tests for the format, sanitizing, rotation, and the disabled log; an e2e test through the tunnel
+  that checks no content leaks. Tests never write the real file (`set_audit_log(AuditLog::disabled())`).
+
+**M5b.**
+- **The bug:** `reconcile` kept a running listener without looking at `mdns`, so `{mdns:false}` alone left the
+  advertisement up.
+- **The fix:** it now withdraws it (goodbye packets, off the async threads) or restarts it, and the listener stays the
+  same socket. Switching the bridge off withdraws the advertisement before closing the listener.
+- **Testing:** the advertiser is injectable (`set_advertiser`), so tests use a fake on loopback and nothing multicasts.
+
+**Slow close on `{enabled:false}`.**
+- **The cause:** `ListenerHandle::stop` waited for axum's graceful shutdown, which waits for every request in flight. A
+  phone's `/v1/changes` long-poll holds a request for up to 25 s.
+- **The fix:** the close now waits `STOP_GRACE` (2 s), then drops what is left.
+- **Test:** a hanging request is cut off at about 2 s.
 
 ## Hand-off (final, 2026-11-08)
 
@@ -239,26 +270,30 @@ firewall add itself.
 
 | Phase | State | Where |
 |---|---|---|
-| core-0014 (K1: lifecycle routes lead-only for runtime tokens) | done; QA live A1–A7 pass | `patches/core-0014-auth-channel` |
+| core-0015 (K1: lifecycle routes lead-only for runtime tokens) | done; QA live A1–A7 pass | `patches/core-0015-auth-channel` |
 | 0: the crate, its own DB, the DPAPI host key, the listener, admin status/settings | done | |
 | 1: pair / session / rpc, devices; recovery, `lastRecovery` | done; QA B0–B11 pass | |
 | 2: facade reads | done | |
 | 3: writes, confirm proofs (§5.4), re-key (§5.3) | done; QA 68/69, the one gap fixed in 4 | |
 | 4: the change feed, approvals, native/follow-up refusals, derived state, send-failure links, shutdown rejected/expired | done; QA 92/95, then AP5/AP6 fixed in 5b | |
 | 5 core: netinfo QR, mDNS, IPv6 `[::]`, firewall status, re-key state, `extraUrls`, `AIONDX_MOBILE_BIND` | done | |
-| 5b: AP6 (`respond_now` for solo refusals), AP5 (409 for a resolved id) | done; QA's final pass running on exe 47b64970 | |
-| 5 desktop: Settings > Mobile | done by Voice UI Engineer, app patch 0018 (branch `mobile-desktop-ui`) | |
+| 5b: AP6 (`respond_now` for solo refusals), AP5 (409 for a resolved id) | done | |
+| 5c: AP1 (self-healing approvals), `firewallEnabled`, effective mDNS, netinfo ordering | done; QA's final pass on exe 85f2467c (the last pre-0.27.0 build) | |
+| 0.27.0: rebased onto upstream core-0014-launch-skills (renumbered 0015/0016); audit log; M5b; bounded listener close | done | see "0.27.0" below |
+| 5 desktop: Settings > Mobile | done by Voice UI Engineer, app patch 0020-mobile-settings (was 0018 on `mobile-desktop-ui`) | |
 | LAN live check (mDNS, `[::]`) | approved by Nathan, part of QA's final pass | checklist sent to the lead |
 
 **Commits (all local, never pushed).**
-- Dev tree `work-core`, branch `aiondx-dev`. Rebased 2026-11-08 again, to put the core-0010 test fix under core-0014:
+- Dev tree `work-core`, branch `aiondx-dev-027` (0.27.0):
   - `74bffa45`: baseline core-0001..0013 + core-0010/0002;
-  - `52913b90`: core-0014;
-  - `b0a02d25`: HEAD, phase 5b.
+  - `e326bf74`: + upstream core-0014-launch-skills;
+  - branch `auth-027` (`6af5f14c`): + core-0015-auth-channel, as exported;
+  - HEAD: + core-0016-mobile-bridge.
+  The old line (`aiondx-dev`, core-0014/0015 numbering, last build 85f2467c) is kept for reference.
 - Exports:
-  - core-0014 = `git diff 74bffa45 52913b90`;
-  - core-0015 = `git diff 52913b90 HEAD`;
-  - core-0010/0002 = the `team_e2e.rs` test only.
+  - core-0015 = `git diff e326bf74 auth-027`;
+  - core-0016 = `git diff auth-027 aiondx-dev-027`;
+  - core-0010/0002 = the `team_e2e.rs` test only (upstream's core-0010 still lacks it).
 - Checked: applying every core patch in order to v0.2.2 (47e66d0d) gives exactly the dev tree (0 diff lines).
 
 ### Known gaps

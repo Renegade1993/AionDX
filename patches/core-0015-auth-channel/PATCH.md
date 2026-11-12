@@ -1,6 +1,7 @@
-# core-0014: lead-only team routes for agent runtimes, and the AuthChannel marker
+# core-0015: lead-only team routes for agent runtimes, and the AuthChannel marker
 
-Patch: `0001-auth-channel.patch` in this folder. Applies after core-0013.
+Patch: `0001-auth-channel.patch` in this folder. Applies after core-0014-launch-skills (it was core-0014 until 0.27.0,
+when upstream took that number).
 Target: AionCore v0.2.2 (tag `v0.2.2`, commit `47e66d0d`). Written November 7th, 2026. Built with
 `tools\build-aioncore.ps1 -Patched`. Approved by Nathan on 2026-11-07 as a separate patch
 (docs/mobile-bridge/CONTRACT.md §9 K1, §11 #5).
@@ -16,7 +17,7 @@ and skip the rule. `CurrentUser` alone could not tell the user's own client from
 
 1. **`aionui-auth`: `AuthChannel`.** The auth middleware now inserts `AuthChannel::{Local, Session,
    RuntimeToken { conversation_id }}` next to `CurrentUser`. Handlers and layers can use it to tell the user's clients
-   from an agent runtime. The mobile bridge (core-0015) uses it to refuse runtime-token callers on its admin routes.
+   from an agent runtime. The mobile bridge (core-0016) uses it to refuse runtime-token callers on its admin routes.
 2. **`aionui-auth`: no fallback from a runtime token to the cookie.** A request that carries `x-aionui-runtime-token`
    is authenticated by that token only. Before, a bad token with a valid session cookie fell through to the cookie.
    The CSRF layer exempts any request carrying that header, so the old fallback authenticated a cookie-bearing request

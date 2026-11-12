@@ -1,6 +1,6 @@
 # Desktop UI for the mobile bridge: Settings > Mobile (spec for a parallel implementer)
 
-**What:** the PC side of pairing and managing phones. The bridge itself (core-0015) is done through phase 4. This page
+**What:** the PC side of pairing and managing phones. The bridge itself (core-0016) is done through phase 4. This page
 is the only way a user turns it on, pairs a phone, and revokes one. CONTRACT.md §3 (pairing, SAS, devices) and
 §5.3 (re-key) are the reference for behavior; this file is the screen-level brief.
 

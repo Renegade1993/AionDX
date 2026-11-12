@@ -336,14 +336,14 @@ index 5846fbdd..9d00931b 100644
  aionui-sidebar = { path = "crates/aionui-sidebar" }
  aionui-cron = { path = "crates/aionui-cron" }
 diff --git a/crates/aionui-ai-agent/src/agent_task.rs b/crates/aionui-ai-agent/src/agent_task.rs
-index fc00c151..553769e1 100644
+index fc00c151..ff77be5e 100644
 --- a/crates/aionui-ai-agent/src/agent_task.rs
 +++ b/crates/aionui-ai-agent/src/agent_task.rs
 @@ -378,6 +378,24 @@ impl AgentInstance {
          }
      }
  
-+    /// AionDX core-0015: `confirm`, plus the user's reason when the answer is a deny. Claude (session) and aionrs
++    /// AionDX core-0016: `confirm`, plus the user's reason when the answer is a deny. Claude (session) and aionrs
 +    /// show it to the agent in place of their fixed refusal text; the other backends have no field for it and
 +    /// ignore it.
 +    pub fn confirm_with_message(
@@ -365,14 +365,14 @@ index fc00c151..553769e1 100644
      pub fn answer_ask(
          &self,
 diff --git a/crates/aionui-ai-agent/src/manager/aionrs/agent.rs b/crates/aionui-ai-agent/src/manager/aionrs/agent.rs
-index 3291d92f..301be5d6 100644
+index 3291d92f..ae5cee55 100644
 --- a/crates/aionui-ai-agent/src/manager/aionrs/agent.rs
 +++ b/crates/aionui-ai-agent/src/manager/aionrs/agent.rs
 @@ -520,10 +520,30 @@ impl AionrsAgentManager {
      }
  }
  
-+/// AionDX core-0015: the reason aionrs is told for a deny: the user's own words when given, else the fixed text.
++/// AionDX core-0016: the reason aionrs is told for a deny: the user's own words when given, else the fixed text.
 +fn denial_reason(deny_message: Option<String>) -> String {
 +    deny_message
 +        .map(|m| m.trim().to_owned())
@@ -388,7 +388,7 @@ index 3291d92f..301be5d6 100644
 +        self.confirm_with_message(msg_id, call_id, data, always_allow, None)
 +    }
 +
-+    /// AionDX core-0015: `confirm` with the user's reason for a deny, sent as the denial `reason`.
++    /// AionDX core-0016: `confirm` with the user's reason for a deny, sent as the denial `reason`.
 +    pub fn confirm_with_message(
 +        &self,
 +        _msg_id: &str,
@@ -424,7 +424,7 @@ index 3291d92f..301be5d6 100644
 +    }
 +}
 diff --git a/crates/aionui-ai-agent/src/session_agent.rs b/crates/aionui-ai-agent/src/session_agent.rs
-index 07d88ebb..c27cf0b3 100644
+index 07d88ebb..83a09460 100644
 --- a/crates/aionui-ai-agent/src/session_agent.rs
 +++ b/crates/aionui-ai-agent/src/session_agent.rs
 @@ -838,11 +838,23 @@ impl SessionAgentTask {
@@ -440,7 +440,7 @@ index 07d88ebb..c27cf0b3 100644
 +        self.confirm_with_message(msg_id, call_id, data, always_allow, None)
 +    }
 +
-+    /// AionDX core-0015: `confirm` with the user's reason for a deny (ignored on an allow).
++    /// AionDX core-0016: `confirm` with the user's reason for a deny (ignored on an allow).
 +    pub fn confirm_with_message(
          &self,
          _msg_id: &str,
@@ -480,14 +480,14 @@ index f0fa6126..378fca87 100644
  aionui-cron.workspace = true
  aionui-project.workspace = true
 diff --git a/crates/aionui-app/src/commands/cmd_server.rs b/crates/aionui-app/src/commands/cmd_server.rs
-index 17526034..c23179e6 100644
+index 17526034..623854c4 100644
 --- a/crates/aionui-app/src/commands/cmd_server.rs
 +++ b/crates/aionui-app/src/commands/cmd_server.rs
 @@ -348,6 +348,11 @@ pub(crate) async fn run_server(
      emit_ready_event();
      info!("startup: server ready, emitted AIONCORE_READY");
  
-+    // AionDX core-0015: bring the mobile bridge's LAN listener up if the user left it on.
++    // AionDX core-0016: bring the mobile bridge's LAN listener up if the user left it on.
 +    if let Some(bridge) = services.mobile_bridge.clone() {
 +        tokio::spawn(async move { bridge.start_if_enabled().await });
 +    }
@@ -507,7 +507,7 @@ index 17526034..c23179e6 100644
                      "keep-awake release timed out; abandoning keep-awake child reap",
                  ),
              }
-+            // AionDX core-0015: close the mobile bridge's LAN listener.
++            // AionDX core-0016: close the mobile bridge's LAN listener.
 +            if let Some(bridge) = mobile_bridge_for_shutdown
 +                && tokio::time::timeout(std::time::Duration::from_secs(3), bridge.stop())
 +                    .await
@@ -524,13 +524,13 @@ index 17526034..c23179e6 100644
          .into_future();
 diff --git a/crates/aionui-app/src/router/mobile_backend.rs b/crates/aionui-app/src/router/mobile_backend.rs
 new file mode 100644
-index 00000000..cadca386
+index 00000000..1acf92a0
 --- /dev/null
 +++ b/crates/aionui-app/src/router/mobile_backend.rs
 @@ -0,0 +1,534 @@
 +#![allow(clippy::disallowed_types)] // maps domain errors through ApiError at this HTTP-facing boundary
 +
-+//! AionDX core-0015: the mobile facade's view of AionCore, over the team,
++//! AionDX core-0016: the mobile facade's view of AionCore, over the team,
 +//! conversation and assistant services. Every call acts as the paired user.
 +
 +use std::sync::Arc;
@@ -1075,14 +1075,14 @@ index 92017b94..f353c221 100644
  mod runtime_team_tools;
  mod scm_monitor;
 diff --git a/crates/aionui-app/src/router/routes.rs b/crates/aionui-app/src/router/routes.rs
-index e67514c7..d9cace97 100644
+index e67514c7..24e3bce0 100644
 --- a/crates/aionui-app/src/router/routes.rs
 +++ b/crates/aionui-app/src/router/routes.rs
 @@ -122,6 +122,26 @@ pub async fn create_router_with_runtime(services: &AppServices) -> Result<(Route
      let team_service = states.team.service.clone();
      tracing::info!(elapsed_ms = boot.elapsed().as_millis(), "startup: module states built");
  
-+    // AionDX core-0015: give the mobile bridge its facade over these services.
++    // AionDX core-0016: give the mobile bridge its facade over these services.
 +    if let Some(bridge) = &services.mobile_bridge {
 +        let backend = Arc::new(super::mobile_backend::AppMobileBackend {
 +            team: states.team.service.clone(),
@@ -1109,7 +1109,7 @@ index e67514c7..d9cace97 100644
      #[cfg(feature = "weixin")]
      let router = router.merge(weixin_login_authenticated);
  
-+    // AionDX core-0015: the mobile bridge's desktop admin routes, behind the
++    // AionDX core-0016: the mobile bridge's desktop admin routes, behind the
 +    // normal auth middleware and (non-local) CSRF like every other user route.
 +    let router = match services.mobile_bridge.clone() {
 +        Some(bridge) => router.merge(
@@ -1123,14 +1123,14 @@ index e67514c7..d9cace97 100644
          router
      } else {
 diff --git a/crates/aionui-app/src/services.rs b/crates/aionui-app/src/services.rs
-index 1c2ee34b..97d2122c 100644
+index 1c2ee34b..8491309f 100644
 --- a/crates/aionui-app/src/services.rs
 +++ b/crates/aionui-app/src/services.rs
 @@ -70,6 +70,9 @@ pub struct AppServices {
      /// by `jwt_service`, so signing can rotate without changing the key.
      pub encryption_secret_raw: String,
      pub data_dir: PathBuf,
-+    /// AionDX core-0015: the mobile bridge. `None` when it could not start
++    /// AionDX core-0016: the mobile bridge. `None` when it could not start
 +    /// (its own database or host key failed); AionCore runs on without it.
 +    pub mobile_bridge: Option<Arc<aionui_mobile::MobileBridge>>,
      pub dump_prompts: bool,
@@ -1214,7 +1214,7 @@ index a1820663..fcf2b645 100644
  pub use state::ConversationRouterState;
  
 diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
-index 49bbde7a..668f9d5d 100644
+index 5d7ff70b..52fade5e 100644
 --- a/crates/aionui-conversation/src/service.rs
 +++ b/crates/aionui-conversation/src/service.rs
 @@ -3700,6 +3700,20 @@ impl ConversationService {
@@ -1226,7 +1226,7 @@ index 49bbde7a..668f9d5d 100644
 +            .await
 +    }
 +
-+    /// AionDX core-0015: `confirm` with the user's reason for a deny (the mobile bridge's refusal message).
++    /// AionDX core-0016: `confirm` with the user's reason for a deny (the mobile bridge's refusal message).
 +    pub async fn confirm_with_message(
 +        &self,
 +        user_id: &str,
@@ -1251,7 +1251,7 @@ index 49bbde7a..668f9d5d 100644
      NotAvailable { reason: &'static str },
  }
  
-+/// AionDX core-0015: how `respond_now` delivered a message to a solo chat.
++/// AionDX core-0016: how `respond_now` delivered a message to a solo chat.
 +#[derive(Debug, Clone, PartialEq, Eq)]
 +pub enum RespondNow {
 +    /// Into the running turn; the agent reads it at its next step.
@@ -1273,7 +1273,7 @@ index 49bbde7a..668f9d5d 100644
              }
          }
      }
-+    /// AionDX core-0015: deliver a message to a solo chat now, whatever its state: into the running turn when the
++    /// AionDX core-0016: deliver a message to a solo chat now, whatever its state: into the running turn when the
 +    /// agent can take it, as a new turn when the chat is idle, and otherwise right after the running turn ends.
 +    /// The mobile bridge's refusal follow-up uses it, since right after a refused tool the turn usually still runs.
 +    pub async fn respond_now(
@@ -1343,21 +1343,21 @@ index 49bbde7a..668f9d5d 100644
                      "user_id": user_id,
                      "conversation_id": conversation_id,
                      "msg_id": &user_msg_id,
-+                    // AionDX core-0015: the turn this send started, so a later send_failed row can be traced back
++                    // AionDX core-0016: the turn this send started, so a later send_failed row can be traced back
 +                    // to this message (its failure frame carries the same turn_id).
 +                    "turn_id": &turn_id,
                      "content": &resolved.content,
                      "position": "right",
                      "status": "finish",
 diff --git a/crates/aionui-conversation/src/service_test.rs b/crates/aionui-conversation/src/service_test.rs
-index a6cf541d..42752cfa 100644
+index a6cf541d..bae3bbd3 100644
 --- a/crates/aionui-conversation/src/service_test.rs
 +++ b/crates/aionui-conversation/src/service_test.rs
 @@ -4245,6 +4245,40 @@ async fn steer_active_turn_for_a_queued_message_writes_nothing_to_the_chat() {
      assert!(!broadcaster.take_events().iter().any(|e| e.name == "message.userCreated"));
  }
  
-+/// AionDX core-0015: a refusal follow-up to a solo chat whose agent can't take a message mid-turn is held while
++/// AionDX core-0016: a refusal follow-up to a solo chat whose agent can't take a message mid-turn is held while
 +/// the turn runs, and sent as soon as it ends (QA AP6). An idle chat gets it straight away.
 +#[tokio::test]
 +async fn respond_now_holds_the_message_until_the_running_turn_ends() {
@@ -1398,7 +1398,7 @@ index a6cf541d..42752cfa 100644
      assert_eq!(user_created.data["msg_id"], response.msg_id);
      assert_eq!(user_created.data["content"], "Hello");
      assert_eq!(user_created.data["position"], "right");
-+    // AionDX core-0015: the turn the send started, for tracing a later send failure back to this message.
++    // AionDX core-0016: the turn the send started, for tracing a later send failure back to this message.
 +    assert_eq!(user_created.data["turn_id"], response.turn_id);
  }
  
@@ -1448,22 +1448,22 @@ index d148c02d..172b1350 100644
          }
          if let Some(ref blocked_by) = params.blocked_by {
 diff --git a/crates/aionui-db/src/repository/team.rs b/crates/aionui-db/src/repository/team.rs
-index 36d0b168..383359dd 100644
+index 36d0b168..12bf4b4c 100644
 --- a/crates/aionui-db/src/repository/team.rs
 +++ b/crates/aionui-db/src/repository/team.rs
 @@ -35,6 +35,10 @@ pub struct UpdateTeamParams {
  /// Parameters for updating a task record.
  #[derive(Debug, Clone, Default)]
  pub struct UpdateTaskParams {
-+    /// AionDX core-0015: the subject can be edited (the user's task writes).
++    /// AionDX core-0016: the subject can be edited (the user's task writes).
 +    pub subject: Option<String>,
-+    /// AionDX core-0015: unassign. Wins over `owner`.
++    /// AionDX core-0016: unassign. Wins over `owner`.
 +    pub clear_owner: bool,
      pub status: Option<String>,
      pub description: Option<String>,
      pub owner: Option<String>,
 diff --git a/crates/aionui-db/tests/team_repository.rs b/crates/aionui-db/tests/team_repository.rs
-index a352946b..8086f997 100644
+index a352946b..2d023d44 100644
 --- a/crates/aionui-db/tests/team_repository.rs
 +++ b/crates/aionui-db/tests/team_repository.rs
 @@ -1228,3 +1228,54 @@ async fn list_tasks_by_ids_enforces_owner_isolation() {
@@ -1471,7 +1471,7 @@ index a352946b..8086f997 100644
      assert!(rows.is_empty());
  }
 +
-+/// AionDX core-0015: the user's task writes can edit the subject and unassign.
++/// AionDX core-0016: the user's task writes can edit the subject and unassign.
 +#[tokio::test]
 +async fn update_task_subject_and_clear_owner() {
 +    let (repo, _db) = repo().await;
@@ -1523,16 +1523,16 @@ index a352946b..8086f997 100644
 +}
 diff --git a/crates/aionui-mobile/Cargo.toml b/crates/aionui-mobile/Cargo.toml
 new file mode 100644
-index 00000000..21bff076
+index 00000000..6384162d
 --- /dev/null
 +++ b/crates/aionui-mobile/Cargo.toml
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +[package]
 +name = "aionui-mobile"
 +version.workspace = true
 +edition.workspace = true
 +
-+# AionDX core-0015: the encrypted PC <-> phone bridge (docs/mobile-bridge/CONTRACT.md).
++# AionDX core-0016: the encrypted PC <-> phone bridge (docs/mobile-bridge/CONTRACT.md).
 +
 +[dependencies]
 +aionui-common.workspace = true
@@ -1554,6 +1554,7 @@ index 00000000..21bff076
 +hkdf = "0.12"
 +hmac = "0.12"
 +sha2.workspace = true
++chrono.workspace = true
 +mdns-sd = { version = "0.21.7", default-features = false }
 +
 +[target.'cfg(windows)'.dependencies]
@@ -3806,6 +3807,249 @@ index 00000000..dcb63878
 +        );
 +    }
 +}
+diff --git a/crates/aionui-mobile/src/audit.rs b/crates/aionui-mobile/src/audit.rs
+new file mode 100644
+index 00000000..337dec79
+--- /dev/null
++++ b/crates/aionui-mobile/src/audit.rs
+@@ -0,0 +1,237 @@
++//! The audit log of what paired phones changed (CONTRACT §3.3): one line per mutating action in
++//! `%LOCALAPPDATA%\AionDX\logs\mobile-bridge.log`, with the time, the device, the action, the ids it touched, and the
++//! outcome. It never records message content, request bodies, or keys: only the method, the route with its ids, and
++//! the status.
++//!
++//! The file is kept small: past `MAX_BYTES` it is renamed to `mobile-bridge.log.1` (replacing the previous one), so
++//! at most two files of about 1 MiB each exist. A write that fails is logged and dropped: auditing never blocks a
++//! request.
++
++use std::io::Write;
++use std::path::{Path, PathBuf};
++use std::sync::Mutex;
++
++/// Rotate past this size.
++pub const MAX_BYTES: u64 = 1024 * 1024;
++
++/// Collections whose next path segment is an id (`/v1/teams/{id}`), and the name that id gets in `targets`.
++const ID_AFTER: &[(&str, &str)] = &[
++    ("teams", "team"),
++    ("agents", "agent"),
++    ("conversations", "conversation"),
++    ("tasks", "task"),
++    ("approvals", "approval"),
++    ("devices", "device"),
++];
++
++pub struct AuditLog {
++    path: Option<PathBuf>,
++    max_bytes: u64,
++    lock: Mutex<()>,
++}
++
++impl AuditLog {
++    /// Records nothing (tests, or no `%LOCALAPPDATA%`).
++    pub fn disabled() -> Self {
++        Self {
++            path: None,
++            max_bytes: MAX_BYTES,
++            lock: Mutex::new(()),
++        }
++    }
++
++    pub fn at(path: PathBuf) -> Self {
++        Self {
++            path: Some(path),
++            max_bytes: MAX_BYTES,
++            lock: Mutex::new(()),
++        }
++    }
++
++    /// `%LOCALAPPDATA%\AionDX\logs\mobile-bridge.log`.
++    pub fn default_location() -> Self {
++        match std::env::var_os("LOCALAPPDATA")
++            .map(PathBuf::from)
++            .filter(|p| p.is_absolute())
++        {
++            Some(base) => Self::at(base.join("AionDX").join("logs").join("mobile-bridge.log")),
++            None => {
++                tracing::warn!("mobile bridge: no LOCALAPPDATA; the audit log is off");
++                Self::disabled()
++            }
++        }
++    }
++
++    #[cfg(test)]
++    fn with_max_bytes(mut self, max_bytes: u64) -> Self {
++        self.max_bytes = max_bytes;
++        self
++    }
++
++    pub fn path(&self) -> Option<&Path> {
++        self.path.as_deref()
++    }
++
++    /// One phone request: `method` and `path` (the query is dropped), how it ended (`status`, and the error code when
++    /// there is one).
++    pub fn request(&self, device_id: &str, method: &str, path: &str, status: u16, error_code: Option<&str>) {
++        let (route, targets) = route_and_targets(path);
++        let outcome = match error_code {
++            Some(code) => format!("{status} {code}"),
++            None => status.to_string(),
++        };
++        self.record(device_id, &format!("{method} {route}"), &targets, &outcome);
++    }
++
++    /// One event that isn't a phone request (a pairing approved, a phone revoked on the PC).
++    pub fn event(&self, device_id: &str, action: &str, outcome: &str) {
++        self.record(device_id, action, "", outcome);
++    }
++
++    fn record(&self, device_id: &str, action: &str, targets: &str, outcome: &str) {
++        let Some(path) = &self.path else { return };
++        let line = format!(
++            "{} device={} action={} targets={} outcome={}\n",
++            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"),
++            clean(device_id),
++            clean(action),
++            clean(targets),
++            clean(outcome),
++        );
++        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
++        if let Err(e) = append(path, &line, self.max_bytes) {
++            tracing::warn!(error = %e, "mobile bridge: could not write the audit log");
++        }
++    }
++}
++
++fn append(path: &Path, line: &str, max_bytes: u64) -> std::io::Result<()> {
++    if let Some(dir) = path.parent() {
++        std::fs::create_dir_all(dir)?;
++    }
++    if std::fs::metadata(path).is_ok_and(|m| m.len() + line.len() as u64 > max_bytes) {
++        let old = PathBuf::from(format!("{}.1", path.display()));
++        let _ = std::fs::remove_file(&old);
++        std::fs::rename(path, &old)?;
++    }
++    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
++    file.write_all(line.as_bytes())
++}
++
++/// Keeps a field on one line and free of anything that could forge another entry: spaces become `_`, control
++/// characters and `=` are dropped, and it is cut at 200 characters.
++fn clean(field: &str) -> String {
++    let out: String = field
++        .chars()
++        .filter(|c| !c.is_control() && *c != '=')
++        .map(|c| if c.is_whitespace() { '_' } else { c })
++        .take(200)
++        .collect();
++    if out.is_empty() { "-".to_owned() } else { out }
++}
++
++/// `/v1/teams/t1/agents/s2/stop?x=1` → (`/v1/teams/{team}/agents/{agent}/stop`, `team:t1,agent:s2`).
++fn route_and_targets(path: &str) -> (String, String) {
++    let path = path.split('?').next().unwrap_or_default();
++    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
++    let mut route = Vec::with_capacity(segs.len());
++    let mut targets = Vec::new();
++    for (i, seg) in segs.iter().enumerate() {
++        let after = i
++            .checked_sub(1)
++            .and_then(|p| ID_AFTER.iter().find(|(c, _)| *c == segs[p]));
++        match after {
++            Some((_, name)) => {
++                route.push(format!("{{{name}}}"));
++                targets.push(format!("{name}:{seg}"));
++            }
++            None => route.push((*seg).to_owned()),
++        }
++    }
++    (format!("/{}", route.join("/")), targets.join(","))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn routes_and_targets_split_ids_from_the_action() {
++        assert_eq!(
++            route_and_targets("/v1/teams/t1/agents/s2/shutdown?force=1"),
++            (
++                "/v1/teams/{team}/agents/{agent}/shutdown".to_owned(),
++                "team:t1,agent:s2".to_owned()
++            )
++        );
++        assert_eq!(
++            route_and_targets("/v1/approvals/YzI6Y2FsbC0x/answer"),
++            (
++                "/v1/approvals/{approval}/answer".to_owned(),
++                "approval:YzI6Y2FsbC0x".to_owned()
++            )
++        );
++        assert_eq!(
++            route_and_targets("/v1/host/device/confirm-key"),
++            ("/v1/host/device/confirm-key".to_owned(), String::new())
++        );
++    }
++
++    #[test]
++    fn a_line_has_the_fields_and_nothing_can_forge_another() {
++        let dir = tempfile::tempdir().unwrap();
++        let log = AuditLog::at(dir.path().join("logs").join("mobile-bridge.log"));
++        log.request("dev-1", "POST", "/v1/teams/t1/agents/s2/stop", 200, None);
++        log.request(
++            "dev\n2 outcome=200",
++            "DELETE",
++            "/v1/teams/t1/agents/s2",
++            422,
++            Some("lead_not_allowed"),
++        );
++        log.event("dev-3", "pair approved", "ok");
++        let text = std::fs::read_to_string(log.path().unwrap()).unwrap();
++        let lines: Vec<&str> = text.lines().collect();
++        assert_eq!(lines.len(), 3, "{text}");
++        assert!(lines[0].ends_with(
++            "device=dev-1 action=POST_/v1/teams/{team}/agents/{agent}/stop targets=team:t1,agent:s2 outcome=200"
++        ));
++        assert!(
++            lines[1].contains("device=dev2_outcome200 action=DELETE"),
++            "{}",
++            lines[1]
++        );
++        assert!(lines[1].ends_with("outcome=422_lead_not_allowed"));
++        assert!(lines[2].ends_with("device=dev-3 action=pair_approved targets=- outcome=ok"));
++        assert!(
++            lines[0].len() > 24 && lines[0].as_bytes()[10] == b'T',
++            "starts with an ISO time"
++        );
++    }
++
++    #[test]
++    fn the_log_rotates_and_stays_bounded() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("mobile-bridge.log");
++        let log = AuditLog::at(path.clone()).with_max_bytes(400);
++        for i in 0..40 {
++            log.request(&format!("dev-{i}"), "POST", "/v1/conversations/c1/messages", 200, None);
++        }
++        let current = std::fs::metadata(&path).unwrap().len();
++        let old = std::fs::metadata(dir.path().join("mobile-bridge.log.1")).unwrap().len();
++        assert!(current <= 400 && old <= 400, "{current} {old}");
++        assert!(std::fs::read_to_string(&path).unwrap().contains("device=dev-39"));
++        assert_eq!(
++            std::fs::read_dir(dir.path()).unwrap().count(),
++            2,
++            "never more than two files"
++        );
++    }
++
++    #[test]
++    fn disabled_writes_nothing() {
++        let log = AuditLog::disabled();
++        log.request("d", "POST", "/v1/x", 200, None);
++        assert!(log.path().is_none());
++    }
++}
 diff --git a/crates/aionui-mobile/src/backend.rs b/crates/aionui-mobile/src/backend.rs
 new file mode 100644
 index 00000000..033ee2a2
@@ -4048,10 +4292,10 @@ index 00000000..033ee2a2
 +}
 diff --git a/crates/aionui-mobile/src/core.rs b/crates/aionui-mobile/src/core.rs
 new file mode 100644
-index 00000000..de4c0796
+index 00000000..68689836
 --- /dev/null
 +++ b/crates/aionui-mobile/src/core.rs
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,175 @@
 +//! Shared state behind the LAN routes and the desktop admin routes.
 +
 +use std::collections::HashMap;
@@ -4179,9 +4423,15 @@ index 00000000..de4c0796
 +    pub app_version: RwLock<String>,
 +    /// Open re-key offers, by device id.
 +    pub rekey_offers: Mutex<HashMap<String, RekeyOffer>>,
++    /// What phones changed (CONTRACT §3.3). Off until the bridge sets its file (`MobileBridge::new`).
++    pub audit: RwLock<Arc<crate::audit::AuditLog>>,
 +}
 +
 +impl BridgeCore {
++    pub fn audit(&self) -> Arc<crate::audit::AuditLog> {
++        self.audit.read().unwrap_or_else(|p| p.into_inner()).clone()
++    }
++
 +    pub fn new(
 +        host_key: Arc<HostKey>,
 +        store: MobileStore,
@@ -4199,6 +4449,7 @@ index 00000000..de4c0796
 +            host_name: RwLock::new(host_name),
 +            app_version: RwLock::new(String::new()),
 +            rekey_offers: Mutex::new(HashMap::new()),
++            audit: RwLock::new(Arc::new(crate::audit::AuditLog::disabled())),
 +        })
 +    }
 +
@@ -8416,15 +8667,16 @@ index 00000000..ab2491a9
 +}
 diff --git a/crates/aionui-mobile/src/lib.rs b/crates/aionui-mobile/src/lib.rs
 new file mode 100644
-index 00000000..20d36950
+index 00000000..41d443dc
 --- /dev/null
 +++ b/crates/aionui-mobile/src/lib.rs
-@@ -0,0 +1,44 @@
-+//! AionDX core-0015: the encrypted PC <-> phone bridge.
+@@ -0,0 +1,45 @@
++//! AionDX core-0016: the encrypted PC <-> phone bridge.
 +//! Contract: `docs/mobile-bridge/CONTRACT.md` in the AionDX repository.
 +
 +pub mod admin_routes;
 +pub mod approvals;
++pub mod audit;
 +pub mod backend;
 +pub mod core;
 +pub mod crypto;
@@ -8466,10 +8718,10 @@ index 00000000..20d36950
 +pub use wire::{InnerRequest, InnerResponse};
 diff --git a/crates/aionui-mobile/src/listener.rs b/crates/aionui-mobile/src/listener.rs
 new file mode 100644
-index 00000000..ce9bb21c
+index 00000000..ab4880f7
 --- /dev/null
 +++ b/crates/aionui-mobile/src/listener.rs
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,230 @@
 +//! The LAN listener (CONTRACT §2, §4). It is separate from AionCore's own
 +//! 127.0.0.1 server and serves only `/api/mobile/v1/*`. Every request from a
 +//! peer outside the private ranges is refused before routing.
@@ -8525,6 +8777,9 @@ index 00000000..ce9bb21c
 +    }
 +}
 +
++/// How long a closing listener waits for requests in flight.
++pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
++
 +/// A running listener. Dropping it does not stop it; call [`ListenerHandle::stop`].
 +pub struct ListenerHandle {
 +    pub addr: SocketAddr,
@@ -8534,10 +8789,19 @@ index 00000000..ce9bb21c
 +}
 +
 +impl ListenerHandle {
++    /// Stops accepting, lets requests in flight finish for up to `STOP_GRACE`, then drops whatever is left. Without
++    /// the bound, a phone's `/v1/changes` long-poll (up to 25 s) held the close that long.
 +    pub async fn stop(self) {
++        let mut tasks = Vec::new();
 +        for (tx, task) in self.servers {
 +            let _ = tx.send(());
-+            let _ = task.await;
++            tasks.push(task);
++        }
++        for mut task in tasks {
++            if tokio::time::timeout(STOP_GRACE, &mut task).await.is_err() {
++                task.abort();
++                tracing::info!(addr = %self.addr, "mobile bridge: requests still open at close were dropped");
++            }
 +        }
 +        tracing::info!(addr = %self.addr, "mobile bridge: listener stopped");
 +    }
@@ -8589,6 +8853,32 @@ index 00000000..ce9bb21c
 +mod tests {
 +    use super::*;
 +    use std::net::{IpAddr, Ipv4Addr};
++
++    /// A request still open when the bridge is switched off (a phone's long-poll) no longer holds the close: the
++    /// listener waits `STOP_GRACE`, then drops it.
++    #[tokio::test]
++    async fn a_request_in_flight_does_not_hold_the_close() {
++        use tokio::io::AsyncWriteExt;
++        let router = Router::new().route(
++            "/hang",
++            axum::routing::get(|| async {
++                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
++                "late"
++            }),
++        );
++        let handle = start(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, router).await.unwrap();
++        let mut stream = tokio::net::TcpStream::connect(handle.addr).await.unwrap();
++        stream
++            .write_all(b"GET /hang HTTP/1.1\r\nHost: x\r\n\r\n")
++            .await
++            .unwrap();
++        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
++        let started = std::time::Instant::now();
++        handle.stop().await;
++        let took = started.elapsed();
++        assert!(took >= STOP_GRACE - std::time::Duration::from_millis(100), "{took:?}");
++        assert!(took < STOP_GRACE + std::time::Duration::from_secs(1), "{took:?}");
++    }
 +
 +    async fn get_json(addr: SocketAddr, path: &str) -> (u16, serde_json::Value) {
 +        use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -9431,10 +9721,10 @@ index 00000000..7e07e640
 +}
 diff --git a/crates/aionui-mobile/src/outer.rs b/crates/aionui-mobile/src/outer.rs
 new file mode 100644
-index 00000000..29cb1bc0
+index 00000000..cf1fafb0
 --- /dev/null
 +++ b/crates/aionui-mobile/src/outer.rs
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,405 @@
 +//! The LAN routes `pair`, `session` and `rpc` (CONTRACT §4.2–4.4). Outer
 +//! errors are plaintext `{"error": code, ...}` and never carry secrets.
 +
@@ -9668,6 +9958,18 @@ index 00000000..29cb1bc0
 +    if mutating {
 +        core.sessions
 +            .remember_rid(&opened.device_id, &req.rid, &response, now());
++        let code = response
++            .body
++            .as_ref()
++            .and_then(|b| b["error"]["code"].as_str())
++            .map(str::to_owned);
++        core.audit().request(
++            &opened.device_id,
++            &req.method,
++            &req.path,
++            response.status,
++            code.as_deref(),
++        );
 +    }
 +    response
 +}
@@ -10564,10 +10866,10 @@ index 00000000..72e5cfa8
 +}
 diff --git a/crates/aionui-mobile/src/service.rs b/crates/aionui-mobile/src/service.rs
 new file mode 100644
-index 00000000..a01309e5
+index 00000000..ad93fd12
 --- /dev/null
 +++ b/crates/aionui-mobile/src/service.rs
-@@ -0,0 +1,979 @@
+@@ -0,0 +1,1078 @@
 +//! The bridge's lifecycle: settings, the host key, whether the LAN listener
 +//! runs, and the desktop's pairing and device actions. Business logic only;
 +//! the HTTP surfaces live in `listener.rs`/`outer.rs` (LAN) and
@@ -10657,7 +10959,17 @@ index 00000000..a01309e5
 +    port: u16,
 +    handle: ListenerHandle,
 +    /// The `_aiondx._tcp` advertisement while the listener runs (when the user left mDNS on); dropping withdraws it.
-+    _mdns: Option<crate::mdns::MdnsAdvertiser>,
++    mdns: Option<Box<dyn crate::service_net::Advertisement>>,
++}
++
++impl Running {
++    /// Withdraws the advertisement (goodbye packets), then closes the listener.
++    async fn stop(mut self) {
++        if let Some(ad) = self.mdns.take() {
++            crate::service_net::withdraw(ad).await;
++        }
++        self.handle.stop().await;
++    }
 +}
 +
 +pub struct MobileBridge {
@@ -10666,6 +10978,10 @@ index 00000000..a01309e5
 +    pub(crate) bind_ip: IpAddr,
 +    /// Reads the firewall rule (read-only `netsh show`); a fake in tests.
 +    pub(crate) firewall: Arc<dyn crate::firewall::NetshRunner>,
++    /// Starts the mDNS advertisement (a fake in tests).
++    pub(crate) advertiser: crate::service_net::AdvertiseFn,
++    /// Tests only: let a fake advertiser run while the listener is on loopback.
++    pub(crate) advertise_on_loopback: bool,
 +    running: Mutex<Option<Running>>,
 +    last_error: Mutex<Option<String>>,
 +    /// Set when this boot can't run the bridge (e.g. host.key unreadable): the
@@ -10680,13 +10996,20 @@ index 00000000..a01309e5
 +        default_host_name: String,
 +        events: Arc<dyn BridgeEvents>,
 +    ) -> Arc<Self> {
-+        Self::with_bind_ip(
++        let bridge = Self::with_bind_ip(
 +            store,
 +            host_key,
 +            default_host_name,
 +            events,
 +            crate::service_net::bind_ip_from_env(),
-+        )
++        );
++        bridge.set_audit_log(crate::audit::AuditLog::default_location());
++        bridge
++    }
++
++    /// Where the audit log goes (CONTRACT §3.3); `AuditLog::disabled()` turns it off.
++    pub fn set_audit_log(&self, log: crate::audit::AuditLog) {
++        *self.core.audit.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(log);
 +    }
 +
 +    /// `bind_ip` is `0.0.0.0` in production; tests use loopback.
@@ -10702,6 +11025,8 @@ index 00000000..a01309e5
 +            default_host_name,
 +            bind_ip,
 +            firewall: Arc::new(crate::firewall::ShowOnlyRunner),
++            advertiser: crate::service_net::real_advertiser(),
++            advertise_on_loopback: false,
 +            running: Mutex::new(None),
 +            last_error: Mutex::new(None),
 +            fault: None,
@@ -10721,6 +11046,8 @@ index 00000000..a01309e5
 +            default_host_name,
 +            bind_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
 +            firewall: Arc::new(crate::firewall::ShowOnlyRunner),
++            advertiser: crate::service_net::real_advertiser(),
++            advertise_on_loopback: false,
 +            running: Mutex::new(None),
 +            last_error: Mutex::new(None),
 +            fault: Some(reason),
@@ -10784,6 +11111,13 @@ index 00000000..a01309e5
 +        &self.core.store
 +    }
 +
++    /// Replaces the mDNS advertiser (tests use a fake; it may then run on a loopback bind, which the real one never
++    /// does).
++    pub fn set_advertiser(&mut self, advertiser: crate::service_net::AdvertiseFn) {
++        self.advertiser = advertiser;
++        self.advertise_on_loopback = true;
++    }
++
 +    /// Replaces the firewall reader (tests use a fake instead of `netsh`).
 +    pub fn set_firewall_runner(&mut self, runner: Arc<dyn crate::firewall::NetshRunner>) {
 +        self.firewall = runner;
@@ -10840,7 +11174,7 @@ index 00000000..a01309e5
 +    /// Stops the listener, e.g. at shutdown.
 +    pub async fn stop(&self) {
 +        if let Some(running) = self.running.lock().await.take() {
-+            running.handle.stop().await;
++            running.stop().await;
 +        }
 +    }
 +
@@ -10907,6 +11241,7 @@ index 00000000..a01309e5
 +            serde_json::json!({ "deviceId": device.device_id, "change": "paired" }),
 +        );
 +        tracing::info!(user_id, device_id = %device.device_id, "mobile bridge: phone paired");
++        self.core.audit().event(&device.device_id, "pair approved", "ok");
 +        Ok(device.device_id)
 +    }
 +
@@ -10970,6 +11305,7 @@ index 00000000..a01309e5
 +            serde_json::json!({ "deviceId": device_id, "change": "revoked" }),
 +        );
 +        tracing::info!(user_id, device_id, "mobile bridge: phone revoked");
++        self.core.audit().event(device_id, "device revoked", "ok");
 +        Ok(())
 +    }
 +
@@ -10981,6 +11317,19 @@ index 00000000..a01309e5
 +        }
 +        let keep = matches!(&*running, Some(r) if settings.enabled && r.user_id == user_id && r.port == settings.port);
 +        if keep {
++            // The listener stays; only the advertisement follows the mDNS switch (QA M5b).
++            if let Some(r) = running.as_mut() {
++                match (r.mdns.is_some(), settings.mdns) {
++                    (true, false) => {
++                        if let Some(ad) = r.mdns.take() {
++                            crate::service_net::withdraw(ad).await;
++                            tracing::info!("mobile bridge: mDNS advertisement withdrawn");
++                        }
++                    }
++                    (false, true) => r.mdns = self.advertise(settings),
++                    _ => {}
++                }
++            }
 +            return;
 +        }
 +        let other_user = matches!(&*running, Some(r) if r.user_id != user_id);
@@ -10988,7 +11337,7 @@ index 00000000..a01309e5
 +            return; // someone else's bridge; this user switching off changes nothing
 +        }
 +        if let Some(old) = running.take() {
-+            old.handle.stop().await;
++            old.stop().await;
 +        }
 +        *self.last_error.lock().await = None;
 +        if !settings.enabled {
@@ -11006,7 +11355,7 @@ index 00000000..a01309e5
 +                    user_id: user_id.to_owned(),
 +                    port: settings.port,
 +                    handle,
-+                    _mdns: mdns,
++                    mdns,
 +                });
 +            }
 +            Err(e) => {
@@ -11298,6 +11647,58 @@ index 00000000..a01309e5
 +        assert!(status.error.unwrap().contains(&port.to_string()));
 +    }
 +
++    struct FakeAd(Arc<std::sync::Mutex<Vec<String>>>);
++
++    impl crate::service_net::Advertisement for FakeAd {
++        fn withdraw(self: Box<Self>) {
++            self.0.lock().unwrap().push("goodbye".into());
++        }
++    }
++
++    /// QA M5b: the mDNS switch alone starts and withdraws the advertisement while the listener stays up; switching
++    /// the bridge off withdraws it too. A fake advertiser on loopback: nothing goes on the LAN.
++    #[tokio::test]
++    async fn the_mdns_switch_alone_withdraws_and_restores_the_advertisement() {
++        let mut b = bridge().await;
++        let log = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
++        let l = log.clone();
++        Arc::get_mut(&mut b)
++            .unwrap()
++            .set_advertiser(Arc::new(move |_host: &str, port: u16| {
++                l.lock().unwrap().push(format!("start {port}"));
++                Ok(Box::new(FakeAd(l.clone())) as Box<dyn crate::service_net::Advertisement>)
++            }));
++        let port = free_port();
++        let patch = |enabled: Option<bool>, mdns: Option<bool>| MobileSettingsPatch {
++            enabled,
++            mdns,
++            port: Some(port),
++            ..Default::default()
++        };
++        let events = || log.lock().unwrap().clone();
++
++        b.update_settings("u1", &patch(Some(true), Some(true))).await.unwrap();
++        assert_eq!(events(), [format!("start {port}")]);
++        let addr = b.running.lock().await.as_ref().unwrap().handle.addr;
++
++        let status = b.update_settings("u1", &patch(None, Some(false))).await.unwrap();
++        assert_eq!(events(), [format!("start {port}"), "goodbye".into()]);
++        assert!(status.listening, "the bridge stays on");
++        assert_eq!(
++            b.running.lock().await.as_ref().unwrap().handle.addr,
++            addr,
++            "the same listener, not a restart"
++        );
++
++        b.update_settings("u1", &patch(None, Some(true))).await.unwrap();
++        assert_eq!(events().len(), 3);
++        assert_eq!(events()[2], format!("start {port}"));
++
++        b.update_settings("u1", &patch(Some(false), None)).await.unwrap();
++        assert_eq!(events().last().unwrap(), "goodbye", "switching off withdraws it");
++        assert!(!b.status("u1").await.unwrap().listening);
++    }
++
 +    #[tokio::test]
 +    async fn start_if_enabled_restores_the_listener() {
 +        let b = bridge().await;
@@ -11549,10 +11950,10 @@ index 00000000..a01309e5
 +}
 diff --git a/crates/aionui-mobile/src/service_net.rs b/crates/aionui-mobile/src/service_net.rs
 new file mode 100644
-index 00000000..aa3ca87b
+index 00000000..8bacbce3
 --- /dev/null
 +++ b/crates/aionui-mobile/src/service_net.rs
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,219 @@
 +//! Phase 5: the bridge's network surface for the desktop (CONTRACT §7, PHASE5-NET-SPEC): the QR address list, the
 +//! mDNS advertisement, the firewall rule's state, the listener's bind address, and how a re-key offer ended.
 +
@@ -11589,6 +11990,35 @@ index 00000000..aa3ca87b
 +            );
 +            any
 +        }
++    }
++}
++
++/// A running `_aiondx._tcp` advertisement. `withdraw` sends the goodbye packets and stops it (it may block for up to
++/// a couple of seconds, so callers run it off the async threads).
++pub trait Advertisement: Send {
++    fn withdraw(self: Box<Self>);
++}
++
++impl Advertisement for crate::mdns::MdnsAdvertiser {
++    fn withdraw(self: Box<Self>) {
++        (*self).stop();
++    }
++}
++
++/// Starts an advertisement for `(host_id, port)`. The real one is `MdnsAdvertiser::start`; tests use a fake, so no
++/// test ever multicasts on the LAN.
++pub type AdvertiseFn = std::sync::Arc<dyn Fn(&str, u16) -> Result<Box<dyn Advertisement>, String> + Send + Sync>;
++
++pub(crate) fn real_advertiser() -> AdvertiseFn {
++    std::sync::Arc::new(|host_id: &str, port: u16| {
++        crate::mdns::MdnsAdvertiser::start(host_id, port).map(|a| Box::new(a) as Box<dyn Advertisement>)
++    })
++}
++
++/// Withdraws an advertisement without blocking the async threads.
++pub(crate) async fn withdraw(ad: Box<dyn Advertisement>) {
++    if let Err(e) = tokio::task::spawn_blocking(move || ad.withdraw()).await {
++        tracing::warn!(error = %e, "mobile bridge: withdrawing the mDNS advertisement failed");
 +    }
 +}
 +
@@ -11657,11 +12087,11 @@ index 00000000..aa3ca87b
 +
 +    /// Starts the `_aiondx._tcp` advertisement when the user left mDNS on and the listener is on the LAN. A failure
 +    /// (no private interface, a socket error) only loses discovery: phones still use their stored URLs.
-+    pub(crate) fn advertise(&self, settings: &MobileSettings) -> Option<crate::mdns::MdnsAdvertiser> {
-+        if !settings.mdns || self.bind_ip.is_loopback() {
++    pub(crate) fn advertise(&self, settings: &MobileSettings) -> Option<Box<dyn Advertisement>> {
++        if !settings.mdns || (self.bind_ip.is_loopback() && !self.advertise_on_loopback) {
 +            return None;
 +        }
-+        match crate::mdns::MdnsAdvertiser::start(&self.core.host_key.host_id, settings.port) {
++        match (self.advertiser)(&self.core.host_key.host_id, settings.port) {
 +            Ok(a) => Some(a),
 +            Err(e) => {
 +                tracing::warn!(error = %e, "mobile bridge: mDNS advertisement did not start");
@@ -15036,10 +15466,10 @@ index 00000000..9e6b2837
 +}
 diff --git a/crates/aionui-mobile/tests/protocol_e2e.rs b/crates/aionui-mobile/tests/protocol_e2e.rs
 new file mode 100644
-index 00000000..3aee7721
+index 00000000..7c163cbd
 --- /dev/null
 +++ b/crates/aionui-mobile/tests/protocol_e2e.rs
-@@ -0,0 +1,636 @@
+@@ -0,0 +1,679 @@
 +//! End to end over the real outer router: a phone implemented here from
 +//! CONTRACT §4 alone pairs, handshakes, calls RPC, and gets revoked.
 +
@@ -15263,6 +15693,8 @@ index 00000000..3aee7721
 +        "Test PC".into(),
 +        Arc::new(NoEvents),
 +    );
++    // Never the real %LOCALAPPDATA% log from a test; the audit test points it at a temp file.
++    bridge.set_audit_log(aionui_mobile::audit::AuditLog::disabled());
 +    let router = outer_router(bridge.core().clone());
 +    (bridge, router)
 +}
@@ -15676,6 +16108,47 @@ index 00000000..3aee7721
 +    seq += 1;
 +    assert_eq!(check(None, seq).await, "NotRequired");
 +}
++
++/// CONTRACT §3.3: each mutating phone action is one audit line (time, device, action with its ids, outcome), and
++/// nothing of the request's content: no body, no proof, no key. A retried request id isn't logged twice, and reads
++/// aren't logged.
++#[tokio::test]
++async fn the_audit_log_records_actions_not_content() {
++    let (bridge, router) = setup().await;
++    let dir = tempfile::tempdir().unwrap();
++    let path = dir.path().join("logs").join("mobile-bridge.log");
++    bridge.set_audit_log(aionui_mobile::audit::AuditLog::at(path.clone()));
++    bridge.set_facade(std::sync::Arc::new(ConfirmProbe));
++    let phone = Phone::new("dev-1");
++    let (offer, _confirm_key) = pair(&bridge, &router, &phone).await;
++    let hs = begin_handshake(&phone, &offer.host_id, &offer.host_pk, now());
++    let (_, resp) = post(&router, "/api/mobile/v1/session", &hs.body).await;
++    let (s, _) = finish_handshake(&phone, &offer.host_pk, &hs, &resp);
++
++    let write = json!({ "method": "POST", "path": "/v1/probe", "rid": "r1",
++                        "body": { "content": "do-not-log-me" }, "confirm": "c2VjcmV0LXByb29m" });
++    let (_, resp) = post(&router, "/api/mobile/v1/rpc", &envelope(&s, 1, &write)).await;
++    assert_eq!(open_rpc(&s, 1, &resp)["status"], 200);
++    let (_, resp) = post(&router, "/api/mobile/v1/rpc", &envelope(&s, 2, &write)).await; // the same rid, retried
++    assert_eq!(open_rpc(&s, 2, &resp)["status"], 200);
++    let read = json!({ "method": "GET", "path": "/v1/host", "rid": "r3" });
++    post(&router, "/api/mobile/v1/rpc", &envelope(&s, 3, &read)).await;
++
++    let text = std::fs::read_to_string(&path).unwrap();
++    let lines: Vec<&str> = text.lines().collect();
++    assert_eq!(lines.len(), 2, "{text}");
++    assert!(
++        lines[0].ends_with("device=dev-1 action=pair_approved targets=- outcome=ok"),
++        "{text}"
++    );
++    assert!(
++        lines[1].ends_with("device=dev-1 action=POST_/v1/probe targets=- outcome=200"),
++        "{text}"
++    );
++    for secret in ["do-not-log-me", "c2VjcmV0LXByb29m", "content"] {
++        assert!(!text.contains(secret), "{secret} leaked: {text}");
++    }
++}
 diff --git a/crates/aionui-mobile/tests/vectors.json b/crates/aionui-mobile/tests/vectors.json
 new file mode 100644
 index 00000000..ce3314a5
@@ -16055,7 +16528,7 @@ index fe6fd6ac..e234cb44 100644
          .await
          .expect("a resolved-twice answer must not surface an error");
 diff --git a/crates/aionui-session/src/backend/claude_conn.rs b/crates/aionui-session/src/backend/claude_conn.rs
-index b751aa3d..d976b05e 100644
+index b751aa3d..4c47e7de 100644
 --- a/crates/aionui-session/src/backend/claude_conn.rs
 +++ b/crates/aionui-session/src/backend/claude_conn.rs
 @@ -1090,6 +1090,7 @@ impl ClaudeSessionBackend {
@@ -16080,7 +16553,7 @@ index b751aa3d..d976b05e 100644
      })
  }
  
-+/// AionDX core-0015: put the user's refusal reason in a deny response's `message`, the field
++/// AionDX core-0016: put the user's refusal reason in a deny response's `message`, the field
 +/// `build_control_response` otherwise fills with a fixed "User rejected the request.".
 +/// An allow response, or a blank reason, is left alone.
 +fn with_deny_message(response: &mut serde_json::Value, deny_message: Option<&str>) {
@@ -16233,14 +16706,14 @@ index 127dd2d2..cb11c35c 100644
              .await
      }
 diff --git a/crates/aionui-session/src/backend/types.rs b/crates/aionui-session/src/backend/types.rs
-index 3c33b5c0..1c79857c 100644
+index 3c33b5c0..7a29588b 100644
 --- a/crates/aionui-session/src/backend/types.rs
 +++ b/crates/aionui-session/src/backend/types.rs
 @@ -64,6 +64,9 @@ pub enum Command {
          decision: PermissionDecision,
          selected: Option<String>,
          answers: Vec<QuestionAnswer>,
-+        /// AionDX core-0015: on a deny, the user's reason, shown to the agent in place of the fixed refusal text.
++        /// AionDX core-0016: on a deny, the user's reason, shown to the agent in place of the fixed refusal text.
 +        /// Only the claude adapter carries it; the others ignore it.
 +        deny_message: Option<String>,
      },
@@ -16296,11 +16769,11 @@ index 7f6311ec..4d131ef1 100644
      pub fn new(
 diff --git a/crates/aionui-team/src/service/user_actions.rs b/crates/aionui-team/src/service/user_actions.rs
 new file mode 100644
-index 00000000..95bd7e05
+index 00000000..60bdd763
 --- /dev/null
 +++ b/crates/aionui-team/src/service/user_actions.rs
 @@ -0,0 +1,202 @@
-+//! AionDX core-0015: team actions taken by the user directly, from the desktop or a
++//! AionDX core-0016: team actions taken by the user directly, from the desktop or a
 +//! paired phone (docs/mobile-bridge/CONTRACT.md §6.6, §6.7). The phone is the user
 +//! (CONTRACT §3.3), so these check team ownership, like every user route.
 +
@@ -16503,14 +16976,14 @@ index 00000000..95bd7e05
 +    }
 +}
 diff --git a/crates/aionui-team/src/session.rs b/crates/aionui-team/src/session.rs
-index da30c5f4..b8c940cf 100644
+index da30c5f4..0bea05eb 100644
 --- a/crates/aionui-team/src/session.rs
 +++ b/crates/aionui-team/src/session.rs
 @@ -986,6 +986,50 @@ impl TeamSession {
          })
      }
  
-+    /// AionDX core-0015: the user (the desktop or a paired phone) asks a teammate to
++    /// AionDX core-0016: the user (the desktop or a paired phone) asks a teammate to
 +    /// shut down, through the same mailbox protocol the lead's tool uses. The agent
 +    /// answers `shutdown_approved` (it is then removed) or `shutdown_rejected:<reason>`
 +    /// (delivered to the lead's mailbox, as for a lead's request).
@@ -16558,16 +17031,16 @@ index da30c5f4..b8c940cf 100644
          &self,
          caller_slot_id: &str,
 diff --git a/crates/aionui-team/src/task_board.rs b/crates/aionui-team/src/task_board.rs
-index 46156818..86320761 100644
+index 46156818..af1717b5 100644
 --- a/crates/aionui-team/src/task_board.rs
 +++ b/crates/aionui-team/src/task_board.rs
 @@ -24,6 +24,10 @@ pub struct TaskBoard {
  /// Optional fields for task update.
  #[derive(Debug, Clone, Default)]
  pub struct TaskUpdate {
-+    /// AionDX core-0015.
++    /// AionDX core-0016.
 +    pub subject: Option<String>,
-+    /// AionDX core-0015: unassign. Wins over `owner`.
++    /// AionDX core-0016: unassign. Wins over `owner`.
 +    pub clear_owner: bool,
      pub status: Option<TaskStatus>,
      pub description: Option<String>,
@@ -16582,7 +17055,7 @@ index 46156818..86320761 100644
              description: update.description.clone(),
              owner: update.owner.clone(),
 diff --git a/crates/aionui-team/tests/mcp_server_integration.rs b/crates/aionui-team/tests/mcp_server_integration.rs
-index 481cd827..900c5713 100644
+index 481cd827..76b13c81 100644
 --- a/crates/aionui-team/tests/mcp_server_integration.rs
 +++ b/crates/aionui-team/tests/mcp_server_integration.rs
 @@ -1501,3 +1501,71 @@ async fn tsr3_send_message_without_sentinel_rejects_without_live_team_run_servic
@@ -16591,7 +17064,7 @@ index 481cd827..900c5713 100644
  }
 +
 +// ---------------------------------------------------------------------------
-+// AionDX core-0015: a declined shutdown reaches the event bus (QA SD2a)
++// AionDX core-0016: a declined shutdown reaches the event bus (QA SD2a)
 +// ---------------------------------------------------------------------------
 +
 +/// The mobile bridge learns that a teammate refused a phone-sent shutdown from the `team.mailboxChanged` event of the

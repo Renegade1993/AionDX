@@ -1,4 +1,4 @@
-# AionDX Mobile Bridge: API Contract v1 (DRAFT)
+# AionDX Mobile Bridge: API Contract v1
 
 **Status:** revision 4.5, approved for implementation. Written 2026-11-06/07 by the AionDX Bridge/API Engineer.
 - **Rev 1:** first draft.
@@ -13,7 +13,7 @@
   - **(a)7** freshness window for the revocation notice: A1.
   - **(a)8** what message `pending` and `error` mean: §6.4.
   - **(a)9** vectors: sent alongside this rev.
-  - **Also found while verifying:** AionCore's task board can't edit a task's subject or clear its owner. core-0015
+  - **Also found while verifying:** AionCore's task board can't edit a task's subject or clear its owner. core-0016
     adds both (§6.7).
 - **Rev 4 (2026-11-07):** Nathan approved all nine §11 items as recommended. §11 is now a record of those decisions.
   The `[PENDING SIGN-OFF]` markers are removed, and `tasks.write` is on by default (§6.1, §6.7). The Claude
@@ -41,15 +41,17 @@
   - the first `before` cursor for backward paging (§6.4);
   - `GET /v1/changes` with no `since` (§6.2);
   - the role and sender of a task-assigned notice when the user assigns the task (§6.4, §6.7).
-- **Rev 4 note:** the bridge patch is renamed **core-0015-mobile-bridge**, since `core-0006` through `core-0013` are
-  already taken by other AionDX core patches. The K1 fix is **core-0014-auth-channel** and comes first, because it
-  introduces the `AuthChannel` marker that the admin routes (§3.4) rely on.
+- **Rev 4 note (numbers as of 0.27.0):** the bridge patch is **core-0016-mobile-bridge**, since `core-0001` through
+  `core-0014` are taken by other AionDX core patches (core-0014 is upstream's launch-skills). The K1 fix is
+  **core-0015-auth-channel** and comes first, because it introduces the `AuthChannel` marker that the admin routes (§3.4)
+  rely on. (Earlier drafts called them core-0006, then core-0015/core-0014.)
 - **Rev 3.1:** `send_failed` rows gain `error.messageId`, the user message whose send failed (nullable; it is exact for
   solo sends and mid-turn failures, and `null` in team member chats). Retry re-sends that message instead of "the most
   recent" one. A user message can itself have status `error` after a failed mid-turn delivery (§6.4).
 **Answers:** the mobile team's `docs/pairing-encryption-proposal.md` §8 (seven decisions) and the surface their
 `remoteApi.ts` assumed.
-**Backend:** AionDX on AionUi 2.2.2 (AionPro edition) + AionCore v0.2.2, with core patches 0001-0005.
+**Backend:** AionDX on AionUi 2.2.2 (AionPro edition) + AionCore v0.2.2, with AionDX core patches core-0001..core-0016:
+core-0015-auth-channel (K1) and core-0016-mobile-bridge (this contract) on top of core-0001..core-0014.
 
 All design decisions in this document were approved by Nathan on 2026-11-07; §11 records them. Everything on the
 wire is versioned (`v: 1`).
@@ -95,7 +97,7 @@ earlier assumptions.
 
 ```
  phone ──HTTP (E2E-sealed envelopes)──▶ LAN listener :47734  ┐
-                                       /api/mobile/v1/*      │  aioncore.exe (core patch core-0015-mobile-bridge,
+                                       /api/mobile/v1/*      │  aioncore.exe (core patch core-0016-mobile-bridge,
                                                              │  new crate aionui-mobile)
  desktop renderer ──existing auth──▶ 127.0.0.1:<core port>   │   ├─ crypto: x25519-dalek, chacha20poly1305 (XChaCha),
                                      /api/mobile/admin/*     │   │          hkdf, sha2, hmac (RustCrypto)
@@ -105,7 +107,7 @@ earlier assumptions.
                                                                     tracker, unread/attention state
 ```
 
-- **Delivery.** The bridge is a new AionCore patch, `patches/core-0015-mobile-bridge/`, built by the existing
+- **Delivery.** The bridge is a new AionCore patch, `patches/core-0016-mobile-bridge/`, built by the existing
   `tools/build-aioncore.ps1 -Patched` path. It is in-process because the bridge needs the event bus and the domain
   services directly, and because the main API must stay loopback-only.
 - **The LAN listener serves only four routes:** `hello`, `pair`, `session` and `rpc`. Every other path gets a
@@ -765,7 +767,7 @@ they happen and stores the link in its own table, so it survives restarts:
 
 | Case | Link | `messageId` |
 |---|---|---|
-| A new-turn send in a **solo** chat, from the phone or the desktop | The send mints the user message and the `turn_id` together (`service.rs`, the send path). core-0015 adds that `turn_id` to the `message.userCreated` event, an additive field. The failure row's `turn_id` then names exactly one user message. | exact |
+| A new-turn send in a **solo** chat, from the phone or the desktop | The send mints the user message and the `turn_id` together (`service.rs`, the send path). core-0016 adds that `turn_id` to the `message.userCreated` event, an additive field. The failure row's `turn_id` then names exactly one user message. | exact |
 | A failed **mid-turn** delivery | The failure row carries the *running* turn's id, which would point at the wrong message. That message's own status is set to `error` just before the failure row is written (above), so the bridge links to that message. This link is also in AionCore's DB. | exact |
 | A **team member** chat | A team turn can take several queued messages in one batch, and they are projected into the chat under ids that differ from the mailbox ids. There is no reliable one-to-one link in v1. | `null` |
 | A failure row written while the bridge wasn't running (before it was installed or enabled) | Nothing was recorded. | `null` |
@@ -865,9 +867,9 @@ Responses:
 **Deny with a message (rev 3, readiness (a)1).** How the reason reaches the agent depends on the backend (verified in
 source):
 
-| Backend | v0.2.2 today | Delivery in core-0015 | `messageDelivery` |
+| Backend | v0.2.2 today | Delivery in core-0016 | `messageDelivery` |
 |---|---|---|---|
-| Claude (session) | The deny response to Claude carries a fixed `"message": "User rejected the request."` (`claude_conn.rs` `build_control_response`). | core-0015 adds an optional deny message to `Command::AnswerPermission` and puts the user's text in that `message` field, so Claude reads it as the reason for the refusal. | `native` |
+| Claude (session) | The deny response to Claude carries a fixed `"message": "User rejected the request."` (`claude_conn.rs` `build_control_response`). | core-0016 adds an optional deny message to `Command::AnswerPermission` and puts the user's text in that `message` field, so Claude reads it as the reason for the refusal. | `native` |
 | aionrs | `ToolApprovalResult::Denied { reason: "User denied the tool request" }`, a fixed string (`manager/aionrs/agent.rs`). | The user's text becomes `reason`. | `native` |
 | Codex (session) | The decision goes over the wire as `"decline"`, with no text field (`codex_conn.rs`). | Follow-up message, below. | `followup` |
 | ACP agents | The ACP permission response selects an option id; the protocol has no message field. | Follow-up message, below. | `followup` |
@@ -920,7 +922,7 @@ Two backend hazards the bridge guards against:
 |---|---|---|---|
 | `POST /v1/teams/{t}/agents/{slot}/wake` | `{nudge?: string}` → `{runtime}` | `attach` (retries a dormant or failed runtime), plus a message if `nudge` is set | no |
 | `POST /v1/teams/{t}/agents/{slot}/stop` | `{replacementMessage?}` → `{outcome: "cancelled"\|"interrupted"\|"no_active_turn"}` | No replacement: cancel the slot's child turn of the active run. With a replacement: `interrupt` (teammates only; on the lead it returns `422 lead_not_allowed`). | no |
-| `POST /v1/teams/{t}/agents/{slot}/shutdown` | `{reason?}` → `{outcome: "requested"}` | **New in core-0015:** a user-originated `shutdown_request` to the agent's mailbox, the same protocol the lead's tool uses. Progress shows in `Agent.shutdown`. Refuses the lead (`422 lead_not_allowed`). | yes |
+| `POST /v1/teams/{t}/agents/{slot}/shutdown` | `{reason?}` → `{outcome: "requested"}` | **New in core-0016:** a user-originated `shutdown_request` to the agent's mailbox, the same protocol the lead's tool uses. Progress shows in `Agent.shutdown`. Refuses the lead (`422 lead_not_allowed`). | yes |
 | `DELETE /v1/teams/{t}/agents/{slot}` | → `{removed: true}` | **Force-remove**, which kills the agent's process (`DELETE /api/teams/{id}/agents/{slot}`). Refuses the lead. This is the "it refused shutdown" path. | yes |
 | `POST /v1/teams/{t}/agents` | `{assistantId, name?, model?}` → `Agent` | Spawn (`POST /api/teams/{id}/agents`, role `teammate`) | yes |
 | `PATCH /v1/teams/{t}/agents/{slot}` | `{name}` → `Agent` | Rename | no |
@@ -977,8 +979,8 @@ off, and `capabilities` then omits `tasks.write`.
     go.
 - **`owner: null` unassigns.** `owner: "user"` assigns to the user. Omitting `owner` leaves it unchanged.
   - AionCore v0.2.2 can't clear an owner: `TaskUpdate.owner` is `Option<String>`, and the SQL only sets the column
-    when it is present. **core-0015 adds clearing**, so this works when the bridge ships.
-- **`subject` is editable.** AionCore v0.2.2's `TaskUpdate` has no `subject` field, so **core-0015 adds it**. Until
+    when it is present. **core-0016 adds clearing**, so this works when the bridge ships.
+- **`subject` is editable.** AionCore v0.2.2's `TaskUpdate` has no `subject` field, so **core-0016 adds it**. Until
   then the field would be refused; it ships together with the bridge.
 - **`blockedBy`** replaces the whole list. Unknown task ids are `400 invalid_request`.
 

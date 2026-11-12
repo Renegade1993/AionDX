@@ -6,14 +6,14 @@ Written 2026-11-08 by the Bridge/API Engineer. Nothing here has been done; it li
 the desktop UI merged with one conflict in `tools/build-release.ps1` (its mobile block and upstream's new patch list, both
 kept). Upstream took app numbers 0018 (`0018-reply-lane`) and 0019 (`0019-question-notice`) meanwhile, so the desktop UI is
 now **`patches/0020-mobile-settings`** (markers `AIONDX-0020`); the paths below are updated. The core patches came in as
-core-0014 / core-0015 and are renumbered to core-0015-auth-channel / core-0016-mobile-bridge by the Bridge/API Engineer;
+core-0014 / core-0015 and were renumbered to core-0015-auth-channel / core-0016-mobile-bridge by the Bridge/API Engineer (done 2026-11-12, rebased onto core-0014-launch-skills with no conflicts);
 `build-aioncore.ps1` takes `patches\core-*` in name order, so nothing else names them.
 
 ## The branches (all local, none pushed)
 
 | Branch | Base | What it adds |
 |---|---|---|
-| `mobile-bridge-impl` | `origin/main` 54212e6 | `patches/core-0014-auth-channel`, `patches/core-0015-mobile-bridge`; `patches/core-0010-hard-stop/0002-pause-test.patch` (test only); `tools/build-aioncore.ps1` (`-TargetDir`, `--no-self-update`); `docs/mobile-bridge/*` |
+| `mobile-bridge-impl` | `origin/main` 54212e6 | `patches/core-0015-auth-channel`, `patches/core-0016-mobile-bridge` (were core-0014 / core-0015); `patches/core-0010-hard-stop/0002-pause-test.patch` (test only); `tools/build-aioncore.ps1` (`-TargetDir`, `--no-self-update`); `docs/mobile-bridge/*` |
 | `mobile-desktop-ui` | `mobile-bridge-impl` | `patches/0020-mobile-settings/*` (was 0018); `tools/build-release.ps1` (0020 wiring, patch list, privacy-check files) |
 | `voice-core-elevenlabs` | `origin/main` 54212e6 (26 commits) | `patches/0011-voice/*` (the voice work); `tools/brand-names.js` (new keep rules); `tools/build-release.ps1` (`$root` from the script path, plus the `check-core-contract.js` step); `tools/check-core-contract.js`, `tools/test-core-contract.js`, `tools/test-live-session.js`; `tools/live-app.js` |
 
@@ -24,7 +24,8 @@ core-0014 / core-0015 and are renumbered to core-0015-auth-channel / core-0016-m
 - **App patches:** voice adds no new number (it changes 0011). The desktop UI was **0018**; upstream has since used 0018 and
   0019, so it is **0020**. The next free app number after the merge is 0021.
 - **Core patches:** core-0001..0013 are byte-identical on the voice and bridge branches (checked with `git diff`).
-  Voice adds no core patch. core-0014 / core-0015 exist only on the bridge line. core-0010 gains a second file,
+  Voice adds no core patch. core-0015-auth-channel / core-0016-mobile-bridge exist only on the bridge line (they follow
+  upstream's core-0014-launch-skills). core-0010 gains a second file,
   `0002-pause-test.patch` (test only); `build-aioncore.ps1` applies `*.patch` in name order inside each folder, so it
   goes after 0001.
 
@@ -57,7 +58,7 @@ core-0014 / core-0015 and are renumbered to core-0015-auth-channel / core-0016-m
      - `AIONDX_MOBILE_BIND` is already AionDX-spelled;
      - `aiondx-bridge.db` and `aiondx-mobile\host.key` are AionDX-spelled;
      - the crate becomes `aiondx-mobile` either way.
-  3. core-0014 has one test that writes the cookie literally (`aionui-session={token}` in its lifecycle-guard tests).
+  3. core-0015 (auth-channel) has one test that writes the cookie literally (`aionui-session={token}` in its lifecycle-guard tests).
      brand-names rewrites that literal exactly as it rewrites the constant (renamed on main, kept with voice's rules),
      so the test matches in both. Using the `aionui_common::constants::COOKIE_NAME` constant there would be cleaner; that's optional.
 
@@ -69,7 +70,7 @@ core-0014 / core-0015 and are renumbered to core-0015-auth-channel / core-0016-m
 3. Run `node tools/brand-names.js <fresh core checkout> --mode core --report …` (or just step 4) and read the report:
    the cookie names, the folder variables and the error codes must be listed as kept.
 4. Run `tools\build-aioncore.ps1 -Patched`. All 16 core patch files apply in order (0001..0013, 0010/0002, 0014, 0015).
-   Check that `vendor\aioncore\aioncore.json` lists core-0001..core-0015.
+   Check that `vendor\aioncore\aioncore.json` lists core-0001..core-0016.
 5. Run the core tests on the dev tree. Expect aionui-mobile 157 / team MCP 51 green, with the known upstream-only
    failures:
    - terminal default cwd;

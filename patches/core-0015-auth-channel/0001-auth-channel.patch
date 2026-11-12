@@ -104,7 +104,7 @@ index 0945b406..f6c09a09 100644
  }
  
 diff --git a/crates/aionui-auth/tests/middleware_tests.rs b/crates/aionui-auth/tests/middleware_tests.rs
-index 0a4cc912..0f9a5313 100644
+index 0a4cc912..d5d5c21b 100644
 --- a/crates/aionui-auth/tests/middleware_tests.rs
 +++ b/crates/aionui-auth/tests/middleware_tests.rs
 @@ -10,8 +10,8 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode}
@@ -124,7 +124,7 @@ index 0a4cc912..0f9a5313 100644
  }
 +
 +// ============================================================
-+// AionDX core-0014: AuthChannel marks how a request authenticated
++// AionDX core-0015: AuthChannel marks how a request authenticated
 +// ============================================================
 +
 +fn channel_echo_app(
@@ -272,13 +272,13 @@ index e8674b2d..973b22f2 100644
  mod member_runtime;
 diff --git a/crates/aionui-team/src/lifecycle_guard.rs b/crates/aionui-team/src/lifecycle_guard.rs
 new file mode 100644
-index 00000000..dcf67442
+index 00000000..00eae051
 --- /dev/null
 +++ b/crates/aionui-team/src/lifecycle_guard.rs
 @@ -0,0 +1,295 @@
 +#![allow(clippy::disallowed_types)] // HTTP middleware: maps to ApiError at the boundary
 +
-+//! AionDX core-0014: lead-only team lifecycle routes over HTTP.
++//! AionDX core-0015: lead-only team lifecycle routes over HTTP.
 +//!
 +//! The MCP tools behind spawn, shutdown, interrupt, rename and clear-context
 +//! are lead-only, but their HTTP twins checked only that the user owns the
@@ -572,14 +572,14 @@ index 00000000..dcf67442
 +    }
 +}
 diff --git a/crates/aionui-team/src/routes.rs b/crates/aionui-team/src/routes.rs
-index 542bf83c..9532c567 100644
+index 542bf83c..bd15042e 100644
 --- a/crates/aionui-team/src/routes.rs
 +++ b/crates/aionui-team/src/routes.rs
 @@ -177,6 +177,8 @@ impl From<TeamError> for ApiError {
  }
  
  pub fn team_routes(state: TeamRouterState) -> Router {
-+    // core-0014: lead-only lifecycle routes for runtime-token callers.
++    // core-0015: lead-only lifecycle routes for runtime-token callers.
 +    let lifecycle_authority: Arc<dyn crate::lifecycle_guard::LifecycleAuthority> = state.service.clone();
      Router::new()
          .route("/api/teams", post(create_team).get(list_teams))
