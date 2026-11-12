@@ -1,4 +1,4 @@
-/* Vendored for AionDX patch 0018 from qrcode.react 4.2.0 (node_modules/qrcode.react/lib/index.js, lines 66-791), already shipped in the app.
+/* Vendored for AionDX patch 0020 from qrcode.react 4.2.0 (node_modules/qrcode.react/lib/index.js, lines 66-791), already shipped in the app.
  * Exposes window.AionDxQrcodegen.QrCode.encodeText(text, Ecc). Nayuki's licence header below is kept as is. */
 (function () {
 /**

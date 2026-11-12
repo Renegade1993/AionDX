@@ -1,9 +1,9 @@
 // The netsh plans for the bridge's Windows Firewall rule, built in the MAIN process from nothing the renderer controls but the
-// port. The same rules as core-0015's firewall.rs (add_rule_plan): a fixed netsh.exe path, a fixed rule name, the Private profile
+// port. The same rules as core-0016's firewall.rs (add_rule_plan): a fixed netsh.exe path, a fixed rule name, the Private profile
 // only, inbound TCP on one port, for one program; a path netsh could misread (a ", an =, a control character, a relative path, a
 // trailing separator) is refused, never quoted around. apply.js inlines the part between the INLINE markers into out/main/index.js;
 // the last line is for the tests only.
-// AIONDX-0018-INLINE-BEGIN
+// AIONDX-0020-INLINE-BEGIN
 function __aiondxMobileFirewallPlan() {
   const RULE_NAME = 'AionDX mobile bridge';
   const PORT_MIN = 1024, PORT_MAX = 65535;
@@ -64,5 +64,5 @@ function __aiondxMobileFirewallPlan() {
   }
   return { RULE_NAME, PORT_MIN, PORT_MAX, buildPlan, showPlan, parseShowRule, checkPath, netshPath };
 }
-// AIONDX-0018-INLINE-END
+// AIONDX-0020-INLINE-END
 module.exports = __aiondxMobileFirewallPlan();

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * test-firewall.js - patch 0018's main-process firewall path, with nothing real run: the plan builder against firewall.rs's
+ * test-firewall.js - patch 0020's main-process firewall path, with nothing real run: the plan builder against firewall.rs's
  * injection cases, the show-rule parser, apply.js on a made-up extracted tree, and the inserted main-process block itself run
  * in a sandbox whose child_process.spawn is a fake that only records (no netsh, no elevate.exe, no UAC prompt).
  *
- *   node patches\0018-mobile-settings\test-firewall.js
+ *   node patches\0020-mobile-settings\test-firewall.js
  */
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path'), vm = require('vm'), { EventEmitter } = require('events');
@@ -55,7 +55,7 @@ check('parse: disabled; Any port; localized output', P.parseShowRule(PRESENT(477
   P.parseShowRule('Regelname: AionDX mobile bridge\r\nAktiviert: Ja').present === false);
 
 // ---- apply.js on a made-up extracted tree ----
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-0018-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-0020-'));
 try {
   fs.mkdirSync(path.join(tmp, 'out', 'main'), { recursive: true });
   fs.mkdirSync(path.join(tmp, 'out', 'preload'), { recursive: true });
@@ -153,7 +153,7 @@ function sandbox(opts) {
     }
   }
   // The build renames AIONUI to AIONDX in out/main/index.js after this block goes in: the check must survive that pass.
-  const bt = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-0018-brand-'));
+  const bt = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-0020-brand-'));
   try {
     const f = path.join(bt, 'index.js');
     fs.writeFileSync(f, A.mainBlock());

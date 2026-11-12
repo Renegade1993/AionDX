@@ -1,4 +1,4 @@
-/* AionDX patch 0018: Settings > Mobile - the PC side of pairing and managing phones (core-0015's admin routes).
+/* AionDX patch 0020: Settings > Mobile - the PC side of pairing and managing phones (core-0016's admin routes).
  * docs/mobile-bridge/DESKTOP-UI-SPEC.md; CONTRACT.md §3 (pairing, SAS, devices), §5.3 (re-key).
  * A "Mobile" item in the settings sidebar, and a Mobile card at the top of Settings > Remote (#/settings/webui), next to
  * the existing remote-access settings: a new route would mean patching the bundle's router, this needs no anchor in it.
@@ -659,7 +659,7 @@
   }
 
   var ALLOW_LABEL = 'Allow phones through Windows Firewall (Private networks only)';
-  /** The main process's one narrow handler (patch 0018's apply.js: window.aiondxMobile). The page passes the port and nothing
+  /** The main process's one narrow handler (patch 0020's apply.js: window.aiondxMobile). The page passes the port and nothing
    *  else; main builds the rule itself for the app's own aioncore.exe and runs it through elevate.exe (a UAC prompt), and answers
    *  { ok, error }. */
   function bridgeApi() {

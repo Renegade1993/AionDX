@@ -501,8 +501,9 @@ patch leaves behind.
   patch 0001's app-shaped harness. Not yet run: against a real ElevenLabs account (both dev-smoke
   suites stub the network), or inside `click-test.js`'s own `harness.html` alongside patch 0001's
   checks.
-- The wake-phrase listener and utterance capture (build 2026-10-11.3 above) are core-module-only so
-  far; the UI wiring and a real-microphone check are listed in that section.
+- The wake-phrase listener and utterance capture are wired into the UI (build 2026-10-11.4 and later);
+  barge-in's trigger is measured against a fake microphone only. A real microphone, real speakers and
+  real echo cancellation are still the user's test (see the November 7th evening sections).
 - Still unresolved: the commit-identity finding above.
 
 ## October 14th, 2026: changes made while merging into main (the AionDX owner's review)
@@ -800,3 +801,33 @@ recording); `test-voice.js` 59 (`language_code` default, per call, per provider,
 `tag_audio_events=false`). The UI harnesses against this module: `dev-smoke-test-real.js` 36, `dev-smoke-test.js` 36,
 `dev-smoke-test-handsfree-team.js` 12, `dev-smoke-test-handsfree.js` 67 (it hit its 60 s deadline once when run straight after
 the other harnesses, then passed three times on its own).
+
+## November 12th, 2026: what goes out in 0.27.0 (the 0.26.9 voice work, merged onto 0.26.7)
+
+`voice-core-elevenlabs` (head b376b96) merged into `release-0.27.0` (off `origin/main` 1376608, 0.26.7) with no conflict:
+upstream had not touched this folder since 0.26.2. What the release has that 0.26.7 did not, all described above:
+
+- **Talk over a reply** (barge-in): hands-free stops the reply when the user speaks over it and sends what they said; "stop" or
+  "wait" sends nothing. The speaker button reads with barge-in too. The trigger is relative to the reply's own level in the
+  microphone, with echo cancellation asked for and what the device applied read back (986fbba, 1918f54).
+- **A locked speech language**: every transcribe call sends `language_code` (the panel's "Speech language", by default the app's
+  language) and `tag_audio_events=false`, so English speech is no longer written as Japanese or Chinese and sounds are no longer
+  written as tags (986fbba, 8c6dac7).
+- **Clips not worth sending** (`cleanTranscript`): sound tags, wrong-script text, too-short clips and fragments ending on "and",
+  "or", "the" and the like are dropped, and the badge's tooltip and the status line say why (`Heard: "..." (ignored: not
+  speech)`) (986fbba, 1918f54).
+- **The wake phrase taken off a message**, a phrase-only message not sent, and a request said in the same breath as the wake
+  phrase sent from the wake clip (8c6dac7). Recording starts at the first loud frame, so the first word is kept (986fbba).
+- Earlier on the same branch: a reply read in pieces (`playChunked`, 3ba1d60), only what a reply shows is read (12d5943), the
+  provider saved with a typed key (5f699c5).
+
+Build-side changes that came with it (outside this folder): `tools/brand-names.js` keeps AionCore's cookie names, folder
+variables, error codes and ownership key (dc808a0, 4fadee4, 3e8ec99); `tools/check-core-contract.js` checks them at build, by
+whole identifier (86fd2a5); `tools/build-release.ps1` finds the repo root from its own path (2a002e6); `tools/live-app.js` drops
+installed AionDX bin folders from the launched app's PATH (b376b96).
+
+Checked on the merged branch (2026-11-12, nothing built): `test-voice.js` 59, `test-wake.js` 52, `test-speak.js` 36,
+`test-barge.js` 24, `dev-smoke-test.js` 36, `dev-smoke-test-real.js` 36, `dev-smoke-test-handsfree-team.js` 12,
+`dev-smoke-test-handsfree.js` 67, `tools/test-core-contract.js` 42, and `tools/check-page-script.js` (with the acorn scope scan)
+on `aiondx-voice-ui.js`. `tools/test-live-session.js` (speech language and barge-in in the built app, 8851f9f) waits for the
+0.27.0 stage.

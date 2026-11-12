@@ -99,7 +99,7 @@ if ($idx -notmatch 'aiondx-ui\.js') {
   Set-Content "$ext\out\renderer\index.html" $idx -NoNewline -Encoding utf8
 }
 # A name declared twice as a function silently replaces the first (2026-11-10: the Loop menu stopped opening): refused here.
-Run $node @("$root\tools\check-page-script.js", "$root\patches\0001-renderer-dx\aiondx-ui.js", "$root\patches\0011-voice\aiondx-voice-ui.js") 'page script check'
+Run $node @("$root\tools\check-page-script.js", "$root\patches\0001-renderer-dx\aiondx-ui.js", "$root\patches\0011-voice\aiondx-voice-ui.js", "$root\patches\0020-mobile-settings\aiondx-mobile-settings.js") 'page script check'
 Copy-Item "$root\patches\0001-renderer-dx\aiondx-ui.js" "$ext\out\renderer\aiondx-ui.js" -Force
 Say "patch 0001: aiondx-ui.js ($rendererBuild) and its script tag"
 # Patch 0011: aiondx-voice.js (the provider-agnostic TTS/STT module, window.AionDxVoice) loads
@@ -112,25 +112,25 @@ if ($idx -notmatch 'aiondx-voice\.js') {
 Copy-Item "$root\patches\0011-voice\aiondx-voice.js" "$ext\out\renderer\aiondx-voice.js" -Force
 Copy-Item "$root\patches\0011-voice\aiondx-voice-ui.js" "$ext\out\renderer\aiondx-voice-ui.js" -Force
 Say "patch 0011: aiondx-voice.js, aiondx-voice-ui.js and their script tags"
-# Patch 0018: Settings > Mobile (pairing, paired phones, the bridge's switches). qrcodegen.js (window.AionDxQrcodegen, vendored
+# Patch 0020: Settings > Mobile (pairing, paired phones, the bridge's switches). qrcodegen.js (window.AionDxQrcodegen, vendored
 # from the qrcode.react the app already ships) loads before aiondx-mobile-settings.js, which draws the pairing QR with it.
 if ($idx -notmatch 'aiondx-mobile-settings\.js') {
   $idx = $idx -replace '(<script src="\./aiondx-ui\.js" defer></script>)', "`$1`r`n    <script src=`"./aiondx-qrcodegen.js`" defer></script>`r`n    <script src=`"./aiondx-mobile-settings.js`" defer></script>"
-  if ($idx -notmatch 'aiondx-mobile-settings\.js') { throw 'patch 0018: the aiondx-ui.js script tag to insert after was not found' }
+  if ($idx -notmatch 'aiondx-mobile-settings\.js') { throw 'patch 0020: the aiondx-ui.js script tag to insert after was not found' }
   Set-Content "$ext\out\renderer\index.html" $idx -NoNewline -Encoding utf8
 }
-Copy-Item "$root\patches\0018-mobile-settings\qrcodegen.js" "$ext\out\renderer\aiondx-qrcodegen.js" -Force
-Copy-Item "$root\patches\0018-mobile-settings\aiondx-mobile-settings.js" "$ext\out\renderer\aiondx-mobile-settings.js" -Force
-Say "patch 0018: aiondx-qrcodegen.js, aiondx-mobile-settings.js and their script tags"
+Copy-Item "$root\patches\0020-mobile-settings\qrcodegen.js" "$ext\out\renderer\aiondx-qrcodegen.js" -Force
+Copy-Item "$root\patches\0020-mobile-settings\aiondx-mobile-settings.js" "$ext\out\renderer\aiondx-mobile-settings.js" -Force
+Say "patch 0020: aiondx-qrcodegen.js, aiondx-mobile-settings.js and their script tags"
 foreach ($p in @('0003-local-account', '0006-butler-to-antigravity', '0009-identity', '0012-no-builtin-browser', '0013-chat-anchors', '0014-mcp-oauth-ui-state', '0017-dollar-text', '0018-reply-lane', '0019-question-notice')) {
   Run $node @("$root\patches\$p\apply.js", $ext) "patch $p"
   Say "patch $p applied"
 }
 Run $node @("$root\patches\0010-official-identity\apply.js", $ext, $Version, '--report', "$work\0010-report.txt") 'patch 0010'
 Say "patch 0010 applied (report: $work\0010-report.txt)"
-# Patch 0018's main-process side: one narrow IPC handler for the Windows Firewall rule (built in main, run through
+# Patch 0020's main-process side: one narrow IPC handler for the Windows Firewall rule (built in main, run through
 # resources\elevate.exe on the user's click) and window.aiondxMobile in the preload. After 0010, which edits the same preload line.
-Run $node @("$root\patches\0018-mobile-settings\apply.js", $ext) 'patch 0018 (main, preload)'
+Run $node @("$root\patches\0020-mobile-settings\apply.js", $ext) 'patch 0020 (main, preload)'
 # The AionDX names (a request of 2026-11-01): AionUi is renamed to AionDX across the app, except the licence notices, web addresses and the stored values
 # tools\brand-names.js lists. Patch 0015 goes after it: it holds the old data folder's name, which must stay as written.
 # The two unpacked scripts stay stock here (the pack step refuses changes to unpacked files); they are renamed in the stage below.
@@ -260,7 +260,7 @@ Files AionDX changed or added:
        reply (text to speech), and a Settings > Appearance section to pick the provider, API key and
        voice, backed by ElevenLabs (out/renderer/aiondx-voice.js, out/renderer/aiondx-voice-ui.js and
        two script tags in out/renderer/index.html)
-  0018 mobile settings: Settings > Mobile, the PC side of the AionDX phone app - turning phone access on,
+  0020 mobile settings: Settings > Mobile, the PC side of the AionDX phone app - turning phone access on,
        pairing a phone (a QR code, then a code to compare), paired phones, the bridge's options
        (out/renderer/aiondx-qrcodegen.js, out/renderer/aiondx-mobile-settings.js and two script tags)
 - resources\aiondx\: AionDX's own programs, skills and icon.
@@ -289,7 +289,7 @@ $release = [ordered]@{
   files = [ordered]@{ 'AionDX.exe' = $exeSha; 'resources/app.asar' = $asarSha; 'resources/bundled-aioncore/win32-x64/aioncore.exe' = $coreSha }
   appBytes = $stageBytes
   patches = @('0001-renderer-dx', '0002-claude-model-currency', '0003-local-account', '0004-setup-butler', '0005-claude-exe-shim',
-    '0006-butler-to-antigravity', '0007-loop-tool', '0008-agy-signin', '0009-identity', '0010-official-identity', '0011-voice', '0018-mobile-settings') + @($(if ($coreRec) { @($coreRec.patches) } else { @() }))
+    '0006-butler-to-antigravity', '0007-loop-tool', '0008-agy-signin', '0009-identity', '0010-official-identity', '0011-voice', '0020-mobile-settings') + @($(if ($coreRec) { @($coreRec.patches) } else { @() }))
   userFiles = @($userFiles)
 }
 [IO.File]::WriteAllText("$payload\release.json", ($release | ConvertTo-Json -Depth 6), $utf8)

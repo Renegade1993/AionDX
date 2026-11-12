@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * test-live-mobile.js - patch 0018 (Settings > Mobile) in a real app with a bridge-capable AionCore, through tools\live-app.js:
+ * test-live-mobile.js - patch 0020 (Settings > Mobile) in a real app with a bridge-capable AionCore, through tools\live-app.js:
  * a throwaway profile, made-up APPDATA/LOCALAPPDATA/cache/work/log folders, AIONUI_E2E_TEST=1, AIONDX_NO_ACTIVATE=1.
  * The patch's two scripts are evaluated into the page (the stage need not be rebuilt). A phone is played by QA's phone client
  * (pair.js, CONTRACT §4 crypto): it scans the QR's URI, sends a pairing request, and the PC side is driven only through the UI.
@@ -86,7 +86,7 @@ function phone(uri, bport, deviceName) {
         if (window.__fakeRecovery && /\\/api\\/mobile\\/admin\\/recovery\\/dismiss$/.test(s)) window.__fakeRecovery = null;
         return of.apply(this, arguments);
       };
-      // What patch 0018's preload exposes (main process handler stubbed: it never reaches elevate.exe or netsh here).
+      // What patch 0020's preload exposes (main process handler stubbed: it never reaches elevate.exe or netsh here).
       window.__fwAnswer = { ok: true };
       // In a BUILT app this assignment fails silently (contextBridge's object cannot be replaced) and the real main handler would
       // be reached: __aiondxTestStub marks the stub, and every firewall click below is skipped unless it is really in place.

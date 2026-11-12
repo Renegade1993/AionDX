@@ -2,20 +2,27 @@
 
 Written 2026-11-08 by the Bridge/API Engineer. Nothing here has been done; it lists the steps and what will conflict.
 
+**Done 2026-11-12, app side (branch `release-0.27.0`, off `origin/main` 1376608, 0.26.7):** voice merged with no conflict;
+the desktop UI merged with one conflict in `tools/build-release.ps1` (its mobile block and upstream's new patch list, both
+kept). Upstream took app numbers 0018 (`0018-reply-lane`) and 0019 (`0019-question-notice`) meanwhile, so the desktop UI is
+now **`patches/0020-mobile-settings`** (markers `AIONDX-0020`); the paths below are updated. The core patches came in as
+core-0014 / core-0015 and are renumbered to core-0015-auth-channel / core-0016-mobile-bridge by the Bridge/API Engineer;
+`build-aioncore.ps1` takes `patches\core-*` in name order, so nothing else names them.
+
 ## The branches (all local, none pushed)
 
 | Branch | Base | What it adds |
 |---|---|---|
 | `mobile-bridge-impl` | `origin/main` 54212e6 | `patches/core-0014-auth-channel`, `patches/core-0015-mobile-bridge`; `patches/core-0010-hard-stop/0002-pause-test.patch` (test only); `tools/build-aioncore.ps1` (`-TargetDir`, `--no-self-update`); `docs/mobile-bridge/*` |
-| `mobile-desktop-ui` | `mobile-bridge-impl` | `patches/0018-mobile-settings/*`; `tools/build-release.ps1` (0018 wiring, patch list, privacy-check files) |
+| `mobile-desktop-ui` | `mobile-bridge-impl` | `patches/0020-mobile-settings/*` (was 0018); `tools/build-release.ps1` (0020 wiring, patch list, privacy-check files) |
 | `voice-core-elevenlabs` | `origin/main` 54212e6 (26 commits) | `patches/0011-voice/*` (the voice work); `tools/brand-names.js` (new keep rules); `tools/build-release.ps1` (`$root` from the script path, plus the `check-core-contract.js` step); `tools/check-core-contract.js`, `tools/test-core-contract.js`, `tools/test-live-session.js`; `tools/live-app.js` |
 
 `remotes/voiceui/voice-ui-composer` is older (patches up to 0011 and core-0005) and is not part of this.
 
 ## Numbering
 
-- **App patches:** voice adds no new number (it changes 0011). The desktop UI is **0018**. There's no clash. The next
-  free app number after the merge is 0019.
+- **App patches:** voice adds no new number (it changes 0011). The desktop UI was **0018**; upstream has since used 0018 and
+  0019, so it is **0020**. The next free app number after the merge is 0021.
 - **Core patches:** core-0001..0013 are byte-identical on the voice and bridge branches (checked with `git diff`).
   Voice adds no core patch. core-0014 / core-0015 exist only on the bridge line. core-0010 gains a second file,
   `0002-pause-test.patch` (test only); `build-aioncore.ps1` applies `*.patch` in name order inside each folder, so it
@@ -25,12 +32,12 @@ Written 2026-11-08 by the Bridge/API Engineer. Nothing here has been done; it li
 
 - `tools/build-release.ps1`: the only file all three lines touch.
   - Voice changes the `$root` line and adds the `check-core-contract.js` run after the AionCore step.
-  - The desktop UI adds the 0018 block, `'0018-mobile-settings'` in the patch list, and two files in the privacy check.
-  - The hunks are in different places, so git will probably merge them on its own. Read the result anyway: the 0018
+  - The desktop UI adds the 0020 block, `'0020-mobile-settings'` in the patch list, and two files in the privacy check.
+  - The hunks are in different places, so git will probably merge them on its own. Read the result anyway: the 0020
     block must run before the privacy check, and `check-core-contract` must run on the staged AionCore that
     `-AionDxCore` copied in.
 - Everything else is touched by one line only: `brand-names.js`, `live-app.js` and the voice `tools/test-*` (voice);
-  `build-aioncore.ps1` (bridge); `patches/0018-*` (desktop UI); `docs/mobile-bridge/*` (bridge).
+  `build-aioncore.ps1` (bridge); `patches/0020-mobile-settings/*` (desktop UI); `docs/mobile-bridge/*` (bridge).
 
 ## The semantic conflict: brand-name keep rules
 
@@ -72,10 +79,10 @@ Written 2026-11-08 by the Bridge/API Engineer. Nothing here has been done; it li
    - 2 skill tests.
    The pause test is now fixed by core-0010/0002.
 6. Run `tools\build-release.ps1 -AionDxCore …`. `check-core-contract` must pass (the cookie, the env variables, the
-   error codes), and the privacy check covers the 0018 files.
+   error codes), and the privacy check covers the 0020 files.
 7. Live checks, only with `tools\live-app.js`, a throwaway profile and a made-up APPDATA:
    - QA's full bridge pass: `QA_PAIR=1 QA_P3=1 QA_P4=1 node run-k1.js` plus the LAN checklist;
-   - the 0018 desktop tests (`patches/0018-mobile-settings/test-live-mobile.js`);
+   - the 0020 desktop tests (`patches/0020-mobile-settings/test-live-mobile.js`);
    - voice's live tests (`tools/test-live-session.js`, `patches/0011-voice/test-*.js`);
    - one session-cookie smoke test: open the staged app and make a write (a new chat). This is the failure
      `check-core-contract` guards against.

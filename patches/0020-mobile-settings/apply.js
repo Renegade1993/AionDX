@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * AionDX patch 0018-mobile-settings, main process and preload: the one narrow way Settings > Mobile can change Windows Firewall.
+ * AionDX patch 0020-mobile-settings, main process and preload: the one narrow way Settings > Mobile can change Windows Firewall.
  *
- *   node patches\0018-mobile-settings\apply.js <extracted-asar-root>
+ *   node patches\0020-mobile-settings\apply.js <extracted-asar-root>
  *
  * out/main/index.js gets one IPC handler, "aiondx:mobile-firewall" (action "allow" | "remove", and for "allow" the port). The
  * main process builds the netsh plan itself (firewall-plan.js, inlined): a fixed netsh.exe, a fixed rule name, the Private
@@ -17,21 +17,21 @@
 const fs = require('fs');
 const path = require('path');
 
-const MARK_BEGIN = '/* AIONDX-0018 BEGIN';
-const MARK_END = '/* AIONDX-0018 END */';
+const MARK_BEGIN = '/* AIONDX-0020 BEGIN';
+const MARK_END = '/* AIONDX-0020 END */';
 const PRELOAD_ANCHOR = 'const backendPort = electron.ipcRenderer.sendSync("get-backend-port");';
 const PRELOAD_DONE = 'exposeInMainWorld("aiondxMobile"';
 const CHANNEL = 'aiondx:mobile-firewall';
 
 function inlinePlan() {
   const src = fs.readFileSync(path.join(__dirname, 'firewall-plan.js'), 'utf8');
-  const m = /\/\/ AIONDX-0018-INLINE-BEGIN\r?\n([\s\S]*?)\/\/ AIONDX-0018-INLINE-END/.exec(src);
+  const m = /\/\/ AIONDX-0020-INLINE-BEGIN\r?\n([\s\S]*?)\/\/ AIONDX-0020-INLINE-END/.exec(src);
   if (!m) throw new Error('firewall-plan.js has no INLINE markers');
   return m[1];
 }
 
 function mainBlock() {
-  return MARK_BEGIN + ': the bridge\'s Windows Firewall rule, from Settings > Mobile (patches/0018-mobile-settings). */\n' +
+  return MARK_BEGIN + ': the bridge\'s Windows Firewall rule, from Settings > Mobile (patches/0020-mobile-settings). */\n' +
     '(function __aiondxMobileFirewallMain() {\n' +
     '  try {\n' +
     '    if (process.platform !== "win32") return;\n' +
@@ -79,7 +79,7 @@ function patchMain(src) {
   const begin = src.indexOf(MARK_BEGIN);
   if (begin !== -1) {
     const end = src.indexOf(MARK_END, begin);
-    if (end === -1) throw new Error('found AIONDX-0018 BEGIN without END in out/main/index.js');
+    if (end === -1) throw new Error('found AIONDX-0020 BEGIN without END in out/main/index.js');
     return { src: src.slice(0, begin) + mainBlock() + src.slice(end + MARK_END.length).replace(/^\r?\n/, ''), note: 'main: firewall handler replaced' };
   }
   if (src.indexOf('ipcMain') === -1) throw new Error('out/main/index.js does not look like the main bundle (no ipcMain)');
@@ -90,7 +90,7 @@ function patchPreload(src) {
   if (src.indexOf(PRELOAD_DONE) !== -1) return { src, note: 'preload: aiondxMobile already exposed' };
   const n = src.split(PRELOAD_ANCHOR).length - 1;
   if (n !== 1) throw new Error('expected exactly one preload anchor, found ' + n);
-  const block = '/* AIONDX-0018: Settings > Mobile\'s firewall switch (patches/0018-mobile-settings, main process ' + CHANNEL + '). */\n' +
+  const block = '/* AIONDX-0020: Settings > Mobile\'s firewall switch (patches/0020-mobile-settings, main process ' + CHANNEL + '). */\n' +
     'electron.contextBridge.exposeInMainWorld("aiondxMobile", {\n' +
     '  allowFirewall: (port) => electron.ipcRenderer.invoke(' + JSON.stringify(CHANNEL) + ', "allow", port),\n' +
     '  removeFirewall: () => electron.ipcRenderer.invoke(' + JSON.stringify(CHANNEL) + ', "remove")\n' +
@@ -108,10 +108,10 @@ function main(argv) {
     const p = patchPreload(fs.readFileSync(preloadJs, 'utf8'));
     fs.writeFileSync(mainJs, m.src);   // only after both succeeded
     fs.writeFileSync(preloadJs, p.src);
-    console.log('0018: ' + m.note + '; ' + p.note);
+    console.log('0020: ' + m.note + '; ' + p.note);
     return 0;
   } catch (e) {
-    console.error('0018: NOT APPLIED, nothing written: ' + e.message);
+    console.error('0020: NOT APPLIED, nothing written: ' + e.message);
     return 1;
   }
 }

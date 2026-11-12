@@ -1,9 +1,16 @@
-# 0018-mobile-settings: Settings > Mobile, the PC side of the AionDX phone app
+# 0020-mobile-settings: Settings > Mobile, the PC side of the AionDX phone app
 
-**Target:** renderer only (two plain scripts, like patches 0001 and 0011) · **Needs:** an AionCore with core-0015's admin routes
+**Target:** the renderer (two plain scripts, like patches 0001 and 0011), plus one IPC handler in the main process and its
+preload call (`apply.js`, below) · **Needs:** an AionCore with core-0016's admin routes
 (`/api/mobile/admin/*`) · **Spec:** `docs/mobile-bridge/DESKTOP-UI-SPEC.md`; behaviour from `CONTRACT.md` §3 (pairing, SAS,
-devices) and §5.3 (re-key) · **Status:** written 2026-11-08, tested live against a bridge-capable core (below), not yet in a
-release build.
+devices) and §5.3 (re-key) · **Status:** written 2026-11-08, tested live against a bridge-capable core (below); merged for
+0.27.0 on 2026-11-12, not yet in a built release.
+
+**Numbering:** written as 0018-mobile-settings (markers `AIONDX-0018`) on the `mobile-desktop-ui` branch. Upstream used 0018
+(`0018-reply-lane`) and 0019 (`0019-question-notice`) meanwhile, so it was renumbered to 0020 when merged for 0.27.0 (the
+folder, the `AIONDX-0020` markers, the build hooks, the manifest list and the README line). The bridge it needs, core-0015 on
+that branch, is core-0016-mobile-bridge after the core renumbering. A bundle patched by the old `apply.js` carries the old
+markers; the build always starts from the stock app.asar, so that never happens in a release.
 
 ## What it adds
 
@@ -36,7 +43,7 @@ release build.
 The page never chooses what gets elevated. `apply.js` adds to `out/main/index.js` one IPC handler, `aiondx:mobile-firewall`
 (action `allow` or `remove`; for `allow` the port, which must be a whole number from 1024 to 65535), and to
 `out/preload/index.js` `window.aiondxMobile = { allowFirewall(port), removeFirewall() }`, which only invoke that handler.
-Main builds the plan itself (`firewall-plan.js`, inlined; the same rules as core-0015's `firewall.rs`): `%SystemRoot%\System32\
+Main builds the plan itself (`firewall-plan.js`, inlined; the same rules as core-0016's `firewall.rs`): `%SystemRoot%\System32\
 netsh.exe` by absolute path, the fixed rule name `AionDX mobile bridge`, `dir=in action=allow protocol=TCP localport=<port>
 profile=private program=<the app's own resources\bundled-aioncore\win32-x64\aioncore.exe> enable=yes`; a program path with a `"`,
 `=`, a control character, a relative path or a trailing separator is refused, never quoted around. It runs that through the app's
@@ -58,10 +65,12 @@ ships (`node_modules/qrcode.react/lib/index.js`, lines 66-791), with its licence
 
 Wired into `tools\build-release.ps1` like 0011: two script tags after 0001's `aiondx-ui.js` tag in `index.html` (the QR library
 first), a `Copy-Item` of each file to `out\renderer\` (`aiondx-qrcodegen.js`, `aiondx-mobile-settings.js`), both in the
-renderer privacy check, a README line, and `0018-mobile-settings` in the release manifest's patch list. Removing: those lines and
-the two files; the bridge's own settings stay where AionCore keeps them.
+renderer privacy check, a README line, and `0020-mobile-settings` in the release manifest's patch list; `aiondx-mobile-settings.js`
+is also in the build's `check-page-script.js` run (the vendored `qrcodegen.js` is not: its unused exports only warn). `apply.js`
+runs after patch 0010's and before the brand-names pass. Removing: those lines and the two files; the bridge's own settings stay
+where AionCore keeps them.
 
-Check `test-firewall.js` (51 checks, nothing real run): the plan builder against firewall.rs's injection cases (a quote closing
+Check `test-firewall.js` (61 checks, nothing real run): the plan builder against firewall.rs's injection cases (a quote closing
 netsh's quoting, `=`, newline, NUL, relative and folder paths, ports outside 1024-65535 or not integers, unknown actions); the
 show-rule parser; `apply.js` on a made-up tree (idempotent, a missing anchor writes nothing, the preload exposes exactly two
 calls on one channel); and the inserted main block run in a sandbox whose `spawn` only records - allow runs exactly `elevate.exe
