@@ -23,6 +23,33 @@ const file = path.join(dir, 'out', 'main', 'index.js');
 const MARK = '/* AIONDX-0015: data folder */';
 
 const BLOCK = MARK + `
+(function aiondxPortableDrive() {
+  // AionDX on a drive (R-102, 2026-11-12). A data folder moved to a drive (aiondx-data-move.js --portable) holds aiondx-portable.json; this PC's
+  // pointer, %APPDATA%\\AionDX-location.json, names the one it uses. At start, before anything opens the data folder, only the pointer is
+  // checked: its folder is used when it is there. No drive is searched here, because this runs before the window exists and a disconnected
+  // network drive can take seconds to answer; the search for a drive this PC has not used yet (or one plugged in under another letter) runs
+  // after the start, in the background (main process aiondx:portable scan), and the page asks before anything is taken up.
+  // global.__aiondxPortable tells the page: "using", "missing" (the pointer's drive is not plugged in: this PC's own chats open) or "none".
+  global.__aiondxPortable = { state: "none" };
+  try {
+    var electron = require("electron"), fs = require("fs"), path = require("path");
+    var app = electron.app;
+    if (!app || !app.getPath) return;
+    var appData = process.env.AIONDX_PORTABLE_APPDATA || app.getPath("appData");   // tests: a made-up folder for the pointer
+    var readJson = function (f) { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { return null; } };
+    var ptr = readJson(path.join(appData, "AionDX-location.json"));
+    if (!ptr || !ptr.path) return;
+    var m = readJson(path.join(ptr.path, "aiondx-portable.json"));
+    var hasDb = fs.existsSync(path.join(ptr.path, "aionui", "aiondx-backend.db")) || fs.existsSync(path.join(ptr.path, "aionui", "aionui-backend.db"));
+    if (m && m.id && (!ptr.id || m.id === ptr.id) && hasDb) {
+      app.setPath("userData", ptr.path);
+      global.__aiondxPortable = { state: "using", path: ptr.path, id: m.id };
+    } else {
+      global.__aiondxPortable = { state: "missing", path: ptr.path, id: ptr.id || "" };
+    }
+    try { fs.appendFileSync(path.join(appData, "AionDX-data-move.log"), new Date().toISOString() + " drive: " + JSON.stringify(global.__aiondxPortable) + "\\n"); } catch (e) { /* nothing to write to */ }
+  } catch (e) { /* the app starts with its own data folder */ }
+})();
 (function aiondxDataFolder() {
   try {
     var electron = require("electron"), fs = require("fs"), path = require("path");

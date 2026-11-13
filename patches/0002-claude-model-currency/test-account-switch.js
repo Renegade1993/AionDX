@@ -202,6 +202,32 @@ const lastLog = () => { try { return fs.readFileSync(LOG, 'utf8').trim().split('
         { cwd: cat, env: Object.assign({}, process.env, { AIONDX_CONVERSATION_ID: CHAT, ANTHROPIC_AUTH_TOKEN: 'inherited' }), encoding: 'utf8', windowsHide: true, timeout: 60000 });
       const te = envOf(tr);
       check("the account's token goes in CLAUDE_CODE_OAUTH_TOKEN only; ANTHROPIC_AUTH_TOKEN (visible to tools) is not set", te && te.o === 'tok-test-123' && te.a === null, tr.stdout + tr.stderr);
+      // R-106 (2026-11-12): one sign-in per account. A folder holding a full Claude Code sign-in (access token and renewal key) runs the chat
+      // on it: no token variable at all, so Claude Docs, claude.ai skills and connectors load. "signIn": "token" keeps the token.
+      const credFile = path.join(dir, '.credentials.json');
+      const hadCred = fs.existsSync(credFile) ? fs.readFileSync(credFile) : null;
+      fs.writeFileSync(credFile, JSON.stringify({ claudeAiOauth: { accessToken: 'acc-test', refreshToken: 'ref-test', expiresAt: Date.now() + 3600000, scopes: ['user:inference', 'user:profile'], subscriptionType: 'max' } }));
+      cleanups.push(() => { if (hadCred) fs.writeFileSync(credFile, hadCred); else fs.rmSync(credFile, { force: true }); });
+      const envRun = () => envOf(spawnSync(process.execPath, [path.join(cat, 'claude-account-router.js'), '-e', 'console.log(JSON.stringify({ o: process.env.CLAUDE_CODE_OAUTH_TOKEN || null, a: process.env.ANTHROPIC_AUTH_TOKEN || null, c: process.env.CLAUDE_CONFIG_DIR || null }))'],
+        { cwd: cat, env: Object.assign({}, process.env, { AIONDX_CONVERSATION_ID: CHAT, ANTHROPIC_AUTH_TOKEN: 'inherited', CLAUDE_CODE_OAUTH_TOKEN: 'inherited2' }), encoding: 'utf8', windowsHide: true, timeout: 60000 }));
+      const fe = envRun();
+      check('an account folder with a full sign-in runs the chat on it: no token in either variable, inherited ones removed, its folder set',
+        fe && fe.o === null && fe.a === null && fe.c === dir, JSON.stringify(fe));
+      fs.writeFileSync(path.join(cat, 'claude-account-router.config.json'), JSON.stringify({ claudeExe: process.execPath, streamProxy: false, modelCatalog: false, defaultAccount: 'only',
+        accounts: { only: { label: 'only', configDir: dir, tokenFile: tokFile, signIn: 'token' } } }));
+      const ke = envRun();
+      check('"signIn": "token" keeps the account on its token', ke && ke.o === 'tok-test-123' && ke.a === null, JSON.stringify(ke));
+      fs.writeFileSync(credFile, JSON.stringify({ claudeAiOauth: { accessToken: 'acc-test', refreshToken: '', expiresAt: 0 } }));
+      fs.writeFileSync(path.join(cat, 'claude-account-router.config.json'), JSON.stringify({ claudeExe: process.execPath, streamProxy: false, modelCatalog: false, defaultAccount: 'only',
+        accounts: { only: { label: 'only', configDir: dir, tokenFile: tokFile } } }));
+      const oe = envRun();
+      check('a sign-in with no renewal key (the old kind) is not used: the token is', oe && oe.o === 'tok-test-123', JSON.stringify(oe));
+      fs.writeFileSync(credFile, JSON.stringify({ claudeAiOauth: { accessToken: 'acc-test', refreshToken: 'ref-test', expiresAt: Date.now() - 1000, refreshTokenExpiresAt: Date.now() - 3600000 } }));
+      const xe = envRun();
+      check('a sign-in whose renewal key has expired is not used: the token is', xe && xe.o === 'tok-test-123', JSON.stringify(xe));
+      fs.writeFileSync(credFile, JSON.stringify({ claudeAiOauth: { accessToken: 'acc-test', refreshToken: 'ref-test', expiresAt: Date.now() - 1000, refreshTokenExpiresAt: Date.now() + 86400000 } }));
+      const ve = envRun();
+      check('an access token past its hour with a renewal key still valid: the full sign-in (Claude Code renews it)', ve && ve.o === null, JSON.stringify(ve));
     }
   } catch (e) {
     check('no exception', false, e.message);

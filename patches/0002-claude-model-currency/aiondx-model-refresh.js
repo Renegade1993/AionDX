@@ -422,6 +422,23 @@ function sweepScratch() {
  *  166 times that day, stalling the backend for every chat; with them it uses the msg_id index (1,381 ms to 0.2 ms, measured live).
  *  `analysis_limit` keeps it under a second on a 2 GB database. Only sqlite_stat1 is written; no chat data. */
 function dbUpkeep() {
+  // A small index for one of AionCore's lookups (bug sweep 2026-11-12): a chat's scheduled-task messages (type cron_trigger) were found by
+  // reading through every message of the chat, 2.2 s each, 20 times that day on a 1.9 GB database. An index of only those rows makes it about
+  // 1 ms (measured on a copy: 117 ms to 1 ms warm). Named aiondx_*, so no AionCore migration can collide with it; made again if a
+  // migration rebuilds the table.
+  if (!DRY) {
+    try {
+      const d1 = db(false);
+      try {
+        const cols = d1.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+        if (['conversation_id', 'created_at', 'type'].every((c) => cols.indexOf(c) >= 0) && !d1.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'aiondx_messages_cron'").get()) {
+          const t = Date.now();
+          d1.exec("CREATE INDEX IF NOT EXISTS aiondx_messages_cron ON messages(conversation_id, created_at) WHERE type = 'cron_trigger'");
+          log('added the scheduled-task message index (' + (Date.now() - t) + ' ms)');
+        }
+      } finally { d1.close(); }
+    } catch (e) { log('scheduled-task message index not added: ' + e.message); }
+  }
   const stamp = path.join(LOG_DIR, 'db-analyze.json');
   const last = (readJson(stamp) || {}).at || 0;
   let have = true;
@@ -436,6 +453,75 @@ function dbUpkeep() {
   } catch (e) { log('database planner statistics not refreshed: ' + e.message); }
 }
 
+/*
+ * Skills that were renamed (2026-11-12). AionDX renamed AionUi's built-in skills (aionui-config to aiondx-config and the others), but a chat keeps
+ * the skill names it was created with (conversations.extra.skills), an assistant keeps its default list (assistant_definitions.default_skill_ids),
+ * and AionCore left the old built-in row behind with a folder that no longer exists. Those chats' agents got no config skill at all (234 of
+ * the chats of one install on November 11th). Here, for any built-in skill whose folder is gone and whose renamed counterpart (aionui- to aiondx-) has its
+ * folder: every chat and assistant naming the old one names the new one instead, and the old row is marked deleted. Only the skills array is
+ * changed in place (json_replace, and only when it still holds what was read), so AionCore's own writes to a chat are never undone. What was
+ * changed is kept in <log folder>\skill-repair-<time>.json, which is enough to put it back. A chat whose skill has no counterpart is left as it is.
+ */
+function skillRepair() {
+  let d;
+  try { d = db(false); } catch (e) { return; }
+  try {
+    const has = (t) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+    if (!has('skills') || !has('conversations')) return;
+    const rows = d.prepare('SELECT id, name, path, source FROM skills WHERE deleted_at IS NULL').all();
+    const live = new Set(rows.filter((r) => { try { return fs.existsSync(r.path); } catch (e) { return false; } }).map((r) => r.name));
+    const map = {};
+    for (const r of rows) {
+      if (r.source !== 'builtin' || live.has(r.name)) continue;
+      const to = /^aionui-/.test(r.name) ? 'aiondx-' + r.name.slice('aionui-'.length) : null;
+      if (to && live.has(to)) map[r.name] = { to, row: r.id };
+    }
+    // a name with no row of its own any more is mapped too, when its renamed counterpart is live
+    const rename = (name) => (map[name] ? map[name].to : (/^aionui-/.test(name) && !live.has(name) && live.has('aiondx-' + name.slice(7)) ? 'aiondx-' + name.slice(7) : null));
+    const fixList = (list) => {
+      if (!Array.isArray(list)) return null;
+      let changed = false;
+      const out = [];
+      for (const x of list) {
+        const to = typeof x === 'string' ? rename(x) : null;
+        const v = to || x;
+        if (to) changed = true;
+        if (out.indexOf(v) < 0) out.push(v); else changed = true;
+      }
+      return changed ? out : null;
+    };
+    const undo = { conversations: [], assistant_definitions: [], skills: [] };
+    const convs = d.prepare("SELECT id, json_extract(extra, '$.skills') AS sk FROM conversations WHERE instr(extra, 'aionui-') > 0").all();
+    const plans = [];
+    for (const c of convs) { let sk; try { sk = JSON.parse(c.sk); } catch (e) { continue; } const f = fixList(sk); if (f) plans.push([c.id, c.sk, f]); }
+    let assist = [];
+    if (has('assistant_definitions')) {
+      for (const a of d.prepare("SELECT id, default_skill_ids FROM assistant_definitions WHERE instr(default_skill_ids, 'aionui-') > 0").all()) {
+        let l; try { l = JSON.parse(a.default_skill_ids); } catch (e) { continue; }
+        const f = fixList(l); if (f) assist.push([a.id, a.default_skill_ids, f]);
+      }
+    }
+    const stale = Object.values(map);
+    if (!plans.length && !assist.length && !stale.length) return;
+    if (DRY) { log('would repair renamed skills: ' + plans.length + ' chats, ' + assist.length + ' assistants, ' + stale.length + ' old rows (' + Object.keys(map).join(', ') + ')'); return; }
+    let doneC = 0, doneA = 0;
+    d.exec('BEGIN IMMEDIATE');
+    try {
+      const upC = d.prepare("UPDATE conversations SET extra = json_replace(extra, '$.skills', json(?)) WHERE id = ? AND json_extract(extra, '$.skills') = ?");
+      for (const [id, before, f] of plans) { const r = upC.run(JSON.stringify(f), id, before); if (r.changes) { doneC++; undo.conversations.push({ id, skills: before }); } }
+      const upA = d.prepare('UPDATE assistant_definitions SET default_skill_ids = ? WHERE id = ? AND default_skill_ids = ?');
+      for (const [id, before, f] of assist) { const r = upA.run(JSON.stringify(f), id, before); if (r.changes) { doneA++; undo.assistant_definitions.push({ id, default_skill_ids: before }); } }
+      const upS = d.prepare('UPDATE skills SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL');
+      for (const st of stale) { if (upS.run(Date.now(), st.row).changes) undo.skills.push({ id: st.row, deleted_at: null }); }
+      d.exec('COMMIT');
+    } catch (e) { try { d.exec('ROLLBACK'); } catch (x) { /* none open */ } throw e; }
+    const file = path.join(LOG_DIR, 'skill-repair-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json');
+    try { fs.writeFileSync(file, JSON.stringify(Object.assign({ at: Date.now(), map }, undo), null, 1)); } catch (e) { /* the log line has the counts */ }
+    log('repaired renamed skills: ' + doneC + ' chats, ' + doneA + ' assistants, ' + undo.skills.length + ' old rows marked deleted (' + Object.keys(map).map((k) => k + ' -> ' + map[k].to).join(', ') + '); undo record ' + path.basename(file));
+  } catch (e) { log('renamed skills not repaired: ' + e.message); }
+  finally { try { d.close(); } catch (e) { /* closed */ } }
+}
+
 async function main(opts) {
   opts = opts || {};
   if (!fs.existsSync(DB)) { log('no AionUi database at ' + DB + '; nothing to do'); return 0; }
@@ -446,6 +532,7 @@ async function main(opts) {
   fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, at: Date.now() }));
   sweepScratch();
   dbUpkeep();
+  skillRepair();
   try {
     const d0 = db(true);
     let cols, rows;
@@ -478,7 +565,7 @@ async function main(opts) {
   }
 }
 
-module.exports = { main, shapeRow, envFor, claudeCandidates, updateNpmClaude, npmPrefixes, thawModelOffer, PROVIDERS };
+module.exports = { main, shapeRow, envFor, claudeCandidates, updateNpmClaude, npmPrefixes, thawModelOffer, skillRepair, PROVIDERS };
 
 if (require.main === module) {
   const hard = setTimeout(() => { log('stopped at the 4-minute deadline'); process.exit(4); }, DEADLINE_MS);

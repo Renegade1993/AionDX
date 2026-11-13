@@ -29,6 +29,7 @@ const { spawn } = require('child_process');
 const OURS = Buffer.from('"request_id":"aiondx-');
 const CONTROL = Buffer.from('"control_response"');
 const RESULT = Buffer.from('"type":"result"');   // Claude's end-of-turn line
+const COMPACT = Buffer.from('"subtype":"compact_boundary"');   // a compaction finished (R-103)
 const PREFIX = 256;            // bytes of a line read before deciding whether it is AionDX's
 const REQ = 'aiondx.unsend.req.';
 const RES = 'aiondx.unsend.result.';
@@ -145,15 +146,43 @@ function watchStart(reqHeaders, ur, onCall, log) {
  * at: the last main call. until: the latest moment any entry those calls wrote or refreshed can still live (each call: its time plus
  * the length its writes were given; a call that only read keeps the length the cache had). Past until the cache is gone for certain;
  * before it, Anthropic may still drop it early, which the next call shows. rebuilt: the last call that wrote most of its context
- * again (a cold cache, or a changed prefix): { at, tokens, afterMin, early } where early means it came before the record's until.
+ * again (a cold cache, or a changed prefix): { at, tokens, afterMin, early } where early means it came before the newest part's end.
+ * tailUntil: when the newest part runs out; longUntil: when a part written for an hour runs out (0 for none). They differ only after
+ * Anthropic moved the chat from an hour to 5 minutes (2026-11-11.3): until stays the later one, the Loop keeps warm against tailUntil.
  * Written at the end of each turn, when the length changes or a rebuild happens, and otherwise at most once a minute.
  */
 const CACHE_TTL_MS = { '1h': 3600000, '5m': 300000 };
 const CACHE_KEY = 'aiondx.cache.conv.';
+const CACHE_ACCT_KEY = 'aiondx.cache.acct.';
 const CACHE_WRITE_GAP_MS = 60000;
 const REBUILD_MIN_CTX = 20000;
+/*
+ * The fixed part of a request (2026-11-12, R-103: the context meter showed the pre-compaction size after a compaction finished). Claude
+ * reports a compaction as compact_boundary { pre_tokens, post_tokens }: pre_tokens is the whole context before, post_tokens only the
+ * compacted conversation, without the system prompt and tool definitions every request carries (AionCore's own notes measured 2,065 against
+ * a next turn of 27,238). So the size after a compaction is post_tokens plus that fixed part. Its tokens are estimated from the last main
+ * call: that call's context times the fixed part's share of its request body (system and tools against messages, by length). The next
+ * real reply measures the size exactly and replaces the estimate.
+ */
+const SHARE_MAX_BYTES = 32 * 1024 * 1024;
+function readShare(req, out, log) {
+  const parts = [];
+  let size = 0, over = false;
+  req.on('data', (d) => { if (over) return; size += d.length; if (size > SHARE_MAX_BYTES) { over = true; parts.length = 0; return; } parts.push(d); });
+  req.on('end', () => {
+    if (over || !size) return;
+    try {
+      const j = JSON.parse(Buffer.concat(parts).toString('utf8'));
+      const fixed = JSON.stringify(j.system || '').length + JSON.stringify(j.tools || []).length;
+      const conv = JSON.stringify(j.messages || []).length;
+      if (fixed > 0 && fixed + conv > 0) out.v = fixed / (fixed + conv);
+    } catch (e) { log('tap: request body not read: ' + e.message); }
+  });
+}
+
+const CTX_KEY = 'aiondx.ctx.conv.';
 function startCache(opts, log) {
-  const noop = { record() {}, flush() {}, stop() { return Promise.resolve(); } };
+  const noop = { record() {}, compacted() {}, flush() {}, stop() { return Promise.resolve(); } };
   if (!opts.convId || !opts.apiBase || !opts.apiHeaders) return noop;
   const key = CACHE_KEY + opts.convId;
   // Every request still out is kept, so the process can wait for them before it exits (an exit with a request in flight lost the last
@@ -171,13 +200,39 @@ function startCache(opts, log) {
   };
   let rec = null;            // the record as this process knows it
   let dirty = false, lastPut = 0, timer = null, stopped = false;
-  // The record an earlier process of this chat left: its until still bounds the cache.
-  api('GET', '/api/settings/client?keys=' + encodeURIComponent(key)).then((r) => (r.ok ? r.json() : null)).then((j) => {
-    const old = j && (j.data || j)[key];
+  // The account's length (a request of 2026-11-11: if Anthropic moves the account back to 5 minutes, AionDX notices by itself):
+  //   aiondx.cache.acct.<account> = { v: 1, label, ttl, at, from, changedAt }
+  // written when this process's first measured call finds no record, and whenever a call's length differs from it. The page tells the
+  // user once per change.
+  const acctKey = opts.usage && opts.usage.key ? CACHE_ACCT_KEY + opts.usage.key : '';
+  const acctLabel = (opts.usage && opts.usage.label) || '';
+  let acct = null, acctRead = false, acctPending = null;
+  function noteAccount(ttl, at) {
+    if (!acctKey || !ttl || stopped) return;
+    // Until the stored length is read, keep the newest call's length and judge it then.
+    if (!acctRead) { acctPending = { ttl, at }; return; }
+    if (acct && acct.ttl === ttl) return;
+    const from = acct ? acct.ttl : null;
+    acct = { v: 1, label: acctLabel, ttl, at, from, changedAt: from ? at : 0 };
+    if (from) log(`prompt cache length for the ${acctLabel || 'account'} account is now ${ttl === '1h' ? '1 hour' : '5 minutes'} (was ${from === '1h' ? '1 hour' : '5 minutes'})`);
+    const body = {};
+    body[acctKey] = acct;
+    api('PUT', '/api/settings/client', body).then((r) => { if (!r.ok) log('account cache length not saved: ' + r.status); }, (e) => log('account cache length not saved: ' + e.message));
+  }
+  // The records an earlier process left: the chat's until still bounds the cache; the account's length is what a change is measured from.
+  const keys = acctKey ? key + ',' + acctKey : key;
+  api('GET', '/api/settings/client?keys=' + encodeURIComponent(keys)).then((r) => (r.ok ? r.json() : null)).then((j) => {
+    const data = (j && (j.data || j)) || {};
+    const a = data[acctKey];
+    if (acctKey && !acct && a && typeof a === 'object' && (a.ttl === '1h' || a.ttl === '5m')) acct = Object.assign({}, a);
+    const old = data[key];
     if (!old || typeof old !== 'object' || !(Number(old.until) > 0)) return;
     if (!rec) rec = Object.assign({}, old);
     else if (Number(old.until) > rec.until && Number(old.at) <= rec.at) rec.until = Number(old.until);
-  }).catch(() => { /* no earlier record */ });
+  }).catch(() => { /* no earlier record */ }).then(() => {
+    acctRead = true;
+    if (acctPending) { const p = acctPending; acctPending = null; noteAccount(p.ttl, p.at); }
+  });
   function put() {
     if (!rec || stopped) return;
     dirty = false; lastPut = Date.now();
@@ -186,19 +241,42 @@ function startCache(opts, log) {
     body[key] = rec;
     api('PUT', '/api/settings/client', body).then((r) => { if (!r.ok) log('cache record not saved: ' + r.status); }, (e) => log('cache record not saved: ' + e.message));
   }
+  let fixedTokens = 0;       // the fixed part of the last main call, in tokens (estimated)
+  function compacted(meta) {
+    if (stopped || !meta) return;
+    const post = Number(meta.post_tokens) || 0, pre = Number(meta.pre_tokens) || 0;
+    if (!(post > 0)) return;
+    const tokens = fixedTokens + post;
+    const body = {};
+    body[CTX_KEY + opts.convId] = { v: 1, at: Date.now(), pre, post, fixed: fixedTokens, tokens, estimated: true };
+    log(`compaction: about ${tokens} tokens now (${post} compacted conversation + ${fixedTokens} system prompt and tools), ${pre} before`);
+    api('PUT', '/api/settings/client', body).then((r) => { if (!r.ok) log('compaction estimate not saved: ' + r.status); }, (e) => log('compaction estimate not saved: ' + e.message));
+  }
   function record(c) {
     if (stopped || !c || !c.main) return;
+    if (c.share > 0 && c.share < 1) fixedTokens = Math.round((c.read + c.write + c.input) * c.share);
     const prev = rec;
-    const bucket = c.w1h > 0 ? '1h' : c.w5m > 0 ? '5m' : c.write > 0 ? null : (prev && prev.ttl) || null;
+    // ttl is the length of the newest part: a 1-hour part always comes before a 5-minute one, so a call that wrote both ends in 5 minutes.
+    const bucket = c.w5m > 0 ? '5m' : c.w1h > 0 ? '1h' : c.write > 0 ? null : (prev && prev.ttl) || null;
     const ctx = c.read + c.write + c.input;
     const next = { v: 1, at: c.at, until: prev && prev.until > c.at ? prev.until : 0, ttl: bucket, read: c.read, write: c.write, ctx, model: c.model,
       calls: ((prev && prev.calls) || 0) + 1, rebuilt: (prev && prev.rebuilt) || null };
-    if (bucket) next.until = Math.max(next.until, c.at + CACHE_TTL_MS[bucket]);
+    // longUntil: when the part written for an hour runs out. A read restarts a part's lifetime at the length it was written with (Anthropic:
+    // reading a 5-minute entry restarts its 5 minutes even when the request asks for an hour), so a call that read while an hour part was
+    // alive keeps it another hour. A record from before 2026-11-11.3 has no longUntil: its until is the hour part's when its ttl was 1h.
+    const prevLong = !prev ? 0 : Number(prev.longUntil) > 0 ? Number(prev.longUntil) : prev.ttl === '1h' ? Number(prev.until) || 0 : 0;
+    next.longUntil = c.w1h > 0 || (c.read > 0 && prevLong > c.at) ? c.at + CACHE_TTL_MS['1h'] : prevLong > c.at ? prevLong : 0;
+    // tailUntil: when the newest part (what this call wrote, or what it read at the length it had) runs out. Equal to until unless Anthropic
+    // moved the chat from an hour to 5 minutes and an older hour part still lives; the Loop keeps the chat warm against this one.
+    next.tailUntil = bucket ? c.at + CACHE_TTL_MS[bucket] : 0;
+    next.until = Math.max(next.until, next.tailUntil, next.longUntil);
     // A call that wrote with no length given cannot be bounded: the record says so (until 0) and the page shows no cache state.
-    if (!bucket && c.write > 0) next.until = 0;
+    if (!bucket && c.write > 0) { next.until = 0; next.tailUntil = 0; next.longUntil = 0; }
     let important = !prev || (prev.ttl !== bucket);
+    if (bucket) noteAccount(bucket, c.at);
     if (ctx >= REBUILD_MIN_CTX && c.read < ctx / 2 && prev && prev.at) {
-      next.rebuilt = { at: c.at, tokens: c.write, afterMin: Math.round((c.at - prev.at) / 60000), early: !!(prev.until && prev.until > c.at) };
+      const prevTail = Number(prev.tailUntil) > 0 ? Number(prev.tailUntil) : Number(prev.until) || 0;
+      next.rebuilt = { at: c.at, tokens: c.write, afterMin: Math.round((c.at - prev.at) / 60000), early: !!(prevTail && prevTail > c.at) };
       important = true;
       log(`cache rebuilt: ${c.write} tokens written ${next.rebuilt.afterMin} min after the last call${next.rebuilt.early ? ', before its time was up' : ''}`);
     }
@@ -209,6 +287,7 @@ function startCache(opts, log) {
   }
   return {
     record,
+    compacted,
     flush() { if (dirty) put(); },
     /** Writes what is left; resolves when every request is answered or after 2 s. */
     stop() {
@@ -247,7 +326,9 @@ function startTap(opts) {
         }
       } catch (e) { log('tap: onResponse failed: ' + e.message); }
       try {
-        if (/^\/v1\/messages(?:\?|$)/.test(req.url) && ur.statusCode === 200 && opts.onCall) watchStart(req.headers, ur, opts.onCall, log);
+        if (/^\/v1\/messages(?:\?|$)/.test(req.url) && ur.statusCode === 200 && opts.onCall) {
+          watchStart(req.headers, ur, (c) => opts.onCall(Object.assign(c, { share: reqShare.v })), log);
+        }
       } catch (e) { log('tap: cache reading failed: ' + e.message); }
     });
     pr.on('error', (e) => {
@@ -257,6 +338,8 @@ function startTap(opts) {
     });
     // A request the client gives up on (a cancelled turn) ends the upstream one too.
     res.on('close', () => { if (!res.writableEnded) pr.destroy(); });
+    const reqShare = { v: 0 };
+    if (req.method === 'POST' && /^\/v1\/messages(?:\?|$)/.test(req.url) && !req.headers['content-encoding']) readShare(req, reqShare, log);
     req.pipe(pr);
   });
   server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
@@ -655,6 +738,9 @@ function startProxy(opts) {
         const h = head.length === 1 ? head[0] : Buffer.concat(head);
         head = []; headLen = 0;
         if (h.indexOf(RESULT) >= 0) { usage.turnEnded(); cache.flush(); }
+        if (complete && h.indexOf(COMPACT) >= 0) {
+          try { const j = JSON.parse(h.toString('utf8')); if (j && j.type === 'system' && j.subtype === 'compact_boundary') cache.compacted(j.compact_metadata); } catch { /* not that line */ }
+        }
         if (h.indexOf(CONTROL) >= 0 && h.indexOf(OURS) >= 0) {
           swallowKind = 'ours';
           if (complete) answer(h); else { swallow = [h]; mode = 'swallow'; }

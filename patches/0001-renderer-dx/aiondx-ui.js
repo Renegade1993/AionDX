@@ -150,6 +150,9 @@
   var KEY_PREFIX = 'aionui.dx.';
   var LOOP_TAG = '[AionDX Loop: sent automatically, not typed by the user] ';
   var DEFAULT_MSG = 'CONTINUE WORKING. Re-check the project plan and queue files, take the next unfinished item, and keep going until the user interrupts.';
+  // R-100 (2026-11-12, from a measurement on a team of November 10th: agents opened a skill only when their Loop message said to). Added to
+  // every plain continue nudge, whatever its message, unless the option loop.skillsLine is off.
+  var SKILLS_LINE = ' Skills: before a task, check your project\u2019s skills (its *-procedures skill lists them); when you learn a better way, update the matching skill.';
 
   // The cache window; see the header.
   var CACHE_TTL_MS = 5 * 60000;           // the length counted for a chat with no measured record (cacheWindow)
@@ -253,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-11.2';
+  var BUILD = '2026-11-12.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -623,6 +626,12 @@
     var d = new Date(ms);
     return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
   }
+  /** "December 13th": a date as it is written in AionDX's text. */
+  function longDate(ms) {
+    var d = new Date(ms), n = d.getDate();
+    var suf = (n % 100 >= 11 && n % 100 <= 13) ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th';
+    return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getMonth()] + ' ' + n + suf;
+  }
   /** The next time a clock time ("12:10") comes round: today, or tomorrow once it has passed. 0 otherwise. */
   function nextClock(v) {
     var m = /^(\d{1,2}):(\d{2})/.exec(String(v || '').trim());
@@ -702,6 +711,8 @@
   var OPTIONS = [
     { id: 'links.files', group: 'Links', type: 'choice', default: 'outside', choices: [['outside', 'Outside AionDX (its own program, or Explorer for a folder)'], ['preview', 'A preview tab inside AionDX']],
       label: 'Open file and folder links in', desc: 'Where a link to a file or folder on this PC opens. A folder always opens in Explorer. Alt+click uses the other one; Shift+click shows it in its folder.' },
+    { id: 'loop.skillsLine', group: 'The Loop', type: 'bool', default: true,
+      label: 'Remind agents of their skills', desc: 'Each Loop nudge to keep working ends with one line: check the project\u2019s skills before a task, and update the matching skill when you learn a better way. Agents rarely open a skill unless told (measured on a team, November 10th).' },
     { id: 'spellcheck', group: 'Typing', type: 'bool', default: true,
       label: 'Check spelling', desc: 'Underline misspelled words in message boxes; right-click one for suggestions.' },
     { id: 'draft.quote', group: 'Typing', type: 'bool', default: true,
@@ -953,7 +964,7 @@
       compactAt: s.compactAt || 0, compactSentAt: s.compactSentAt || 0, compactNote: s.compactNote || '',
       // The cache window (build 2026-09-25.4): the agent's last message, when the cache runs out,
       // and whether the Loop is resting.
-      lastAt: s.lastAt || 0, warmUntil: coldAtOf(s), cacheMeasured: !!s.cacheMeasured, holdMin: holdMinutes(s),
+      lastAt: s.lastAt || 0, warmUntil: coldAtOf(s), newestUntil: warmAtOf(s), cacheMeasured: !!s.cacheMeasured, holdMin: holdMinutes(s),
       shortSince: s.shortSince || 0, restingSince: s.restingSince || 0, restKind: s.restKind || '',
       wakeAt: s.on ? s.wakeAt || 0 : 0, wokeAt: s.wokeAt || 0 };
     var k = statusKey(t);
@@ -1338,6 +1349,13 @@
       '<div class="aiondx-accent-title aiondx-setup-title">AionDX setup</div>' +
       '<div class="aiondx-accent-desc">Bring your agents, instructions and tools over from the other AI apps on this PC, with Antigravity or an agent of your choice.</div>' +
       '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-setup-open" data-testid="aiondx-setup-open">Open AionDX setup</button>' +
+      (window.aiondxSignin ? '<div class="aiondx-accent-title aiondx-signin-title">Sign-in</div>' +
+        '<div class="aiondx-accent-desc">Sign Claude Code in once, in your browser: model calls, Claude Docs, your claude.ai skills and connectors all come with it, and it renews itself.</div>' +
+        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-signin-open" data-testid="aiondx-signin-open">Sign in to your agents</button>' : '') +
+      (portableBridge() ? '<div class="aiondx-accent-title aiondx-drive-title">Chats on a drive</div>' +
+        '<div class="aiondx-accent-desc">Keep your chats, teams and their history on a drive that goes with you. AionDX on any PC opens them while the drive is plugged in.</div>' +
+        '<div class="aiondx-accent-desc aiondx-drive-state" data-testid="aiondx-drive-state">Checking...</div>' +
+        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-drive-move" data-testid="aiondx-drive-move">Move my chats to a drive...</button>' : '') +
       (cacheBridge() ? '<div class="aiondx-accent-title aiondx-cache-title">Agent caches</div>' +
         '<div class="aiondx-accent-desc">See what Claude Code, Devin and AionDX keep on this PC, and clear the caches, or the history older than a week, a month or more.</div>' +
         '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-open" data-testid="aiondx-cache-open">Clear agent caches</button>' : '') +
@@ -1356,6 +1374,13 @@
     });
     var cacheOpen = el.querySelector('.aiondx-cache-open');
     if (cacheOpen) cacheOpen.addEventListener('click', function (ev) { ev.preventDefault(); openCaches(); });
+    var signinOpen = el.querySelector('.aiondx-signin-open');
+    if (signinOpen) signinOpen.addEventListener('click', function (ev) { ev.preventDefault(); welcome.opened = true; showWelcome('accounts'); });
+    var driveMove = el.querySelector('.aiondx-drive-move');
+    if (driveMove) {
+      driveMove.addEventListener('click', function (ev) { ev.preventDefault(); moveToDrive(); });
+      paintDriveState(el);
+    }
     var row = el.querySelector('.aiondx-accent-row');
     ACCENTS.forEach(function (a) {
       var b = document.createElement('button');
@@ -2270,8 +2295,8 @@
     // plus CACHE_TTL_MS. Kept for the button's warmth ring and the tool's loop_status.
     var lastAt = lastAny ? (lastAny.created_at || 0) : 0;
     var cw = cacheWindow(convId, lastAt);
-    if (lastAt !== (s.lastAt || 0) || cw.coldAt !== (s.coldAt || 0) || cw.ttl !== (s.cacheTtl || 0) || cw.measured !== !!s.cacheMeasured) {
-      s.lastAt = lastAt; s.coldAt = cw.coldAt; s.cacheTtl = cw.ttl; s.cacheMeasured = cw.measured; save(t, s);
+    if (lastAt !== (s.lastAt || 0) || cw.coldAt !== (s.coldAt || 0) || cw.warmAt !== (s.warmAt || 0) || cw.ttl !== (s.cacheTtl || 0) || cw.measured !== !!s.cacheMeasured) {
+      s.lastAt = lastAt; s.coldAt = cw.coldAt; s.warmAt = cw.warmAt; s.cacheTtl = cw.ttl; s.cacheMeasured = cw.measured; save(t, s);
     }
     // Resting, and something happened since (you or its lead wrote, or it worked on its own): the
     // agent is warm again, so the Loop carries on after this turn.
@@ -2377,9 +2402,11 @@
         // Never wake a cold agent: that nudge would pay to write its whole context again. Unless the
         // Loop was switched on after the cache had already run out and has not nudged since: then
         // someone asked for exactly that.
+        // After a move from an hour to 5 minutes, an older hour part can outlive the newest part: the Loop rests only once all of it is gone,
+        // and keeps the chat warm against the newest part (a nudge after that part ran out still saves the hour part).
         var coldAt = cw.coldAt;
-        var restFrom = coldAt - warmMargin(cw.ttl);
-        var warmBy = coldAt - warmLead(cw.ttl);
+        var restFrom = coldAt - warmMargin(cw.restTtl);
+        var warmBy = cw.warmAt - warmLead(cw.ttl);
         var wakeAsked = s.onAt && s.onAt >= restFrom && !((s.lastFired || 0) > s.onAt);
         // Until the user stops it: never rests, so a cold agent is woken too.
         if (lastAt && now > restFrom && !wakeAsked && !s.forever) { rest(t, s, 'cold', coldAt); return; }
@@ -2423,7 +2450,9 @@
     // Marked as the Loop's (2026-09-25): an unmarked nudge reads exactly like the user's own message.
     // A team's agent logged the 07:00 nudge as the owner's instruction while the owner was asleep, and its
     // lead switched the Loop off over it. Resume notes already carry "[Loop]".
-    var text = LOOP_TAG + (wakeDue ? resumeText(s, wake) : limitResume ? limitResumeText(s) : holding ? holdingText(s, wake) : s.msg) + usageNote(convId);
+    var plainContinue = !wakeDue && !limitResume && !holding;
+    var text = LOOP_TAG + (wakeDue ? resumeText(s, wake) : limitResume ? limitResumeText(s) : holding ? holdingText(s, wake) : s.msg) +
+      (plainContinue && opt('loop.skillsLine') !== false ? SKILLS_LINE : '') + usageNote(convId);
     var fr = await send(text);
     if (fr.status === 401 || fr.status === 403 || fr.status === 404) { setOn(t, false, 'send failed (' + fr.status + ')'); return; }
     if (!fr.ok) return; // transient; the next tick retries
@@ -2850,6 +2879,72 @@
     }
   }
   function cacheBridge() { return window.aiondxCache && typeof window.aiondxCache.scan === 'function' ? window.aiondxCache : null; }
+  // ---------------------------------------------------------------- AionDX on a drive (R-102, 2026-11-12)
+  // A request of 2026-11-12: take the chats and their history between PCs on a drive. The main process (patch 0009,
+  // aiondx:portable) picks the folder and starts the mover, which closes AionDX, moves its whole data folder there with every stored path
+  // rewritten (aiondx-data-move.js --portable) and opens it again; patch 0015 opens a plugged-in AionDX drive at start, on any PC. The Claude
+  // launcher keeps each chat's Claude history on the drive too. Here: the card in Settings, and the notices at start.
+  function portableBridge() { return window.aiondxPortable && typeof window.aiondxPortable.status === 'function' ? window.aiondxPortable : null; }
+  function paintDriveState(card) {
+    var b = portableBridge(), st = card && card.querySelector('.aiondx-drive-state');
+    if (!b || !st) return;
+    b.status().then(function (r) {
+      if (!r || !r.ok) { st.textContent = 'Could not read where the chats are.'; return; }
+      st.textContent = r.portable ? 'Your chats are on the drive, in ' + r.userData + '.' : 'Your chats are on this PC, in ' + r.userData + '.';
+      var btn = card.querySelector('.aiondx-drive-move');
+      if (btn) btn.textContent = r.portable ? 'Move them to another folder...' : 'Move my chats to a drive...';
+    }, function () { st.textContent = 'Could not read where the chats are.'; });
+  }
+  async function moveToDrive() {
+    var b = portableBridge();
+    if (!b) return;
+    var c = await b.choose();
+    if (!c || !c.ok) { if (c && c.error) toast('Not moved: ' + c.error, ''); return; }
+    var ok = window.confirm('Move your chats to ' + c.to + '?\n\nAionDX closes, copies all of its data there (chats, teams, their working folders and Claude history), ' +
+      'checks every chat, and opens again by itself. A large set of chats takes a few minutes. Your current folder is kept, renamed, until you delete it.\n\n' +
+      'Close any work in progress first: running agents are stopped when AionDX closes.');
+    if (!ok) return;
+    var r = await b.move(c.to);
+    if (!r || !r.ok) toast('Not moved: ' + ((r && r.error) || 'no answer') + '.', '');
+    else toast('AionDX is closing to move your chats to ' + c.to + '. It opens again when the move is done.', '');
+  }
+  var DRIVE_SEEN = 'aiondx.dx.driveSeen';
+  function driveNotices() {
+    var b = portableBridge();
+    if (!b) return;
+    b.status().then(function (r) {
+      if (!r || !r.ok) return;
+      var st = r.start || {};
+      var seen = '';
+      try { seen = localStorage.getItem(DRIVE_SEEN) || ''; } catch (e) {}
+      var last = r.last;
+      if (last && last.at && String(last.at) !== seen && (last.state === 'done' || last.state === 'failed')) {
+        try { localStorage.setItem(DRIVE_SEEN, String(last.at)); } catch (e) {}
+        if (last.state === 'done') toast('Your chats are now in ' + last.to + '.', 'Your old folder is kept, renamed with ".moved-", next to where it was; delete it once everything works from the drive.');
+        else toast('Your chats were not moved: ' + (last.error || 'the move failed and was undone') + '.', (last.log || []).slice(-2).join(' '));
+      }
+      if (st.state === 'using') return;
+      // Not using a drive: look for one in the background (each drive is given a second and a half), and ask before taking it up.
+      if (typeof b.scan !== 'function') { if (st.state === 'missing') toast('Your AionDX drive is not plugged in, so these are this PC\'s own chats.', 'Plug in the drive holding ' + st.path + ' and restart AionDX to open yours.'); return; }
+      b.scan().then(function (sc) {
+        var f = sc && sc.ok && sc.found && sc.found[0];
+        if (!f) {
+          if (st.state === 'missing') toast('Your AionDX drive is not plugged in, so these are this PC\'s own chats.', 'Plug in the drive holding ' + st.path + ' and restart AionDX to open yours.');
+          return;
+        }
+        if (f.have !== f.want) {
+          var go = window.confirm('An AionDX drive is plugged in as ' + f.have + ':, but its chats were made on ' + f.want + ':.\n\n' +
+            'Give it the letter ' + f.want + ': on this PC too? Windows asks for permission once, then AionDX restarts and opens the chats on it. ' +
+            'The letter stays with the drive on this PC.');
+          if (go) b.letter(f.have, f.want).then(function (x) { if (!x || !x.ok) toast('The drive letter was not changed: ' + ((x && x.error) || 'no answer'), ''); });
+          return;
+        }
+        var ok = window.confirm('An AionDX drive is plugged in: ' + f.dir + '.\n\nOpen the chats on it? AionDX restarts and uses the drive while it is plugged in; ' +
+          'unplugged, this PC\'s own chats open, as now.');
+        if (ok) b.adopt(f.dir, f.id).then(function (x) { if (!x || !x.ok) toast('Not opened: ' + ((x && x.error) || 'no answer'), ''); });
+      }, function () {});
+    }, function () {});
+  }
   function sizeText(n) {
     n = Number(n) || 0;
     if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
@@ -3968,11 +4063,13 @@
     // The meter and the alert check follow the refresh rate the owner chose (a reading can only be as new as the last one AionCore's tap wrote).
     if (usageCfg.pollSec > 3 && Date.now() - usageTaken < usageCfg.pollSec * 1000 - 400) return;
     usageTaken = Date.now();
-    var a = {}, c = {}, al = {}, fi = {}, cc = {};
+    var a = {}, c = {}, al = {}, fi = {}, cc = {}, ca = {}, cx = {};
     Object.keys(data).forEach(function (k) {
       var v = data[k];
       if (!v || typeof v !== 'object') return;
       if (k.indexOf(CACHE_CONV) === 0) cc[k.slice(CACHE_CONV.length)] = v;
+      else if (k.indexOf(CACHE_ACCT) === 0) ca[k.slice(CACHE_ACCT.length)] = v;
+      else if (k.indexOf(CTX_COMPACT) === 0) cx[k.slice(CTX_COMPACT.length)] = v;
       else if (k.indexOf(USAGE_ACCT) === 0) a[k.slice(USAGE_ACCT.length)] = v;
       else if (k.indexOf(USAGE_CONV) === 0) c[k.slice(USAGE_CONV.length)] = v;
       else if (k.indexOf(USAGE_ALERT) === 0) al[k.slice(USAGE_ALERT.length)] = v;
@@ -3981,6 +4078,10 @@
     usageAcct = a;
     usageConv = c;
     cacheConv = cc;
+    var newCompact = Object.keys(cx).some(function (id) { return !ctxCompact[id] || ctxCompact[id].at !== cx[id].at; });
+    ctxCompact = cx;
+    if (newCompact) { ctxAsk = {}; try { renderSched(); } catch (e) {} }
+    try { checkCacheLength(ca); } catch (e) { console.log('[dx] cache length check failed', e); }
     usageAlerts = al;
     usageFired = fi;
     try { checkUsageAlerts(); } catch (e) { console.log('[dx] usage alert check failed', e); }
@@ -3992,18 +4093,63 @@
   // shows as a rebuild.
   var CACHE_CONV = 'aiondx.cache.conv.';
   var cacheConv = {};        // conversation id -> record
+  // Each account's length, as its chats' answers last showed it (2026-11-11.3): aiondx.cache.acct.<account> = { label, ttl, at, from,
+  // changedAt }. A request of 2026-11-11: if Anthropic moves an account back to 5 minutes (or to an hour), say so once, the day it happens.
+  // The length this window last told the user about is kept per account in the browser's storage, so several pages tell it once; the first
+  // reading only sets it.
+  // The size after a compaction (R-103, 2026-11-12): the launcher writes aiondx.ctx.conv.<chat> = { at, pre, post, fixed, tokens } when Claude
+  // reports a finished compaction (claude-stream-proxy.js, readShare). AionCore keeps the size from before until the next reply measures the new
+  // one, so the meter used to show the old size. While the chat's count still equals the size before (within 2%), the meter shows the estimate.
+  var CTX_COMPACT = 'aiondx.ctx.conv.';
+  var ctxCompact = {};
+  function compactView(info) {
+    var r = info && info.convId ? ctxCompact[info.convId] : null;
+    if (!r || !(Number(r.tokens) > 0) || !(Number(r.pre) > 0) || Date.now() - Number(r.at) > 86400000) return null;
+    return Math.abs(Number(info.used) - Number(r.pre)) <= Math.max(500, Number(r.pre) * 0.02) ? r : null;
+  }
+  var CACHE_ACCT = 'aiondx.cache.acct.';
+  var CACHE_SEEN = 'aiondx.dx.cacheLen.';
+  function lengthText(ttl) { return ttl === '1h' ? '1 hour' : '5 minutes'; }
+  function checkCacheLength(accts) {
+    Object.keys(accts).forEach(function (key) {
+      var r = accts[key];
+      if (!r || (r.ttl !== '1h' && r.ttl !== '5m')) return;
+      var seen = null;
+      try { seen = localStorage.getItem(CACHE_SEEN + key); } catch (e) { return; }
+      if (seen === r.ttl) return;
+      try { localStorage.setItem(CACHE_SEEN + key, r.ttl); } catch (e) { return; }
+      if (!seen) return;
+      var who = r.label ? 'the ' + r.label + ' account' : 'a Claude account';
+      var when = Number(r.changedAt || r.at) > 0 ? ', from ' + hhmm(Number(r.changedAt || r.at)) : '';
+      console.log('[dx] prompt cache length for ' + who + ': ' + lengthText(r.ttl) + ' (was ' + lengthText(seen) + ')' + when);
+      toast('Anthropic now keeps the prompt cache of ' + who + "'s chats " + lengthText(r.ttl) + ' (it was ' + lengthText(seen) + ')' + when + '.',
+        r.ttl === '5m'
+          ? 'Measured from their answers. Anthropic gives 5 minutes when an account is on extra usage, or when they change it on their side. The Loop now keeps chats warm on the 5-minute cycle.'
+          : 'Measured from their answers. The Loop now counts with the hour: fewer keep-warm nudges, and quiet chats stay warm longer.',
+        { where: 'Prompt cache' });
+    });
+  }
   /** The chat's measured cache record, or null. */
   function cacheRecord(convId) {
     var r = convId ? cacheConv[convId] : null;
     return r && Number(r.until) > 0 && Number(r.at) > 0 ? r : null;
   }
   function ttlMsOf(r) { return r.ttl === '1h' ? 3600000 : r.ttl === '5m' ? 300000 : Math.max(60000, Number(r.until) - Number(r.at)); }
-  /** The window the Loop counts with: { coldAt, ttl, measured }. A record the chat's messages have outrun (a message more than a minute
-   *  after its until: the chat ran without the launcher's reading) is not used. */
+  /** When the newest part of a record runs out: its tailUntil (2026-11-11.3), never later than until; until for an older record. */
+  function tailOf(r) { var u = Number(r.until), tl = Number(r.tailUntil); return tl > 0 && tl < u ? tl : u; }
+  /** The window the Loop counts with: { coldAt, warmAt, ttl, restTtl, measured }. coldAt: when all of the cache is gone for certain (the Loop
+   *  rests after it). warmAt: when the newest part runs out (the Loop keeps the chat warm against it). They differ after Anthropic moved a
+   *  chat from an hour to 5 minutes while an older hour part still lives. ttl: the newest part's length; restTtl: the length behind coldAt.
+   *  A record the chat's messages have outrun (a message more than a minute after its until: the chat ran without the launcher's reading)
+   *  is not used. */
   function cacheWindow(convId, lastAt) {
     var r = cacheRecord(convId);
-    if (r && !(lastAt && lastAt > Number(r.until) + 60000)) return { coldAt: Number(r.until), ttl: ttlMsOf(r), measured: true };
-    return { coldAt: lastAt ? lastAt + CACHE_TTL_MS : 0, ttl: CACHE_TTL_MS, measured: false };
+    if (r && !(lastAt && lastAt > Number(r.until) + 60000)) {
+      var tail = tailOf(r), ttl = ttlMsOf(r);
+      return { coldAt: Number(r.until), warmAt: tail, ttl: ttl, restTtl: tail < Number(r.until) ? 3600000 : ttl, measured: true };
+    }
+    var at = lastAt ? lastAt + CACHE_TTL_MS : 0;
+    return { coldAt: at, warmAt: at, ttl: CACHE_TTL_MS, restTtl: CACHE_TTL_MS, measured: false };
   }
   /** How long before coldAt the last keep-warm nudge is planned, and how long before it the Loop rests instead (a nudge then could land
    *  after the cache is gone). An hour cache leaves room for a team's send spacing; a 5-minute one keeps the old timing. */
@@ -4014,6 +4160,8 @@
   function resumeWarmMax(ttl) { return Math.max(RESUME_WARM_MAX_MS, 3 * ttl); }
   /** The Loop's saved window: when its cache runs out, and how long it is. */
   function coldAtOf(s) { return s.coldAt || (s.lastAt ? s.lastAt + CACHE_TTL_MS : 0); }
+  /** When the newest part of the Loop's saved window runs out (coldAtOf for a window with one length). */
+  function warmAtOf(s) { var c = coldAtOf(s); return s.warmAt && s.warmAt < c ? s.warmAt : c; }
   function ttlOf(s) { return s.cacheTtl || CACHE_TTL_MS; }
   function usageScope(t) { return t.kind === 'team' ? 'team.' + t.teamId : 'conv.' + t.convId; }
   /** The chats a usage alert scope covers: [{ convId, slotId, teamId, role, name }], or null while the team is not read yet. */
@@ -4980,7 +5128,9 @@
       if (!accountsBox()) return;
       if (!r || !r.ok) st.textContent = 'Could not ask Claude Code: ' + ((r && r.error) || 'no answer') + '.';
       else if (!r.installed) st.textContent = 'Not installed on this PC.';
-      else if (r.loggedIn) st.textContent = 'Signed in' + (r.email ? ' as ' + r.email : '') + (r.plan ? ' (' + r.plan + ')' : '') + '.';
+      else if (r.loggedIn && r.renews === false) st.textContent = 'Signed in' + (r.email ? ' as ' + r.email : '') + ' with an old sign-in that cannot renew itself and carries no Claude Docs or claude.ai skills: sign in again once.';
+      else if (r.loggedIn) st.textContent = 'Signed in' + (r.email ? ' as ' + r.email : '') + (r.plan ? ' (' + r.plan + ')' : '') + '. It renews itself' +
+        (r.renewsUntil ? ' until ' + longDate(r.renewsUntil) + '; sign in again before then' : '') + '; Claude Docs and your claude.ai skills come with it.';
       else st.textContent = 'Not signed in.';
       var b = box.querySelector('.aiondx-acc-signin');
       b.textContent = r && r.loggedIn ? 'Sign in again' : 'Sign in';
@@ -5397,6 +5547,27 @@
   // loses it when the member's turn starts on it. An AionCore without core-0002 has neither the route nor the list: no bolts, and a ticked
   // send goes as usual.
   var ICON_BOLT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor"/></svg>';
+  /** Runs fn on the press itself (R-104, 2026-11-12: "lightning bolt send still doesn't do anything"). A click needs the press and the release
+   *  on the same element in the same place; while an agent works the page redraws many times a second (a streaming reply re-renders the
+   *  message rows, and a repaint can move a control AionDX placed), so a click on a bolt was often never delivered, with no request and no
+   *  error. A keyboard click (Enter or Space, detail 0) still works; a click that follows a handled press is ignored. */
+  function onPress(el, fn) {
+    el.addEventListener('pointerdown', function (ev) {
+      if (ev.button !== 0 || el.disabled) return;
+      ev.preventDefault(); ev.stopPropagation();
+      el._pressAt = Date.now();
+      fn(ev);
+    });
+    el.addEventListener('click', function (ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (el.disabled || Date.now() - (el._pressAt || 0) < 1500) return;
+      fn(ev);
+    });
+  }
+  /** True when el already comes before ref under the same parent (other AionDX controls may sit between): nothing to move. */
+  function placedBefore(el, ref) {
+    return el.parentNode === ref.parentNode && !!(el.compareDocumentPosition(ref) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }
   var rnBoxes = [];          // tick boxes on screen
   var rnBolts = [];          // bolt buttons on screen
   var rnBusy = {};           // member + message -> a bolt's request in flight
@@ -5464,6 +5635,7 @@
       scanTeamQueues().catch(function () {});
     }, function () { back("Could not reach AionDX's backend; your message is back in the box."); });
   }
+  setTimeout(function () { try { if (!disabled()) driveNotices(); } catch (e) {} }, 4000);
   function watchRespondNow() {
     window.addEventListener('keydown', function (ev) {
       var enter = ev.key === 'Enter' || ev.code === 'Enter' || ev.code === 'NumpadEnter' || ev.keyCode === 13;
@@ -5503,7 +5675,7 @@
     b.innerHTML = ICON_BOLT;
     b.title = 'Respond now: this message goes to the top of the queue and is read at the agent\'s next step. Nothing it is doing is stopped.';
     b.setAttribute('aria-label', 'Respond now');
-    b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); boltClick(b._t, b._mid); });
+    onPress(b, function () { boltClick(b._t, b._mid); });
     return b;
   }
 
@@ -6633,7 +6805,7 @@
     var a = agentLive[t.key];
     if (a && (a.state === 'working' || a.state === 'queued')) return 1;
     if (!s.lastAt) return -1;
-    var left = coldAtOf(s) - Date.now();
+    var left = warmAtOf(s) - Date.now();
     return left > 0 ? Math.min(1, left / ttlOf(s)) : 0;
   }
 
@@ -6726,7 +6898,10 @@
     var now = Date.now();
     var how = s.cacheMeasured ? 'measured' : 'not measured, counted at ' + Math.round(ttlOf(s) / 60000) + ' min';
     if (until <= now) return 'Cache: ran out at ' + hhmm(until) + ' (' + how + ').';
-    return 'Cache: warm until ' + hhmm(until) + ' (' + Math.max(1, Math.round((until - now) / 60000)) + ' min, ' + how + ').' +
+    var tail = warmAtOf(s);
+    var part = tail < until ? (tail > now ? ' The newest part, kept ' + Math.round(ttlOf(s) / 60000) + ' min, runs out at ' + hhmm(tail) + '.'
+      : ' The newest part, kept ' + Math.round(ttlOf(s) / 60000) + ' min, ran out at ' + hhmm(tail) + '.') : '';
+    return 'Cache: warm until ' + hhmm(until) + ' (' + Math.max(1, Math.round((until - now) / 60000)) + ' min, ' + how + ').' + part +
       (!s.restingSince && s.nextNudgeAt > now ? ' Next nudge ' + hhmm(s.nextNudgeAt) + '.' : '');
   }
 
@@ -7725,7 +7900,7 @@
       stopEls[t.key] = el;
     }
     el._t = t;
-    if (el.parentNode !== wrap.parentNode || el.nextSibling !== wrap) wrap.parentNode.insertBefore(el, wrap);
+    if (!placedBefore(el, wrap)) wrap.parentNode.insertBefore(el, wrap);
     var btn = el.firstChild;
     var tip = 'Stop: AionUi shows no Stop button, but this chat is still working.';
     if (btn.title !== tip) { btn.title = tip; btn.setAttribute('aria-label', tip); }
@@ -7755,16 +7930,23 @@
       el.innerHTML = '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-default arco-btn-shape-circle aiondx-solo-bolt" data-testid="aiondx-solo-bolt">' + ICON_BOLT + '</button>';
       el.firstChild.title = 'Interrupt and send: ends what the agent is doing and sends this message first.';
       el.firstChild.setAttribute('aria-label', el.firstChild.title);
-      el.firstChild.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); interruptAndSendSolo(el._t); });
+      onPress(el.firstChild, function () { interruptAndSendSolo(el._t); });
       soloBoltEls[t.key] = el;
     }
     el._t = t;
-    if (el.parentNode !== wrap.parentNode || el.nextSibling !== wrap) wrap.parentNode.insertBefore(el, wrap);
+    if (!placedBefore(el, wrap)) wrap.parentNode.insertBefore(el, wrap);
   }
+  var soloBoltBusy = {};
   async function interruptAndSendSolo(t) {
     var box = draftBox(t);
     var text = box ? String(box.value || '') : '';
-    if (!text.trim()) return;
+    if (!text.trim()) { toast('Type the message first: the bolt stops the agent and sends what is in the box.', ''); return; }
+    if (soloBoltBusy[t.key]) return;
+    soloBoltBusy[t.key] = true;
+    toast('Interrupting the agent to send your message…', '"' + quoteOf(text) + '"');
+    try { await interruptAndSendSoloNow(t, box, text); } finally { delete soloBoltBusy[t.key]; }
+  }
+  async function interruptAndSendSoloNow(t, box, text) {
     var convId = t.convId;
     setComposerValue(box, '');
     var back = function (why) { setComposerValue(box, text); toast(why, 'Your message is back in the box.'); };
@@ -7849,7 +8031,7 @@
   /** { since, at, minutes } when this chat's measured prompt cache has run out with the agent idle; null otherwise. */
   function ctxCold(t, info) {
     var c = ctxCache(t, info);
-    return c && !c.warm ? { since: c.until, at: c.at, minutes: c.minutes } : null;
+    return c && !c.warm ? { since: c.until, at: c.at, minutes: c.span } : null;
   }
   /** This chat's prompt cache from its measured record: { warm, until, at, minutes, rebuilt } (until: when it runs out or ran out); null
    *  while a turn runs or when there is no record. */
@@ -7857,15 +8039,19 @@
     if (info.busy) return null;
     var r = cacheRecord(info.convId);
     if (!r) return null;
-    var until = Number(r.until);
-    return { warm: Date.now() < until, until: until, at: Number(r.at), minutes: Math.round(ttlMsOf(r) / 60000), rebuilt: r.rebuilt || null };
+    var until = Number(r.until), tail = tailOf(r);
+    return { warm: Date.now() < until, until: until, tail: tail, at: Number(r.at), minutes: Math.round(ttlMsOf(r) / 60000),
+      span: Math.max(1, Math.round((until - Number(r.at)) / 60000)), rebuilt: r.rebuilt || null };
   }
   function spanText(minutes) { return minutes >= 60 && minutes % 60 === 0 ? (minutes / 60) + ' hour' + (minutes > 60 ? 's' : '') : minutes + ' minutes'; }
   /** The hover line: "Prompt cache warm until 09:12 at the latest (the last call, 08:12, kept it 1 hour)" or "Prompt cache cold since
    *  09:12 ...", and the last rebuild when there was one in the last day. */
   function promptCacheLine(c) {
     if (!c) return '';
-    var kept = '(the last call, ' + hhmm(c.at) + ', kept it ' + spanText(c.minutes) + ')';
+    var kept = c.tail < c.until
+      ? '(the last call, ' + hhmm(c.at) + ', kept the older part 1 hour and the newest part ' + spanText(c.minutes) + ', ' +
+        (Date.now() < c.tail ? 'until ' : 'gone since ') + hhmm(c.tail) + ')'
+      : '(the last call, ' + hhmm(c.at) + ', kept it ' + spanText(c.minutes) + ')';
     var line = c.warm ? 'Prompt cache warm until ' + hhmm(c.until) + ' at the latest ' + kept
       : 'Prompt cache cold since ' + hhmm(c.until) + ' ' + kept + ': the next message writes the whole context again';
     var rb = c.rebuilt;
@@ -7889,7 +8075,12 @@
     var stock = t.actions && t.actions.querySelector('.context-usage-indicator:not(.aiondx-ctx)');
     var el = ctxEls[t.key];
     var cold = info ? ctxCold(t, info) : null;
-    if (stock) { if (el && el.parentNode) el.parentNode.removeChild(el); ctxSnow(stock, cold); return; }
+    var cmp = compactView(info);
+    if (stock && !cmp) {
+      if (stock.getAttribute('data-aiondx-hidden')) { stock.style.display = ''; stock.removeAttribute('data-aiondx-hidden'); }
+      if (el && el.parentNode) el.parentNode.removeChild(el); ctxSnow(stock, cold); return;
+    }
+    if (stock && cmp && !stock.getAttribute('data-aiondx-hidden')) { stock.style.display = 'none'; stock.setAttribute('data-aiondx-hidden', '1'); }
     var send = t.actions && t.actions.querySelector('.sendbox-send-tooltip-anchor');
     if (!info || !send || !send.parentNode) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
     if (!el) {
@@ -7901,14 +8092,17 @@
       ctxEls[t.key] = el;
     }
     var circ = 2 * Math.PI * 9;
-    var pct = info.limit > 0 ? Math.max(0, Math.min(100, info.used / info.limit * 100)) : 0;
+    var usedNow = cmp ? Number(cmp.tokens) : info.used;
+    var pct = info.limit > 0 ? Math.max(0, Math.min(100, usedNow / info.limit * 100)) : 0;
     var arc = el.querySelectorAll('circle')[1];
     var dash = String(circ), off = String(circ - pct / 100 * circ);
     if (arc.getAttribute('stroke-dasharray') !== dash) arc.setAttribute('stroke-dasharray', dash);
     if (arc.getAttribute('stroke-dashoffset') !== off) arc.setAttribute('stroke-dashoffset', off);
     var disp = info.limit > 0 ? '' : 'none';
     if (arc.style.display !== disp) arc.style.display = disp;
-    var tip = (info.limit > 0 ? pct.toFixed(1) + '% of the context window used (' + Math.round(info.used / 1000) + 'K of ' + Math.round(info.limit / 1000) + 'K)'
+    var tip = (cmp ? 'Compacted at ' + hhmm(Number(cmp.at)) + ': about ' + Math.round(usedNow / 1000) + 'K now' + (info.limit > 0 ? ' (' + pct.toFixed(1) + '% of ' + Math.round(info.limit / 1000) + 'K)' : '') +
+        ', down from ' + Math.round(Number(cmp.pre) / 1000) + 'K. An estimate until the next reply measures it.'
+      : info.limit > 0 ? pct.toFixed(1) + '% of the context window used (' + Math.round(info.used / 1000) + 'K of ' + Math.round(info.limit / 1000) + 'K)'
       : info.used > 0 ? Math.round(info.used / 1000) + 'K tokens used; the window size is not known' : 'No context count yet for this chat') +
       (info.cost ? '\nSession cost ≈ ' + costText(info.cost) : '');
     var cl = promptCacheLine(ctxCache(t, info));

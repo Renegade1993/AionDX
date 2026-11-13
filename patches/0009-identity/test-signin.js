@@ -78,6 +78,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('poll: done after a good code', r.state === 'done' && /Login successful/.test(r.text) && !/\x1b/.test(r.text), JSON.stringify(r));
     r = await call({ op: 'status', agent: 'claude' });
     check('status after: signed in, with the account it says', r.loggedIn === true && r.email === 'someone@example.com' && r.plan === 'pro', JSON.stringify(r));
+    // R-106 (2026-11-12): status says whether the sign-in can renew itself (its renewal key is saved). One that cannot is the old kind,
+    // which carries no Claude Docs or claude.ai skills and has to be done again.
+    const sdir = path.join(os.homedir(), '.claude-signintest');
+    fs.mkdirSync(sdir, { recursive: true });
+    try {
+      fs.writeFileSync(path.join(sdir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() + 3600000 } }));
+      r = await call({ op: 'status', agent: 'claude', account: 'signintest' });
+      check('a sign-in with its renewal key: status says it renews itself', r.loggedIn === true && r.renews === true, JSON.stringify(r));
+      fs.writeFileSync(path.join(sdir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'a', refreshToken: null, expiresAt: 0 } }));
+      r = await call({ op: 'status', agent: 'claude', account: 'signintest' });
+      check('an old sign-in without one: signed in, but it does not renew', r.loggedIn === true && r.renews === false, JSON.stringify(r));
+    } finally { fs.rmSync(sdir, { recursive: true, force: true }); }
     fs.unlinkSync(state);
     r = await call({ op: 'start', agent: 'claude', account: 'second' });
     const le2 = JSON.parse(fs.readFileSync(path.join(root, 'login-env.json'), 'utf8'));

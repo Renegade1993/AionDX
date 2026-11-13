@@ -42,6 +42,7 @@ process.stdin.on('data', (d) => {
     else if (j.type === 'foreign') out({ type: 'control_response', response: { subtype: 'success', request_id: 'abc-1', response: {} } });
     else if (j.type === 'exit') process.exit(j.code);
     else if (j.type === 'turn') out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, result: 'done' });
+    else if (j.type === 'compact') out({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: j.pre, post_tokens: j.post } });
     else if (j.type === 'api') {
       // Plain http and a synchronous unzip: Node's fetch decompresses with zlib streams, and a process that exits right after one
       // prints a libuv assertion on Windows (seen November 11th; it was this stand-in, not the proxy).
@@ -58,7 +59,7 @@ process.stdin.on('data', (d) => {
         });
       });
       rq.on('error', (e) => out({ type: 'api_result', id: j.id, error: String(e.message) }));
-      rq.end(JSON.stringify({ hello: 'world' }));
+      rq.end(JSON.stringify(j.body || { hello: 'world' }));
     }
     else if (j.type === 'ask') out({ type: 'control_request', request_id: j.id, request: { subtype: 'can_use_tool', tool_name: j.tool, input: j.input, decision_reason: j.reason } });
     else if (j.type === 'env') out({ type: 'env', base: process.env.ANTHROPIC_BASE_URL || '' });
@@ -125,10 +126,14 @@ const server = http.createServer((req, res) => {
       res.end('{"type":"message","content":[]}');
       return;
     }
-    // A chat's earlier cache record: c9 has one, every other chat none. Not counted among the writes.
+    // A chat's earlier cache record: c9 has one, every other chat none. The account tapkey000006 was last seen at 5 minutes. Not counted
+    // among the writes.
     if (req.method === 'GET' && req.url.indexOf('aiondx.cache.conv.') >= 0) {
+      const data = {};
+      if (req.url.indexOf('aiondx.cache.conv.c9') >= 0) data['aiondx.cache.conv.c9'] = seedRec;
+      if (req.url.indexOf('aiondx.cache.acct.tapkey000006') >= 0) data['aiondx.cache.acct.tapkey000006'] = { v: 1, label: 'Cache', ttl: '5m', at: Date.now() - 3600000, from: null, changedAt: 0 };
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, data: req.url.indexOf('aiondx.cache.conv.c9') >= 0 ? { 'aiondx.cache.conv.c9': seedRec } : {} }));
+      res.end(JSON.stringify({ success: true, data }));
       return;
     }
     puts.push({ method: req.method, url: req.url, token: req.headers['x-aiondx-runtime-token'], body: body ? JSON.parse(body) : null });
@@ -432,6 +437,7 @@ server.listen(0, '127.0.0.1', async () => {
       puts.length = 0;
       const C = run({ usage: { key: 'tapkey000005', label: 'Cache', probe: false }, env: Object.assign({}, process.env, { ANTHROPIC_BASE_URL: base }) });
       const cachePuts = (conv) => puts.filter((x) => x.method === 'PUT' && x.body && x.body['aiondx.cache.conv.' + conv]).map((x) => x.body['aiondx.cache.conv.' + conv]);
+      const acctPuts = (key) => puts.filter((x) => x.method === 'PUT' && x.body && x.body['aiondx.cache.acct.' + key]).map((x) => x.body['aiondx.cache.acct.' + key]);
       const call = async (id, mode, agent) => { C.input.write(frame({ type: 'api', id, mode, agent })); await waitFor(() => C.json().some((x) => x.type === 'api_result' && x.id === id)); return C.json().find((x) => x.type === 'api_result' && x.id === id); };
       const t0 = Date.now();
       const r1 = await call('k1', 'sse:1000:30000:0:gz');
@@ -455,18 +461,28 @@ server.listen(0, '127.0.0.1', async () => {
       await call('k4', 'sse:31000:0:200');
       await waitFor(() => cachePuts('c1').length >= 3);
       const c4 = cachePuts('c1')[2] || {};
-      check('a main call that wrote 5-minute entries is written at once and keeps the later until (the 1-hour entries outlive it)', c4.ttl === '5m' && c4.until === c3.until, JSON.stringify(c4));
+      // Anthropic moves the chat to 5 minutes (2026-11-11.3): the newest part ends in 5 minutes; the hour part this call read lives an hour on.
+      check('a main call that wrote 5-minute entries is written at once: the newest part ends 5 minutes on, the hour part it read lives an hour on, until is the later',
+        c4.ttl === '5m' && c4.tailUntil === c4.at + 300000 && c4.longUntil === c4.at + 3600000 && c4.until === c4.longUntil && c4.until > c3.until, JSON.stringify(c4));
+      await waitFor(() => acctPuts('tapkey000005').length >= 2);
+      const ac = acctPuts('tapkey000005');
+      check("the account's length: the first measured call records 1 hour (no change), the move to 5 minutes records the change and its time",
+        ac.length === 2 && ac[0].ttl === '1h' && ac[0].from === null && ac[0].label === 'Cache' && ac[1].ttl === '5m' && ac[1].from === '1h' && ac[1].changedAt === c4.at, JSON.stringify(ac));
+      check('the log names the account and both lengths', C.logs.some((l) => /prompt cache length for the Cache account is now 5 minutes \(was 1 hour\)/.test(l)), C.logs.join(' | ').slice(0, 400));
       await call('k5', 'sse:0:52000:0');
       await waitFor(() => cachePuts('c1').length >= 4);
       const c5 = cachePuts('c1')[3] || {};
       check('a main call that wrote most of its context again is a rebuild, and early when the record said the cache was still there', c5.rebuilt && c5.rebuilt.tokens === 52000 &&
         c5.rebuilt.early === true && c5.rebuilt.afterMin === 0 && c5.ttl === '1h', JSON.stringify(c5));
       check('the log says so', C.logs.some((l) => /cache rebuilt: 52000 tokens/.test(l)), C.logs.join(' | ').slice(0, 300));
+      check('a call that wrote at 1 hour again: one, two and only three account records (calls that only read write none)', acctPuts('tapkey000005').length === 3 &&
+        acctPuts('tapkey000005')[2].ttl === '1h' && acctPuts('tapkey000005')[2].from === '5m' && c5.tailUntil === c5.until && c5.longUntil === c5.until, JSON.stringify(acctPuts('tapkey000005')) + ' ' + JSON.stringify(c5));
       const r6 = await call('k6', 'sse:52000:0:0:gzsplit');
       await call('k7', 'sse:52000:0:0:br');
       C.input.write(frame({ type: 'turn' }));
       await waitFor(() => cachePuts('c1').length >= 5);
       const c7 = cachePuts('c1').slice(-1)[0] || {};
+      check('the read-only calls after it changed no account record', acctPuts('tapkey000005').length === 3, acctPuts('tapkey000005').length);
       check('a gzip answer cut inside message_start and a brotli answer are both read (two more main calls: 6 in all, not the subagent call)', c7.calls === 6 && c7.read === 52000, JSON.stringify(cachePuts('c1').map((x) => x.calls + ':' + x.read + ':' + x.ttl)) + ' ' + C.json().filter((x) => x.type === 'api_result').map((x) => x.id + ':' + x.status + ':' + (x.error || '')).join(','));
       check('and the cut gzip answer reaches Claude whole', r6 && /message_stop/.test(r6.body), JSON.stringify(r6).slice(0, 200));
       C.input.end();
@@ -479,6 +495,10 @@ server.listen(0, '127.0.0.1', async () => {
       const d1 = cachePuts('c9')[0] || {};
       check("a new process reads the chat's earlier record: the call count goes on, and a rebuild names the gap since that record's last call", d1.calls === 41 &&
         d1.rebuilt && d1.rebuilt.afterMin >= 30 && d1.rebuilt.afterMin <= 32 && d1.rebuilt.early === true && d1.ttl === '1h', JSON.stringify(d1));
+      await waitFor(() => acctPuts('tapkey000006').length >= 1);
+      const ad = acctPuts('tapkey000006');
+      check('an account last seen at 5 minutes, now answered at 1 hour: the change back is recorded and logged', ad.length === 1 && ad[0].ttl === '1h' && ad[0].from === '5m' &&
+        D.logs.some((l) => /is now 1 hour \(was 5 minutes\)/.test(l)), JSON.stringify(ad) + ' ' + D.logs.join(' | ').slice(0, 300));
       D.input.end();
       await Promise.race([D.done, sleep(5000)]);
       const E = run({ convId: 'c8', usage: { key: 'tapkey000007', label: '', probe: false }, env: Object.assign({}, process.env, { ANTHROPIC_BASE_URL: base }) });
@@ -489,6 +509,23 @@ server.listen(0, '127.0.0.1', async () => {
       check('an answer that is not an event stream writes no cache record', cachePuts('c8').length === 0, JSON.stringify(cachePuts('c8')));
       E.input.end();
       await Promise.race([E.done, sleep(5000)]);
+      // R-103 (2026-11-12): a compaction finished. The size after it is the compacted conversation plus the fixed part of each request
+      // (system prompt and tools), estimated from the last main call's context and that part's share of its request body.
+      const F = run({ convId: 'c7', usage: { key: 'tapkey000008', label: 'Cache', probe: false }, env: Object.assign({}, process.env, { ANTHROPIC_BASE_URL: base }) });
+      const ctxPuts = () => puts.filter((x) => x.method === 'PUT' && x.body && x.body['aiondx.ctx.conv.c7']).map((x) => x.body['aiondx.ctx.conv.c7']);
+      const reqBody = { model: 'claude-test-1', system: [{ type: 'text', text: 'S'.repeat(3000) }], tools: [{ name: 't', description: 'D'.repeat(1000) }], messages: [{ role: 'user', content: 'M'.repeat(6000) }] };
+      F.input.write(frame({ type: 'api', id: 'f1', mode: 'sse:90000:10000:0', body: reqBody }));
+      await waitFor(() => F.json().some((x) => x.type === 'api_result' && x.id === 'f1'));
+      F.input.write(frame({ type: 'compact', pre: 100003, post: 4000 }));
+      await waitFor(() => ctxPuts().length >= 1);
+      const fx = JSON.stringify(reqBody.system).length + JSON.stringify(reqBody.tools).length, cv = JSON.stringify(reqBody.messages).length;
+      const wantFixed = Math.round(100003 * fx / (fx + cv));
+      const cx = ctxPuts()[0] || {};
+      check('a finished compaction writes the size after it: the compacted conversation plus the fixed part, measured from the last call\'s request',
+        cx.pre === 100003 && cx.post === 4000 && cx.fixed === wantFixed && cx.tokens === wantFixed + 4000 && cx.estimated === true, JSON.stringify([cx, wantFixed]));
+      check('the log says so', F.logs.some((l) => new RegExp('compaction: about ' + (wantFixed + 4000) + ' tokens now').test(l)), F.logs.join(' | ').slice(0, 300));
+      F.input.end();
+      await Promise.race([F.done, sleep(5000)]);
     }
 
     // A program that will not start: exit 1, no hang.

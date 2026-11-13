@@ -152,6 +152,59 @@ try {
   const d3 = new DatabaseSync(odd); d3.exec('CREATE TABLE agent_metadata (id TEXT, agent_id TEXT, backend TEXT)'); d3.close();
   r = spawnSync(process.execPath, [shim, '--db', odd], { encoding: 'utf8', windowsHide: true, timeout: 30000, env: Object.assign({}, process.env, { AIONDX_REFRESH_LOG_DIR: path.join(root, 'logs') }) });
   check('a table without the expected columns is not written', r.status === 0 && /does not have/.test(fs.readFileSync(path.join(root, 'logs', 'model-refresh.log'), 'utf8')));
+  // Renamed built-in skills (2026-11-12: the updater repairs any such chat, for every install): a chat or assistant naming
+  // aionui-config, whose folder is gone, names aiondx-config instead; the old row is marked deleted; a skill with no counterpart is left alone.
+  {
+    const sdb = path.join(root, 'skills.db');
+    const sk = path.join(root, 'builtin-skills');
+    fs.mkdirSync(path.join(sk, 'aiondx-config'), { recursive: true });
+    fs.mkdirSync(path.join(sk, 'cron'), { recursive: true });
+    const d4 = new DatabaseSync(sdb);
+    d4.exec("CREATE TABLE skills (id TEXT PRIMARY KEY, name TEXT, path TEXT, source TEXT, deleted_at INTEGER); CREATE TABLE conversations (id TEXT PRIMARY KEY, extra TEXT); CREATE TABLE assistant_definitions (id TEXT PRIMARY KEY, default_skill_ids TEXT); CREATE TABLE agent_metadata (id TEXT, agent_id TEXT, backend TEXT)");
+    const insS = d4.prepare('INSERT INTO skills VALUES (?,?,?,?,NULL)');
+    insS.run('s-old', 'aionui-config', path.join(sk, 'aionui-config'), 'builtin');
+    insS.run('s-new', 'aiondx-config', path.join(sk, 'aiondx-config'), 'builtin');
+    insS.run('s-cron', 'cron', path.join(sk, 'cron'), 'builtin');
+    insS.run('s-gone', 'aionui-oldthing', path.join(sk, 'aionui-oldthing'), 'builtin');
+    const insC = d4.prepare('INSERT INTO conversations VALUES (?,?)');
+    insC.run('c1', JSON.stringify({ backend: 'claude', workspace: 'C:\\w', skills: ['aionui-config', 'cron'], other: { keep: 1 } }));
+    insC.run('c2', JSON.stringify({ skills: ['aionui-config', 'aiondx-config', 'cron'] }));
+    insC.run('c3', JSON.stringify({ skills: ['cron'] }));
+    insC.run('c4', JSON.stringify({ skills: ['aionui-oldthing', 'cron'] }));
+    d4.prepare('INSERT INTO assistant_definitions VALUES (?,?)').run('a1', JSON.stringify(['aionui-config', 'aionui-troubleshooting']));
+    d4.close();
+    r = spawnSync(process.execPath, [shim, '--db', sdb], { encoding: 'utf8', windowsHide: true, timeout: 30000, env: Object.assign({}, process.env, { AIONDX_REFRESH_LOG_DIR: path.join(root, 'logs2') }) });
+    const d5 = new DatabaseSync(sdb, { readOnly: true });
+    const ex = (id) => JSON.parse(d5.prepare('SELECT extra FROM conversations WHERE id = ?').get(id).extra);
+    const c1 = ex('c1'), c2 = ex('c2'), c3 = ex('c3'), c4 = ex('c4');
+    const a1 = JSON.parse(d5.prepare("SELECT default_skill_ids FROM assistant_definitions WHERE id = 'a1'").get().default_skill_ids);
+    const del = d5.prepare("SELECT id FROM skills WHERE deleted_at IS NOT NULL").all().map((x) => x.id).sort();
+    d5.close();
+    check('renamed skills: a chat naming the old config skill names the new one, the rest of its record untouched',
+      JSON.stringify(c1.skills) === JSON.stringify(['aiondx-config', 'cron']) && c1.other.keep === 1 && c1.workspace === 'C:\\w', JSON.stringify(c1));
+    check('renamed skills: a chat that had both keeps one of each', JSON.stringify(c2.skills) === JSON.stringify(['aiondx-config', 'cron']), JSON.stringify(c2));
+    check('renamed skills: other chats, and a skill with no counterpart, are left alone', JSON.stringify(c3.skills) === '["cron"]' && JSON.stringify(c4.skills) === '["aionui-oldthing","cron"]', JSON.stringify([c3, c4]));
+    check("renamed skills: an assistant's default list follows (a name with no counterpart stays)", JSON.stringify(a1) === JSON.stringify(['aiondx-config', 'aionui-troubleshooting']), JSON.stringify(a1));
+    check('renamed skills: only the old row whose folder is gone and has a counterpart is marked deleted', JSON.stringify(del) === '["s-old"]', JSON.stringify(del));
+    const rec = fs.readdirSync(path.join(root, 'logs2')).filter((f) => /^skill-repair-/.test(f));
+    const undo = rec.length ? JSON.parse(fs.readFileSync(path.join(root, 'logs2', rec[0]), 'utf8')) : null;
+    check('renamed skills: an undo record holds every value changed', rec.length === 1 && undo.conversations.length === 2 && undo.assistant_definitions.length === 1 && undo.skills.length === 1, JSON.stringify(undo).slice(0, 300));
+    spawnSync(process.execPath, [shim, '--db', sdb], { encoding: 'utf8', windowsHide: true, timeout: 30000, env: Object.assign({}, process.env, { AIONDX_REFRESH_LOG_DIR: path.join(root, 'logs2') }) });
+    check('renamed skills: a second run finds nothing more to do', fs.readdirSync(path.join(root, 'logs2')).filter((f) => /^skill-repair-/.test(f)).length === 1);
+  }
+  // the scheduled-task message index (bug sweep 2026-11-12): added once to a database with a messages table, left alone where there is none
+  {
+    const mdb = path.join(root, 'msgs.db');
+    const d6 = new DatabaseSync(mdb);
+    d6.exec('CREATE TABLE messages (id TEXT, conversation_id TEXT, type TEXT, created_at INTEGER, position TEXT, status TEXT); CREATE TABLE agent_metadata (id TEXT, agent_id TEXT, backend TEXT)');
+    d6.close();
+    spawnSync(process.execPath, [shim, '--db', mdb], { encoding: 'utf8', windowsHide: true, timeout: 30000, env: Object.assign({}, process.env, { AIONDX_REFRESH_LOG_DIR: path.join(root, 'logs3') }) });
+    const d7 = new DatabaseSync(mdb, { readOnly: true });
+    const idx = d7.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'aiondx_messages_cron'").get();
+    const plan = d7.prepare("EXPLAIN QUERY PLAN SELECT * FROM messages WHERE conversation_id = 'c' AND type = 'cron_trigger' ORDER BY created_at").all().map((r) => r.detail).join(' ');
+    d7.close();
+    check("the scheduled-task message index is added, and AionCore's lookup uses it", idx && /WHERE type = 'cron_trigger'/.test(idx.sql) && /aiondx_messages_cron/.test(plan), JSON.stringify([idx, plan]));
+  }
 } catch (e) {
   check('no exception', false, e.stack);
 } finally {

@@ -94,7 +94,9 @@ const PROFILE = path.join(process.env.TEMP || 'C:\\Windows\\Temp', 'aiondx-edge-
 const SHOTS = path.join(__dirname, 'shots');
 const DEFAULT_MSG = 'CONTINUE WORKING. Re-check the project plan and queue files, take the next unfinished item, and keep going until the user interrupts.';
 const LOOP_TAG = '[AionDX Loop: sent automatically, not typed by the user] ';
-const NUDGE = LOOP_TAG + DEFAULT_MSG;   // what a Loop nudge sends since 2026-09-25
+// the skills line every plain continue nudge ends with (R-100, 2026-11-12; option loop.skillsLine, on by default)
+const SKILLS_LINE = ' Skills: before a task, check your project’s skills (its *-procedures skill lists them); when you learn a better way, update the matching skill.';
+const NUDGE = LOOP_TAG + DEFAULT_MSG + SKILLS_LINE;   // what a Loop nudge sends since 2026-09-25 (the skills line since 2026-11-12)
 
 const edge = spawn(EDGE, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--hide-scrollbars',
@@ -179,6 +181,10 @@ async function pageTarget() {
     const hover = async (sel, waitMs = 600) => {
       const p = await centerOf(sel);
       if (!p) throw new Error(`nothing to hover at ${sel}`);
+      // from somewhere else first: a pointer already resting where the control now is sends no enter event (2026-11-12: a hover card
+      // that showed only some runs)
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      await sleep(60);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
       await sleep(waitMs);
     };
@@ -802,7 +808,79 @@ async function pageTarget() {
       await js('window.__aionDx.tickNow()');
       st = await saved(K);
       check(sc, 'a record older than the chat\'s last message is not used', st.cacheMeasured === false, JSON.stringify([st.cacheMeasured, st.coldAt - Date.now()]));
+      // 8. Anthropic moved the chat from an hour to 5 minutes (R-101, 2026-11-12): the newest part ends 5 minutes after the call, an older
+      // hour part lives on. A third short reply waits until 1 minute before the newest part ends (4 min), not 8 minutes.
+      const splitRec = async (atAgoMs, longLeftMs) => {
+        const at = Date.now() - atAgoMs;
+        await putStore('aiondx.cache.conv.harness1', { v: 1, at, until: Date.now() + longLeftMs, longUntil: Date.now() + longLeftMs, tailUntil: at + 300000, ttl: '5m',
+          read: 90000, write: 400, ctx: 90403, calls: 14, rebuilt: null });
+        await js('window.__aionDx.pullNow()');
+      };
+      await scene(60000, 3);
+      await splitRec(60000, 50 * 60000);
+      await js('window.__calls.length = 0; 0');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      const rec8 = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.cache.conv.harness1'];
+      check(sc, 'after a switch to 5 minutes the wait is capped by the newest part (4 min), though an hour part lasts 50 more min',
+        (await count()) === 0 && Math.abs(st.nextNudgeAt - (rec8.tailUntil - 60000)) < 2000 && st.warmAt === rec8.tailUntil && st.coldAt === rec8.until && st.cacheTtl === 300000,
+        JSON.stringify([st.nextNudgeAt - Date.now(), st.warmAt - rec8.tailUntil, st.coldAt - rec8.until, st.cacheTtl]));
+      await humanClick('.aiondx-loop button');
+      const status8 = await js('(document.querySelector(".aiondx-status") || {}).textContent');
+      check(sc, 'the menu names the newest part and when it runs out', /Cache: warm until \d\d:\d\d \(\d+\smin, measured\)\. The newest part, kept 5\smin, runs out at \d\d:\d\d\./.test(status8 || ''), status8);
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      const pub8 = (await js('JSON.parse(JSON.stringify(window.__stub.store))'))['aiondx.loopstatus.conv.harness1'];
+      check(sc, 'loop_status carries the newest part\'s end beside the until', pub8 && Math.abs(pub8.newestUntil - rec8.tailUntil) < 1000 && Math.abs(pub8.warmUntil - rec8.until) < 1000, JSON.stringify(pub8));
+      // 9. The newest part ran out 2 minutes ago, the hour part has 45 minutes: the Loop does not rest (some cache is left), it nudges.
+      await scene(7 * 60000, 0);
+      await splitRec(7 * 60000, 45 * 60000);
+      await js('window.__calls.length = 0; 0');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      check(sc, 'the newest part gone, the hour part alive: nudged, not put to rest', (await count()) === 1 && !st.restingSince, JSON.stringify([await count(), st.restKind, st.why]));
+      // 10. Both gone: it rests.
+      await scene(7 * 60000, 0);
+      await splitRec(7 * 60000, -60000);
+      await js('window.__calls.length = 0; 0');
+      await js('window.__aionDx.tickNow()');
+      st = await saved(K);
+      check(sc, 'both parts gone: no nudge, it rests', (await count()) === 0 && st.restKind === 'cold', JSON.stringify([await count(), st.restKind, st.why]));
       await noRec();
+    }
+
+    // The account's cache length changes (R-101, 2026-11-12): one notice per change, none for the first reading, none twice.
+    {
+      const sc = 'cache-length-notice';
+      await load('theme=light');
+      await js('localStorage.removeItem("aiondx.dx.cacheLen.k9"); document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
+      const lenNotices = async () => (await toasts()).filter((t) => /prompt cache of/.test(t));
+      await putStore('aiondx.cache.acct.k9', { v: 1, label: 'Personal', ttl: '1h', at: Date.now() - 600000, from: null, changedAt: 0 });
+      await js('window.__aionDx.pullNow()');
+      await sleep(300);
+      check(sc, 'the first reading of an account sets what was told and shows nothing', (await lenNotices()).length === 0 &&
+        (await js('localStorage.getItem("aiondx.dx.cacheLen.k9")')) === '1h', JSON.stringify(await toasts()));
+      await putStore('aiondx.cache.acct.k9', { v: 1, label: 'Personal', ttl: '5m', at: Date.now() - 60000, from: '1h', changedAt: Date.now() - 60000 });
+      await js('window.__aionDx.pullNow()');
+      await sleep(300);
+      let tn = await lenNotices();
+      check(sc, 'a move to 5 minutes shows one notice naming the account, both lengths and the time', tn.length === 1 &&
+        /^Anthropic now keeps the prompt cache of the Personal account's chats 5 minutes \(it was 1 hour\), from \d\d:\d\d\.Measured from their answers\. Anthropic gives 5 minutes when an account is on extra usage/.test(tn[0]), JSON.stringify(tn));
+      await js('window.__aionDx.pullNow()');
+      await sleep(300);
+      check(sc, 'the next reading of the same length shows no second notice', (await lenNotices()).length === 1, JSON.stringify(await lenNotices()));
+      // A reload that keeps the page's storage, as a real restart does: the same 5-minute reading is not told again.
+      await load('theme=light&keepls=1');
+      await putStore('aiondx.cache.acct.k9', { v: 1, label: 'Personal', ttl: '5m', at: Date.now() - 60000, from: '1h', changedAt: Date.now() - 60000 });
+      await js('window.__aionDx.pullNow()');
+      await sleep(300);
+      check(sc, 'a page opened after it shows none either (the length told is kept)', (await lenNotices()).length === 0 &&
+        (await js('localStorage.getItem("aiondx.dx.cacheLen.k9")')) === '5m', JSON.stringify(await lenNotices()));
+      await putStore('aiondx.cache.acct.k9', { v: 1, label: 'Personal', ttl: '1h', at: Date.now(), from: '5m', changedAt: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await sleep(300);
+      tn = await lenNotices();
+      check(sc, 'the move back to an hour is told too', tn.length === 1 && /keeps the prompt cache of the Personal account's chats 1 hour \(it was 5 minutes\)/.test(tn[0]), JSON.stringify(tn));
+      await js('(() => { delete window.__stub.store["aiondx.cache.acct.k9"]; localStorage.removeItem("aiondx.dx.cacheLen.k9"); document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); return 0; })()');
     }
 
     // Resume at a set time (2026-09-26): a team lead, told to slow down until 12:10, answered each nudge
@@ -1905,7 +1983,7 @@ async function pageTarget() {
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.tickNow()');
       const p = await posts('/api/conversations/harness1/messages');
-      check(sc, "the nudge sends the agent's message", p.length === 1 && p[0].body.content === LOOP_TAG + 'Agent wrote this nudge.', JSON.stringify(p));
+      check(sc, "the nudge sends the agent's message", p.length === 1 && p[0].body.content === LOOP_TAG + 'Agent wrote this nudge.' + SKILLS_LINE, JSON.stringify(p));   // the skills line follows any continue message (2026-11-12)
       await putStore(SOLO_KEY, { v: 1, on: false, msg: 'Agent wrote this nudge.', compactAt: 0, rev: 2, by: 'agent', who: 'Harness agent', for: 'Harness agent', at: Date.now() + 5, note: 'done for today' });
       await js('window.__aionDx.pullNow()');
       await sleep(200);
@@ -2772,7 +2850,9 @@ async function pageTarget() {
       await sleep(2600);
       a = await acc();
       check(sc, 'a pasted code goes to the sign-in, and when it finishes the page says who is signed in', JSON.stringify((await js('window.__si.calls'))[1]) === JSON.stringify(['code', 'CODE-123']) &&
-        a.flow === null && a.state === 'Signed in as someone@example.com (pro).' && a.signin === 'Sign in again' && /^Signed in\./.test(a.status), JSON.stringify(a));
+        // R-106 (2026-11-12): the status also says the sign-in renews itself and carries Claude Docs and claude.ai skills
+        a.flow === null && a.state === 'Signed in as someone@example.com (pro). It renews itself; Claude Docs and your claude.ai skills come with it.' &&
+        a.signin === 'Sign in again' && /^Signed in\./.test(a.status), JSON.stringify(a));
       await humanClick('.aiondx-acc-add');
       await sleep(400);
       await typeInto('.aiondx-acc-code', 'CODE-456');
@@ -2958,6 +3038,73 @@ async function pageTarget() {
       check(sc, 'Settings > Appearance has Open AionDX setup, which brings it back', v && v.title === 'Welcome to AionDX', JSON.stringify(v));
     }
 
+    // ---- chats on a drive (R-102, 2026-11-12) and the sign-in button (R-106) ----
+    {
+      const sc = 'drive';
+      const addSection = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
+        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
+        sec.appendChild(grid); document.body.appendChild(sec); return 0; })()`);
+      const bridge = (start, last, found) => js(`(() => {
+        window.__pd = { calls: [] };
+        window.confirm = (q) => { window.__pd.calls.push(['confirm', q]); return true; };
+        window.aiondxSignin = { status: () => Promise.resolve({ ok: true, installed: true, loggedIn: true, renews: true, renewsUntil: new Date(2026, 11, 13, 9, 0).getTime() }) };
+        window.aiondxPortable = {
+          status: () => Promise.resolve({ ok: true, userData: 'C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\AionDX', portable: false, start: ${JSON.stringify(start)}, last: ${JSON.stringify(last)} }),
+          choose: () => { window.__pd.calls.push(['choose']); return Promise.resolve({ ok: true, to: 'H:\\\\Work\\\\AionDX-Data' }); },
+          move: (to) => { window.__pd.calls.push(['move', to]); return Promise.resolve({ ok: true }); },
+          letter: (h, w) => { window.__pd.calls.push(['letter', h, w]); return Promise.resolve({ ok: true }); },
+          scan: () => { window.__pd.calls.push(['scan']); return Promise.resolve({ ok: true, found: ${JSON.stringify(found || [])}, pointer: null }); },
+          adopt: (d, id) => { window.__pd.calls.push(['adopt', d, id]); return Promise.resolve({ ok: true }); },
+        };
+        return 0; })()`);
+      await load('theme=light');
+      await addSection();
+      await sleep(600);
+      check(sc, 'without the drive bridge (the browser, WebUI) Settings has no drive section', !(await js(`!!document.querySelector('[data-testid="aiondx-drive-move"]')`)));
+      await load('theme=light');
+      await bridge({ state: 'none' }, null);
+      await addSection();
+      await sleep(900);
+      const stText = await js(`(document.querySelector('[data-testid="aiondx-drive-state"]') || {}).textContent`);
+      check(sc, 'with the bridge, Settings says where the chats are', /^Your chats are on this PC, in C:\\Users\\me\\AppData\\Roaming\\AionDX\.$/.test(stText || ''), stText);
+      check(sc, 'and has the sign-in button beside it', await js(`!!document.querySelector('[data-testid="aiondx-signin-open"]')`));
+      await humanClick('[data-testid="aiondx-drive-move"]');
+      await sleep(500);
+      const calls = await js('window.__pd.calls');
+      check(sc, 'Move: the folder picker, a plain confirmation of what happens, then the move to the chosen place', calls.length === 3 && calls[0][0] === 'choose' &&
+        calls[1][0] === 'confirm' && /^Move your chats to H:\\Work\\AionDX-Data\?/.test(calls[1][1]) && /kept, renamed/.test(calls[1][1]) &&
+        JSON.stringify(calls[2]) === JSON.stringify(['move', 'H:\\Work\\AionDX-Data']), JSON.stringify(calls));
+      await humanClick('[data-testid="aiondx-signin-open"]');
+      await sleep(500);
+      check(sc, 'Sign in to your agents opens the sign-in screen', await js(`!!document.querySelector('[data-testid="aiondx-acc-claude"]')`));
+      await sleep(400);
+      const accState = await js(`(document.querySelector('.aiondx-acc-state') || {}).textContent`);
+      check(sc, 'the sign-in screen says until when the sign-in renews itself (R-106)', /^Signed in\. It renews itself until December 13th; sign in again before then; Claude Docs and your claude\.ai skills come with it\.$/.test(accState || ''), accState);
+      // notices at start
+      await load('theme=light');
+      await js('localStorage.removeItem("aiondx.dx.driveSeen"); 0');
+      await bridge({ state: 'missing', path: 'H:\\AionDX-Data' }, { state: 'done', at: 1794500000000, to: 'H:\\AionDX-Data' });
+      await sleep(4800);
+      let tn = await toasts();
+      check(sc, 'at start: a finished move is told once, and a missing drive is told', tn.some((t) => /^Your chats are now in H:\\AionDX-Data\./.test(t)) &&
+        tn.some((t) => /^Your AionDX drive is not plugged in, so these are this PC's own chats\./.test(t)), JSON.stringify(tn));
+      await load('theme=light&keepls=1');
+      await bridge({ state: 'none' }, { state: 'done', at: 1794500000000, to: 'H:\\AionDX-Data' }, [{ dir: 'E:\\AionDX-Data', id: 'd1', have: 'E', want: 'H' }]);
+      await sleep(4800);
+      tn = await toasts();
+      const c2 = await js('window.__pd.calls');
+      check(sc, 'next start: the move is not told again; the background search finds the drive under another letter, offers its letter, and yes gives it',
+        !tn.some((t) => /^Your chats are now in/.test(t)) && c2.length === 3 && c2[0][0] === 'scan' && /plugged in as E:, but its chats were made on H:/.test(c2[1][1]) &&
+        JSON.stringify(c2[2]) === JSON.stringify(['letter', 'E', 'H']), JSON.stringify([tn, c2]));
+      await load('theme=light&keepls=1');
+      await bridge({ state: 'none' }, null, [{ dir: 'H:\\AionDX-Data', id: 'd1', have: 'H', want: 'H' }]);
+      await sleep(4800);
+      const c3 = await js('window.__pd.calls');
+      check(sc, 'a PC that has not used a drive asks before opening it, and yes takes it up', c3.length === 3 && c3[0][0] === 'scan' &&
+        /^An AionDX drive is plugged in: H:\\AionDX-Data\./.test(c3[1][1]) && JSON.stringify(c3[2]) === JSON.stringify(['adopt', 'H:\\AionDX-Data', 'd1']), JSON.stringify(c3));
+      await js('(() => { delete window.aiondxPortable; delete window.aiondxSignin; return 0; })()');
+    }
+
     // ---- clearing agent caches (2026-10-13, a request) ----
     {
       const sc = 'caches';
@@ -3126,6 +3273,31 @@ async function pageTarget() {
       const cancels = await js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/cancel').map(c => c.body)`);
       check(sc, 'the bolt cancels the running turn', JSON.stringify(cancels) === JSON.stringify([{ turn_id: 'turn_Z' }]), JSON.stringify(cancels));
       check(sc, 'and then sends the message, once', JSON.stringify(await posts3()) === JSON.stringify(['answer me now']), JSON.stringify(await posts3()));
+      // R-104 (2026-11-12, "lightning bolt send still doesn't do anything"): while an agent works the page redraws and the bolt can be
+      // taken out and put back between the press and the release, so the browser never delivers a click. The bolt acts on the press.
+      await load('theme=light');
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.runtime = { state: 'running', is_processing: true, turn_id: 'turn_Y' };
+        window.__aionDx.setLive('conv:harness1', 'working'); window.__calls.length = 0; return 0; })()`);
+      await humanClick('[data-testid="sendbox-input"]');
+      await send('Input.insertText', { text: 'stop and read this' });
+      await sleep(900);
+      await js('window.__aionDx.repaint()');
+      await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
+      const bp = await centerOf('#solo [data-testid="aiondx-solo-bolt"]');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bp.x, y: bp.y });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: bp.x, y: bp.y, button: 'left', clickCount: 1 });
+      // a redraw between press and release: the bolt's wrapper is taken out and put back in the same place
+      await js(`(() => { const w = document.querySelector('#solo .aiondx-solo-bolt-wrap'); const par = w.parentNode, nx = w.nextSibling; par.removeChild(w); par.insertBefore(w, nx); return 0; })()`);
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: bp.x, y: bp.y, button: 'left', clickCount: 1 });
+      await sleep(300);
+      check(sc, 'a press on the bolt answers at once, even when a redraw moved it before the release',
+        (await toasts()).some((t) => /^Interrupting the agent to send your message/.test(t)), JSON.stringify(await toasts()));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime; return 0; })()`);
+      await sleep(1700);
+      const cancels2 = await js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/cancel').map(c => c.body)`);
+      const sends2 = await js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/messages').map(c => c.body && c.body.content)`);
+      check(sc, 'and it still cancels the turn and sends the message once (no second send from the click that follows)',
+        JSON.stringify(cancels2) === JSON.stringify([{ turn_id: 'turn_Y' }]) && JSON.stringify(sends2) === JSON.stringify(['stop and read this']), JSON.stringify([cancels2, sends2]));
       await js(`(() => { window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
 
       // The context meter is always there; a snowflake says the chat's prompt cache is gone (2026-11-01), and since the second build of
@@ -3153,6 +3325,19 @@ async function pageTarget() {
       let rg = await ring();
       check(sc, 'a chat with no AionUi ring still shows the context meter', !!rg, JSON.stringify(rg));
       check(sc, 'it is 42% full (84K of 200K)', rg && Math.abs(1 - Number(rg.off) / Number(rg.dash) - 0.42) < 0.01 && /42\.0% of the context window used \(84K of 200K\)/.test(rg.title), JSON.stringify(rg));
+      // R-103 (2026-11-12): a compaction finished; the chat's count still says 84K (AionCore keeps it until the next reply). The meter shows
+      // the launcher's estimate at once, and goes back to the measured count when a reply changes it.
+      await putStore('aiondx.ctx.conv.harness1', { v: 1, at: Date.now() - 5000, pre: 84000, post: 3000, fixed: 20000, tokens: 23000, estimated: true });
+      await js('window.__aionDx.pullNow()');
+      rg = await again();
+      check(sc, 'right after a compaction the meter shows the estimate (23K, 11.5%) and says it is one',
+        rg && Math.abs(1 - Number(rg.off) / Number(rg.dash) - 0.115) < 0.01 && /^Compacted at \d\d:\d\d: about 23K now \(11\.5% of 200K\), down from 84K\. An estimate until the next reply measures it\./.test(rg.title), JSON.stringify(rg));
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.last_token_usage = { total_tokens: 26000 }; return 0; })()`);
+      rg = await again();
+      check(sc, 'the next reply\'s count replaces the estimate', rg && /13\.0% of the context window used \(26K of 200K\)/.test(rg.title) && !/Compacted at/.test(rg.title), JSON.stringify(rg));
+      await js(`(() => { delete window.__stub.store['aiondx.ctx.conv.harness1']; const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.last_token_usage = { total_tokens: 84000 }; return 0; })()`);
+      await js('window.__aionDx.pullNow()');
+      rg = await again();
       check(sc, 'a measured hour cache whose last call was 75 min ago has the snowflake, saying when it went and why',
         rg && rg.snow && /^Cold: the last call, at \d\d:\d\d, kept the prompt cache 1 hour, so it was gone by \d\d:\d\d \(measured from Anthropic's answer\)\./.test(rg.snowTitle) &&
         /Prompt cache cold since \d\d:\d\d \(the last call, \d\d:\d\d, kept it 1 hour\): the next message writes the whole context again/.test(rg.title), JSON.stringify(rg));
@@ -3168,6 +3353,10 @@ async function pageTarget() {
       await snowRec(7 * 60000, '5m');
       rg = await again();
       check(sc, 'a measured 5-minute cache (extra usage) 7 min after its last call: the snowflake, saying 5 minutes', rg && rg.snow && /kept the prompt cache 5 minutes/.test(rg.snowTitle), JSON.stringify(rg));
+      await snowRec(8 * 60000, '5m', { until: Date.now() + 40 * 60000, longUntil: Date.now() + 40 * 60000, tailUntil: Date.now() - 3 * 60000 });
+      rg = await again();
+      check(sc, 'after a switch to 5 minutes, with the hour part alive: warm, no snowflake, and the hover names both parts',
+        rg && !rg.snow && /Prompt cache warm until \d\d:\d\d at the latest \(the last call, \d\d:\d\d, kept the older part 1 hour and the newest part 5 minutes, gone since \d\d:\d\d\)/.test(rg.title), JSON.stringify(rg));
       await snowRec(30 * 60000, '1h', { rebuilt: { at: Date.now() - 30 * 60000, tokens: 182000, afterMin: 75, early: false } });
       rg = await again();
       check(sc, 'the meter names the last rebuild: when, after how long, how much was written', rg && !rg.snow && /\nLast rebuilt \d\d:\d\d, 75 min after the call before \(182K tokens written\)/.test(rg.title), JSON.stringify(rg));
@@ -3381,7 +3570,7 @@ async function pageTarget() {
       await addSection();
       await sleep(700);
       const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
-      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
       check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.files' && o.default === 'outside' && o.choices.length === 2) && !schema.options.some((o) => o.id === 'links.external') &&
         schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));

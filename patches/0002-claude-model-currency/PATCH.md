@@ -386,3 +386,21 @@ Tests: `test-stream-proxy.js` 60 (12 new: a gzip answer, a subagent's left out, 
 write keeping the later until, a rebuild, a gzip answer cut inside `message_start`, brotli, a new process continuing the record, a
 plain JSON answer writing nothing). The stand-in Claude in that test now reads answers with plain http and a synchronous unzip: Node's
 fetch decompresses with zlib streams and printed a libuv assertion on exit.
+
+## November 12th, 2026 (0.27.0)
+
+- Cache length changes (R-101, `claude-stream-proxy.js`): the record keeps `tailUntil` (the newest part) and `longUntil` (a part written for
+  an hour, which a read refreshes at its own length); `ttl` is the newest part's. `aiondx.cache.acct.<account>` records the account's length
+  and its changes, with a log line.
+- Compaction (R-103): the tap reads the share of each main request that is system prompt and tools (`readShare`); on Claude's
+  `compact_boundary` the launcher writes `aiondx.ctx.conv.<chat>` = post_tokens + that share of the last call's context.
+- One sign-in per account (R-106, `claude-account-router.js`): an account folder with a full Claude Code sign-in (access token and renewal
+  key) runs its chats on it and no token variable is set; `"signIn": "token"` keeps the token. Claude Docs: a chat bound to no project follows
+  the registry's `accountDocs`; with Docs on, an inherited connectors-off switch is cleared. Measured on a real Personal chat through the new
+  router: Claude Docs' 8 tools, 13 claude.ai skills.
+- Chats on a drive (R-102): when the data folder is portable (`aiondx-portable.json`), each chat's Claude history is copied to
+  `<data>\claude-history\projects` when its process ends and read from there at a resume (`test-portable-history.js`).
+- Renamed skills (`aiondx-model-refresh.js`, `skillRepair`): chats and assistants that name a built-in skill whose folder is gone get its
+  renamed counterpart (aionui- to aiondx-), the old row is marked deleted, an undo record is kept. Run on the developer's database: 234 chats.
+- A partial index for AionCore's scheduled-task message lookup (`aiondx_messages_cron`; 117 ms to 1 ms measured on a copy).
+- Tests: test-stream-proxy.js 67, test-account-switch.js 24, test-model-refresh.js 38, test-portable-history.js 4.

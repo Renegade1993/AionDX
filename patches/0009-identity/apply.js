@@ -352,7 +352,16 @@ function __aiondxIconFile(name) {
             cp.execFile(exe, ["auth", "status", "--json"], { env: envFor(configDir), windowsHide: true, timeout: 30000 }, (err, stdout) => {
               let j = null;
               try { j = JSON.parse(stdout); } catch {}
-              resolve(j ? { ok: true, installed: true, loggedIn: !!j.loggedIn, method: j.authMethod || "", email: j.email || "", org: j.orgName || "", plan: j.subscriptionType || "" }
+              // renews: the sign-in keeps its renewal key, so it stays current by itself and carries Claude Docs, claude.ai skills and connectors
+              // (R-106, 2026-11-12). A sign-in without one (an old kind) still answers loggedIn but has to be done again.
+              let renews = false, renewsUntil = 0;
+              try {
+                const credDir = configDir || path__namespace.join(os.homedir(), ".claude");
+                const o = JSON.parse(fs__namespace.readFileSync(path__namespace.join(credDir, ".credentials.json"), "utf8")).claudeAiOauth || {};
+                renews = !!(o.accessToken && o.refreshToken) && !(Number(o.refreshTokenExpiresAt) > 0 && Number(o.refreshTokenExpiresAt) < Date.now());
+                if (renews && Number(o.refreshTokenExpiresAt) > 0) renewsUntil = Number(o.refreshTokenExpiresAt);
+              } catch {}
+              resolve(j ? { ok: true, installed: true, loggedIn: !!j.loggedIn, renews, renewsUntil, method: j.authMethod || "", email: j.email || "", org: j.orgName || "", plan: j.subscriptionType || "" }
                         : { ok: false, installed: true, error: String(err && err.message || "no answer") });
             });
           });
@@ -388,6 +397,120 @@ function __aiondxIconFile(name) {
         }
         if (op === "cancel") {
           if (run && run.code === null) { try { run.child.kill(); } catch {} }
+          return { ok: true };
+        }
+        return { ok: false, error: "unknown request" };
+      } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    });
+  } catch {}
+})();
+/** AionDX on a drive (R-102, 2026-11-12). Ops: status (where the data folder is, what patch 0015 found at start, the last move's outcome),
+ *  choose (a folder picker; the data goes into a new AionDX-Data folder inside the chosen one), move (starts aiondx-portable-move.js hidden and
+ *  detached, then closes AionDX; the mover waits for it to close, moves, and opens it again), letter (gives the plugged-in drive the letter it
+ *  was made with, through one administrator prompt, then restarts AionDX). */
+(function __aiondxPortable() {
+  try {
+    const electron = require$$0$2;
+    const cp = require("child_process");
+    const os = require("os");
+    const local = () => process.env.LOCALAPPDATA || path__namespace.join(os.homedir(), "AppData", "Local");
+    const appData = () => process.env.AIONDX_PORTABLE_APPDATA || electron.app.getPath("appData");   // tests: a made-up folder for the pointer
+    const pointerFile = () => path__namespace.join(appData(), "AionDX-location.json");
+    const binDir = () => process.env.AIONDX_PORTABLE_BIN || path__namespace.join(process.resourcesPath || "", "aiondx", "bin");
+    const nodeExe = () => {
+      if (process.env.AIONDX_PORTABLE_NODE) return process.env.AIONDX_PORTABLE_NODE;
+      const base = path__namespace.join(process.resourcesPath || "", "bundled-aioncore", "win32-x64", "managed-resources", "node");
+      try { const d = fs__namespace.readdirSync(base).filter((x) => /^node-v/.test(x)).sort().pop(); if (d && fs__namespace.existsSync(path__namespace.join(base, d, "node.exe"))) return path__namespace.join(base, d, "node.exe"); } catch {}
+      return null;
+    };
+    electron.ipcMain.handle("aiondx:portable", async (_event, req) => {
+      try {
+        const op = req && req.op;
+        const userData = electron.app.getPath("userData");
+        if (op === "status") {
+          let last = null;
+          try { last = JSON.parse(fs__namespace.readFileSync(path__namespace.join(local(), "AionDX", "data-move", "portable-last.json"), "utf8")); } catch {}
+          let marked = false;
+          try { marked = fs__namespace.existsSync(path__namespace.join(userData, "aiondx-portable.json")); } catch {}
+          return { ok: true, userData, portable: marked, start: global.__aiondxPortable || { state: "none" }, last };
+        }
+        if (op === "choose") {
+          const r = await electron.dialog.showOpenDialog({ title: "Choose where AionDX keeps your chats (a folder on your drive)", properties: ["openDirectory", "createDirectory"] });
+          if (!r || r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
+          const to = path__namespace.join(r.filePaths[0], "AionDX-Data");
+          if (fs__namespace.existsSync(to) && fs__namespace.readdirSync(to).length) return { ok: false, error: to + " already holds files; choose another folder." };
+          if (to.toLowerCase().startsWith(userData.toLowerCase())) return { ok: false, error: "That folder is inside AionDX's own data folder." };
+          return { ok: true, to };
+        }
+        if (op === "move") {
+          const to = String(req.to || "");
+          if (!path__namespace.isAbsolute(to)) return { ok: false, error: "Choose a folder first." };
+          const node = nodeExe();
+          const mover = path__namespace.join(binDir(), "aiondx-portable-move.js");
+          const engine = path__namespace.join(binDir(), "aiondx-data-move.js");
+          if (!node || !fs__namespace.existsSync(mover) || !fs__namespace.existsSync(engine)) return { ok: false, error: "This AionDX is missing its mover (" + (node ? "" : "Node.js, ") + "aiondx-portable-move.js)." };
+          const args = ["--no-warnings", mover, "--from", userData, "--to", to, "--app", process.execPath, "--wait-pid", String(process.pid), "--engine", engine,
+            "--pointer", pointerFile(), "--local", local(), "--home", os.homedir(), "--roaming", appData()];
+          if (process.env.AIONDX_MOVER_SKIP_PROCESS_CHECK === "1") args.push("--skip-process-check");   // tests: this PC's own AionDX is open
+          if (process.env.AIONDX_MOVER_NO_REOPEN === "1") args.push("--no-reopen");                     // tests start the app themselves
+          // Started through WMI (Win32_Process.Create), so it is not a child of AionDX and not in any job AionDX runs in: a job that ends its
+          // children when AionDX closes (a test launcher's, measured November 12th) would end the mover before it moved anything. Hidden
+          // (ShowWindow 0; WMI refuses CREATE_NO_WINDOW in CreateFlags with "invalid parameter", 21). If WMI cannot start it, a plain
+          // detached start is tried.
+          const quoted = [node].concat(args).map((a) => '"' + String(a).replace(/"/g, "") + '"').join(" ");
+          const ps = "$s = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $s.ShowWindow = 0; " +
+            "$r = ([wmiclass]'Win32_Process').Create($env:AIONDX_MOVER_CMD, $null, $s); exit [int]$r.ReturnValue";
+          const w = cp.spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
+            { env: Object.assign({}, process.env, { AIONDX_MOVER_CMD: quoted }), windowsHide: true, timeout: 60000, encoding: "utf8" });
+          if (w.status !== 0) {
+            const child = cp.spawn(node, args, { detached: true, stdio: "ignore", windowsHide: true });
+            child.unref();
+          }
+          setTimeout(() => { try { electron.app.quit(); } catch {} }, 800);
+          return { ok: true, via: w.status === 0 ? "wmi" : "spawn" };
+        }
+        if (op === "scan") {
+          // Every drive root, each given a second and a half (a disconnected network drive must not hold the answer), for AionDX-drive.json naming
+          // a marked folder with a chats database. With a pointer, only that drive's id counts. Each found: its folder, its letter now, and the
+          // letter it was made with.
+          let ptr = null;
+          try { ptr = JSON.parse(fs__namespace.readFileSync(pointerFile(), "utf8")); } catch {}
+          const roots = process.env.AIONDX_PORTABLE_ROOTS ? process.env.AIONDX_PORTABLE_ROOTS.split(";").filter(Boolean)
+            : "DEFGHIJKLMNOPQRSTUVWXYZ".split("").map((l) => l + ":" + path__namespace.sep);
+          const within = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
+          const look = async (root) => {
+            try {
+              const dm = JSON.parse(await fs__namespace.promises.readFile(path__namespace.join(root, "AionDX-drive.json"), "utf8"));
+              if (!dm || !dm.id || !dm.dataPath) return null;
+              if (ptr && ptr.id && dm.id !== ptr.id) return null;
+              const dir = path__namespace.join(root, dm.dataPath);
+              const mk = JSON.parse(await fs__namespace.promises.readFile(path__namespace.join(dir, "aiondx-portable.json"), "utf8"));
+              if (!mk || mk.id !== dm.id) return null;
+              await fs__namespace.promises.access(path__namespace.join(dir, "aionui"));
+              return { dir, id: dm.id, have: root.slice(0, 1).toUpperCase(), want: String(dm.letter || root.slice(0, 1)).toUpperCase() };
+            } catch { return null; }
+          };
+          const found = (await Promise.all(roots.map((r) => within(look(r), 1500)))).filter(Boolean);
+          return { ok: true, found, pointer: ptr ? { path: ptr.path, id: ptr.id || "" } : null };
+        }
+        if (op === "adopt") {
+          const dir = String(req.dir || ""), id = String(req.id || "");
+          let mk = null;
+          try { mk = JSON.parse(fs__namespace.readFileSync(path__namespace.join(dir, "aiondx-portable.json"), "utf8")); } catch {}
+          if (!mk || !id || mk.id !== id) return { ok: false, error: "That is not an AionDX drive folder." };
+          fs__namespace.writeFileSync(pointerFile(), JSON.stringify({ v: 1, id, path: dir, at: new Date().toISOString(), takenUp: true }, null, 2));
+          setTimeout(() => { try { electron.app.relaunch(); electron.app.exit(0); } catch {} }, 600);
+          return { ok: true };
+        }
+        if (op === "letter") {
+          const have = String(req.have || "").toUpperCase(), want = String(req.want || "").toUpperCase();
+          if (!/^[D-Z]$/.test(have) || !/^[D-Z]$/.test(want) || have === want) return { ok: false, error: "Not a drive letter." };
+          if (fs__namespace.existsSync(want + ":" + path__namespace.sep)) return { ok: false, error: want + ": is already in use on this PC; free it first (Disk Management), then try again." };
+          const inner = "Get-Partition -DriveLetter " + have + " | Set-Partition -NewDriveLetter " + want;
+          const outer = "Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-Command','" + inner + "'";
+          const r = cp.spawnSync("powershell.exe", ["-NoProfile", "-Command", outer], { windowsHide: true, timeout: 180000, encoding: "utf8" });
+          if (!fs__namespace.existsSync(want + ":" + path__namespace.sep)) return { ok: false, error: "The drive did not get the letter " + want + ": (the administrator prompt was declined, or Windows refused). " + String(r.stderr || "").slice(0, 200) };
+          setTimeout(() => { try { electron.app.relaunch(); electron.app.exit(0); } catch {} }, 600);
           return { ok: true };
         }
         return { ok: false, error: "unknown request" };
@@ -585,6 +708,24 @@ else {
     '  cancel: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "cancel" })\n' +
     '});\n' + anchor);
   notes.push('preload: aiondxSignin');
+}
+
+// ... and AionDX on a drive (main process aiondx:portable, R-102).
+if (/aiondxPortable/.test(preload)) notes.push('preload: aiondxPortable already there');
+else {
+  const anchor = 'const backendPort = electron.ipcRenderer.sendSync("get-backend-port");';
+  const n = count(preload, anchor);
+  if (n !== 1) { console.error(`0009: preload (portable): expected 1 match, found ${n}. Nothing written.`); process.exit(1); }
+  preload = preload.replace(anchor, '/* AIONDX-0009: AionDX on a drive (patches/0009-identity, main process aiondx:portable) */\n' +
+    'electron.contextBridge.exposeInMainWorld("aiondxPortable", {\n' +
+    '  status: () => electron.ipcRenderer.invoke("aiondx:portable", { op: "status" }),\n' +
+    '  choose: () => electron.ipcRenderer.invoke("aiondx:portable", { op: "choose" }),\n' +
+    '  move: (to) => electron.ipcRenderer.invoke("aiondx:portable", { op: "move", to }),\n' +
+    '  letter: (have, want) => electron.ipcRenderer.invoke("aiondx:portable", { op: "letter", have, want }),\n' +
+    '  scan: () => electron.ipcRenderer.invoke("aiondx:portable", { op: "scan" }),\n' +
+    '  adopt: (dir, id) => electron.ipcRenderer.invoke("aiondx:portable", { op: "adopt", dir, id })\n' +
+    '});\n' + anchor);
+  notes.push('preload: aiondxPortable');
 }
 
 // ... and clearing an agent profile's caches (main process aiondx:cache).

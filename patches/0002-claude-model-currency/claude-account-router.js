@@ -349,8 +349,43 @@ function handOff(env) {
     env: env || process.env,
     windowsHide: true,
   });
+  mirrorBack();
   if (r.error) { console.error(r.error.message); process.exit(1); }
   process.exit(typeof r.status === 'number' ? r.status : 1);
+}
+
+/*
+ * AionDX on a drive (R-102, 2026-11-12). When AionDX's data folder is a portable one (it holds aiondx-portable.json, written by the move to a
+ * drive), Claude Code still keeps each chat's history in this PC's user folder (<config>\projects\<working folder>\<session>.jsonl), which
+ * does not travel. So the data folder keeps a copy, <data>\claude-history\projects\..., laid out as a Claude folder: at the start of a chat
+ * carryTranscript reads it as one more place (the newest copy wins), and when the chat's process ends, every history file of this working
+ * folder written since the start is copied back to it. On the other PC the chat then resumes with its memory.
+ */
+let mirror = null;   // { dir: <data>\claude-history, from: <this PC's Claude folder>, slug, since }
+function portableHistory(dbPath) {
+  try {
+    const dataDir = path.dirname(path.dirname(dbPath));
+    if (!fs.existsSync(path.join(dataDir, 'aiondx-portable.json'))) return null;
+    return path.join(dataDir, 'claude-history');
+  } catch { return null; }
+}
+function mirrorBack() {
+  if (!mirror) return;
+  try {
+    const src = path.join(mirror.from, 'projects', mirror.slug);
+    const dst = path.join(mirror.dir, 'projects', mirror.slug);
+    let copied = 0;
+    for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+      const f = path.join(src, e.name);
+      const st = fs.statSync(f);
+      if (st.mtimeMs < mirror.since - 2000) continue;
+      fs.mkdirSync(dst, { recursive: true });
+      if (e.isDirectory()) fs.cpSync(f, path.join(dst, e.name), { recursive: true, force: true });
+      else fs.copyFileSync(f, path.join(dst, e.name));
+      copied++;
+    }
+    if (copied) routerLog(`copied ${copied} history item(s) of this chat to the drive (${mirror.dir})`);
+  } catch (e) { if (e && e.code !== 'ENOENT') routerLog(`could not copy the history to the drive: ${e.message}`); }
 }
 
 /** AionCore's own session (stream-json in and out) runs Claude behind the pass-through in
@@ -402,6 +437,16 @@ function usageFor0(env, cfg, label) {
   if (hasToken) return Object.assign({ key: hash('file:' + path.resolve(file).toLowerCase()), label: lab, probe, configDir: dir }, probe ? { tokenFile: file } : {});
   return { key: hash('dir:' + path.resolve(dir).toLowerCase()), label: lab, probe: false };
 }
+/** A full Claude Code sign-in in this config folder: an access token and the renewal key that keeps it current, while that key has not
+ *  expired (refreshTokenExpiresAt; measured November 12th: a month after the sign-in). After it, the chat falls back to the account's token. */
+function hasFullSignIn(dir) {
+  try {
+    const o = JSON.parse(fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8')).claudeAiOauth || {};
+    if (Number(o.refreshTokenExpiresAt) > 0 && Number(o.refreshTokenExpiresAt) < Date.now() + 60000) return false;
+    return !!(o.accessToken && o.refreshToken);
+  } catch { return false; }
+}
+let fullSignIn = false;
 function proxyOff(env, convId, dbPath, usage, cfg) {
   let proxy;
   try {
@@ -422,7 +467,7 @@ function proxyOff(env, convId, dbPath, usage, cfg) {
     tap: !(cfg && cfg.usageTap === false), approve: !(cfg && cfg.autoApprove === false),   // each can be switched off in the config
     apiBase: String(process.env.AIONDX_BASE_URL || process.env.AIONUI_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers, // legacy-name
     log: (m) => routerLog(`conv=${convId} ${m}`),
-  }).then((code) => process.exit(code), () => process.exit(1));
+  }).then((code) => { mirrorBack(); process.exit(code); }, () => { mirrorBack(); process.exit(1); });
 }
 
 /** Keep this account's model picker current (a request of 2026-10-11): when the saved catalog in its config folder is older than six hours
@@ -495,9 +540,12 @@ function projectSetup(env, dbPath, convId, facts, label) {
   const acct = /work/i.test(String(label || '')) ? 'work' : 'personal';
   const owns = proj && ((proj.domain === 'work' && acct === 'work') || (proj.domain === 'personal' && acct === 'personal'));
   const allowed = proj && (!Array.isArray(proj.accounts) || proj.accounts.indexOf(acct) >= 0);
-  const docs = !!(proj && proj.docs === 'on' && owns && allowed);
+  // A chat bound to no project follows its account (registry accountDocs, 2026-11-12).
+  const acctDocs = reg && reg.accountDocs && typeof reg.accountDocs === 'object' ? reg.accountDocs[acct] : undefined;
+  const docs = proj ? !!(proj.docs === 'on' && owns && allowed) : acctDocs === 'on';
   if (!docs) { env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false'; env.CLAUDE_CODE_DISABLE_ARTIFACT = '1'; }
-  routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'}`);
+  else { delete env.ENABLE_CLAUDEAI_MCP_SERVERS; delete env.CLAUDE_CODE_DISABLE_ARTIFACT; }   // an inherited switch (a parent chat with Docs off) must not close it
+  routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'} sign-in=${fullSignIn ? 'full' : 'token or none'}`);
 }
 
 // ---- everything below is best-effort; any throw lands in the catch and passes through ----
@@ -535,7 +583,16 @@ try {
       env.CLAUDE_CONFIG_DIR = account.configDir;
       env.CLAUDE_SECURESTORAGE_CONFIG_DIR = account.configDir;
     }
-    if (account.tokenFile && fs.existsSync(account.tokenFile)) {
+    // One sign-in per account (R-106, 2026-11-12): when the account's folder holds a full sign-in (Claude Code's own, with its renewal key), the
+    // chat runs on it, so Claude Docs, the account's claude.ai skills and its connectors load with the model calls; a setup token can only
+    // make model calls. "signIn": "token" in the account's config keeps the token. Measured November 12th: the full sign-in loads Claude Docs
+    // through the usage tap (Research\2026-11-12_claude-docs-connector-measured.md).
+    const signInDir = account.configDir || path.join(home || realProfileDir(), '.claude');
+    if (account.signIn !== 'token' && hasFullSignIn(signInDir)) {
+      delete env.CLAUDE_CODE_OAUTH_TOKEN;
+      delete env.ANTHROPIC_AUTH_TOKEN;
+      fullSignIn = true;
+    } else if (account.tokenFile && fs.existsSync(account.tokenFile)) {
       const tok = fs.readFileSync(account.tokenFile, 'utf8').trim();
       // CLAUDE_CODE_OAUTH_TOKEN only: Claude Code takes it out of the environment of every command it runs, and keeps ANTHROPIC_AUTH_TOKEN
       // in, so a tool call that listed its variables printed the token into the chat (a report of 2026-10-12; measured offline with
@@ -556,7 +613,14 @@ try {
   // Resuming a session: bring the newest copy of its transcript to the folder about to run it first.
   // Claude keeps a session under <config dir>\projects\<folder>\<id>.jsonl, so a chat that moved would
   // otherwise find nothing, and AionCore would start it over with no memory of the chat.
-  carryTranscript(env.CLAUDE_CONFIG_DIR || path.join(env.HOME || env.USERPROFILE || realProfileDir(), '.claude'), claudeDirs(cfg, facts));
+  const claudeHere = env.CLAUDE_CONFIG_DIR || path.join(env.HOME || env.USERPROFILE || realProfileDir(), '.claude');
+  const driveHistory = portableHistory(dbPath);
+  const searchDirs = claudeDirs(cfg, facts);
+  if (driveHistory) {
+    searchDirs.push(driveHistory);
+    mirror = { dir: driveHistory, from: claudeHere, slug: process.cwd().replace(/[^a-zA-Z0-9]/g, '-'), since: Date.now() };
+  }
+  carryTranscript(claudeHere, searchDirs);
 
   // Always log the decision. One short line per launch, and it is the only durable record of
   // which account actually answered a conversation and which build served it. Trimmed so it

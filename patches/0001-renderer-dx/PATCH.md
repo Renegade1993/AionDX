@@ -1035,3 +1035,24 @@ Anthropic's cache length for an AionDX chat changed on its side on October 12th,
   measured hour cache the same lane is nudged; waits 8 min at the third short reply; a 30 min wait capped 6 min before the end; a
   measured 5-minute cache keeps 4 min; past the hour it rests; an outrun record is not used; snowflake from the record only, none with
   no record however long idle, none during a turn, the rebuild line.
+
+## Build `2026-11-12.1` (0.27.0)
+
+- Cache length changes (R-101): the Loop keeps a chat warm against the end of its newest cache part (`tailUntil`) and rests only when every
+  part is gone (`until`, which an older hour part can hold later after Anthropic moves a chat from an hour to 5 minutes). Saved as
+  `s.warmAt`; `loop_status` has `newestUntil`; the menu and the context hover name both parts. When an account's length changes
+  (`aiondx.cache.acct.<account>`), one notice says so; the length told is kept per account in the browser's storage, the first reading tells
+  nothing.
+- The context meter after a compaction (R-103): while the chat's count still equals the size before (within 2%), the meter shows the
+  launcher's estimate (`aiondx.ctx.conv.<chat>`), says so in its hover, and hides AionUi's own ring, which still holds the old count.
+- The bolts (R-104): every bolt acts on the press (`onPress`), not the click, because a repaint or a streaming reply could move or replace the
+  button between press and release and no click was ever delivered (two days of logs: no request from any bolt). AionDX's own controls are no
+  longer moved on a repaint when they are already in place (`placedBefore`; the plain Stop and the solo bolt used to swap places every
+  repaint). The solo bolt answers at once and never returns silently.
+- Sign-in (R-106): Settings > Appearance has "Sign in to your agents"; the sign-in screen says whether a sign-in renews itself.
+- Chats on a drive (R-102): Settings > Appearance > "Chats on a drive" says where the chats are and moves them (`window.aiondxPortable`,
+  patch 0009); at start, notices for a finished or failed move, a drive that is not plugged in, a drive taken up on this PC, and a drive under
+  another letter (with an offer to give it its letter).
+- The Loop's continue nudges end with a line about the project's skills (R-100; option `loop.skillsLine`, on by default).
+- Tests: click-test.js (cases `keep-warm-measured` 8 to 10, `cache-length-notice`, the redraw bolt case, the meter after a compaction,
+  `drive`).

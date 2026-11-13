@@ -14,6 +14,8 @@ echo ==== smoke >> "%OUT%"
 node tools\smoke-standalone.js >> "%OUT%" 2>&1
 echo ==== oct9 >> "%OUT%"
 node tools\test-live-oct9.js >> "%OUT%" 2>&1
+echo ==== drive >> "%OUT%"
+node tools\test-live-drive.js >> "%OUT%" 2>&1
 echo ==== click >> "%OUT%"
 node tools\dx-harness\click-test.js >> "%OUT%" 2>&1
 echo ==== cleanup >> "%OUT%"

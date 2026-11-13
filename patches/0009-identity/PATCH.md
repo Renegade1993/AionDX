@@ -181,3 +181,15 @@ out of settings.json, the cache folders deleted). Test plugin changes only throu
 - Spell checking is Chromium's own checker through the session (`setSpellCheckerLanguages`: the PC's language where Chromium has it, then English), on by default; the option `spellcheck` (patch 0001)
   switches the underlines per message box. Whether the checker finds its dictionaries offline on a PC with none cached is shown by the live test (`tools\test-live-menu.js`).
 - `AIONDX_MENU_TEST_FILE` (tests): the template's labels are written to that file and no menu is shown, so a test never puts a native menu on the screen.
+
+## November 12th, 2026 (0.27.0)
+
+- `aiondx:portable` and `window.aiondxPortable` (R-102): status, choose (a folder picker; the chats go into a new AionDX-Data folder),
+  move (starts `aiondx-portable-move.js` hidden and detached with this data folder, the target, AionDX's path and pid, then quits),
+  letter (gives a plugged-in drive its letter through one administrator prompt, then restarts). `test-portable.js` 12.
+- `aiondx:signin` status has `renews` (the folder's sign-in keeps its renewal key). `test-signin.js` 20.
+- The mover is started through WMI (Win32_Process.Create, ShowWindow 0), so it is not a child of AionDX and not in any job AionDX runs in
+  (a job that ends its children when the app closes killed it before it moved anything: found by `tools\test-live-drive.js`). Everything it
+  needs goes as arguments (`--pointer`, `--local`, `--home`, `--roaming`); a plain detached start is the fallback. WMI refuses
+  CREATE_NO_WINDOW in CreateFlags ("invalid parameter", 21). `scan` and `adopt`: the background search for an AionDX drive after the start
+  (each drive root given 1.5 s) and taking one up after the user says yes.

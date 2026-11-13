@@ -39,11 +39,26 @@ const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] :
 const ROAMING = opt('--roaming', process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'));
 const HOME = opt('--home', process.env.USERPROFILE || os.homedir());
 const LOCAL = opt('--local', process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'));
-const OLD = path.join(ROAMING, 'AionUi');    // legacy-name
-const NEW = path.join(ROAMING, 'AionDX');
+// --from / --to (R-102, 2026-11-12): any data folder to any other, for example AionDX's own to a folder on a drive that travels between PCs.
+// --portable marks the new folder as one (aiondx-portable.json in it, AionDX-drive.json at its drive's root, and this PC's pointer
+// %APPDATA%\AionDX-location.json), so AionDX on any PC finds it and the Claude launcher keeps the chats' history in it.
+const FROM = opt('--from', null), TO = opt('--to', null);
+const OLD = FROM ? path.resolve(FROM) : path.join(ROAMING, 'AionUi');    // legacy-name
+const NEW = TO ? path.resolve(TO) : path.join(ROAMING, 'AionDX');
+const PORTABLE = argv.includes('--portable');
+const POINTER = opt('--pointer', path.join(ROAMING, 'AionDX-location.json'));   // this PC's pointer (the app passes the path it reads)
+const sameVolume = (a, b) => path.parse(path.resolve(a)).root.toLowerCase() === path.parse(path.resolve(b)).root.toLowerCase();
 const INNER = 'aionui';                      // legacy-name: the folder inside the data folder, still named so
 const DB_NAMES = ['aiondx-backend.db', 'aionui-backend.db']; // legacy-name
-const STAMP = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+// The time to the second; a second run within the same second (two moves in a row) gets -2, -3 and so on, so it never meets the
+// first run's backup file (2026-11-12: "output file already exists" undid such a move).
+const STAMP = (() => {
+  const base = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+  const root = path.join(LOCAL, 'AionDX', 'data-move');
+  let s = base;
+  for (let i = 2; fs.existsSync(path.join(root, s)) && i < 1000; i++) s = base + '-' + i;
+  return s;
+})();
 const WORK = path.join(LOCAL, 'AionDX', 'data-move', STAMP);
 const LOGFILE = path.join(WORK, 'data-move.log');
 
@@ -160,6 +175,8 @@ function undo(journal) {
           fs.copyFileSync(s.backup, s.db);
         }
       } else if (s.kind === 'folder-rename') { if (exists(s.to) && !exists(s.from)) fs.renameSync(s.to, s.from); }
+      else if (s.kind === 'folder-copy') { if (exists(s.to)) fs.rmSync(s.to, { recursive: true, force: true, maxRetries: 5, retryDelay: 400 }); }
+      else if (s.kind === 'marker') { for (const f of s.files || []) { try { if (f.before === null) fs.rmSync(f.file, { force: true }); else fs.writeFileSync(f.file, f.before); } catch (e) { /* best effort */ } } }
       else if (s.kind === 'stub-removed') { /* the empty start-up folder is not worth restoring */ }
       log('undone: ' + s.kind + ' ' + (s.from || s.file || s.db || ''));
     } catch (e) { clean = false; log('COULD NOT UNDO ' + s.kind + ': ' + e.message); }
@@ -173,9 +190,14 @@ function checks() {
   const oldDb = dbIn(OLD);
   if (!oldDb || fs.statSync(oldDb).size === 0) throw Object.assign(new Refused('the earlier folder holds no chats database'), { code: 3 });
   if (hasChats(NEW)) throw Object.assign(new Refused('AionDX already has chats of its own in ' + NEW + '; nothing is moved'), { code: 3 });
+  const o = OLD.toLowerCase(), t = NEW.toLowerCase();
+  if (t === o || t.startsWith(o + '\\') || o.startsWith(t + '\\')) throw Object.assign(new Refused('the new folder cannot be the old one, inside it, or around it'), { code: 5 });
+  if (realDir(NEW) && fs.readdirSync(NEW).length && !TO_IS_STUB(NEW)) throw Object.assign(new Refused('the new folder ' + NEW + ' is not empty; choose an empty or new folder'), { code: 5 });
   return { oldDb };
 }
 
+// what Chromium leaves in AionDX's default folder when it starts with no data (the folder at the old default name may be that, and only that)
+function TO_IS_STUB(dir) { return !TO || path.resolve(dir).toLowerCase() === path.join(ROAMING, 'AionDX').toLowerCase(); }
 function planAndBaseline(oldDb) {
   const db = openDb(oldDb, true);
   try {
@@ -415,6 +437,14 @@ function run(dry) {
     return 0;
   }
 
+  if (!sameVolume(OLD, NEW)) {
+    let size = 0;
+    const du = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const q = path.join(d, e.name); try { if (e.isDirectory()) du(q); else size += fs.statSync(q).size; } catch (x) { /* unreadable: counted as nothing */ } } };
+    du(OLD);
+    fs.mkdirSync(path.dirname(NEW), { recursive: true });
+    if (freeBytes(path.dirname(NEW)) < size * 1.1) throw Object.assign(new Refused('not enough free space on ' + path.parse(NEW).root + ' (' + Math.round(size * 1.1 / 1048576) + ' MB needed)'), { code: 5 });
+    log('to copy to another drive: ' + Math.round(size / 1048576) + ' MB');
+  }
   const need = fs.statSync(oldDb).size * 1.2;
   if (freeBytes(LOCAL) < need) throw Object.assign(new Refused('not enough free disk space for a backup of the chats database (' + Math.round(need / 1048576) + ' MB needed)'), { code: 5 });
   // no program has the database open: the folder rename would fail on an open file, and a rewrite needs the file to itself
@@ -441,9 +471,20 @@ function run(dry) {
       journal.add({ kind: 'stub-removed', path: NEW });
       log('removed the empty start-up folder ' + NEW);
     }
-    fs.renameSync(OLD, NEW);
-    journal.add({ kind: 'folder-rename', from: OLD, to: NEW });
-    log('renamed ' + OLD + ' to ' + NEW);
+    if (sameVolume(OLD, NEW)) {
+      fs.mkdirSync(path.dirname(NEW), { recursive: true });
+      fs.renameSync(OLD, NEW);
+      journal.add({ kind: 'folder-rename', from: OLD, to: NEW });
+      log('renamed ' + OLD + ' to ' + NEW);
+    } else {
+      // another drive: copy everything, then keep the old folder under a new name until the user deletes it (nothing is deleted here)
+      fs.cpSync(OLD, NEW, { recursive: true, preserveTimestamps: true, errorOnExist: false, force: true });
+      journal.add({ kind: 'folder-copy', to: NEW });
+      const kept = OLD + '.moved-' + STAMP;
+      fs.renameSync(OLD, kept);
+      journal.add({ kind: 'folder-rename', from: OLD, to: kept });
+      log('copied ' + OLD + ' to ' + NEW + '; the old folder is kept as ' + kept + ' (delete it once AionDX works from the new place)');
+    }
     inject('folder');
 
     // 3. the database
@@ -517,6 +558,19 @@ function run(dry) {
     } finally { v.close(); }
     for (const [from, to] of renamed) if (!exists(to) || exists(from)) throw new Error('a history folder is not where it should be: ' + to);
     log('verified: integrity ok, ' + totalRows + ' rows in the same tables, no old path left, every working folder as before, history folders in place');
+    if (PORTABLE) {
+      const id = require('crypto').randomBytes(8).toString('hex');
+      const root = path.parse(NEW).root;
+      const files = [
+        [path.join(NEW, 'aiondx-portable.json'), { v: 1, id, path: NEW, from: OLD, movedAt: new Date().toISOString(), host: os.hostname() }],
+        [path.join(root, 'AionDX-drive.json'), { v: 1, id, dataPath: path.relative(root, NEW), letter: root.slice(0, 1).toUpperCase(), movedAt: new Date().toISOString() }],
+        [POINTER, { v: 1, id, path: NEW, at: new Date().toISOString() }],
+      ];
+      const step = { kind: 'marker', files: [] };
+      for (const [f, body] of files) { step.files.push({ file: f, before: exists(f) ? fs.readFileSync(f, 'utf8') : null }); fs.writeFileSync(f, JSON.stringify(body, null, 2)); }
+      journal.add(step);
+      log('marked ' + NEW + ' as a portable AionDX data folder (id ' + id + ')');
+    }
     journal.state = 'done'; journal.save();
     committed = true;
     return 0;

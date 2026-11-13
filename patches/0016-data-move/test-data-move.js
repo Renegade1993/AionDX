@@ -270,6 +270,63 @@ for (const step of ['folder', 'db', 'history', 'files']) {
   check('an empty start-up folder in the way is cleared and the move goes ahead', r.status === 0 && !!dbIn(m.NEW) && !fs.existsSync(path.join(m.NEW, 'Local State')), r.stdout + r.stderr);
 }
 
+// ---- 6. R-102 (2026-11-12): AionDX's data folder to a folder on another drive (H: by default; AIONDX_TEST_DRIVE picks another), marked as portable
+{
+  const DRIVE = process.env.AIONDX_TEST_DRIVE || 'H:\\';
+  if (!fs.existsSync(DRIVE)) { console.log('SKIP  the drive tests: ' + DRIVE + ' is not there'); }
+  else {
+    const m = make('drive');
+    // an AionDX folder (not AionUi) is the source here: rename the made-up one, and fix its stored paths first with the engine itself
+    const rr = tool(m, 'run');   // AionUi -> AionDX on the same volume, as before
+    const target = path.join(DRIVE, 'AionDX-test-' + process.pid, 'AionDX-Data');
+    const driveMarker = path.join(path.parse(target).root, 'AionDX-drive.json');
+    const hadDriveMarker = fs.existsSync(driveMarker) ? fs.readFileSync(driveMarker) : null;
+    try {
+      const before = (() => { const d = new DatabaseSync(dbIn(m.NEW), { readOnly: true }); try { return d.prepare('SELECT COUNT(*) AS n FROM messages').get().n; } finally { d.close(); } })();
+      const r = spawnSync(process.execPath, ['--no-warnings', TOOL, 'run', '--roaming', m.roaming, '--home', m.home, '--local', m.local, '--from', m.NEW, '--to', target, '--portable'],
+        { encoding: 'utf8', windowsHide: true, timeout: 120000 });
+      if (r.status !== 0) console.log('MOVE OUTPUT ' + r.stdout + ' ERR ' + r.stderr);
+      const db2 = dbIn(target);
+      let after = -1, stored = '', left = -1;
+      if (db2) {
+        const d = new DatabaseSync(db2, { readOnly: true });
+        try {
+          after = d.prepare('SELECT COUNT(*) AS n FROM messages').get().n;
+          stored = JSON.parse(d.prepare("SELECT extra FROM conversations WHERE id = 'c0'").get().extra).workspace;
+          left = d.prepare('SELECT COUNT(*) AS n FROM messages WHERE instr(lower(content), lower(?)) > 0').get(m.NEW).n;
+        } finally { d.close(); }
+      }
+      check('the data folder moves to another drive: copied, every message there, stored paths now on the drive, none of the old left',
+        rr.status === 0 && r.status === 0 && after === before && stored.toLowerCase().startsWith(target.toLowerCase() + '\\') && left === 0, 'status ' + r.status + ' | ' + r.stdout.slice(-900) + ' | ERR ' + r.stderr.slice(-600));
+      const kept = fs.readdirSync(m.roaming).filter((n) => /^AionDX\.moved-/.test(n));
+      check('the old folder is kept under a new name, nothing deleted', kept.length === 1 && !fs.existsSync(m.NEW) && !!dbIn(path.join(m.roaming, kept[0])), JSON.stringify(fs.readdirSync(m.roaming)));
+      const mk = JSON.parse(fs.readFileSync(path.join(target, 'aiondx-portable.json'), 'utf8'));
+      const dm = JSON.parse(fs.readFileSync(driveMarker, 'utf8'));
+      const ptr = JSON.parse(fs.readFileSync(path.join(m.roaming, 'AionDX-location.json'), 'utf8'));
+      check("it is marked as portable: in the folder, at the drive's root (where another PC looks) and in this PC's pointer, with one id",
+        mk.id && mk.id === dm.id && dm.id === ptr.id && path.resolve(path.parse(target).root, dm.dataPath).toLowerCase() === target.toLowerCase() && ptr.path === target, JSON.stringify([mk, dm, ptr]));
+      check("Claude's history folders follow (named for the new place)", fs.existsSync(path.join(m.home, '.claude', 'projects', mangle(path.join(target, 'aionui', 'conversations', 'users', 'u1', '2026', '09', '01', 'chat-temp-c0')))), JSON.stringify(fs.readdirSync(path.join(m.home, '.claude', 'projects'))));
+      // a second move onto a folder that is not empty is refused
+      const busy = path.join(DRIVE, 'AionDX-test-' + process.pid, 'busy');
+      fs.mkdirSync(busy, { recursive: true }); fs.writeFileSync(path.join(busy, 'something.txt'), 'x');
+      const m2 = make('drive2');
+      tool(m2, 'run');
+      const r2 = spawnSync(process.execPath, ['--no-warnings', TOOL, 'run', '--roaming', m2.roaming, '--home', m2.home, '--local', m2.local, '--from', m2.NEW, '--to', busy, '--portable'], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
+      check('a target folder that is not empty is refused, and nothing changes', r2.status === 5 && fs.existsSync(m2.NEW) && fs.readdirSync(busy).length === 1, r2.status + ' ' + r2.stdout.slice(-300));
+      // a failure after the copy is undone: the copy goes, the old folder is back under its name
+      const m3 = make('drive3');
+      tool(m3, 'run');
+      const t3 = path.join(DRIVE, 'AionDX-test-' + process.pid, 'Fail');
+      const r3 = spawnSync(process.execPath, ['--no-warnings', TOOL, 'run', '--roaming', m3.roaming, '--home', m3.home, '--local', m3.local, '--from', m3.NEW, '--to', t3, '--portable'],
+        { encoding: 'utf8', windowsHide: true, timeout: 120000, env: Object.assign({}, process.env, { AIONDX_DATA_MOVE_FAIL_AFTER: 'db' }) });
+      check('a failure after the copy undoes it: the copy is removed and the old folder is back where it was', r3.status === 7 && !fs.existsSync(t3) && !!dbIn(m3.NEW) && !fs.readdirSync(m3.roaming).some((n) => /moved-/.test(n)), r3.status + ' ' + r3.stdout.slice(-400));
+    } finally {
+      try { fs.rmSync(path.join(DRIVE, 'AionDX-test-' + process.pid), { recursive: true, force: true }); } catch (e) { /* best effort */ }
+      try { if (hadDriveMarker) fs.writeFileSync(driveMarker, hadDriveMarker); else fs.rmSync(driveMarker, { force: true }); } catch (e) { /* best effort */ }
+    }
+  }
+}
+
 clearTimeout(deadline);
 console.log('\n' + pass + '/' + (pass + fail) + ' passed');
 process.exit(fail ? 1 : 0);
