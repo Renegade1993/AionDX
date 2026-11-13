@@ -21,7 +21,9 @@ if (!method || !route || !/^(GET|POST|PUT|PATCH|DELETE)$/i.test(method)) {
 const base = (process.env.AIONDX_BASE_URL || process.env.AIONUI_BASE_URL || '').replace(/\/+$/, '');
 const tok = process.env.AIONDX_RUNTIME_TOKEN || process.env.AIONUI_RUNTIME_TOKEN;
 if (!base || !tok) { console.log('runtime-api: this shell has no AionUi runtime token or base URL (run it from an agent\'s shell in AionDX)'); process.exit(2); }
-let body;
+let body, outFile = null;
+const oi = rest.indexOf('--out');
+if (oi >= 0) { outFile = rest[oi + 1]; rest.splice(oi, 2); }   // --out FILE: the whole answer to FILE (the screen copy is cut at 20,000 characters)
 if (rest[0] === '--body-file') body = fs.readFileSync(rest[1], 'utf8');
 else if (rest.length) body = rest.join(' ');
 const headers = { 'Content-Type': 'application/json', 'x-aiondx-runtime-token': tok, 'x-aiondx-user-id': process.env.AIONDX_USER_ID || '',
@@ -34,6 +36,7 @@ fetch(base + route, { method: method.toUpperCase(), headers, body, signal: ac.si
   let out = text;
   try { out = JSON.stringify(JSON.parse(text), null, 2); } catch { /* not JSON */ }
   console.log(r.status);
+  if (outFile) { fs.writeFileSync(outFile, text); console.log('written: ' + outFile + ' (' + text.length + ' characters)'); process.exit(r.ok ? 0 : 1); }
   console.log(out.length > 20000 ? out.slice(0, 20000) + '\n... (' + out.length + ' characters; cut)' : out);
   process.exit(r.ok ? 0 : 1);
 }, (e) => { clearTimeout(timer); console.log('runtime-api: ' + (e.name === 'AbortError' ? 'no answer in 30 s' : e.message)); process.exit(1); });

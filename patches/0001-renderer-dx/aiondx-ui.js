@@ -3534,6 +3534,8 @@
       if (a.source === 'generated') return a.name;
       any = any || a;
     }
+    var added = accountsRec && Array.isArray(accountsRec.accounts) ? accountsRec.accounts.filter(function (x) { return x && x.id === agentId && x.added; })[0] : null;
+    if (!any && added) return 'Claude Code (' + added.label + ')';
     return any ? any.name : (agentId || 'its agent');
   }
   /** "Claude Code (Second)" -> "Work"; anything else as it is. */
@@ -3545,6 +3547,12 @@
       if (a.backend !== 'claude' || !a.agentId || seen[a.agentId]) return;
       seen[a.agentId] = true;
       out.push({ agentId: a.agentId, name: agentName(a.agentId) });
+    });
+    // R-119: the accounts added from "+ Add account" or Settings' sign-in; the launcher runs a chat moved to one on that account
+    (typeof addedAccounts === 'function' ? addedAccounts() : []).forEach(function (a) {
+      if (seen[a.id]) return;
+      seen[a.id] = true;
+      out.push({ agentId: a.id, name: 'Claude Code (' + a.label + ')' });
     });
     return out;
   }
@@ -5186,9 +5194,10 @@
       var cur = await getJson('/api/settings/client?keys=' + encodeURIComponent(ACCOUNTS_KEY));
       var rec = (cur && cur.data && cur.data[ACCOUNTS_KEY]) || {};
       var list = Array.isArray(rec.accounts) ? rec.accounts.filter(function (a) { return a && a.id !== account; }) : [];
-      list.push({ id: account, label: label });
+      list.push({ id: account, label: label, added: true });
       var body = {};
       body[ACCOUNTS_KEY] = Object.assign({ v: 1 }, rec, { accounts: list });
+      accountsRec = body[ACCOUNTS_KEY];
       await putPrefs(body);
     } catch (e) { /* the launcher has it; the menu catches up when the list is next written */ }
     welcomeStatus('Signed in as ' + ((st && st.email) || 'the new account') + '. "' + label + '" is now in every Claude chat\'s account menu.', '');
@@ -6339,6 +6348,22 @@
     '  border:1px solid var(--color-border-2);background:var(--color-bg-2);color:var(--color-text-1);font-size:12px;color-scheme:light dark}',
     // Welcome to AionDX, the first-run screen.
     '.aiondx-welcome-backdrop{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}',
+    // "+ Add account" (R-119): the dialog, and the row while an added account is picked (AionUi's own Claude pill underneath looks unpicked)
+    '.aiondx-accdlg{width:min(540px,92vw);padding:20px 24px 0!important}',
+    '.aiondx-accdlg-h{margin:0 0 14px;font-size:17px;font-weight:600;color:var(--color-text-1)}',
+    '.aiondx-accdlg-row{display:flex;flex-direction:column;gap:4px;margin:0 0 6px}',
+    '.aiondx-accdlg-lab{display:block;margin:10px 0 3px;font-size:13px;font-weight:600;color:var(--color-text-1)}',
+    '.aiondx-accdlg-row .aiondx-accdlg-lab{margin-top:0}',
+    '.aiondx-accdlg-opt{display:flex;gap:8px;align-items:flex-start;margin:3px 0;font-size:13px;line-height:1.4;color:var(--color-text-2);cursor:pointer}',
+    '.aiondx-accdlg-opt b{color:var(--color-text-1)}',
+    '.aiondx-accdlg-inline{display:flex;gap:16px;align-items:center;font-size:13px;color:var(--color-text-2)}',
+    '.aiondx-accdlg-check{display:flex;gap:8px;align-items:center;margin:8px 0 0;font-size:13px;color:var(--color-text-2);cursor:pointer}',
+    '.aiondx-accdlg-hint{font-size:12px;color:var(--color-text-3)}',
+    '.aiondx-accdlg-p{font-size:13px;line-height:1.5;color:var(--color-text-2);margin:0 0 10px}',
+    '.aiondx-accdlg-list{margin:0 0 12px;padding-left:18px;font-size:13px;line-height:1.55;color:var(--color-text-2)}',
+    '.aiondx-accdlg-err{min-height:16px;margin-top:8px;font-size:12.5px;color:rgb(var(--danger-6))}',
+    '.aiondx-accdlg-btns{position:sticky;bottom:0;display:flex;justify-content:flex-end;gap:8px;margin-top:12px;padding:12px 0 16px;background:inherit;border-top:1px solid var(--color-border-1,rgba(0,0,0,.08))}',
+    '.aiondx-acc-pending [data-testid^="preset-pill-"][data-assistant-selected="true"]{background:transparent!important;box-shadow:none!important;opacity:.75}',
     '.aiondx-welcome{box-sizing:border-box;width:min(580px,92vw);max-height:90vh;overflow-y:auto;padding:28px 32px;border-radius:12px;',
     '  border:1px solid var(--color-border-2);background:var(--color-bg-2);color:var(--color-text-1);box-shadow:0 12px 48px rgba(0,0,0,.35)}',
     '.aiondx-welcome-mark{display:block;width:40px;height:40px;margin-bottom:10px}',
@@ -7121,7 +7146,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -10332,6 +10357,10 @@
       try {
         if (!disabled()) {
           if ((id = callId(TEAM_SESSION_RE, input, init, ['POST']))) return holdTeamWake(id, args);
+          if (pendingAccount && String((init && init.method) || (input && input.method) || 'GET').toUpperCase() === 'POST' &&
+              CREATE_RE.test(String(typeof input === 'string' ? input : (input && input.url) || '').replace(/^https?:\/\/[^/]+/, ''))) {
+            return nativeFetch.apply(window, args).then(tagNewChat);
+          }
           if (callId(IMAGE_RE, input, init, ['POST'])) return nativeFetch.apply(window, args).then(tapImage(init));
           if ((id = callId(OLDER_RE, input, init, ['GET']))) return pacedOlderPage(id, args);
           noteAttach(input, init);
@@ -10526,10 +10555,9 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.27.2',
+    release: '0.27.4',
     items: [
-      ['Claude Docs open beside your chat', 'Click a Claude Doc link in a reply. It opens in a pane on the right; drag its left edge to resize, ✕ to close. The first doc asks you to sign in to Claude once, in the pane.'],
-      ['A bell at the top of each chat', 'A red number on it means something needs you, for example a Reconnect so an agent picks up Claude Docs. Click the bell to see it. Nothing restarts unless you click.'],
+      ['More Claude accounts', 'On the new-chat page, click + Add account at the end of the agent row. Name the account, choose what it may do, and sign in on the page that opens; AionDX checks the key and adds a pill for it.'],
     ],
   };
   var WHATS_NEW_KEY = KEY_PREFIX + 'whatsnew.seen';
@@ -10604,7 +10632,8 @@
       text: 'Click a Claude Doc link to read it in a pane beside the chat. Drag the pane’s left edge to resize it, ✕ closes it, and Alt+click opens a doc in your browser instead.' },
     { id: 'loop', sel: '[data-testid="aiondx-loop"]', title: 'The Loop',
       text: 'While it is on, it tells the agent to keep going each time it stops with nothing left to do. Click to switch it on or off; hover it to see what it is doing.' },
-    { id: 'ctx', sel: '.context-usage-indicator', title: 'How full this chat is',
+    // 'ctx2': the first version (0.27.2) said the snowflake meant a warm cache; a new id shows the corrected tip to those who put it away
+    { id: 'ctx2', sel: '.context-usage-indicator', title: 'How full this chat is',
       text: 'The ring fills as the chat\u2019s memory fills. A blue snowflake on it means the chat\u2019s cache has expired, so your next message costs more and starts slower. Hover the ring for the times.' },
     { id: 'account', sel: '[data-testid="aiondx-account"]', title: 'Which Claude account',
       text: 'This chat runs on the account named here. Click it to move the chat to another account, for example when one reaches its limit.' },
@@ -10614,6 +10643,8 @@
       text: 'Shows while the agent works and you have typed something. Click it to stop the agent’s current step and have it answer you right away; Enter instead waits for its next step.' },
     { id: 'menu', sel: '[data-testid="aiondx-chat-menu"]', title: 'This chat’s menu',
       text: 'The same menu you get by right-clicking the chat in the list on the left.' },
+    { id: 'add-account', sel: '[data-testid="aiondx-add-account"]', title: 'Add another Claude account',
+      text: 'Click to sign in another Claude account; you choose what it may do before the sign-in page opens. It then gets its own pill here and shows in every chat\u2019s account button.' },
     { id: 'groups', sel: '[data-testid="aiondx-group-new"]', title: 'Groups',
       text: 'Make a group to keep related chats and teams together in this list.' },
     { id: 'drive', sel: '[data-testid="aiondx-drive-move"]', title: 'Chats on a drive',
@@ -10738,6 +10769,270 @@
     setInterval(function () { if (document.visibilityState === 'visible') coachRun(); }, 700);
   }
   coachInstall();
+
+  // ---------------------------------------------------------------- "+ Add account" on the new-chat page (R-119, a request of 2026-11-13)
+
+  // At the end of the new-chat page's agent row: "+ Add account" opens a dialog that names the account and sets what it may do before
+  // the sign-in starts (everything, chats only, or Anthropic Console; personal or work; Claude Docs and connectors; SSO; the email). The
+  // main process (aiondx-accounts.js) signs it in to its own folder, checks the key it saved and adds it to the launcher's accounts; no key
+  // reaches this page. Each added account then has a pill in the row, "Claude Code (<name>)": picking it selects the row's Claude agent and
+  // marks the next chat for that account, written (aiondx.agent.conv.<id> = {agent: <account>}) when AionCore creates the chat and before
+  // its agent starts (AionDX holds a new chat's start until its first message). The account also shows in every Claude chat's account menu.
+  var ADDED_MARK = 'added';         // entries of aiondx.accounts that this flow (or Settings' sign-in) added; the first version's two have none
+  var pendingAccount = null;        // the account picked on the new-chat page for the next chat
+  var accDlg = null;
+  function addedAccounts() {
+    var list = accountsRec && Array.isArray(accountsRec.accounts) ? accountsRec.accounts : [];
+    return list.filter(function (a) { return a && a.id && a[ADDED_MARK]; });
+  }
+  async function rememberAccount(id, label, kind) {
+    var cur = await getJson('/api/settings/client?keys=' + encodeURIComponent(ACCOUNTS_KEY));
+    var rec = (cur && cur.data && cur.data[ACCOUNTS_KEY]) || {};
+    var list = Array.isArray(rec.accounts) ? rec.accounts.filter(function (a) { return a && a.id !== id; }) : [];
+    var entry = { id: id, label: label, kind: kind };
+    entry[ADDED_MARK] = true;
+    list.push(entry);
+    var body = {};
+    body[ACCOUNTS_KEY] = Object.assign({ v: 1 }, rec, { accounts: list, at: Date.now() });
+    await putPrefs(body);
+    accountsRec = body[ACCOUNTS_KEY];
+  }
+  function accountSlug(name) {
+    return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24).replace(/-+$/, '');
+  }
+  function closeAccDlg() {
+    if (accDlg && accDlg.timer) clearInterval(accDlg.timer);
+    if (accDlg && accDlg.el && accDlg.el.parentNode) accDlg.el.parentNode.removeChild(accDlg.el);
+    accDlg = null;
+  }
+  function openAccDlg() {
+    closeAccDlg();
+    var el = document.createElement('div');
+    el.className = 'aiondx-welcome-backdrop aiondx-accdlg-backdrop';
+    el.innerHTML = '<div class="aiondx-welcome aiondx-accdlg" role="dialog" aria-modal="true" aria-labelledby="aiondx-accdlg-title" data-testid="aiondx-accdlg"></div>';
+    el.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Escape') { if (window.aiondxAccounts) window.aiondxAccounts.cancel(); closeAccDlg(); } });
+    el.addEventListener('mousedown', function (ev) { if (ev.target === el && accDlg && accDlg.step === 'form') closeAccDlg(); });
+    document.body.appendChild(el);
+    accDlg = { el: el, box: el.firstChild, step: 'form' };
+    accForm();
+  }
+  function accForm() {
+    var b = accDlg.box;
+    accDlg.step = 'form';
+    b.innerHTML =
+      '<h2 id="aiondx-accdlg-title" class="aiondx-accdlg-h">Add a Claude account</h2>' +
+      '<label class="aiondx-accdlg-row"><span class="aiondx-accdlg-lab">Name it</span>' +
+      '<input class="arco-input aiondx-accdlg-name" data-testid="aiondx-accdlg-name" maxlength="40" placeholder="For example Client B" autocomplete="off"></label>' +
+      '<div class="aiondx-accdlg-hint aiondx-accdlg-folder"></div>' +
+      '<div class="aiondx-accdlg-lab">What it can do</div>' +
+      '<label class="aiondx-accdlg-opt"><input type="radio" name="aiondx-acc-kind" value="full" checked> <span><b>Everything</b> (recommended): chats, Claude Docs and connectors, your claude.ai skills, file upload. A full Claude sign-in that renews itself.</span></label>' +
+      '<label class="aiondx-accdlg-opt"><input type="radio" name="aiondx-acc-kind" value="token"> <span><b>Chats only</b>: model calls, nothing else. A key that lasts a year; no Claude Docs or connectors.</span></label>' +
+      '<label class="aiondx-accdlg-opt"><input type="radio" name="aiondx-acc-kind" value="console"> <span><b>Anthropic Console</b>: API billing, paid per use instead of a Claude plan.</span></label>' +
+      '<div class="aiondx-accdlg-lab">It is for</div>' +
+      '<div class="aiondx-accdlg-inline"><label><input type="radio" name="aiondx-acc-dom" value="personal" checked> Personal</label>' +
+      '<label><input type="radio" name="aiondx-acc-dom" value="work"> Work</label>' +
+      '<span class="aiondx-accdlg-hint">which projects it may run</span></div>' +
+      '<label class="aiondx-accdlg-check"><input type="checkbox" class="aiondx-accdlg-docs" checked> Claude Docs and connectors in its chats</label>' +
+      '<label class="aiondx-accdlg-check"><input type="checkbox" class="aiondx-accdlg-sso"> My organisation signs in with single sign-on (SSO)</label>' +
+      '<label class="aiondx-accdlg-row"><span class="aiondx-accdlg-lab">Email (optional)</span>' +
+      '<input class="arco-input aiondx-accdlg-email" maxlength="200" placeholder="Filled in on the sign-in page" autocomplete="off"></label>' +
+      '<div class="aiondx-accdlg-err" role="alert"></div>' +
+      '<div class="aiondx-accdlg-btns"><button type="button" class="arco-btn arco-btn-secondary aiondx-accdlg-cancel">Cancel</button>' +
+      '<button type="button" class="arco-btn arco-btn-primary aiondx-accdlg-go" data-testid="aiondx-accdlg-go">Sign in</button></div>';
+    var name = b.querySelector('.aiondx-accdlg-name');
+    var folder = b.querySelector('.aiondx-accdlg-folder');
+    var docs = b.querySelector('.aiondx-accdlg-docs');
+    var sync = function () {
+      var slug = accountSlug(name.value);
+      folder.textContent = slug ? 'Signs in to its own folder, .claude-' + slug + ', so your other sign-ins stay as they are.' : '';
+      var kind = (b.querySelector('input[name="aiondx-acc-kind"]:checked') || {}).value;
+      docs.disabled = kind === 'token';
+      if (kind === 'token') docs.checked = false;
+      b.querySelector('.aiondx-accdlg-sso').disabled = kind === 'token';
+      b.querySelector('.aiondx-accdlg-email').disabled = kind === 'token';
+    };
+    b.addEventListener('input', sync);
+    b.addEventListener('change', sync);
+    sync();
+    b.querySelector('.aiondx-accdlg-cancel').addEventListener('click', closeAccDlg);
+    b.querySelector('.aiondx-accdlg-go').addEventListener('click', function () { accStart(); });
+    setTimeout(function () { name.focus(); }, 0);
+  }
+  function accErr(text) { var e = accDlg && accDlg.box.querySelector('.aiondx-accdlg-err'); if (e) e.textContent = text || ''; }
+  async function accStart() {
+    var b = accDlg.box;
+    var label = b.querySelector('.aiondx-accdlg-name').value.trim();
+    var id = accountSlug(label);
+    if (!id) { accErr('Give the account a name first.'); return; }
+    var taken = (accountsRec && accountsRec.accounts || []).some(function (a) { return a && a.id === id; });
+    if (taken) { accErr('There is already an account called "' + id + '". Pick another name.'); return; }
+    var o = {
+      name: id, label: label,
+      kind: (b.querySelector('input[name="aiondx-acc-kind"]:checked') || {}).value || 'full',
+      domain: (b.querySelector('input[name="aiondx-acc-dom"]:checked') || {}).value || 'personal',
+      docs: b.querySelector('.aiondx-accdlg-docs').checked,
+      sso: b.querySelector('.aiondx-accdlg-sso').checked,
+      email: b.querySelector('.aiondx-accdlg-email').value.trim(),
+    };
+    if (o.domain === 'personal' && /work/i.test(label)) { accErr('A personal account’s name cannot contain "work"; AionDX would treat it as a work account.'); return; }
+    accDlg.o = o;
+    accErr('');
+    b.querySelector('.aiondx-accdlg-go').disabled = true;
+    var r = await window.aiondxAccounts.start(o);
+    if (!accDlg) return;
+    if (!r || !r.ok) { b.querySelector('.aiondx-accdlg-go').disabled = false; accErr('The sign-in did not start: ' + ((r && r.error) || 'no answer') + '.'); return; }
+    accWaiting(r.url);
+  }
+  function accWaiting(url) {
+    var b = accDlg.box;
+    accDlg.step = 'wait';
+    b.innerHTML = '<h2 id="aiondx-accdlg-title" class="aiondx-accdlg-h">Sign in to Claude</h2>' +
+      '<p class="aiondx-accdlg-p">The Claude sign-in page is open in your browser. Sign in there as the account you want for "' + escapeHtml(accDlg.o.label) + '"; this window updates by itself.</p>' +
+      '<p class="aiondx-accdlg-p aiondx-accdlg-again"></p>' +
+      '<div class="aiondx-accdlg-code" hidden><p class="aiondx-accdlg-p">The page shows a code instead of finishing. Paste it here:</p>' +
+      '<input class="arco-input aiondx-accdlg-codein" autocomplete="off"> <button type="button" class="arco-btn arco-btn-primary aiondx-accdlg-codego">Continue</button></div>' +
+      '<div class="aiondx-accdlg-err" role="alert"></div>' +
+      '<div class="aiondx-accdlg-btns"><button type="button" class="arco-btn arco-btn-secondary aiondx-accdlg-cancel">Cancel</button></div>';
+    if (url) {
+      var a = document.createElement('a');
+      a.href = url;
+      a.textContent = 'Open the sign-in page again';
+      b.querySelector('.aiondx-accdlg-again').appendChild(a);
+    }
+    b.querySelector('.aiondx-accdlg-cancel').addEventListener('click', function () { window.aiondxAccounts.cancel(); closeAccDlg(); });
+    b.querySelector('.aiondx-accdlg-codego').addEventListener('click', function () {
+      var c = b.querySelector('.aiondx-accdlg-codein').value.trim();
+      if (c) window.aiondxAccounts.code(c).then(function (r) { if (!r || !r.ok) accErr((r && r.error) || 'The code could not be passed on.'); });
+    });
+    var started = Date.now();
+    accDlg.timer = setInterval(function () {
+      if (!accDlg) return;
+      if (Date.now() - started > 11 * 60000) { clearInterval(accDlg.timer); accErr('The sign-in took too long and was stopped. Cancel and try again.'); return; }
+      window.aiondxAccounts.poll().then(function (p) {
+        if (!accDlg || !p) return;
+        if (p.state === 'running') { b.querySelector('.aiondx-accdlg-code').hidden = !p.asksCode; return; }
+        clearInterval(accDlg.timer);
+        if (p.state === 'done') accVerify();
+        else accErr('The sign-in did not finish. ' + (p.text ? p.text.split('\n').filter(Boolean).slice(-1)[0] : ''));
+      }, function () {});
+    }, 1500);
+  }
+  async function accVerify() {
+    var b = accDlg.box, o = accDlg.o;
+    accDlg.step = 'check';
+    b.innerHTML = '<h2 id="aiondx-accdlg-title" class="aiondx-accdlg-h">Checking the key</h2><p class="aiondx-accdlg-p">Reading what the sign-in saved and asking Claude Code to accept it...</p>';
+    var v = await window.aiondxAccounts.verify(o.name, o.kind);
+    if (!accDlg) return;
+    if (!v || !v.ok) {
+      b.innerHTML = '<h2 id="aiondx-accdlg-title" class="aiondx-accdlg-h">The account was not added</h2><p class="aiondx-accdlg-p"></p>' +
+        '<div class="aiondx-accdlg-btns"><button type="button" class="arco-btn arco-btn-secondary aiondx-accdlg-cancel">Close</button>' +
+        '<button type="button" class="arco-btn arco-btn-primary aiondx-accdlg-retry">Try again</button></div>';
+      b.querySelector('.aiondx-accdlg-p').textContent = (v && v.error) || 'The key could not be checked.';
+      b.querySelector('.aiondx-accdlg-cancel').addEventListener('click', closeAccDlg);
+      b.querySelector('.aiondx-accdlg-retry').addEventListener('click', accForm);
+      return;
+    }
+    var s = await window.aiondxAccounts.save({ name: o.name, label: o.label, kind: o.kind, domain: o.domain, docs: o.docs });
+    if (!accDlg) return;
+    if (!s || !s.ok) { b.innerHTML = '<h2 class="aiondx-accdlg-h">Signed in, but not added</h2><p class="aiondx-accdlg-p"></p>'; b.querySelector('p').textContent = (s && s.error) || 'no answer'; return; }
+    try { await rememberAccount(o.name, o.label, o.kind); } catch (e) { /* the launcher has it; the pill shows after the next read */ }
+    accDlg.step = 'done';
+    var lines = [];
+    lines.push('Signed in' + (v.email ? ' as ' + v.email : '') + (v.plan ? ' (' + v.plan + ')' : '') + '.');
+    lines.push('Key saved and checked: ' + v.key + (v.renewsUntil ? '; it renews itself until ' + longDate(v.renewsUntil) : '') + '.');
+    if (v.scopeWords && v.scopeWords.length) lines.push('It may use: ' + v.scopeWords.join(', ') + '.');
+    if (v.missing && v.missing.length) lines.push('Not granted: ' + v.missing.join(', ') + '.');
+    lines.push('Claude Docs and connectors: ' + (s.docs ? 'on' : 'off') + '. It counts as ' + (s.domain === 'work' ? 'work' : 'personal') + '.');
+    b.innerHTML = '<h2 id="aiondx-accdlg-title" class="aiondx-accdlg-h">"' + escapeHtml(o.label) + '" is added</h2>' +
+      '<ul class="aiondx-accdlg-list" data-testid="aiondx-accdlg-result"></ul>' +
+      '<p class="aiondx-accdlg-p">Pick <b>Claude Code (' + escapeHtml(o.label) + ')</b> in the agent row to start a chat on it. Every Claude chat’s account button offers it too.</p>' +
+      '<div class="aiondx-accdlg-btns"><button type="button" class="arco-btn arco-btn-primary aiondx-accdlg-done">Done</button></div>';
+    var ul = b.querySelector('.aiondx-accdlg-list');
+    lines.forEach(function (t) { var li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+    b.querySelector('.aiondx-accdlg-done').addEventListener('click', closeAccDlg);
+  }
+  function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  // The pills: one per added account, then "+ Add account", at the end of the row of AionUi's own pills.
+  function renderAccountPills() {
+    var r = location.hash || '';
+    var first = /^#\/guid/.test(r) && !disabled() ? document.querySelector('[data-testid^="preset-pill-"]') : null;
+    var row = first ? first.parentNode : null;
+    document.querySelectorAll('.aiondx-acc-pill, .aiondx-add-acc').forEach(function (e) { if (!row || e.parentNode !== row) e.parentNode.removeChild(e); });
+    if (!row) { if (!/^#\/guid/.test(r)) pendingAccount = pendingAccount && pendingAccount.at > Date.now() - 15000 ? pendingAccount : null; return; }
+    var base = row.querySelector('[data-testid^="preset-pill-"][data-assistant-backend="claude"]');
+    var plainPill = row.querySelector('[data-testid^="preset-pill-"][data-assistant-selected="false"]') || first;
+    var onPill = row.querySelector('[data-testid^="preset-pill-"][data-assistant-selected="true"]') || first;
+    var more = row.querySelector('[data-testid="assistant-more-btn"]');
+    if (pendingAccount && (!base || base.getAttribute('data-assistant-selected') !== 'true')) pendingAccount = null;
+    var have = {};
+    row.querySelectorAll('.aiondx-acc-pill').forEach(function (e) { have[e.getAttribute('data-account')] = e; });
+    if (window.aiondxAccounts && base) {
+      addedAccounts().forEach(function (a) {
+        var p = have[a.id];
+        if (!p) {
+          p = document.createElement('button');
+          p.type = 'button';
+          p.setAttribute('data-account', a.id);
+          p.setAttribute('data-testid', 'aiondx-acc-pill-' + a.id);
+          p.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            var b = document.querySelector('[data-testid^="preset-pill-"][data-assistant-backend="claude"]');
+            if (b && b.getAttribute('data-assistant-selected') !== 'true') b.click();
+            pendingAccount = { id: a.id, at: Date.now() };
+            renderAccountPills();
+          });
+        }
+        var on = !!(pendingAccount && pendingAccount.id === a.id);
+        // only what changed is touched: a pill rebuilt between press and release gets no click
+        var cls = (on ? onPill : plainPill).className.replace(/\s*aiondx-acc-pill(--on)?\b/g, '') + ' aiondx-acc-pill' + (on ? ' aiondx-acc-pill--on' : '');
+        if (p.className !== cls) p.className = cls;
+        if (p.getAttribute('aria-pressed') !== (on ? 'true' : 'false')) p.setAttribute('aria-pressed', on ? 'true' : 'false');
+        var logo = base.querySelector('img, svg');
+        var html = '<span class="inline-flex h-20px w-20px items-center justify-center overflow-hidden rounded-999px bg-fill-2">' + (logo ? logo.outerHTML : '') + '</span>' +
+          '<span class="min-w-0 max-w-180px truncate whitespace-nowrap">Claude Code (' + escapeHtml(a.label) + ')</span>';
+        if (p._html !== html) { p.innerHTML = html; p._html = html; }
+        if (p.parentNode !== row) row.insertBefore(p, more || null);
+      });
+    }
+    row.classList.toggle('aiondx-acc-pending', !!pendingAccount);
+    if (window.aiondxAccounts) {
+      var add = row.querySelector('.aiondx-add-acc');
+      if (!add) {
+        add = document.createElement('button');
+        add.type = 'button';
+        add.setAttribute('data-testid', 'aiondx-add-account');
+        add.title = 'Sign in another Claude account';
+        add.textContent = '+ Add account';
+        add.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); openAccDlg(); });
+      }
+      var addCls = (more ? more.className : plainPill.className).replace(/\s*aiondx-acc-pill(--on)?\b/g, '') + ' aiondx-add-acc';
+      if (add.className !== addCls) add.className = addCls;
+      if (add.parentNode !== row || add.nextSibling) row.appendChild(add);
+    }
+  }
+  // A press on one of AionUi's own pills takes the account pick back.
+  document.addEventListener('click', function (ev) {
+    var p = ev.target && ev.target.closest ? ev.target.closest('[data-testid^="preset-pill-"]') : null;
+    if (p && pendingAccount && ev.isTrusted) { pendingAccount = null; setTimeout(renderAccountPills, 0); }
+  }, true);
+  // The new chat AionCore creates gets the account picked for it, before its agent can start.
+  var CREATE_RE = /\/api\/conversations(?:[?#]|$)/;
+  function tagNewChat(r) {
+    var pick = pendingAccount;
+    if (!pick || !r || !r.ok) return Promise.resolve(r);
+    return r.clone().json().then(function (j) {
+      var d = j && (j.data || j);
+      var id = d && (d.id || (d.conversation && d.conversation.id));
+      if (!id) return r;
+      pendingAccount = null;
+      var body = {};
+      body[AGENT_PREFIX + id] = { agent: pick.id, at: Date.now(), by: 'user' };
+      agentPrefs[id] = pick.id;
+      return putPrefs(body).then(function () { return r; }, function () { return r; });
+    }, function () { return r; });
+  }
 
   // ---------------------------------------------------------------- team column scrolling
 

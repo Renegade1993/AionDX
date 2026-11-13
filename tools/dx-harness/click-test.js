@@ -3266,13 +3266,13 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.2');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.4');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.2' && c.names.length === 2 &&
-        /^Click a Claude Doc link in a reply\./.test(c.hows[0]) && /Click the bell to see it\. Nothing restarts unless you click\.$/.test(c.hows[1]), JSON.stringify(c));
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.4' && c.names.length === 1 &&
+        c.names[0] === 'More Claude accounts' && /^On the new-chat page, click \+ Add account at the end of the agent row\./.test(c.hows[0]), JSON.stringify(c));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 340, JSON.stringify(box));
       await humanClick('.aiondx-whatsnew-ok');
@@ -3315,7 +3315,7 @@ async function pageTarget() {
       t = await tip();
       check(sc, 'and after a reload the Loop tip stays away', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
       // the Docs link tip, on a page with a doc link, once the others are done
-      await js(`(() => { const d = {}; ['bell','loop','ctx','account','sched','bolt','menu','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await js(`(() => { const d = {}; ['bell','loop','ctx2','account','sched','bolt','menu','add-account','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
       await load('theme=light&tips=1&keepls=1');
       await js(`(() => { const a = document.createElement('a'); a.href = 'https://claude.ai/artifact/abc'; a.textContent = 'Launch plan'; a.style.cssText = 'position:absolute;left:300px;top:200px;z-index:5;background:#fff;color:#000;padding:4px'; document.body.appendChild(a); return 0; })()`);
       await sleep(2600);
@@ -3332,6 +3332,115 @@ async function pageTarget() {
       const hasSet = await js(`typeof (window.__aionDx || {}).setOption === 'function'`);
       if (hasSet) check(sc, 'with the option off, no tip shows', !(await tip()));
       await js("localStorage.removeItem('aionui.dx.options'); localStorage.removeItem('aionui.dx.tips.done'); 0");
+    }
+
+    // ---- "+ Add account" on the new-chat page (R-119, 2026-11-13) ----
+    {
+      const sc = 'accounts';
+      const row = () => js(`(() => { location.hash = '#/guid'; const old = document.getElementById('trow'); if (old) old.remove();
+        const r = document.createElement('div'); r.id = 'trow'; r.className = 'flex min-w-0 max-w-full items-center gap-6px';
+        r.style.cssText = 'position:fixed;top:120px;left:40px;z-index:40;background:#eee;padding:6px';
+        const pill = (id, backend, on) => { const b = document.createElement('button'); b.type = 'button'; b.setAttribute('data-testid', 'preset-pill-' + id);
+          b.setAttribute('data-assistant-backend', backend); b.setAttribute('data-assistant-selected', on ? 'true' : 'false');
+          b.className = 'arco-btn pill ' + (on ? 'pill-on' : 'pill-off'); b.innerHTML = '<span><svg width="20" height="20"></svg></span><span>' + id + '</span>';
+          b.addEventListener('click', () => { r.querySelectorAll('[data-testid^="preset-pill-"]').forEach((x) => { x.setAttribute('data-assistant-selected', x === b ? 'true' : 'false'); x.className = 'arco-btn pill ' + (x === b ? 'pill-on' : 'pill-off'); }); });
+          r.appendChild(b); return b; };
+        pill('bare:p1', 'gemini', true); pill('bare:c1', 'claude', false);
+        document.body.appendChild(r); return 0; })()`);
+      const stub = (verifyAnswer) => js(`(() => {
+        window.__ac = [];
+        let polls = 0;
+        window.aiondxAccounts = {
+          start: (o) => { window.__ac.push(['start', o]); return Promise.resolve({ ok: true, url: 'https://claude.ai/oauth/authorize?x=1' }); },
+          poll: () => { window.__ac.push(['poll']); polls++; return Promise.resolve(polls < 2 ? { ok: true, state: 'running', asksCode: false } : { ok: true, state: 'done' }); },
+          code: (c) => { window.__ac.push(['code', c]); return Promise.resolve({ ok: true }); },
+          cancel: () => { window.__ac.push(['cancel']); return Promise.resolve({ ok: true }); },
+          verify: (n, k) => { window.__ac.push(['verify', n, k]); return Promise.resolve(${JSON.stringify(verifyAnswer)}); },
+          save: (o) => { window.__ac.push(['save', o]); return Promise.resolve({ ok: true, name: o.name, label: o.label + (o.domain === 'work' ? ' (work)' : ''), domain: o.domain, docs: !!o.docs }); },
+          list: () => Promise.resolve({ ok: true, accounts: [] }),
+        };
+        window.__calls.length = 0; return 0; })()`);
+      const GOOD = { ok: true, kind: 'full', key: 'sign-in key with a renewal key', renewsUntil: new Date(2026, 11, 13, 9, 0).getTime(), email: 'b@example.com', plan: 'pro',
+        scopeWords: ['model calls', 'your profile (name, plan)', 'Claude Code sessions', 'connectors, Claude Docs among them', 'file upload'], missing: ['plugins'], loggedIn: true };
+      await load('theme=light');
+      await stub(GOOD);
+      await row();
+      await sleep(1600);
+      const add = await js(`(() => { const r = document.getElementById('trow'); const a = r && r.querySelector('[data-testid="aiondx-add-account"]'); return a ? { last: r.lastElementChild === a, text: a.textContent, cls: a.className } : null; })()`);
+      check(sc, 'the new-chat row ends with "+ Add account", in the row\'s own pill style', add && add.last && add.text === '+ Add account' && /\bpill-off\b/.test(add.cls), JSON.stringify(add));
+      await humanClick('[data-testid="aiondx-add-account"]');
+      await sleep(400);
+      check(sc, 'it opens the dialog, which asks for a name and what the account may do before any sign-in', await js(`!!document.querySelector('[data-testid="aiondx-accdlg"] .aiondx-accdlg-name')`) &&
+        (await js(`document.querySelectorAll('[data-testid="aiondx-accdlg"] input[name="aiondx-acc-kind"]').length`)) === 3 && (await js('window.__ac.length')) === 0);
+      await humanClick('[data-testid="aiondx-accdlg-go"]');
+      await sleep(200);
+      check(sc, 'Sign in with no name says so and starts nothing', /^Give the account a name first\.$/.test(await js(`document.querySelector('.aiondx-accdlg-err').textContent`)) && (await js('window.__ac.length')) === 0);
+      await typeInto('[data-testid="aiondx-accdlg-name"]', 'Client B');
+      await sleep(200);
+      check(sc, 'the dialog says which folder it signs in to, so the other sign-ins stay as they are', /\.claude-client-b, so your other sign-ins stay as they are\.$/.test(await js(`document.querySelector('.aiondx-accdlg-folder').textContent`)));
+      await js(`(() => { const d = document.querySelector('[data-testid="aiondx-accdlg"]'); d.querySelector('input[name="aiondx-acc-kind"][value="token"]').click(); return 0; })()`);
+      await sleep(150);
+      check(sc, '"Chats only" turns Claude Docs off and greys it, and the SSO and email options too (a model-calls key takes none)',
+        await js(`(() => { const d = document.querySelector('[data-testid="aiondx-accdlg"]'); return d.querySelector('.aiondx-accdlg-docs').disabled && !d.querySelector('.aiondx-accdlg-docs').checked && d.querySelector('.aiondx-accdlg-sso').disabled && d.querySelector('.aiondx-accdlg-email').disabled; })()`));
+      await js(`(() => { const d = document.querySelector('[data-testid="aiondx-accdlg"]'); d.querySelector('input[name="aiondx-acc-kind"][value="full"]').click();
+        d.querySelector('.aiondx-accdlg-docs').checked = true; d.querySelector('input[name="aiondx-acc-dom"][value="work"]').click(); d.querySelector('.aiondx-accdlg-sso').click(); return 0; })()`);
+      await humanClick('[data-testid="aiondx-accdlg-go"]');
+      await sleep(400);
+      const st = await js('window.__ac[0]');
+      check(sc, 'Sign in starts the chosen sign-in: the name as a folder word, everything, work, Docs on, SSO', st && st[0] === 'start' && JSON.stringify(st[1]) ===
+        JSON.stringify({ name: 'client-b', label: 'Client B', kind: 'full', domain: 'work', docs: true, sso: true, email: '' }), JSON.stringify(st));
+      check(sc, 'then it says the page is open in the browser and updates by itself, with a link to open it again',
+        /The Claude sign-in page is open in your browser\./.test(await js(`document.querySelector('[data-testid="aiondx-accdlg"]').textContent`)) &&
+        (await js(`(document.querySelector('.aiondx-accdlg-again a') || {}).href`)) === 'https://claude.ai/oauth/authorize?x=1');
+      await sleep(3800);
+      const res = await js(`[...document.querySelectorAll('[data-testid="aiondx-accdlg-result"] li')].map((li) => li.textContent)`);
+      check(sc, 'when the sign-in finishes, the key is checked and the dialog says what it found, in words', JSON.stringify(res) === JSON.stringify([
+        'Signed in as b@example.com (pro).', 'Key saved and checked: sign-in key with a renewal key; it renews itself until December 13th.',
+        'It may use: model calls, your profile (name, plan), Claude Code sessions, connectors, Claude Docs among them, file upload.', 'Not granted: plugins.',
+        'Claude Docs and connectors: on. It counts as work.']), JSON.stringify(res));
+      const sv = (await js('window.__ac')).filter((x) => x[0] === 'verify' || x[0] === 'save');
+      check(sc, 'verify asked for that account and kind, then save with its settings', sv.length === 2 && JSON.stringify(sv[0]) === '["verify","client-b","full"]' &&
+        JSON.stringify(sv[1][1]) === JSON.stringify({ name: 'client-b', label: 'Client B', kind: 'full', domain: 'work', docs: true }), JSON.stringify(sv));
+      const stored = await js(`fetch('/api/settings/client?keys=aiondx.accounts').then((r) => r.json()).then((j) => j.data['aiondx.accounts'])`);
+      check(sc, 'the account goes in the shared list, marked as added, under the name you typed', stored && stored.accounts.some((a) => a.id === 'client-b' && a.label === 'Client B' && a.added === true && a.kind === 'full'), JSON.stringify(stored));
+      await humanClick('.aiondx-accdlg-done');
+      await sleep(1400);
+      const pill = await js(`(() => { const r = document.getElementById('trow'); const p = r.querySelector('[data-testid="aiondx-acc-pill-client-b"]'); const kids = [...r.children].map((c) => c.getAttribute('data-testid'));
+        return p ? { text: p.textContent, pressed: p.getAttribute('aria-pressed'), kids } : { kids }; })()`);
+      check(sc, 'the row now has a pill for it, "Claude Code (Client B)", before "+ Add account"', pill && pill.text === 'Claude Code (Client B)' &&
+        JSON.stringify(pill.kids) === JSON.stringify(['preset-pill-bare:p1', 'preset-pill-bare:c1', 'aiondx-acc-pill-client-b', 'aiondx-add-account']), JSON.stringify(pill));
+      await humanClick('[data-testid="aiondx-acc-pill-client-b"]');
+      await sleep(600);
+      const picked = await js(`(() => { const r = document.getElementById('trow'); return { claude: r.querySelector('[data-testid="preset-pill-bare:c1"]').getAttribute('data-assistant-selected'),
+        mine: r.querySelector('[data-testid="aiondx-acc-pill-client-b"]').getAttribute('aria-pressed'), pending: r.classList.contains('aiondx-acc-pending') }; })()`);
+      check(sc, 'picking it selects the row\'s Claude agent underneath and shows the account pill as the pick', picked.claude === 'true' && picked.mine === 'true' && picked.pending, JSON.stringify(picked));
+      await js(`fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(() => 0)`);
+      await sleep(300);
+      const tag = await js(`fetch('/api/settings/client?keys=aiondx.agent.conv.newconv1').then((r) => r.json()).then((j) => j.data['aiondx.agent.conv.newconv1'])`);
+      const order = await js(`window.__calls.filter((c) => c.path === '/api/conversations' || (c.method === 'PUT' && c.path === '/api/settings/client')).map((c) => c.method + ' ' + c.path)`);
+      check(sc, 'the chat AionCore creates next is marked for that account before the create call returns', tag && tag.agent === 'client-b' && tag.by === 'user' &&
+        JSON.stringify(order.slice(-2)) === JSON.stringify(['POST /api/conversations', 'PUT /api/settings/client']), JSON.stringify([tag, order]));
+      await js(`fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(() => 0)`);
+      check(sc, 'only that one chat: the pick is used up', (await js(`window.__calls.filter((c) => c.method === 'PUT' && c.path === '/api/settings/client').length`)) === 1 + (order.filter((o) => o.startsWith('PUT')).length - 1));
+      await humanClick('[data-testid="aiondx-acc-pill-client-b"]');
+      await sleep(300);
+      await humanClick('[data-testid="preset-pill-bare:p1"]');
+      await sleep(500);
+      check(sc, 'pressing one of the row\'s own pills takes the account pick back', (await js(`document.querySelector('[data-testid="aiondx-acc-pill-client-b"]').getAttribute('aria-pressed')`)) === 'false' &&
+        !(await js(`document.getElementById('trow').classList.contains('aiondx-acc-pending')`)));
+      // a key that does not check out: nothing is added
+      await js(`(() => { const r = document.getElementById('trow'); if (r) r.remove(); return 0; })()`);
+      await stub({ ok: false, error: 'Claude Code does not accept the saved key. Start the sign-in again.' });
+      await row();
+      await sleep(1200);
+      await humanClick('[data-testid="aiondx-add-account"]');
+      await sleep(300);
+      await typeInto('[data-testid="aiondx-accdlg-name"]', 'Spare');
+      await humanClick('[data-testid="aiondx-accdlg-go"]');
+      await sleep(4200);
+      check(sc, 'a key that does not check out adds nothing and says why, with Try again', /The account was not added/.test(await js(`document.querySelector('[data-testid="aiondx-accdlg"]').textContent`)) &&
+        /does not accept the saved key/.test(await js(`document.querySelector('[data-testid="aiondx-accdlg"]').textContent`)) && !(await js('window.__ac')).some((x) => x[0] === 'save'));
+      await js(`(() => { document.querySelector('.aiondx-accdlg-cancel').click(); const r = document.getElementById('trow'); if (r) r.remove(); delete window.aiondxAccounts; location.hash = '#/conversation/harness1'; return 0; })()`);
     }
 
     // ---- clearing agent caches (2026-10-13, a request) ----

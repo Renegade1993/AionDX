@@ -45,7 +45,7 @@ try {
   let child = null;
   try { child = JSON.parse(r.stdout); } catch (e) { /* none */ }
   check('the record names the launcher process, the parent of the agent (alive as long as it is)', rec && child && rec.pid === child.pid, JSON.stringify([rec, child]));
-  check('and what the launch got: account personal, Docs off, no full sign-in, the sign-in folder', rec && rec.acct === 'personal' && rec.docs === false && rec.fullSignIn === false &&
+  check('and what the launch got: account personal (key ag1), Docs off, no full sign-in, the sign-in folder', rec && rec.acct === 'personal' && rec.accountKey === 'ag1' && rec.docs === false && rec.fullSignIn === false &&
     path.resolve(rec.signInDir) === path.resolve(cfgDir) && rec.project === null, JSON.stringify(rec));
   fs.writeFileSync(path.join(cfgDir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'a', refreshToken: 'r', refreshTokenExpiresAt: Date.now() + 86400000 } }));
   writeReg('on');

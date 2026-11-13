@@ -175,6 +175,13 @@ function __aiondxIconFile(name) {
     require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-notices.js")).install(require$$0$2);
   } catch {}
 })();
+/** "+ Add account" on the new-chat page (R-119): a Claude account signed in to its own folder, the key it saved checked, then added to the
+ *  launcher's accounts. The work is aiondx-accounts.js (patches/0009-identity); no key ever reaches the page. */
+(function __aiondxAccounts() {
+  try {
+    require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-accounts.js")).install(require$$0$2);
+  } catch {}
+})();
 /** The one-click setup (a request of 2026-09-26). The Welcome screen
  *  asks for it through the preload's aiondxSetup. The setup skill's survey.js and apply.js run in a child of this
  *  process as Node (Electron's own runtime, ELECTRON_RUN_AS_NODE), so no Node.js install and no agent are needed.
@@ -744,6 +751,25 @@ else {
   notes.push('preload: aiondxPortable');
 }
 
+// ... and "+ Add account" (main process aiondx:accounts, R-119).
+if (/aiondxAccounts/.test(preload)) notes.push('preload: aiondxAccounts already there');
+else {
+  const anchor = 'const backendPort = electron.ipcRenderer.sendSync("get-backend-port");';
+  const n = count(preload, anchor);
+  if (n !== 1) { console.error(`0009: preload (accounts): expected 1 match, found ${n}. Nothing written.`); process.exit(1); }
+  preload = preload.replace(anchor, '/* AIONDX-0009: adding a Claude account (patches/0009-identity, main process aiondx:accounts) */\n' +
+    'electron.contextBridge.exposeInMainWorld("aiondxAccounts", {\n' +
+    '  start: (o) => electron.ipcRenderer.invoke("aiondx:accounts", Object.assign({}, o, { op: "start" })),\n' +
+    '  poll: () => electron.ipcRenderer.invoke("aiondx:accounts", { op: "poll" }),\n' +
+    '  code: (code) => electron.ipcRenderer.invoke("aiondx:accounts", { op: "code", code }),\n' +
+    '  cancel: () => electron.ipcRenderer.invoke("aiondx:accounts", { op: "cancel" }),\n' +
+    '  verify: (name, kind) => electron.ipcRenderer.invoke("aiondx:accounts", { op: "verify", name, kind }),\n' +
+    '  save: (o) => electron.ipcRenderer.invoke("aiondx:accounts", Object.assign({}, o, { op: "save" })),\n' +
+    '  list: () => electron.ipcRenderer.invoke("aiondx:accounts", { op: "list" })\n' +
+    '});\n' + anchor);
+  notes.push('preload: aiondxAccounts');
+}
+
 // ... and the chat's notification bell (main process aiondx:notices, R-112).
 if (/aiondxNotices/.test(preload)) notes.push('preload: aiondxNotices already there');
 else {
@@ -850,4 +876,6 @@ fs.copyFileSync(path.join(__dirname, 'aiondx-docs.js'), path.join(ext, 'out', 'a
 notes.push('out/aiondx/aiondx-docs.js');
 fs.copyFileSync(path.join(__dirname, 'aiondx-notices.js'), path.join(ext, 'out', 'aiondx', 'aiondx-notices.js'));
 notes.push('out/aiondx/aiondx-notices.js');
+fs.copyFileSync(path.join(__dirname, 'aiondx-accounts.js'), path.join(ext, 'out', 'aiondx', 'aiondx-accounts.js'));
+notes.push('out/aiondx/aiondx-accounts.js');
 for (const n of notes) console.log('0009: ' + n);

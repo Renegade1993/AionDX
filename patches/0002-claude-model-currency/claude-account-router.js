@@ -448,6 +448,7 @@ function hasFullSignIn(dir) {
 }
 let fullSignIn = false;
 let signInFolder = '';   // the folder whose sign-in this launch used (R-112: the launch record)
+let accountKey = '';     // the launcher config's key of the account this launch runs on (R-119: Claude Docs per added account)
 function proxyOff(env, convId, dbPath, usage, cfg) {
   let proxy;
   try {
@@ -542,7 +543,9 @@ function projectSetup(env, dbPath, convId, facts, label) {
   const owns = proj && ((proj.domain === 'work' && acct === 'work') || (proj.domain === 'personal' && acct === 'personal'));
   const allowed = proj && (!Array.isArray(proj.accounts) || proj.accounts.indexOf(acct) >= 0);
   // A chat bound to no project follows its account (registry accountDocs, 2026-11-12).
-  const acctDocs = reg && reg.accountDocs && typeof reg.accountDocs === 'object' ? reg.accountDocs[acct] : undefined;
+  // an account AionDX added has its own entry (accountDocs.<its key>, R-119); the others follow personal or work
+  const docsMap = reg && reg.accountDocs && typeof reg.accountDocs === 'object' ? reg.accountDocs : null;
+  const acctDocs = docsMap ? (accountKey && docsMap[accountKey] !== undefined ? docsMap[accountKey] : docsMap[acct]) : undefined;
   const docs = proj ? !!(proj.docs === 'on' && owns && allowed) : acctDocs === 'on';
   if (!docs) { env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false'; env.CLAUDE_CODE_DISABLE_ARTIFACT = '1'; }
   else { delete env.ENABLE_CLAUDEAI_MCP_SERVERS; delete env.CLAUDE_CODE_DISABLE_ARTIFACT; }   // an inherited switch (a parent chat with Docs off) must not close it
@@ -554,7 +557,7 @@ function projectSetup(env, dbPath, convId, facts, label) {
     for (let i = args.indexOf('--strict-mcp-config'); i >= 0; i = args.indexOf('--strict-mcp-config')) { args.splice(i, 1); strictDropped = true; }
   }
   routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'} sign-in=${fullSignIn ? 'full' : 'token or none'}${strictDropped ? ' strict-mcp dropped' : ''}`);
-  if (isClaude && convId && dataDir) recordLaunch(dataDir, convId, { project: name || null, acct, docs, fullSignIn, signInDir: signInFolder });
+  if (isClaude && convId && dataDir) recordLaunch(dataDir, convId, { project: name || null, acct, accountKey: accountKey || null, docs, fullSignIn, signInDir: signInFolder });
 }
 
 /** R-112: one small file per chat, <data folder>\aiondx-launches\<conversation id>.json, rewritten at each launch: when it started, the
@@ -593,9 +596,12 @@ try {
   let chosen = facts.chosenAgent && facts.chosenAgent !== agentId ? facts.chosenAgent : null;
   let account = null;
   let label;
-  if (chosen && accounts[chosen]) account = accounts[chosen];
-  else if (!chosen && facts.chosenAccount && accounts[facts.chosenAccount]) { account = accounts[facts.chosenAccount]; chosen = facts.chosenAccount; }
-  else if (!chosen && cfg && cfg.accounts && agentId) account = accounts[agentId] || accounts[cfg.defaultAccount] || null;
+  if (chosen && accounts[chosen]) { account = accounts[chosen]; accountKey = chosen; }
+  else if (!chosen && facts.chosenAccount && accounts[facts.chosenAccount]) { account = accounts[facts.chosenAccount]; chosen = facts.chosenAccount; accountKey = chosen; }
+  else if (!chosen && cfg && cfg.accounts && agentId) {
+    account = accounts[agentId] || accounts[cfg.defaultAccount] || null;
+    accountKey = accounts[agentId] ? agentId : (account ? String(cfg.defaultAccount) : '');
+  }
 
   if (account) {
     // A named account from the config (the developer's machine: token files). HOME picks the credential store; an

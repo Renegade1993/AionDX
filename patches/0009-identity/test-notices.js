@@ -53,6 +53,10 @@ try {
   check('a project with Docs on overrides the account being off', N.noticesFor(data, 'p1', alive).length === 1);
   launch('p2', { project: 'atlas', acct: 'work', docs: false, fullSignIn: true, signInDir: personal });
   check('a project whose domain the account does not own: nothing', N.noticesFor(data, 'p2', alive).length === 0);
+  reg({ personal: 'off', work: 'off', work2: 'on' });
+  launch('a1', { project: null, acct: 'work', accountKey: 'work2', docs: false, fullSignIn: true, signInDir: personal });
+  launch('a2', { project: null, acct: 'work', accountKey: 'work', docs: false, fullSignIn: true, signInDir: personal });
+  check('an added account\'s own Docs setting wins over its domain\'s (work2 on while work is off)', N.noticesFor(data, 'a1', alive).length === 1 && N.noticesFor(data, 'a2', alive).length === 0);
   check('no launch record, or an odd id: nothing', N.noticesFor(data, 'none', alive).length === 0 && N.noticesFor(data, '../x', alive).length === 0);
   check('this process counts as alive; pid 0 does not', N.pidAlive(process.pid) && !N.pidAlive(0));
 

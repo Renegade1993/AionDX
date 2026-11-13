@@ -23,7 +23,7 @@ const path = require('path');
 function readJson(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
 
 /** The same rule the launcher uses (claude-account-router.js projectSetup): a bound project decides; a chat with no project follows its account. */
-function docsWanted(reg, project, acct) {
+function docsWanted(reg, project, acct, accountKey) {
   if (!reg) return false;
   const projects = reg.projects && typeof reg.projects === 'object' ? reg.projects : {};
   const proj = project && projects[project] ? projects[project] : null;
@@ -32,7 +32,10 @@ function docsWanted(reg, project, acct) {
     const allowed = !Array.isArray(proj.accounts) || proj.accounts.indexOf(acct) >= 0;
     return proj.docs === 'on' && owns && allowed;
   }
-  return !!(reg.accountDocs && reg.accountDocs[acct] === 'on');
+  // an account AionDX added has its own entry (accountDocs.<its key>); the others follow personal or work
+  const map = reg.accountDocs || {};
+  if (accountKey && map[accountKey] !== undefined) return map[accountKey] === 'on';
+  return map[acct] === 'on';
 }
 
 /** The same test the launcher uses: a full sign-in has its access and renewal keys, and the renewal key has not run out. */
@@ -64,7 +67,7 @@ function noticesFor(dataDir, convId, opts) {
   const rec = readJson(path.join(dataDir, 'aiondx-launches', convId + '.json'));
   if (!rec || rec.v !== 1) return [];
   const reg = readJson(path.join(dataDir, 'aiondx-projects.json'));
-  const wanted = docsWanted(reg, rec.project, rec.acct);
+  const wanted = docsWanted(reg, rec.project, rec.acct, rec.accountKey);
   if (!wanted) return [];
   const alive = (o.pidAlive || pidAlive)(rec.pid);
   const full = (o.hasFullSignIn || hasFullSignIn)(rec.signInDir);
