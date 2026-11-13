@@ -1,0 +1,458 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index c9ff15ef..e5d5834e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -756,6 +756,7 @@ dependencies = [
+  "axum",
+  "base64",
+  "chacha20poly1305",
++ "chrono",
+  "getrandom 0.2.17",
+  "hex",
+  "hkdf",
+diff --git a/crates/aionui-auth/Cargo.toml b/crates/aionui-auth/Cargo.toml
+index ec788e1c..aeefe89a 100644
+--- a/crates/aionui-auth/Cargo.toml
++++ b/crates/aionui-auth/Cargo.toml
+@@ -4,6 +4,7 @@ version.workspace = true
+ edition.workspace = true
+ 
+ [dependencies]
++serde_json = { workspace = true }
+ async-trait = { workspace = true }
+ aionui-common.workspace = true
+ aionui-db.workspace = true
+diff --git a/crates/aionui-auth/src/human_only.rs b/crates/aionui-auth/src/human_only.rs
+new file mode 100644
+index 00000000..9e578a51
+--- /dev/null
++++ b/crates/aionui-auth/src/human_only.rs
+@@ -0,0 +1,211 @@
++//! AionDX core-0019: routes only a human may call (docs/sage/CONTRACT.md §7, SG-0).
++//!
++//! Every agent subprocess holds a conversation runtime token that authenticates as the full user, so an agent could
++//! call any route the desktop calls: answer its own permission prompt, switch its own chat to bypass mode, turn on
++//! cross-session messaging, change a password, approve a bot pairing. Those routes now refuse the runtime-token
++//! channel with `403 HUMAN_ONLY_ROUTE`. The user's own clients (a session, or local mode) are unaffected, and so is the
++//! mobile bridge, which calls the services directly.
++//!
++//! Routes that agent tools legitimately use stay open (the `aioncore config` CLI behind the aiondx-config skill, the
++//! loop tool, the identity and usage patches). Where such a route also carries a human-only field, only that field is
++//! refused: `cross_session_message_enabled` in `PATCH /api/settings`, and the permission-mode keys in
++//! `PATCH /api/conversations/{id}`'s `extra`.
++
++use axum::http::Method;
++use serde_json::Value;
++
++/// The keys of a conversation's `extra` that hold its permission mode: what the Claude stream proxy and the agents
++/// read as "bypass permissions" (core `session_agent.rs` `current_mode_id`, the `session_mode` runtime context).
++const MODE_KEYS: &[&str] = &["session_mode", "current_mode_id"];
++
++/// Settings fields only a human may change.
++const HUMAN_ONLY_SETTINGS: &[&str] = &["cross_session_message_enabled"];
++
++/// Why a runtime-token call is refused, or `None` when it may proceed. `body` is the parsed JSON body, given only
++/// for the routes `needs_body` names.
++pub fn refusal(method: &Method, path: &str, body: Option<&Value>) -> Option<&'static str> {
++    let path = path.split('?').next().unwrap_or_default();
++    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
++    match (method, segs.as_slice()) {
++        // answering a permission card or a question
++        (&Method::POST, ["api", "conversations", _, "confirmations", _, "confirm"]) => {
++            Some("answering a permission prompt")
++        }
++        (&Method::POST, ["api", "conversations", _, "asks", _, "answer"]) => Some("answering a question card"),
++        // the permission mode, which decides what is asked at all
++        (&Method::PUT, ["api", "conversations", _, "config-options", _]) => Some("changing a chat's session options"),
++        (&Method::PUT, ["api", "teams", _, "conversations", _, "config-options", _]) => {
++            Some("changing a team chat's session options")
++        }
++        (&Method::POST, ["api", "teams", _, "session-mode"]) => Some("changing a team's permission mode"),
++        (&Method::PATCH, ["api", "conversations", _]) => {
++            let extra = body.and_then(|b| b.get("extra")).and_then(Value::as_object)?;
++            MODE_KEYS
++                .iter()
++                .any(|k| extra.contains_key(*k))
++                .then_some("changing a chat's permission mode")
++        }
++        (&Method::PATCH, ["api", "settings"]) => {
++            let b = body.and_then(Value::as_object)?;
++            HUMAN_ONLY_SETTINGS
++                .iter()
++                .any(|k| b.contains_key(*k))
++                .then_some("changing cross-session messaging")
++        }
++        // the user's credentials
++        (&Method::POST, ["api", "auth", "change-password"]) => Some("changing the password"),
++        (
++            &Method::POST,
++            [
++                "api",
++                "webui",
++                "change-password" | "change-username" | "reset-password" | "generate-qr-token",
++            ],
++        ) => Some("changing the web login"),
++        // letting someone outside in: messaging-platform bots and their users
++        (&Method::POST, ["api", "channel", "pairings", "approve" | "reject"]) => Some("deciding a bot pairing"),
++        (&Method::POST, ["api", "channel", "users", "revoke"]) => Some("revoking a bot user"),
++        (&Method::POST, ["api", "channel", "plugins", "enable" | "disable"]) => Some("switching a bot on or off"),
++        // what an extension may do
++        (&Method::POST, ["api", "extensions", "permissions" | "risk-level"]) => {
++            Some("granting an extension permissions")
++        }
++        _ => None,
++    }
++}
++
++/// Routes whose refusal depends on the body (the rest are decided by method and path alone).
++pub fn needs_body(method: &Method, path: &str) -> bool {
++    let path = path.split('?').next().unwrap_or_default();
++    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
++    matches!(
++        (method, segs.as_slice()),
++        (&Method::PATCH, ["api", "conversations", _]) | (&Method::PATCH, ["api", "settings"])
++    )
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    fn refused(method: Method, path: &str, body: Option<Value>) -> bool {
++        refusal(&method, path, body.as_ref()).is_some()
++    }
++
++    #[test]
++    fn prompts_and_modes_are_human_only() {
++        assert!(refused(
++            Method::POST,
++            "/api/conversations/c1/confirmations/call-1/confirm",
++            None
++        ));
++        assert!(refused(Method::POST, "/api/conversations/c1/asks/req-1/answer", None));
++        assert!(refused(Method::PUT, "/api/conversations/c1/config-options/mode", None));
++        assert!(
++            refused(Method::PUT, "/api/conversations/c1/config-options/model", None),
++            "the whole route"
++        );
++        assert!(refused(
++            Method::PUT,
++            "/api/teams/t1/conversations/c1/config-options/mode",
++            None
++        ));
++        assert!(refused(Method::POST, "/api/teams/t1/session-mode", None));
++        // reading the cards stays open
++        assert!(!refused(Method::GET, "/api/conversations/c1/confirmations", None));
++    }
++
++    #[test]
++    fn a_conversation_patch_is_refused_only_for_mode_keys() {
++        let path = "/api/conversations/c1";
++        assert!(needs_body(&Method::PATCH, path));
++        assert!(
++            !refused(Method::PATCH, path, Some(json!({ "name": "Renamed" }))),
++            "the config CLI's rename"
++        );
++        assert!(!refused(
++            Method::PATCH,
++            path,
++            Some(json!({ "extra": { "workspace": "C:/w" } }))
++        ));
++        assert!(refused(
++            Method::PATCH,
++            path,
++            Some(json!({ "extra": { "session_mode": "bypassPermissions" } }))
++        ));
++        assert!(refused(
++            Method::PATCH,
++            path,
++            Some(json!({ "name": "x", "extra": { "current_mode_id": "yolo" } }))
++        ));
++        assert!(!refused(Method::PATCH, path, None), "no JSON body: nothing to refuse");
++    }
++
++    #[test]
++    fn settings_are_refused_only_for_cross_session() {
++        assert!(needs_body(&Method::PATCH, "/api/settings"));
++        assert!(!refused(
++            Method::PATCH,
++            "/api/settings",
++            Some(json!({ "language": "en" }))
++        ));
++        assert!(refused(
++            Method::PATCH,
++            "/api/settings",
++            Some(json!({ "cross_session_message_enabled": true }))
++        ));
++        assert!(refused(
++            Method::PATCH,
++            "/api/settings",
++            Some(json!({ "language": "en", "cross_session_message_enabled": false }))
++        ));
++        // client settings stay open (the identity, usage and loop patches write them)
++        assert!(!refused(
++            Method::PUT,
++            "/api/settings/client",
++            Some(json!({ "theme.activeId": "x" }))
++        ));
++    }
++
++    #[test]
++    fn credentials_bots_and_extension_grants_are_human_only() {
++        for (m, p) in [
++            (Method::POST, "/api/auth/change-password"),
++            (Method::POST, "/api/webui/change-password"),
++            (Method::POST, "/api/webui/change-username"),
++            (Method::POST, "/api/webui/reset-password"),
++            (Method::POST, "/api/webui/generate-qr-token"),
++            (Method::POST, "/api/channel/pairings/approve"),
++            (Method::POST, "/api/channel/pairings/reject"),
++            (Method::POST, "/api/channel/users/revoke"),
++            (Method::POST, "/api/channel/plugins/enable"),
++            (Method::POST, "/api/channel/plugins/disable"),
++            (Method::POST, "/api/extensions/permissions"),
++            (Method::POST, "/api/extensions/risk-level"),
++        ] {
++            assert!(refused(m.clone(), p, None), "{m} {p}");
++        }
++    }
++
++    #[test]
++    fn agent_tools_keep_their_routes() {
++        // aioncore config (aiondx-config), the loop tool's MCP row, identity themes, usage records, cron, sends
++        for (m, p) in [
++            (Method::POST, "/api/providers"),
++            (Method::PUT, "/api/providers/p1"),
++            (Method::POST, "/api/mcp/servers"),
++            (Method::POST, "/api/mcp/servers/m1/toggle"),
++            (Method::PUT, "/api/settings/client"),
++            (Method::POST, "/api/assistants"),
++            (Method::POST, "/api/cron/jobs"),
++            (Method::POST, "/api/skills/import"),
++            (Method::POST, "/api/conversations/c1/messages"),
++            (Method::POST, "/api/runtime/team-tools/call"),
++            (Method::POST, "/api/runtime/session-messages/send"),
++            (Method::POST, "/api/teams/t1/agents/s1/messages"),
++        ] {
++            assert!(!refused(m.clone(), p, None), "{m} {p}");
++        }
++    }
++}
+diff --git a/crates/aionui-auth/src/lib.rs b/crates/aionui-auth/src/lib.rs
+index bb30e230..7501828a 100644
+--- a/crates/aionui-auth/src/lib.rs
++++ b/crates/aionui-auth/src/lib.rs
+@@ -6,6 +6,7 @@ mod cookie;
+ mod csrf;
+ mod error;
+ mod extract;
++pub mod human_only;
+ mod jwt;
+ pub mod middleware;
+ mod password;
+diff --git a/crates/aionui-auth/src/middleware.rs b/crates/aionui-auth/src/middleware.rs
+index f6c09a09..80b1ca83 100644
+--- a/crates/aionui-auth/src/middleware.rs
++++ b/crates/aionui-auth/src/middleware.rs
+@@ -226,13 +226,42 @@ async fn runtime_token_channel(state: &AuthState, mut request: Request, next: Ne
+         user_type: user.user_type,
+         status: user.status,
+     });
+-    request
+-        .extensions_mut()
+-        .insert(AuthChannel::RuntimeToken { conversation_id });
++    request.extensions_mut().insert(AuthChannel::RuntimeToken {
++        conversation_id: conversation_id.clone(),
++    });
+ 
++    // AionDX core-0019: routes only a human may call refuse every agent runtime token.
++    let request = refuse_human_only(request, &conversation_id).await?;
+     Ok(next.run(request).await)
+ }
+ 
++/// AionDX core-0019: `403 HUMAN_ONLY_ROUTE` for a runtime-token call to a human-only route (`human_only.rs`). The body
++/// is read only for the two routes whose refusal depends on it, and is put back unchanged.
++async fn refuse_human_only(request: Request, conversation_id: &str) -> Result<Request, ApiError> {
++    let method = request.method().clone();
++    let path = request.uri().path().to_owned();
++    let (request, body) = if crate::human_only::needs_body(&method, &path) {
++        let (parts, body) = request.into_parts();
++        let bytes = axum::body::to_bytes(body, 4 * 1024 * 1024)
++            .await
++            .map_err(|_| ApiError::BadRequest("Request body too large".into()))?;
++        let parsed = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
++        (Request::from_parts(parts, axum::body::Body::from(bytes)), parsed)
++    } else {
++        (request, None)
++    };
++    if let Some(what) = crate::human_only::refusal(&method, &path, body.as_ref()) {
++        tracing::warn!(%method, path, conversation_id, what, "refused an agent call to a human-only route");
++        return Err(ApiError::coded(
++            StatusCode::FORBIDDEN,
++            "HUMAN_ONLY_ROUTE",
++            format!("Only the user can do this ({what}); an agent's runtime token can't."),
++            None,
++        ));
++    }
++    Ok(request)
++}
++
+ /// Local-mode authentication middleware that skips JWT verification.
+ ///
+ /// Injects a fixed `CurrentUser` with id and username `system_default_user`.
+diff --git a/crates/aionui-auth/tests/middleware_tests.rs b/crates/aionui-auth/tests/middleware_tests.rs
+index d5d5c21b..10a62810 100644
+--- a/crates/aionui-auth/tests/middleware_tests.rs
++++ b/crates/aionui-auth/tests/middleware_tests.rs
+@@ -983,3 +983,112 @@ async fn runtime_token_header_with_a_cookie_authenticates_as_the_token() {
+     let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+     assert_eq!(&body[..], br#"RuntimeToken { conversation_id: "conv-1" }"#);
+ }
++
++// ── AionDX core-0019: human-only routes refuse the runtime-token channel ──
++
++fn human_only_app(jwt_service: Arc<JwtService>, user_repo: Arc<dyn IUserRepository>) -> Router {
++    let state = AuthState {
++        jwt_service,
++        user_repo,
++        identity_mode: AuthIdentityMode::UserSession,
++        runtime_token_verifier: conv1_verifier(),
++    };
++    let echo = |body: String| async move { body };
++    Router::new()
++        .route(
++            "/api/conversations/{id}/confirmations/{call}/confirm",
++            axum::routing::post(echo),
++        )
++        .route("/api/conversations/{id}", axum::routing::patch(echo))
++        .route("/api/settings", axum::routing::patch(echo))
++        .route("/api/channel/pairings/approve", axum::routing::post(echo))
++        .route("/api/providers", axum::routing::post(echo))
++        .route_layer(middleware::from_fn_with_state(state, auth_middleware))
++}
++
++fn agent_call(method: &str, path: &str, body: &str) -> Request<Body> {
++    Request::builder()
++        .method(method)
++        .uri(path)
++        .header("x-aionui-runtime-token", "tok-1")
++        .header("x-aionui-user-id", "system_default_user")
++        .header("x-aionui-conversation-id", "conv-1")
++        .header(header::CONTENT_TYPE, "application/json")
++        .body(Body::from(body.to_owned()))
++        .unwrap()
++}
++
++#[tokio::test]
++async fn an_agent_cannot_call_a_human_only_route_but_the_user_can() {
++    let jwt_service = Arc::new(JwtService::new("middleware_test_secret".into()));
++    let token = jwt_service.sign("system_default_user", "system_default_user").unwrap();
++    let db = init_database_memory().await.unwrap();
++    let repo = Arc::new(SqliteUserRepository::new(db.pool().clone())) as Arc<dyn IUserRepository>;
++    let app = human_only_app(jwt_service, repo);
++
++    for (method, path, body) in [
++        (
++            "POST",
++            "/api/conversations/conv-1/confirmations/call-1/confirm",
++            r#"{"msg_id":"m","data":"allow"}"#,
++        ),
++        (
++            "PATCH",
++            "/api/conversations/conv-1",
++            r#"{"extra":{"session_mode":"bypassPermissions"}}"#,
++        ),
++        ("PATCH", "/api/settings", r#"{"cross_session_message_enabled":true}"#),
++        ("POST", "/api/channel/pairings/approve", r#"{"code":"1234"}"#),
++    ] {
++        let resp = app.clone().oneshot(agent_call(method, path, body)).await.unwrap();
++        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{method} {path}");
++        let json = json_body(resp).await;
++        assert_eq!(json["code"], "HUMAN_ONLY_ROUTE", "{method} {path}: {json}");
++    }
++
++    // The user's own session still answers the prompt.
++    let resp = app
++        .clone()
++        .oneshot(
++            Request::post("/api/conversations/conv-1/confirmations/call-1/confirm")
++                .header(header::AUTHORIZATION, format!("Bearer {token}"))
++                .body(Body::from("{}"))
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(resp.status(), StatusCode::OK);
++}
++
++/// The routes an agent's tools legitimately use stay open, and a body the gate had to read reaches the handler unchanged.
++#[tokio::test]
++async fn agent_tools_keep_their_routes_and_bodies_pass_through_intact() {
++    let jwt_service = Arc::new(JwtService::new("middleware_test_secret".into()));
++    let db = init_database_memory().await.unwrap();
++    let repo = Arc::new(SqliteUserRepository::new(db.pool().clone())) as Arc<dyn IUserRepository>;
++    let app = human_only_app(jwt_service, repo);
++
++    for (method, path, body) in [
++        (
++            "PATCH",
++            "/api/conversations/conv-1",
++            r#"{"name":"Renamed by aioncore config"}"#,
++        ),
++        (
++            "PATCH",
++            "/api/conversations/conv-1",
++            r#"{"extra":{"workspace":"C:/w"}}"#,
++        ),
++        ("PATCH", "/api/settings", r#"{"language":"en"}"#),
++        ("POST", "/api/providers", r#"{"name":"p"}"#),
++    ] {
++        let resp = app.clone().oneshot(agent_call(method, path, body)).await.unwrap();
++        assert_eq!(resp.status(), StatusCode::OK, "{method} {path}");
++        let echoed = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
++        assert_eq!(
++            &echoed[..],
++            body.as_bytes(),
++            "{method} {path}: the body arrives as sent"
++        );
++    }
++}
+diff --git a/crates/aionui-runtime/src/agent_env.rs b/crates/aionui-runtime/src/agent_env.rs
+index 57c186e4..4f16be0b 100644
+--- a/crates/aionui-runtime/src/agent_env.rs
++++ b/crates/aionui-runtime/src/agent_env.rs
+@@ -67,6 +67,9 @@ fn clean_agent_env(env: &mut BTreeMap<OsString, OsString>) {
+         "CLAUDECODE",
+         "SSL_CERT_FILE",
+         "SSL_CERT_DIR",
++        // AionDX core-0019: AionCore's own bootstrap secret authenticates the /api/auth/internal routes (create users,
++        // set passwords, rotate JWT secrets). Agents never need it, and inheriting it bypassed every channel check.
++        "AIONCORE_BOOTSTRAP_SECRET",
+     ] {
+         remove_env_key(env, key);
+     }
+@@ -264,6 +267,23 @@ mod tests {
+ 
+     const CHILD_MARKER: &str = "AIONUI_RUNTIME_AGENT_ENV_TEST_CHILD";
+ 
++    /// AionDX core-0019: AionCore's bootstrap secret authenticates the user-admin routes and must never reach an agent.
++    #[test]
++    fn the_bootstrap_secret_never_reaches_an_agent() {
++        let current = vec![
++            (OsString::from("AIONCORE_BOOTSTRAP_SECRET"), OsString::from("s3cret")),
++            (OsString::from("PATH"), OsString::from("C:/bin")),
++            (OsString::from("KEEP_ME"), OsString::from("1")),
++        ];
++        let shell = vec![(
++            OsString::from("AIONCORE_BOOTSTRAP_SECRET"),
++            OsString::from("from-shell"),
++        )];
++        let env = build_agent_process_env(current, shell);
++        assert!(get_env_value(&env, "AIONCORE_BOOTSTRAP_SECRET").is_none());
++        assert_eq!(get_env_value(&env, "KEEP_ME"), Some(&OsString::from("1")));
++    }
++
+     #[cfg(unix)]
+     #[tokio::test]
+     async fn agent_process_env_merges_full_shell_env_and_cleans_pollution() {
