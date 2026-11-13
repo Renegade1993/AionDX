@@ -27,7 +27,10 @@ param(
   # Where cargo builds. Default: vendor\aioncore-src\target, unless that path is long enough to push build outputs past
   # Windows' 260-character limit (link.exe is not long-path aware, so a deep checkout fails with LNK1104); then a short
   # folder under %LOCALAPPDATA%\aiondx-build is used. The finished exe is copied to vendor\aioncore as before.
-  [string]$TargetDir = ''
+  [string]$TargetDir = '',
+  # Parallel compile/link jobs. A full parallel build (one per core) once took 25 GB of RAM and froze the PC it ran
+  # on, so the default is 6; raise it on a machine with memory to spare.
+  [int]$Jobs = 6
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -154,7 +157,7 @@ try {
   $pkg = if ($Patched) { 'aiondx-app' } else { 'aionui-app' }
 
   # 5. The release build, the way AionCore's own release does it.
-  Say "cargo build --release --target $target -p $pkg (+crt-static, build paths remapped)"
+  Say "cargo build --release --target $target -p $pkg -j $Jobs (+crt-static, build paths remapped)"
   # Nothing about this PC goes into the binary: the panic and debug paths Rust writes into it name the build folder, the cargo registry
   # and the toolchain, and those hold the Windows user name (found on October 2nd, 2026, in the first build meant for a public release).
   # CARGO_ENCODED_RUSTFLAGS separates flags with 0x1f, so a path with a space in it is one flag.
@@ -166,7 +169,7 @@ try {
   if ($Clean -and (Test-Path $TargetDir)) { Say "clean build: removing $TargetDir"; Remove-Item -LiteralPath $TargetDir -Recurse -Force }
   Say "cargo target dir: $TargetDir"
   $trim = "/d1trimfile:$($env:USERPROFILE)\"
-  $c = Run $cargo @('build', '--release', '--target', $target, '-p', $pkg) $wt @{ CARGO_ENCODED_RUSTFLAGS = ($flags -join [string][char]0x1f); RUSTFLAGS = $null; CL = $trim; CARGO_TERM_COLOR = 'never'; CARGO_TARGET_DIR = $TargetDir }
+  $c = Run $cargo @('build', '--release', '--target', $target, '-p', $pkg, '-j', "$Jobs") $wt @{ CARGO_ENCODED_RUSTFLAGS = ($flags -join [string][char]0x1f); RUSTFLAGS = $null; CL = $trim; CARGO_TERM_COLOR = 'never'; CARGO_TARGET_DIR = $TargetDir }
   if ($c -ne 0) { throw "cargo build exit $c" }
   $exe = Join-Path $TargetDir "$target\release\aioncore.exe"
   $h = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
