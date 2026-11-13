@@ -173,6 +173,13 @@ try {
     insC.run('c4', JSON.stringify({ skills: ['aionui-oldthing', 'cron'] }));
     d4.prepare('INSERT INTO assistant_definitions VALUES (?,?)').run('a1', JSON.stringify(['aionui-config', 'aionui-troubleshooting']));
     d4.close();
+    // the run at AionDX's start writes nothing to the database (2026-11-13: AionCore's first start failed "database is locked")
+    const before = fs.readFileSync(sdb);
+    r = spawnSync(process.execPath, [shim, '--db', sdb, '--at-start'], { encoding: 'utf8', windowsHide: true, timeout: 30000, env: Object.assign({}, process.env, { AIONDX_REFRESH_LOG_DIR: path.join(root, 'logs2') }) });
+    const atStartLog = fs.readFileSync(path.join(root, 'logs2', 'model-refresh.log'), 'utf8');
+    check('the run at AionDX start leaves the database alone: no repair, no statistics, the file unchanged, and says so',
+      Buffer.compare(before, fs.readFileSync(sdb)) === 0 && /at start: database upkeep left for the next run/.test(atStartLog) &&
+      !fs.readdirSync(path.join(root, 'logs2')).some((f) => /^skill-repair-/.test(f)), atStartLog.slice(-300));
     r = spawnSync(process.execPath, [shim, '--db', sdb], { encoding: 'utf8', windowsHide: true, timeout: 30000, env: Object.assign({}, process.env, { AIONDX_REFRESH_LOG_DIR: path.join(root, 'logs2') }) });
     const d5 = new DatabaseSync(sdb, { readOnly: true });
     const ex = (id) => JSON.parse(d5.prepare('SELECT extra FROM conversations WHERE id = ?').get(id).extra);
@@ -203,7 +210,8 @@ try {
     const idx = d7.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'aiondx_messages_cron'").get();
     const plan = d7.prepare("EXPLAIN QUERY PLAN SELECT * FROM messages WHERE conversation_id = 'c' AND type = 'cron_trigger' ORDER BY created_at").all().map((r) => r.detail).join(' ');
     d7.close();
-    check("the scheduled-task message index is added, and AionCore's lookup uses it", idx && /WHERE type = 'cron_trigger'/.test(idx.sql) && /aiondx_messages_cron/.test(plan), JSON.stringify([idx, plan]));
+    // 2026-11-13: no longer made (building it held the database long enough to fail AionCore's first start)
+    check('the scheduled-task message index is not made by the refresh', !idx, JSON.stringify([idx, plan]));
   }
 } catch (e) {
   check('no exception', false, e.stack);

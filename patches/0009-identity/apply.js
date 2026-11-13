@@ -108,7 +108,7 @@ function __aiondxIconFile(name) {
     // twelve hours while AionDX runs, aiondx-model-refresh.js asks each agent's CLI what it offers and rewrites the stored pickers. It runs
     // on the Node.js AionDX ships (it reads AionCore's database with node:sqlite), hidden, and ends itself within four minutes.
     // AIONDX_NO_REFRESH=1 skips it (tests).
-    const refresh = (quick) => {
+    const refresh = (quick, atStart) => {
       try {
         if (process.env.AIONDX_NO_REFRESH === "1") return;
         // AionDX's own bin folder, or %APPDATA%\\npm where a developer's layout keeps the Claude launcher and its scripts.
@@ -119,7 +119,9 @@ function __aiondxIconFile(name) {
         const base = path__namespace.join(process.resourcesPath, "bundled-aioncore", "win32-x64", "managed-resources", "node");
         const found = fs__namespace.existsSync(base) ? fs__namespace.readdirSync(base).filter((n) => /^node-v[0-9.]+-win-x64$/.test(n) && fs__namespace.existsSync(path__namespace.join(base, n, "node.exe"))).sort().pop() : null;
         const node = found ? path__namespace.join(base, found, "node.exe") : "node";
-        const r = require("child_process").spawn(node, quick ? [script, "--quick", "--no-update"] : [script], { windowsHide: true, stdio: "ignore", detached: true });
+        // --at-start: no database upkeep in this run (AionCore is opening the same database; 2026-11-13 a 6 s write lock made its first
+        // start fail with "database is locked"). The upkeep runs in the 15-minute run.
+        const r = require("child_process").spawn(node, quick ? [script, "--quick", "--no-update"] : [script].concat(atStart ? ["--at-start"] : []), { windowsHide: true, stdio: "ignore", detached: true });
         r.on("error", () => {});
         r.unref();
       } catch {}
@@ -146,8 +148,8 @@ function __aiondxIconFile(name) {
     let lastStamp = catalogStamp();
     const watch = setInterval(() => { const s = catalogStamp(); if (s && s !== lastStamp) { lastStamp = s; refresh(true); } }, 300000);
     if (watch.unref) watch.unref();
-    child.on("error", () => { clearTimeout(timer); refresh(false); });
-    child.on("exit", () => { clearTimeout(timer); refresh(false); });
+    child.on("error", () => { clearTimeout(timer); refresh(false, true); });
+    child.on("exit", () => { clearTimeout(timer); refresh(false, true); });
   } catch {}
 })();
 /** Right-click (a request of 2026-09-26, widened 2026-10-20): Cut, Copy, Paste and Select all in a text box, Copy on selected text, spelling

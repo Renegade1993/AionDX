@@ -426,7 +426,9 @@ function dbUpkeep() {
   // reading through every message of the chat, 2.2 s each, 20 times that day on a 1.9 GB database. An index of only those rows makes it about
   // 1 ms (measured on a copy: 117 ms to 1 ms warm). Named aiondx_*, so no AionCore migration can collide with it; made again if a
   // migration rebuilds the table.
-  if (!DRY) {
+  // The scheduled-task message index is no longer made here (2026-11-13): building it holds the database for seconds on a large one, long
+  // enough to fail AionCore's start or a write. A database that already has it keeps it.
+  if (false) {
     try {
       const d1 = db(false);
       try {
@@ -531,8 +533,10 @@ async function main(opts) {
   if (lock && lock.at && Date.now() - lock.at < DEADLINE_MS + 30000 && lock.pid !== process.pid) { log('another refresh is running (pid ' + lock.pid + ')'); return 0; }
   fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, at: Date.now() }));
   sweepScratch();
-  dbUpkeep();
-  skillRepair();
+  // Database upkeep writes to AionCore's database, so never while AionDX starts (--at-start): on November 13th, 2026 the first start of
+  // 0.27.0 failed because AionCore found the database locked while this built an index (6.2 s on a 1.9 GB database after a cold boot).
+  if (!args.includes('--at-start')) { dbUpkeep(); skillRepair(); }
+  else log('at start: database upkeep left for the next run');
   try {
     const d0 = db(true);
     let cols, rows;
