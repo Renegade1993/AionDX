@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-12.1';
+  var BUILD = '2026-11-13.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -711,6 +711,10 @@
   var OPTIONS = [
     { id: 'links.files', group: 'Links', type: 'choice', default: 'outside', choices: [['outside', 'Outside AionDX (its own program, or Explorer for a folder)'], ['preview', 'A preview tab inside AionDX']],
       label: 'Open file and folder links in', desc: 'Where a link to a file or folder on this PC opens. A folder always opens in Explorer. Alt+click uses the other one; Shift+click shows it in its folder.' },
+    { id: 'links.docs', group: 'Links', type: 'choice', default: 'pane', choices: [['pane', 'A pane beside the chat, inside AionDX'], ['browser', 'Your web browser']],
+      label: 'Open Claude Docs in', desc: 'Where a Claude Doc link opens. The pane keeps its own Claude sign-in, asked for once. Alt+click uses the other one.' },
+    { id: 'help.tips', group: 'Help', type: 'bool', default: true,
+      label: 'Show tips for AionDX\u2019s controls', desc: 'A bubble points at each AionDX control the first time it is on screen and says how to use it, until you press Got it. Off hides them all.' },
     { id: 'loop.skillsLine', group: 'The Loop', type: 'bool', default: true,
       label: 'Remind agents of their skills', desc: 'Each Loop nudge to keep working ends with one line: check the project\u2019s skills before a task, and update the matching skill when you learn a better way. Agents rarely open a skill unless told (measured on a team, November 10th).' },
     { id: 'spellcheck', group: 'Typing', type: 'bool', default: true,
@@ -7117,7 +7121,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -9152,6 +9156,189 @@
     }
     if (chatMenuBtn.parentNode !== right || right.lastElementChild !== chatMenuBtn) right.appendChild(chatMenuBtn);
   }
+
+  // ---- the chat's notification bell (R-112, a request of 2026-11-13). A bell in the chat's header, before the menu button. It holds only notices
+  // whose condition the app checks each time (aiondx-notices.js in the main process: Claude Docs needs a sign-in, an agent started before Docs or
+  // a sign-in and needs a reconnect); a notice whose condition stops holding is gone at the next check. New notices show a red bubble with their
+  // count over the bell; opening the bell marks them seen and the bubble goes. Nothing restarts an agent by itself: a reconnect costs the user
+  // usage, so it is a button. Checked when a chat opens, every minute while the window is in front, and after a sign-in or a reconnect.
+  var bellBtn = null, bellPop = null, bellNotices = [], bellFor = '', bellAt = 0, bellBusy = false, bellTeam = {};
+  var BELL_SEEN_KEY = KEY_PREFIX + 'bell.seen';
+  var SVG_BELL = '<svg width="15" height="15" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 6c-7 0-12 5-12 12v9l-4 7h32l-4-7v-9c0-7-5-12-12-12z" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path d="M19 38c1 3 3 4 5 4s4-1 5-4" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg>';
+  function bellSeen() { try { return JSON.parse(localStorage.getItem(BELL_SEEN_KEY)) || {}; } catch (e) { return {}; } }
+  function bellMarkSeen() {
+    var s = bellSeen(), now = Date.now();
+    bellNotices.forEach(function (n) { s[n.id] = now; });
+    Object.keys(s).forEach(function (k) { if (now - s[k] > 30 * 86400000) delete s[k]; });
+    try { localStorage.setItem(BELL_SEEN_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+  function bellUnseen() { var s = bellSeen(); return bellNotices.filter(function (n) { return !s[n.id]; }).length; }
+  async function bellChats(r) {
+    if (r.kind === 'conv') return [{ conv: r.id }];
+    var c = bellTeam[r.id];
+    if (!c || Date.now() - c.at > 60000) {
+      var t = await getJson('/api/teams/' + encodeURIComponent(r.id));
+      var rows = t && t.data ? (t.data.assistants || t.data.agents || []) : [];
+      c = bellTeam[r.id] = { at: Date.now(), list: rows.filter(function (a) { return a && a.conversation_id; }).map(function (a) {
+        return { conv: a.conversation_id, slot: a.slot_id, name: a.name, team: r.id };
+      }) };
+    }
+    return c.list;
+  }
+  async function bellCheck(force) {
+    var r = route();
+    if (!r || !window.aiondxNotices || bellBusy) return;
+    var key = r.kind + ':' + r.id;
+    if (!force && key === bellFor && Date.now() - bellAt < 60000) return;
+    bellBusy = true;
+    try {
+      var chats = await bellChats(r);
+      var res = await window.aiondxNotices.check(chats.map(function (c) { return c.conv; }));
+      var list = res && res.ok ? res.notices : [];
+      list.forEach(function (n) {
+        var c = chats.filter(function (x) { return x.conv === n.conv; })[0];
+        if (c && c.name) n.who = c.name;
+        if (c && c.slot) { n.slot = c.slot; n.team = c.team; }
+      });
+      bellNotices = list;
+      bellFor = key;
+      bellAt = Date.now();
+      paintBell();
+      if (bellPop) fillBellPop();
+    } catch (e) { /* the next check tries again */ } finally { bellBusy = false; }
+  }
+  function paintBell() {
+    if (!bellBtn) return;
+    var n = bellUnseen();
+    var badge = bellBtn.querySelector('.aiondx-bell-badge');
+    badge.textContent = n > 9 ? '9+' : String(n);
+    badge.style.display = n ? '' : 'none';
+    var b = bellBtn.querySelector('button');
+    b.title = bellNotices.length ? bellNotices.length + ' notice' + (bellNotices.length === 1 ? '' : 's') + ' for this chat' : 'Notices for this chat';
+    b.setAttribute('aria-label', n ? n + ' new notice' + (n === 1 ? '' : 's') : 'Notices');
+  }
+  function closeBellPop() { if (bellPop && bellPop.parentNode) bellPop.parentNode.removeChild(bellPop); bellPop = null; }
+  function fillBellPop() {
+    if (!bellPop) return;
+    bellPop.innerHTML = '';
+    if (!bellNotices.length) { bellPop.appendChild(gEl('div', 'aiondx-bell-empty', 'Nothing needs your attention in this chat.')); return; }
+    bellNotices.forEach(function (n) {
+      var item = gEl('div', 'aiondx-bell-item');
+      item.appendChild(gEl('div', 'aiondx-bell-title', n.title + (n.who ? ' (' + n.who + ')' : '')));
+      item.appendChild(gEl('div', 'aiondx-bell-text', n.text));
+      var st = gEl('div', 'aiondx-bell-status');
+      if (n.action) {
+        var b = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small aiondx-bell-act', n.action.label);
+        b.type = 'button';
+        b.addEventListener('click', function () { bellAct(n, b, st); });
+        item.appendChild(b);
+      }
+      item.appendChild(st);
+      bellPop.appendChild(item);
+    });
+  }
+  async function bellAct(n, btn, st) {
+    btn.disabled = true;
+    try {
+      if (n.action.op === 'reconnect') {
+        var c = await getJson('/api/conversations/' + encodeURIComponent(n.conv));
+        if (c && c.data && c.data.status === 'running') { st.textContent = 'It is working right now. Reconnect when it finishes, so nothing it is doing is cut off.'; btn.disabled = false; return; }
+        st.textContent = 'Reconnecting...';
+        var r = n.slot ? await postJson('/api/teams/' + encodeURIComponent(n.team) + '/agents/' + encodeURIComponent(n.slot) + '/runtime/restart', {})
+                       : await postJson('/api/conversations/' + encodeURIComponent(n.conv) + '/runtime/restart', {});
+        st.textContent = r && r.ok ? 'Reconnected. The chat is kept.' : 'The reconnect did not go through' + (r && r.status ? ' (' + r.status + ')' : '') + '. Try again in a moment.';
+        if (!(r && r.ok)) btn.disabled = false;
+        setTimeout(function () { bellCheck(true); }, 4000);
+        return;
+      }
+      if (n.action.op === 'signin') {
+        if (!window.aiondxSignin) { st.textContent = 'Sign in from Settings: Sign in to your agents.'; return; }
+        st.textContent = 'Opening the Claude sign-in page in your browser...';
+        var s = await window.aiondxSignin.start('claude', n.action.account || undefined);
+        if (!s || !s.ok) { st.textContent = 'The sign-in did not start: ' + ((s && (s.error || s.text)) || 'no answer') + '.'; btn.disabled = false; return; }
+        st.textContent = 'Finish the sign-in on the page that opened; this updates by itself.';
+        if (s.url) { var a = gEl('a', 'aiondx-bell-link', 'Open the sign-in page again'); a.href = s.url; st.appendChild(document.createTextNode(' ')); st.appendChild(a); }
+        var started = Date.now();
+        var t = setInterval(function () {
+          if (Date.now() - started > 11 * 60000) { clearInterval(t); btn.disabled = false; return; }
+          window.aiondxSignin.poll().then(function (p) {
+            if (!p || p.state === 'running' || p.state === 'none') return;
+            clearInterval(t);
+            if (p.state === 'done') { st.textContent = 'Signed in.'; bellCheck(true); }
+            else { st.textContent = 'The sign-in did not finish.'; btn.disabled = false; }
+          }, function () {});
+        }, 1500);
+      }
+    } catch (e) { st.textContent = 'That did not work: ' + e.message; btn.disabled = false; }
+  }
+  function openBellPop(anchor) {
+    if (bellPop) { closeBellPop(); return; }
+    bellPop = gEl('div', 'aiondx-bell-pop');
+    bellPop.setAttribute('role', 'dialog');
+    bellPop.setAttribute('aria-label', 'Notices for this chat');
+    var rc = anchor.getBoundingClientRect();
+    bellPop.style.top = Math.round(rc.bottom + 6) + 'px';
+    bellPop.style.right = Math.max(8, Math.round(document.documentElement.clientWidth - rc.right)) + 'px';
+    document.body.appendChild(bellPop);
+    fillBellPop();
+    bellMarkSeen();
+    paintBell();
+    bellCheck(true);
+    setTimeout(function () {
+      var off = function (ev) {
+        if (!bellPop) { document.removeEventListener('pointerdown', off, true); return; }
+        if (bellPop.contains(ev.target) || (bellBtn && bellBtn.contains(ev.target))) return;
+        closeBellPop();
+        document.removeEventListener('pointerdown', off, true);
+      };
+      document.addEventListener('pointerdown', off, true);
+    }, 0);
+  }
+  function renderBell() {
+    if (!window.aiondxNotices) return;
+    var r = route();
+    var hdr = null;
+    if (r && !disabled()) {
+      var hs = document.querySelectorAll('header.arco-layout-header');
+      for (var i = 0; i < hs.length && !hdr; i++) if (!hs[i].closest('.arco-layout-sider') && hs[i].querySelector('[data-testid="chat-title-editor-trigger"]')) hdr = hs[i];
+    }
+    var right = hdr ? hdr.querySelector(':scope > .shrink-0') : null;
+    if (!right) { if (bellBtn && bellBtn.parentNode) bellBtn.parentNode.removeChild(bellBtn); closeBellPop(); return; }
+    if (!bellBtn) {
+      bellBtn = gEl('div', 'shrink-0 aiondx-bell');
+      bellBtn.innerHTML = '<span class="h-28px w-28px aiondx-bell-wrap"><button type="button" class="arco-btn arco-btn-text arco-btn-size-mini arco-btn-shape-square arco-btn-icon-only aiondx-bell-btn" data-testid="aiondx-bell" aria-haspopup="dialog">' + SVG_BELL + '</button><span class="aiondx-bell-badge" style="display:none"></span></span>';
+      bellBtn.querySelector('button').addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); openBellPop(ev.currentTarget); });
+    }
+    var before = chatMenuBtn && chatMenuBtn.parentNode === right ? chatMenuBtn : null;
+    if (bellBtn.parentNode !== right || (before && bellBtn.nextSibling !== before)) right.insertBefore(bellBtn, before);
+    var key = r.kind + ':' + r.id;
+    if (key !== bellFor) { bellNotices = []; paintBell(); closeBellPop(); }
+    if (document.visibilityState === 'visible') bellCheck(false);
+  }
+  (function bellStyle() {
+    var st = document.createElement('style');
+    st.id = 'aiondx-bell-style';
+    st.textContent = [
+      '.aiondx-bell{display:inline-flex;margin-inline-end:4px}',
+      '.aiondx-bell-wrap{position:relative;display:inline-flex}',
+      '.aiondx-bell-btn{color:var(--color-text-3)!important}',
+      '.aiondx-bell-btn:hover{color:var(--color-text-1)!important}',
+      '.aiondx-bell-badge{position:absolute;top:-4px;right:-5px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;',
+      '  background:#f53f3f;color:#fff;font-size:10px;font-weight:600;line-height:16px;text-align:center;pointer-events:none;',
+      '  border:1px solid #f53f3f;box-shadow:0 0 0 2px var(--color-bg-1,#fff)}',
+      '.aiondx-bell-pop{position:fixed;z-index:1100;width:340px;max-height:60vh;overflow:auto;padding:6px;border-radius:8px;',
+      '  background:var(--color-bg-popup,var(--color-bg-1,#fff));border:1px solid var(--color-border-2,rgba(0,0,0,.12));box-shadow:0 6px 24px rgba(0,0,0,.18)}',
+      '.aiondx-bell-empty{padding:12px;color:var(--color-text-3);font-size:13px}',
+      '.aiondx-bell-item{padding:10px 10px 12px;border-radius:6px}',
+      '.aiondx-bell-item+.aiondx-bell-item{border-top:1px solid var(--color-border-1,rgba(0,0,0,.08))}',
+      '.aiondx-bell-title{font-size:13px;font-weight:600;color:var(--color-text-1);margin-bottom:4px}',
+      '.aiondx-bell-text{font-size:12.5px;line-height:1.45;color:var(--color-text-2);margin-bottom:8px}',
+      '.aiondx-bell-status{font-size:12px;color:var(--color-text-3);margin-top:6px}',
+      '.aiondx-bell-status:empty{display:none}',
+    ].join('\n');
+    document.head.appendChild(st);
+  })();
+  setInterval(function () { if (document.visibilityState === 'visible' && route()) bellCheck(false); }, 60000);
   /** A team's row in AionUi's list: its icon, or its spinner while a run is going. */
   function teamRowOf(node) {
     var row = node.closest ? node.closest('.h-34px') : null;
@@ -9775,6 +9962,8 @@
       ev.preventDefault();
       ev.stopPropagation();
       if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+      // R-110: a Claude Doc opens in the pane beside the chat (option links.docs; Alt+click uses the other place).
+      if (isDocLink(href) && ((opt('links.docs') !== 'browser') !== !!ev.altKey)) { openDocsPane(href); return; }
       openInBrowser(href);
     }, true);
   }
@@ -10179,6 +10368,370 @@
   }
   guardFetch();
   installLinkRouting();
+
+  // ---------------------------------------------------------------- Claude Docs inside AionDX (R-110)
+
+  // A Claude Doc link (claude.ai, an /artifact/ or /docs/ address) opens in a pane docked at the right of the window, as the Claude app shows a
+  // doc, instead of the system browser. The main process (patches/0009-identity/aiondx-docs.js) puts a claude.ai view in the space this code
+  // reserves: the page narrows by the pane's width, this code draws the header (the doc's title, Open in browser, Reload, Close) and a drag edge
+  // to resize it, and sends the view's rectangle whenever the window or the width changes. The pane keeps its own claude.ai sign-in: the first doc
+  // shows claude.ai's sign-in in the pane once. Option links.docs ('pane' or 'browser'); Alt+click uses the other.
+  var DOCS_W_KEY = KEY_PREFIX + 'docs.width';
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  var docsPane = null;           // { box, title, width } while open
+  function isDocLink(href) {
+    return /^https:\/\/([a-z0-9-]+\.)?claude\.ai\/(.*\/)?(artifact|artifacts|docs)\//i.test(href || '');
+  }
+  function docsZoom() {
+    // Bounds go to the main process in window units; the page may be zoomed (Ctrl+wheel), which makes a CSS pixel bigger or smaller.
+    var z = window.outerWidth && window.innerWidth ? window.outerWidth / window.innerWidth : 1;
+    return z > 0.4 && z < 4 && Math.abs(z - 1) > 0.03 ? z : 1;
+  }
+  function docsWidth() {
+    var saved = Number(lsGet(DOCS_W_KEY)) || 0;
+    var w = saved || Math.round(window.innerWidth * 0.45);
+    return Math.max(360, Math.min(w, window.innerWidth - 320));
+  }
+  function docsStyle(w) {
+    var st = document.getElementById('aiondx-docs-style');
+    if (!st) { st = document.createElement('style'); st.id = 'aiondx-docs-style'; document.head.appendChild(st); }
+    st.textContent = w ? [
+      '#root{width:calc(100vw - ' + w + 'px)!important;max-width:calc(100vw - ' + w + 'px)!important}',
+      '.aiondx-docs{position:fixed;top:0;right:0;bottom:0;box-sizing:border-box;width:' + w + 'px;z-index:900;display:flex;flex-direction:column;',
+      '  background:var(--color-bg-1,#fff);border-left:1px solid var(--color-border-2,rgba(0,0,0,.12))}',
+      '.aiondx-docs-head{flex:0 0 36px;display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;border-bottom:1px solid var(--color-border-2,rgba(0,0,0,.12));',
+      '  font-size:13px;color:var(--color-text-1)}',
+      '.aiondx-docs-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}',
+      '.aiondx-docs-btn{flex:0 0 auto;border:0;background:transparent;color:var(--color-text-2);cursor:pointer;border-radius:4px;padding:4px 8px;font-size:12px}',
+      '.aiondx-docs-btn:hover{background:var(--color-fill-2,rgba(0,0,0,.06));color:var(--color-text-1)}',
+      '.aiondx-docs-body{flex:1 1 auto;position:relative}',
+      '.aiondx-docs-note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--color-text-3);font-size:13px}',
+      '.aiondx-docs-edge{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:1}',
+      '.aiondx-docs-edge:hover,.aiondx-docs-edge.on{background:rgb(var(--primary-6,22,93,255));opacity:.5}',
+    ].join('\n') : '';
+  }
+  function docsBounds() {
+    if (!docsPane) return null;
+    var r = docsPane.body.getBoundingClientRect(), z = docsZoom();
+    return { x: r.left * z, y: r.top * z, width: r.width * z, height: r.height * z };
+  }
+  function docsPlace() {
+    if (!docsPane || !window.aiondxDocs) return;
+    var b = docsBounds();
+    if (b) window.aiondxDocs.bounds(b);
+  }
+  function closeDocsPane() {
+    if (!docsPane) return;
+    if (window.aiondxDocs) window.aiondxDocs.close();
+    if (docsPane.box.parentNode) docsPane.box.parentNode.removeChild(docsPane.box);
+    docsPane = null;
+    docsStyle(0);
+    window.dispatchEvent(new Event('resize'));
+  }
+  function openDocsPane(href) {
+    if (!window.aiondxDocs) return openInBrowser(href);
+    docsListen();
+    if (!docsPane) {
+      var w = docsWidth();
+      docsStyle(w);
+      var box = document.createElement('div');
+      box.className = 'aiondx-docs';
+      box.setAttribute('role', 'complementary');
+      box.setAttribute('aria-label', 'Claude Doc');
+      box.innerHTML = '<div class="aiondx-docs-edge" title="Drag to resize"></div>' +
+        '<div class="aiondx-docs-head"><span class="aiondx-docs-title">Claude Doc</span>' +
+        '<button type="button" class="aiondx-docs-btn" data-act="external" title="Open this doc in your browser">Open in browser</button>' +
+        '<button type="button" class="aiondx-docs-btn" data-act="reload" title="Reload the doc">Reload</button>' +
+        '<button type="button" class="aiondx-docs-btn" data-act="close" title="Close the doc" aria-label="Close">✕</button></div>' +
+        '<div class="aiondx-docs-body"><div class="aiondx-docs-note">Opening the doc…</div></div>';
+      document.body.appendChild(box);
+      docsPane = { box: box, title: box.querySelector('.aiondx-docs-title'), body: box.querySelector('.aiondx-docs-body'), width: w };
+      box.querySelector('.aiondx-docs-head').addEventListener('click', function (ev) {
+        var b = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
+        if (!b) return;
+        var act = b.getAttribute('data-act');
+        if (act === 'close') closeDocsPane();
+        else if (act === 'external') window.aiondxDocs.external();
+        else if (act === 'reload') window.aiondxDocs.reload();
+      });
+      var edge = box.querySelector('.aiondx-docs-edge');
+      edge.addEventListener('pointerdown', function (ev) {
+        ev.preventDefault();
+        edge.setPointerCapture(ev.pointerId);
+        edge.classList.add('on');
+        var move = function (e) {
+          if (!docsPane) return;
+          var nw = Math.max(360, Math.min(window.innerWidth - e.clientX, window.innerWidth - 320));
+          docsPane.width = Math.round(nw);
+          docsStyle(docsPane.width);
+          docsPlace();
+        };
+        var done = false;
+        var up = function () {
+          if (done) return;
+          done = true;
+          edge.classList.remove('on');
+          edge.removeEventListener('pointermove', move);
+          edge.removeEventListener('pointerup', up);
+          edge.removeEventListener('lostpointercapture', up);
+          document.removeEventListener('pointerup', up, true);
+          if (docsPane) lsSet(DOCS_W_KEY, String(docsPane.width));
+          window.dispatchEvent(new Event('resize'));
+        };
+        edge.addEventListener('pointermove', move);
+        edge.addEventListener('pointerup', up);
+        // the release can land elsewhere (over the doc's own view, which the page never hears from): the end of the capture ends the drag too
+        edge.addEventListener('lostpointercapture', up);
+        document.addEventListener('pointerup', up, true);
+      });
+      window.dispatchEvent(new Event('resize'));
+    }
+    var b = docsBounds();
+    return window.aiondxDocs.open(href, b).then(function (r) {
+      if (!r || !r.ok) { closeDocsPane(); toast('Could not open the doc inside AionDX; opening it in your browser.', r && r.error); openInBrowser(href); }
+      return !!(r && r.ok);
+    }, function () { closeDocsPane(); openInBrowser(href); return false; });
+  }
+  var docsListening = false;
+  function docsListen() {
+    if (docsListening || !window.aiondxDocs) return;
+    docsListening = true;
+    window.aiondxDocs.onEvent(function (d) {
+      if (!docsPane || !d || d.kind !== 'state') return;
+      if (!d.open) return;
+      var note = docsPane.body.querySelector('.aiondx-docs-note');
+      if (note && !d.loading) note.parentNode.removeChild(note);
+      docsPane.title.textContent = d.signIn ? 'Sign in to Claude (once; AionDX remembers it)' : (d.title || 'Claude Doc').replace(/\s*[-|–]\s*Claude\s*$/, '');
+    });
+  }
+  function installDocsPane() {
+    window.addEventListener('resize', function () { if (docsPane) { docsStyle(docsPane.width = Math.max(360, Math.min(docsPane.width, window.innerWidth - 320))); docsPlace(); } });
+    document.addEventListener('keydown', function (ev) {
+      if (docsPane && ev.key === 'Escape' && ev.target && ev.target.closest && ev.target.closest('.aiondx-docs')) closeDocsPane();
+    }, true);
+  }
+  installDocsPane();
+
+  // ---------------------------------------------------------------- what's new (R-107, a request of 2026-11-13)
+
+  // Once after an update, a small card in the corner names each new thing and says exactly how to use it, in a line or two: "VERY CLEAR, VERY
+  // CONCISE, AND DIRECT ABOUT HOW TO INTERACT WITH THE NEW FEATURE". No steps for the user to carry out by hand: anything that needed doing was
+  // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
+  // opens on the Welcome screen, marks it seen without showing it.
+  var WHATS_NEW = {
+    release: '0.27.2',
+    items: [
+      ['Claude Docs open beside your chat', 'Click a Claude Doc link in a reply. It opens in a pane on the right; drag its left edge to resize, ✕ to close. The first doc asks you to sign in to Claude once, in the pane.'],
+      ['A bell at the top of each chat', 'A red number on it means something needs you, for example a Reconnect so an agent picks up Claude Docs. Click the bell to see it. Nothing restarts unless you click.'],
+    ],
+  };
+  var WHATS_NEW_KEY = KEY_PREFIX + 'whatsnew.seen';
+  // Decided at load (so a reload inside the delay cannot show it twice); shown 3 seconds later.
+  function whatsNewDue() {
+    var seen = null;
+    try { seen = localStorage.getItem(WHATS_NEW_KEY); } catch (e) { return false; }
+    if (seen === WHATS_NEW.release || disabled()) return false;
+    var fresh = !seen && !Object.keys(localStorage).some(function (k) { return k.indexOf(KEY_PREFIX) === 0 && k !== WHATS_NEW_KEY; });
+    try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW.release); } catch (e) {}
+    return !fresh && WHATS_NEW.items.length > 0;
+  }
+  function showWhatsNew() {
+    if (document.querySelector('[data-testid="aiondx-whatsnew"]')) return;
+    var card = gEl('div', 'aiondx-whatsnew');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-label', 'New in AionDX ' + WHATS_NEW.release);
+    card.setAttribute('data-testid', 'aiondx-whatsnew');
+    var head = gEl('div', 'aiondx-whatsnew-head');
+    head.appendChild(gEl('span', 'aiondx-whatsnew-title', 'New in AionDX ' + WHATS_NEW.release));
+    var x = gEl('button', 'aiondx-whatsnew-x', '✕');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Close');
+    head.appendChild(x);
+    card.appendChild(head);
+    WHATS_NEW.items.forEach(function (it) {
+      var row = gEl('div', 'aiondx-whatsnew-item');
+      row.appendChild(gEl('div', 'aiondx-whatsnew-name', it[0]));
+      row.appendChild(gEl('div', 'aiondx-whatsnew-how', it[1]));
+      card.appendChild(row);
+    });
+    var ok = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small aiondx-whatsnew-ok', 'Got it');
+    ok.type = 'button';
+    card.appendChild(ok);
+    var close = function () { if (card.parentNode) card.parentNode.removeChild(card); };
+    x.addEventListener('click', close);
+    ok.addEventListener('click', close);
+    var st = document.getElementById('aiondx-whatsnew-style') || document.createElement('style');
+    st.id = 'aiondx-whatsnew-style';
+    st.textContent = [
+      '.aiondx-whatsnew{position:fixed;right:16px;bottom:16px;z-index:1200;box-sizing:border-box;width:340px;padding:12px 14px 14px;border-radius:10px;',
+      '  background:var(--color-bg-popup,var(--color-bg-1,#fff));border:1px solid var(--color-border-2,rgba(0,0,0,.12));box-shadow:0 8px 28px rgba(0,0,0,.2)}',
+      '.aiondx-whatsnew-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}',
+      '.aiondx-whatsnew-title{font-size:14px;font-weight:600;color:var(--color-text-1)}',
+      '.aiondx-whatsnew-x{border:0;background:transparent;color:var(--color-text-3);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px}',
+      '.aiondx-whatsnew-x:hover{background:var(--color-fill-2,rgba(0,0,0,.06))}',
+      '.aiondx-whatsnew-item{margin:0 0 10px}',
+      '.aiondx-whatsnew-name{font-size:13px;font-weight:600;color:var(--color-text-1);margin-bottom:2px}',
+      '.aiondx-whatsnew-how{font-size:12.5px;line-height:1.45;color:var(--color-text-2)}',
+      '.aiondx-whatsnew-ok{margin-top:2px}',
+    ].join('\n');
+    if (!st.parentNode) document.head.appendChild(st);
+    document.body.appendChild(card);
+  }
+  if (whatsNewDue()) setTimeout(showWhatsNew, 3000);
+
+  // ---------------------------------------------------------------- tips: a bubble pointing at each AionDX control (a request of 2026-11-13)
+
+  // "new features [should] receive bubble callout popups the user can dismiss as they want, but otherwise popup when they go to a new screen until
+  // they do". Each tip points at its control the first time that control is on screen: what it is and how to use it, in two sentences. Got it (or
+  // the close button) puts that tip away for good; a click anywhere else hides it on this screen only, and it comes back on the next screen where
+  // its control shows. One tip at a time. Option help.tips switches them all off. The harness page switches them off for the other tests
+  // (window.__aionDxTips === false) and on for its own.
+  var COACH_TIPS = [
+    { id: 'bell', sel: '[data-testid="aiondx-bell"]', title: 'Notices for this chat',
+      text: 'A red number on the bell means something here needs you, like reconnecting an agent so it gets Claude Docs. Click it to see what and why; nothing restarts unless you click.' },
+    { id: 'docs-link', find: function () {
+        var as = document.querySelectorAll('a[href*="claude.ai"]');
+        for (var i = 0; i < as.length; i++) if (isDocLink(as[i].href) && !as[i].closest('[class*="aiondx"]') && coachVisible(as[i])) return as[i];
+        return null;
+      }, title: 'Claude Docs open right here',
+      text: 'Click a Claude Doc link to read it in a pane beside the chat. Drag the pane’s left edge to resize it, ✕ closes it, and Alt+click opens a doc in your browser instead.' },
+    { id: 'loop', sel: '[data-testid="aiondx-loop"]', title: 'The Loop',
+      text: 'While it is on, it tells the agent to keep going each time it stops with nothing left to do. Click to switch it on or off; hover it to see what it is doing.' },
+    { id: 'ctx', sel: '.context-usage-indicator', title: 'How full this chat is',
+      text: 'The ring fills as the chat’s memory fills. A small blue snowflake inside means the prompt cache is warm, so replies are cheaper and quicker; hover for until when.' },
+    { id: 'account', sel: '[data-testid="aiondx-account"]', title: 'Which Claude account',
+      text: 'This chat runs on the account named here. Click it to move the chat to another account, for example when one reaches its limit.' },
+    { id: 'sched', sel: '[data-testid="aiondx-sched-btn"]', title: 'Schedule send',
+      text: 'Type a message, then click this to pick a time; it is sent then. A number on it counts the messages waiting.' },
+    { id: 'bolt', sel: '[data-testid="aiondx-solo-bolt"]', title: 'Answer this now',
+      text: 'Shows while the agent works and you have typed something. Click it to stop the agent’s current step and have it answer you right away; Enter instead waits for its next step.' },
+    { id: 'menu', sel: '[data-testid="aiondx-chat-menu"]', title: 'This chat’s menu',
+      text: 'The same menu you get by right-clicking the chat in the list on the left.' },
+    { id: 'groups', sel: '[data-testid="aiondx-group-new"]', title: 'Groups',
+      text: 'Make a group to keep related chats and teams together in this list.' },
+    { id: 'drive', sel: '[data-testid="aiondx-drive-move"]', title: 'Chats on a drive',
+      text: 'Moves all your chats to another drive or a USB drive. AionDX then works from there, and the drive carries them to another PC.' },
+    { id: 'signin', sel: '[data-testid="aiondx-signin-open"]', title: 'Sign in your agents',
+      text: 'Sign each Claude account in once here; Claude Docs and your claude.ai skills come with that sign-in.' },
+  ];
+  var COACH_DONE_KEY = KEY_PREFIX + 'tips.done';
+  var coachShown = null;            // { tip, el, target }
+  var coachScreen = '', coachHidden = {}, coachScreenAt = 0;
+  function coachOn() {
+    if (window.__aionDxTips === false || disabled()) return false;
+    try { return opt('help.tips') !== false; } catch (e) { return true; }
+  }
+  function coachDoneList() { try { return JSON.parse(localStorage.getItem(COACH_DONE_KEY)) || {}; } catch (e) { return {}; } }
+  function coachDone(id) { var d = coachDoneList(); d[id] = Date.now(); try { localStorage.setItem(COACH_DONE_KEY, JSON.stringify(d)); } catch (e) {} }
+  function coachVisible(el) {
+    if (!el || !el.isConnected) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4 || r.bottom < 0 || r.right < 0 || r.top > window.innerHeight || r.left > window.innerWidth) return false;
+    var cs = getComputedStyle(el);
+    return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05;
+  }
+  function coachTarget(tip) {
+    if (tip.find) return tip.find();
+    var el = document.querySelector(tip.sel);
+    return coachVisible(el) ? el : null;
+  }
+  function coachHide() {
+    if (!coachShown) return;
+    if (coachShown.el.parentNode) coachShown.el.parentNode.removeChild(coachShown.el);
+    if (coachShown.target) coachShown.target.classList.remove('aiondx-coach-target');
+    coachShown = null;
+  }
+  function coachPlace() {
+    if (!coachShown) return;
+    var r = coachShown.target.getBoundingClientRect(), el = coachShown.el;
+    var w = el.offsetWidth, h = el.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+    var below = r.bottom + 10 + h <= vh - 8 || r.top - 10 - h < 8;
+    var top = below ? r.bottom + 10 : r.top - 10 - h;
+    var left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, vw - w - 8));
+    el.style.top = Math.round(top) + 'px';
+    el.style.left = Math.round(left) + 'px';
+    el.classList.toggle('aiondx-coach--above', !below);
+    var arrow = el.querySelector('.aiondx-coach-arrow');
+    arrow.style.left = Math.round(Math.max(12, Math.min(r.left + r.width / 2 - left - 6, w - 24))) + 'px';
+  }
+  function coachShow(tip, target) {
+    var el = gEl('div', 'aiondx-coach');
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', tip.title);
+    el.setAttribute('data-testid', 'aiondx-coach-' + tip.id);
+    el.appendChild(gEl('span', 'aiondx-coach-arrow'));
+    var head = gEl('div', 'aiondx-coach-head');
+    head.appendChild(gEl('span', 'aiondx-coach-title', tip.title));
+    var x = gEl('button', 'aiondx-coach-x', '✕');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Got it, do not show again');
+    head.appendChild(x);
+    el.appendChild(head);
+    el.appendChild(gEl('div', 'aiondx-coach-text', tip.text));
+    var ok = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-mini aiondx-coach-ok', 'Got it');
+    ok.type = 'button';
+    el.appendChild(ok);
+    var done = function (ev) { if (ev) { ev.preventDefault(); ev.stopPropagation(); } coachDone(tip.id); coachHide(); };
+    x.addEventListener('click', done);
+    ok.addEventListener('click', done);
+    document.body.appendChild(el);
+    target.classList.add('aiondx-coach-target');
+    coachShown = { tip: tip, el: el, target: target };
+    coachPlace();
+  }
+  function coachScreenKey() {
+    var s = location.hash || '';
+    // Settings pages, and which panel of a page is open, count as screens of their own
+    var tab = document.querySelector('.arco-tabs-header-title-active, [role="tab"][aria-selected="true"]');
+    return s + (tab ? '|' + (tab.textContent || '').trim().slice(0, 40) : '');
+  }
+  function coachRun() {
+    if (!coachOn()) { coachHide(); return; }
+    var key = coachScreenKey();
+    if (key !== coachScreen) { coachScreen = key; coachHidden = {}; coachScreenAt = Date.now(); coachHide(); }
+    if (coachShown) {
+      if (!coachVisible(coachShown.target)) coachHide(); else coachPlace();
+      return;
+    }
+    if (Date.now() - coachScreenAt < 1200) return;   // let a new screen settle first
+    // never over another AionDX card or menu, or a dialog of AionUi's
+    if (document.querySelector('.aiondx-bell-pop, [data-testid="aiondx-whatsnew"], .aiondx-menu, .aiondx-acct-menu, .arco-modal-wrapper:not([style*="display: none"]), .aiondx-docs')) return;
+    var done = coachDoneList();
+    for (var i = 0; i < COACH_TIPS.length; i++) {
+      var tip = COACH_TIPS[i];
+      if (done[tip.id] || coachHidden[tip.id]) continue;
+      var target = coachTarget(tip);
+      if (target) { coachShow(tip, target); return; }
+    }
+  }
+  function coachInstall() {
+    // A click anywhere else hides the tip on this screen only; it comes back on the next screen where its control shows.
+    document.addEventListener('pointerdown', function (ev) {
+      if (!coachShown || coachShown.el.contains(ev.target)) return;
+      coachHidden[coachShown.tip.id] = true;
+      coachHide();
+    }, true);
+    window.addEventListener('resize', coachPlace);
+    var st = document.createElement('style');
+    st.id = 'aiondx-coach-style';
+    st.textContent = [
+      '.aiondx-coach{position:fixed;z-index:1150;box-sizing:border-box;width:290px;padding:10px 12px 12px;border-radius:8px;',
+      '  background:rgb(var(--primary-6,22,93,255));color:#fff;box-shadow:0 6px 22px rgba(0,0,0,.25);font-size:12.5px;line-height:1.45}',
+      '.aiondx-coach-arrow{position:absolute;top:-6px;width:12px;height:12px;background:inherit;transform:rotate(45deg);border-radius:2px}',
+      '.aiondx-coach--above .aiondx-coach-arrow{top:auto;bottom:-6px}',
+      '.aiondx-coach-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;position:relative}',
+      '.aiondx-coach-title{font-size:13px;font-weight:600}',
+      '.aiondx-coach-x{border:0;background:transparent;color:rgba(255,255,255,.85);cursor:pointer;font-size:12px;padding:2px 4px;border-radius:4px}',
+      '.aiondx-coach-x:hover{background:rgba(255,255,255,.18);color:#fff}',
+      '.aiondx-coach-text{position:relative;margin-bottom:8px}',
+      '.aiondx-coach-ok{position:relative;background:#fff!important;color:rgb(var(--primary-6,22,93,255))!important;border:0!important}',
+      '.aiondx-coach-target{outline:2px solid rgb(var(--primary-6,22,93,255));outline-offset:2px;border-radius:6px}',
+    ].join('\n');
+    document.head.appendChild(st);
+    setInterval(function () { if (document.visibilityState === 'visible') coachRun(); }, 700);
+  }
+  coachInstall();
 
   // ---------------------------------------------------------------- team column scrolling
 

@@ -18,7 +18,7 @@ const http = require('http');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { PassThrough } = require('stream');
-const { startProxy } = require('./claude-stream-proxy.js');
+const { startProxy, isSideCall } = require('./claude-stream-proxy.js');
 
 const deadline = setTimeout(() => { console.log('DEADLINE'); process.exit(2); }, 150000);
 const scratch = fs.mkdtempSync(path.join(process.env.TEMP || '.', 'aiondx-proxy-test-'));
@@ -464,14 +464,29 @@ server.listen(0, '127.0.0.1', async () => {
       // Anthropic moves the chat to 5 minutes (2026-11-11.3): the newest part ends in 5 minutes; the hour part this call read lives an hour on.
       check('a main call that wrote 5-minute entries is written at once: the newest part ends 5 minutes on, the hour part it read lives an hour on, until is the later',
         c4.ttl === '5m' && c4.tailUntil === c4.at + 300000 && c4.longUntil === c4.at + 3600000 && c4.until === c4.longUntil && c4.until > c3.until, JSON.stringify(c4));
+      await sleep(400);
+      check('one reply that wrote 5 minutes does not move the account yet (it may be a one-off)', acctPuts('tapkey000005').length === 1 && acctPuts('tapkey000005')[0].ttl === '1h',
+        JSON.stringify(acctPuts('tapkey000005')));
+      // 2026-11-13: one of Claude Code's own side requests (no agent header, small, a quick check) wrote a 5-minute cache and the work account was
+      // reported moved to 5 minutes, while every reply in the transcripts was cached for an hour.
+      const before = cachePuts('c1').length;
+      await call('k4s', 'sse:300:0:900');
+      await sleep(400);
+      check("a small side request of Claude Code's (no agent header, a few hundred tokens) moves neither the chat's record nor the account",
+        cachePuts('c1').length === before && acctPuts('tapkey000005').length === 1, JSON.stringify([cachePuts('c1').length, before, acctPuts('tapkey000005')]));
+      await call('k4b', 'sse:31200:0:200');
       await waitFor(() => acctPuts('tapkey000005').length >= 2);
       const ac = acctPuts('tapkey000005');
-      check("the account's length: the first measured call records 1 hour (no change), the move to 5 minutes records the change and its time",
-        ac.length === 2 && ac[0].ttl === '1h' && ac[0].from === null && ac[0].label === 'Cache' && ac[1].ttl === '5m' && ac[1].from === '1h' && ac[1].changedAt === c4.at, JSON.stringify(ac));
+      check("the account's length: the first measured call records 1 hour (no change); a second reply in a row at 5 minutes records the change and its time",
+        ac.length === 2 && ac[0].ttl === '1h' && ac[0].from === null && ac[0].label === 'Cache' && ac[1].ttl === '5m' && ac[1].from === '1h' && ac[1].changedAt > c4.at, JSON.stringify(ac));
+      check('isSideCall: small, or Haiku in a chat that is not on Haiku', isSideCall({ read: 300, write: 0, input: 900 }, null) &&
+        isSideCall({ read: 20000, write: 0, input: 3, model: 'claude-haiku-5-5' }, { model: 'claude-opus-5-5' }) &&
+        !isSideCall({ read: 20000, write: 0, input: 3, model: 'claude-haiku-5-5' }, { model: 'claude-haiku-5-5' }) &&
+        !isSideCall({ read: 20000, write: 0, input: 3, model: 'claude-opus-5-5' }, { model: 'claude-opus-5-5' }));
       check('the log names the account and both lengths', C.logs.some((l) => /prompt cache length for the Cache account is now 5 minutes \(was 1 hour\)/.test(l)), C.logs.join(' | ').slice(0, 400));
       await call('k5', 'sse:0:52000:0');
-      await waitFor(() => cachePuts('c1').length >= 4);
-      const c5 = cachePuts('c1')[3] || {};
+      await waitFor(() => cachePuts('c1').some((x) => x.rebuilt && x.rebuilt.tokens === 52000));
+      const c5 = cachePuts('c1').filter((x) => x.rebuilt && x.rebuilt.tokens === 52000)[0] || {};
       check('a main call that wrote most of its context again is a rebuild, and early when the record said the cache was still there', c5.rebuilt && c5.rebuilt.tokens === 52000 &&
         c5.rebuilt.early === true && c5.rebuilt.afterMin === 0 && c5.ttl === '1h', JSON.stringify(c5));
       check('the log says so', C.logs.some((l) => /cache rebuilt: 52000 tokens/.test(l)), C.logs.join(' | ').slice(0, 300));
@@ -480,10 +495,10 @@ server.listen(0, '127.0.0.1', async () => {
       const r6 = await call('k6', 'sse:52000:0:0:gzsplit');
       await call('k7', 'sse:52000:0:0:br');
       C.input.write(frame({ type: 'turn' }));
-      await waitFor(() => cachePuts('c1').length >= 5);
+      await waitFor(() => cachePuts('c1').some((x) => x.calls === 7));
       const c7 = cachePuts('c1').slice(-1)[0] || {};
       check('the read-only calls after it changed no account record', acctPuts('tapkey000005').length === 3, acctPuts('tapkey000005').length);
-      check('a gzip answer cut inside message_start and a brotli answer are both read (two more main calls: 6 in all, not the subagent call)', c7.calls === 6 && c7.read === 52000, JSON.stringify(cachePuts('c1').map((x) => x.calls + ':' + x.read + ':' + x.ttl)) + ' ' + C.json().filter((x) => x.type === 'api_result').map((x) => x.id + ':' + x.status + ':' + (x.error || '')).join(','));
+      check('a gzip answer cut inside message_start and a brotli answer are both read (two more main calls: 7 in all, not the subagent call or the side request)', c7.calls === 7 && c7.read === 52000, JSON.stringify(cachePuts('c1').map((x) => x.calls + ':' + x.read + ':' + x.ttl)) + ' ' + C.json().filter((x) => x.type === 'api_result').map((x) => x.id + ':' + x.status + ':' + (x.error || '')).join(','));
       check('and the cut gzip answer reaches Claude whole', r6 && /message_stop/.test(r6.body), JSON.stringify(r6).slice(0, 200));
       C.input.end();
       await Promise.race([C.done, sleep(5000)]);

@@ -160,6 +160,17 @@ server = http.createServer((req, res) => {
       if (work[m[1]]) work[m[1]].fg++;
       return reply(res, 200, { success: true, data: { enqueue_status: 'queued', target: { slot_id: m[1] } } });
     }
+    if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/conversations\/([^/]+)\/messages$/))) {
+      // A chat's newest page (aionui-api-types MessageListResponse); before= gives the page ahead of it.
+      if (!conversations[m[1]]) return reply(res, 404, { success: false, message: 'Conversation ' + m[1] + ' not found' });
+      const older = url.searchParams.get('before') === 'cur1';
+      const items = older ? [{ id: 'm0', type: 'text', position: 'right', hidden: false, created_at: 1000, content: { content: 'the first ask' } }] : [
+        { id: 'm1', type: 'text', position: 'right', hidden: false, created_at: 2000, content: { content: 'build the map' } },
+        { id: 'm2', type: 'tool_call', position: 'left', hidden: false, created_at: 3000, content: { name: 'Bash' } },
+        { id: 'm3', type: 'text', position: 'left', hidden: true, created_at: 3500, content: { content: 'a hidden row' } },
+        { id: 'm4', type: 'text', position: 'left', hidden: false, created_at: 4000, content: { content: 'Map built.\nTwo files changed.' } }];
+      return reply(res, 200, { success: true, data: { items, oldest_cursor: older ? null : 'cur1', newest_cursor: 'cur9', has_more_before: !older, has_more_after: false } });
+    }
     if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/conversations\/([^/]+)$/))) {
       // The solo chat was started with aiondx-loop, and (as AionDX's AionCore build keeps it) its agent reported it connected.
       const more = m[1] === 'convS' ? { extra: { mcp_server_ids: ['mcp-1'], mcp_servers: [{ id: 'mcp-1', name: 'aiondx-loop' }] },
@@ -881,6 +892,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   cf = await cli(['config'], 'convL');
   check('config on its own prints the help (and exits 2)', cf.status === 2 && /aiondx config set ID VALUE/.test(cf.stdout), cf.stdout);
   delete kv['aiondx.options']; delete kv['aiondx.options.schema'];
+
+  // ---- aiondx team and aiondx chat read (R-111, 2026-11-13): a @@ team mention is an invitation to read the team ----
+  let tm = await cli(['team', 'list'], 'convS');
+  check('team list names each team, its member count and its lead\'s chat, from a chat that is not on the team', tm.status === 0 && /Team One {2}team team1, 3 members, lead's chat convL/.test(tm.stdout), tm.stdout);
+  tm = await cli(['team', 'show', 'convL'], 'convS');
+  const tmLines = tm.stdout.split('\n');
+  check('team show by the lead\'s chat id gives the layout, the lead first, each member with its chat, agent and model', tm.status === 0 && /^Team: Team One \(team team1\)/.test(tmLines[0]) &&
+    /^ {2}Lead \(lead\): chat convL, agent Lead agent, model default$/.test(tmLines[1]) && /^ {2}Worker: chat convW/.test(tmLines[2]) && /^ {2}Viewer: chat convV/.test(tmLines[3]) && /aiondx chat read CHAT_ID/.test(tm.stdout), tm.stdout);
+  tm = await cli(['team', 'show', 'convW'], 'convS');
+  const tm2 = await cli(['team', 'show', 'team', 'one'], 'convS');
+  const tm3 = await cli(['team', 'show', 'team1'], 'convS');
+  check('team show also finds the team by a member\'s chat, its name (any case, spaces kept) or its id', tm.status === 0 && tm2.status === 0 && tm3.status === 0 &&
+    [tm, tm2, tm3].every((r) => /^Team: Team One/.test(r.stdout)), tm.stdout + tm2.stdout + tm3.stdout);
+  tm = await cli(['team', 'show', 'nobody'], 'convS');
+  check('an unknown team says so and points to team list', tm.status === 1 && /No team matches "nobody"\. aiondx team list/.test(tm.stdout), tm.stdout);
+  tm = await cli(['team'], 'convS');
+  check('team on its own prints the help (and exits 2)', tm.status === 2 && /aiondx team show ID\|NAME/.test(tm.stdout), tm.stdout);
+  let cr = await cli(['chat', 'read', 'convL', '--last', '4'], 'convS');
+  const crq = requests.filter((q) => q.path === '/api/conversations/convL/messages').pop();
+  check('chat read asks for the newest N and prints the text messages oldest first, who and when, skipping hidden rows and tool calls', cr.status === 0 && crq && /limit=4/.test(crq.query) &&
+    /^Chat: Lead chat \(convL\), 4 messages, the newest:/.test(cr.stdout) && /--- user, [^\n]*\nbuild the map\n--- agent, [^\n]*\nMap built\.\nTwo files changed\./.test(cr.stdout) &&
+    !/hidden row|Bash/.test(cr.stdout) && /Older messages: aiondx chat read convL --last 4 --before cur1/.test(cr.stdout), cr.stdout);
+  cr = await cli(['chat', 'read', 'convL', '--all'], 'convS');
+  check('chat read --all also lists tool calls and notices by type', cr.status === 0 && /--- agent, [^\n]*\[tool_call\]/.test(cr.stdout) && /limit=20/.test(requests.filter((q) => q.path === '/api/conversations/convL/messages').pop().query), cr.stdout);
+  cr = await cli(['chat', 'read', 'convL', '--before', 'cur1'], 'convS');
+  check('chat read --before reads the page ahead, and says when there is nothing older', cr.status === 0 && /the first ask/.test(cr.stdout) && /before the cursor/.test(cr.stdout) && !/Older messages/.test(cr.stdout), cr.stdout);
+  cr = await cli(['chat', 'read', 'convZZ'], 'convS');
+  check('an unknown chat gives AionUi\'s answer', cr.status === 1 && /404 to GET \/api\/conversations\/convZZ\/messages/.test(cr.stdout), cr.stdout);
+  cr = await cli(['chat', 'read', 'convL', '--last', 'x'], 'convS');
+  check('a bad --last is refused', cr.status === 1 && /--last takes a number/.test(cr.stdout), cr.stdout);
+  cr = await cli(['chat', 'read', 'convL'], 'convS');
+  check('reading changes nothing: only GETs', requests.filter((q) => /\/api\/conversations\/convL\/messages$/.test(q.path)).every((q) => q.method === 'GET'), '');
 
   // ---- aiondx member (R-054, 2026-10-16; the swap, 2026-10-20): the lead reads and sets what each member runs on ----
   let mb = await cli(['member', 'list'], 'convL');

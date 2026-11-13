@@ -161,6 +161,20 @@ function __aiondxIconFile(name) {
     require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-menu.js")).install(require$$0$2);
   } catch {}
 })();
+/** Claude Docs inside AionDX (R-110): a Claude Doc link opens in a pane beside the chat, with its own remembered claude.ai sign-in.
+ *  The work is aiondx-docs.js (patches/0009-identity); the renderer draws the pane's frame and asks through the preload's aiondxDocs. */
+(function __aiondxDocsPane() {
+  try {
+    require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-docs.js")).install(require$$0$2);
+  } catch {}
+})();
+/** The chat's notification bell (R-112): notices whose condition is checked each time (Claude Docs needs a sign-in, an agent started before
+ *  Docs or a sign-in and needs a reconnect). The work is aiondx-notices.js (patches/0009-identity); nothing here restarts an agent. */
+(function __aiondxNotices() {
+  try {
+    require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-notices.js")).install(require$$0$2);
+  } catch {}
+})();
 /** The one-click setup (a request of 2026-09-26). The Welcome screen
  *  asks for it through the preload's aiondxSetup. The setup skill's survey.js and apply.js run in a child of this
  *  process as Node (Electron's own runtime, ELECTRON_RUN_AS_NODE), so no Node.js install and no agent are needed.
@@ -730,6 +744,38 @@ else {
   notes.push('preload: aiondxPortable');
 }
 
+// ... and the chat's notification bell (main process aiondx:notices, R-112).
+if (/aiondxNotices/.test(preload)) notes.push('preload: aiondxNotices already there');
+else {
+  const anchor = 'const backendPort = electron.ipcRenderer.sendSync("get-backend-port");';
+  const n = count(preload, anchor);
+  if (n !== 1) { console.error(`0009: preload (notices): expected 1 match, found ${n}. Nothing written.`); process.exit(1); }
+  preload = preload.replace(anchor, '/* AIONDX-0009: the chat\'s notification bell (patches/0009-identity, main process aiondx:notices) */\n' +
+    'electron.contextBridge.exposeInMainWorld("aiondxNotices", {\n' +
+    '  check: (convIds) => electron.ipcRenderer.invoke("aiondx:notices", { op: "check", convIds })\n' +
+    '});\n' + anchor);
+  notes.push('preload: aiondxNotices');
+}
+
+// ... and the Claude Docs pane (main process aiondx:docs, R-110).
+if (/aiondxDocs/.test(preload)) notes.push('preload: aiondxDocs already there');
+else {
+  const anchor = 'const backendPort = electron.ipcRenderer.sendSync("get-backend-port");';
+  const n = count(preload, anchor);
+  if (n !== 1) { console.error(`0009: preload (docs): expected 1 match, found ${n}. Nothing written.`); process.exit(1); }
+  preload = preload.replace(anchor, '/* AIONDX-0009: the Claude Docs pane (patches/0009-identity, main process aiondx:docs) */\n' +
+    'electron.contextBridge.exposeInMainWorld("aiondxDocs", {\n' +
+    '  open: (url, bounds) => electron.ipcRenderer.invoke("aiondx:docs", { op: "open", url, bounds }),\n' +
+    '  bounds: (bounds) => electron.ipcRenderer.invoke("aiondx:docs", { op: "bounds", bounds }),\n' +
+    '  close: () => electron.ipcRenderer.invoke("aiondx:docs", { op: "close" }),\n' +
+    '  external: () => electron.ipcRenderer.invoke("aiondx:docs", { op: "external" }),\n' +
+    '  reload: () => electron.ipcRenderer.invoke("aiondx:docs", { op: "reload" }),\n' +
+    '  state: () => electron.ipcRenderer.invoke("aiondx:docs", { op: "state" }),\n' +
+    '  onEvent: (cb) => { const f = (_e, d) => cb(d); electron.ipcRenderer.on("aiondx:docs-event", f); return () => electron.ipcRenderer.removeListener("aiondx:docs-event", f); }\n' +
+    '});\n' + anchor);
+  notes.push('preload: aiondxDocs');
+}
+
 // ... and clearing an agent profile's caches (main process aiondx:cache).
 if (/aiondxCache/.test(preload)) notes.push('preload: aiondxCache already there');
 else {
@@ -800,4 +846,8 @@ fs.copyFileSync(path.join(__dirname, 'aiondx-restart.js'), path.join(ext, 'out',
 notes.push('out/aiondx/aiondx-restart.js');
 fs.copyFileSync(path.join(__dirname, 'aiondx-menu.js'), path.join(ext, 'out', 'aiondx', 'aiondx-menu.js'));
 notes.push('out/aiondx/aiondx-menu.js');
+fs.copyFileSync(path.join(__dirname, 'aiondx-docs.js'), path.join(ext, 'out', 'aiondx', 'aiondx-docs.js'));
+notes.push('out/aiondx/aiondx-docs.js');
+fs.copyFileSync(path.join(__dirname, 'aiondx-notices.js'), path.join(ext, 'out', 'aiondx', 'aiondx-notices.js'));
+notes.push('out/aiondx/aiondx-notices.js');
 for (const n of notes) console.log('0009: ' + n);

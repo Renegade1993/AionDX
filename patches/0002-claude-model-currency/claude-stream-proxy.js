@@ -181,6 +181,17 @@ function readShare(req, out, log) {
 }
 
 const CTX_KEY = 'aiondx.ctx.conv.';
+/** A request with no agent header that is still not the conversation: one of Claude Code's own side requests (a quick Haiku check of a command,
+ *  a title). It is far smaller than a conversation call, which carries the whole system prompt and tools, or it runs on Haiku while the chat
+ *  does not. Such a request must not move the chat's cache record or the account's cache length (2026-11-13: one wrote a 5-minute cache and
+ *  the work account was reported moved to 5 minutes, while every reply in the transcripts was cached for an hour). */
+const SIDE_MAX_CTX = 4000;
+function isSideCall(c, prev) {
+  const ctx = (Number(c.read) || 0) + (Number(c.write) || 0) + (Number(c.input) || 0);
+  if (ctx < SIDE_MAX_CTX) return true;
+  return /haiku/i.test(String(c.model || '')) && !!(prev && prev.model) && !/haiku/i.test(String(prev.model));
+}
+
 function startCache(opts, log) {
   const noop = { record() {}, compacted() {}, flush() {}, stop() { return Promise.resolve(); } };
   if (!opts.convId || !opts.apiBase || !opts.apiHeaders) return noop;
@@ -206,12 +217,15 @@ function startCache(opts, log) {
   // user once per change.
   const acctKey = opts.usage && opts.usage.key ? CACHE_ACCT_KEY + opts.usage.key : '';
   const acctLabel = (opts.usage && opts.usage.label) || '';
-  let acct = null, acctRead = false, acctPending = null;
+  let acct = null, acctRead = false, acctPending = null, shortRun = 0;
   function noteAccount(ttl, at) {
     if (!acctKey || !ttl || stopped) return;
     // Until the stored length is read, keep the newest call's length and judge it then.
     if (!acctRead) { acctPending = { ttl, at }; return; }
-    if (acct && acct.ttl === ttl) return;
+    if (acct && acct.ttl === ttl) { if (ttl === '1h') shortRun = 0; return; }
+    // An account on an hour is reported as moved to 5 minutes only when two replies in a row say so; back to an hour at once.
+    if (ttl === '5m' && acct && acct.ttl === '1h' && ++shortRun < 2) return;
+    shortRun = 0;
     const from = acct ? acct.ttl : null;
     acct = { v: 1, label: acctLabel, ttl, at, from, changedAt: from ? at : 0 };
     if (from) log(`prompt cache length for the ${acctLabel || 'account'} account is now ${ttl === '1h' ? '1 hour' : '5 minutes'} (was ${from === '1h' ? '1 hour' : '5 minutes'})`);
@@ -254,8 +268,9 @@ function startCache(opts, log) {
   }
   function record(c) {
     if (stopped || !c || !c.main) return;
-    if (c.share > 0 && c.share < 1) fixedTokens = Math.round((c.read + c.write + c.input) * c.share);
     const prev = rec;
+    if (isSideCall(c, prev)) return;
+    if (c.share > 0 && c.share < 1) fixedTokens = Math.round((c.read + c.write + c.input) * c.share);
     // ttl is the length of the newest part: a 1-hour part always comes before a 5-minute one, so a call that wrote both ends in 5 minutes.
     const bucket = c.w5m > 0 ? '5m' : c.w1h > 0 ? '1h' : c.write > 0 ? null : (prev && prev.ttl) || null;
     const ctx = c.read + c.write + c.input;
@@ -813,4 +828,4 @@ function isStreamSession(args) {
   return i >= 0 && args[i + 1] === 'stream-json';
 }
 
-module.exports = { usageModel, startProxy, isStreamSession, startTap, readUsage, watchStart, startCache };
+module.exports = { isSideCall, usageModel, startProxy, isStreamSession, startTap, readUsage, watchStart, startCache };

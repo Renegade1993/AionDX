@@ -1,6 +1,6 @@
 ---
 name: aiondx-loop
-description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. It is the only keep-warm mechanism: do not write a script that pokes agents.
+description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. Also use it when the user @@-mentions a team (its line in the sessions block ends [team]) or asks you to read another of their chats: aiondx team show gives the team's layout, lead first, and aiondx chat read reads any chat. It is the only keep-warm mechanism: do not write a script that pokes agents.
 ---
 
 # The AionDX Loop
@@ -256,6 +256,22 @@ itself (Git Credential Manager), the same sign-in the user's other repositories 
   (`.gitignore`), and look for keys before the first push.
 - Make a repository public only when the user says so. `create` reads back what GitHub made and sets it
   right if it differs.
+
+## Reading a team or another chat
+
+When the user `@@`-mentions a team, its line in the `[[AION_SESSIONS]]` block ends `[team]` and the id on it is the
+team lead's chat. That is an invitation to read the team, not to send to it. Start with the layout, then the lead,
+then any member the work needs:
+
+```
+"{{AIONDX}}" team show <id>                  the team: its lead first, then each member, with the chat id to read
+"{{AIONDX}}" chat read <chat id> --last 30   that chat's newest 30 messages, oldest first (user and agent text)
+"{{AIONDX}}" chat read <chat id> --last 30 --before <cursor>   the page before (the cursor is printed at the end)
+"{{AIONDX}}" team list                       every team that is not archived
+```
+
+`team show` also takes a team's id, any member's chat id, or its name. `chat read --all` adds tool calls and notices.
+Reading changes nothing in that chat and its agent does not see it. Send nothing to a team unless the user asks.
 
 ## When
 

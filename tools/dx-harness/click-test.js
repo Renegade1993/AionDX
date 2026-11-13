@@ -3105,6 +3105,231 @@ async function pageTarget() {
       await js('(() => { delete window.aiondxPortable; delete window.aiondxSignin; return 0; })()');
     }
 
+    // ---- the chat's notification bell (R-112, 2026-11-13) ----
+    {
+      const sc = 'bell';
+      const header = () => js(`(() => {
+        const h = document.createElement('header'); h.className = 'arco-layout-header'; h.id = 'th';
+        h.style.cssText = 'position:fixed;top:0;left:0;right:0;height:44px;display:flex;align-items:center;justify-content:space-between;z-index:50;background:#fff';
+        const t = document.createElement('span'); t.setAttribute('data-testid', 'chat-title-editor-trigger'); t.textContent = 'Harness';
+        const r = document.createElement('div'); r.className = 'shrink-0'; r.style.cssText = 'display:flex;align-items:center;gap:4px;padding-right:12px';
+        h.appendChild(t); h.appendChild(r); document.body.appendChild(h); return 0; })()`);
+      const stub = (notices) => js(`(() => {
+        window.__bn = { checks: [], signin: [] };
+        window.__bnList = ${JSON.stringify(notices)};
+        window.aiondxNotices = { check: (ids) => { window.__bn.checks.push(ids); return Promise.resolve({ ok: true, notices: window.__bnList.filter((n) => ids.indexOf(n.conv) >= 0) }); } };
+        window.aiondxSignin = { start: (agent, acct) => { window.__bn.signin.push(['start', agent, acct]); return Promise.resolve({ ok: true, url: 'https://claude.ai/oauth/authorize?x=1' }); },
+          poll: () => { window.__bn.signin.push(['poll']); return Promise.resolve({ state: 'done' }); } };
+        window.__calls.length = 0; return 0; })()`);
+      const RC = { id: 'docs-reconnect:harness1:1000', kind: 'reconnect', conv: 'harness1', title: 'Reconnect to use Claude Docs', text: 'Claude Docs was turned on after this agent started.', action: { op: 'reconnect', label: 'Reconnect' } };
+      const SI = { id: 'docs-signin:work', kind: 'signin', conv: 'harness1', title: 'Sign in to use Claude Docs', text: 'Its work Claude account is not signed in.', action: { op: 'signin', account: 'work', label: 'Sign in' } };
+      await js("localStorage.removeItem('aionui.dx.bell.seen'); 0");
+      await load('theme=light');
+      await stub([RC, SI]);
+      await header();
+      await sleep(2500);
+      const bell = await js(`(() => { const b = document.querySelector('#th .shrink-0 [data-testid="aiondx-bell"]'); const g = document.querySelector('#th .aiondx-bell-badge');
+        return b ? { badge: g && g.style.display !== 'none' ? g.textContent : '', label: b.getAttribute('aria-label') } : null; })()`);
+      check(sc, 'the chat header has the bell, with a red bubble counting the 2 new notices', bell && bell.badge === '2' && bell.label === '2 new notices', JSON.stringify(bell));
+      check(sc, 'the bell asked about this chat', JSON.stringify(await js('window.__bn.checks[0]')) === '["harness1"]', JSON.stringify(await js('window.__bn.checks')));
+      const look = await js(`(() => { const g = getComputedStyle(document.querySelector('#th .aiondx-bell-badge')); return [g.backgroundColor, g.color, g.borderTopColor]; })()`);
+      check(sc, 'the bubble is red with a white number and a red outline', JSON.stringify(look) === JSON.stringify(['rgb(245, 63, 63)', 'rgb(255, 255, 255)', 'rgb(245, 63, 63)']), JSON.stringify(look));
+      await humanClick('#th [data-testid="aiondx-bell"]');
+      await sleep(500);
+      const pop = await js(`[...document.querySelectorAll('.aiondx-bell-pop .aiondx-bell-title')].map((e) => e.textContent)`);
+      check(sc, 'opening it lists both notices', JSON.stringify(pop) === JSON.stringify(['Reconnect to use Claude Docs', 'Sign in to use Claude Docs']), JSON.stringify(pop));
+      check(sc, 'and the bubble is gone once they are seen', (await js(`document.querySelector('#th .aiondx-bell-badge').style.display`)) === 'none');
+      await humanClick('.aiondx-bell-item:nth-child(1) .aiondx-bell-act');
+      await sleep(700);
+      const rs = await js(`window.__calls.filter((c) => c.method === 'POST' && /runtime\\/restart$/.test(c.path)).map((c) => c.path)`);
+      check(sc, 'Reconnect restarts this chat\'s agent (only on the click) and says so', JSON.stringify(rs) === '["/api/conversations/harness1/runtime/restart"]' &&
+        /^Reconnected\./.test(await js(`document.querySelector('.aiondx-bell-item:nth-child(1) .aiondx-bell-status').textContent`)), JSON.stringify(rs));
+      const checksBefore = await js('window.__bn.checks.length');
+      await humanClick('.aiondx-bell-item:nth-child(2) .aiondx-bell-act');
+      await sleep(2200);
+      const si = await js('window.__bn.signin');
+      check(sc, 'Sign in starts the sign-in for that account, notices the finish by itself and checks the notices again', si[0] && si[0][0] === 'start' && si[0][1] === 'claude' && si[0][2] === 'work' && si.some((x) => x[0] === 'poll') &&
+        (await js('window.__bn.checks.length')) > checksBefore, JSON.stringify([si, checksBefore, await js('window.__bn.checks.length')]));
+      // seen notices stay seen; a new one brings the bubble back; none: the bell stays, quiet
+      await load('theme=light&keepls=1');
+      await stub([RC, SI]);
+      await header();
+      await sleep(2500);
+      check(sc, 'after a reload, notices already seen bring no bubble', (await js(`document.querySelector('#th .aiondx-bell-badge').style.display`)) === 'none');
+      await load('theme=light&keepls=1');
+      await stub([RC, SI, Object.assign({}, RC, { id: 'signin-reconnect:harness1:2000', title: 'Reconnect to finish the sign-in' })]);
+      await header();
+      await sleep(2500);
+      check(sc, 'a new notice brings the bubble back with 1', (await js(`document.querySelector('#th .aiondx-bell-badge').textContent`)) === '1' && (await js(`document.querySelector('#th .aiondx-bell-badge').style.display`)) !== 'none');
+      await load('theme=light');
+      await stub([]);
+      await header();
+      await sleep(2500);
+      await humanClick('#th [data-testid="aiondx-bell"]');
+      await sleep(400);
+      check(sc, 'with nothing to tell, the bell has no bubble and says so when opened', (await js(`document.querySelector('#th .aiondx-bell-badge').style.display`)) === 'none' &&
+        (await js(`(document.querySelector('.aiondx-bell-empty') || {}).textContent`)) === 'Nothing needs your attention in this chat.');
+      // a team: every member's chat is asked about; a member's reconnect goes through the team's route
+      await load('team=1&theme=light');
+      await stub([Object.assign({}, RC, { id: 'docs-reconnect:convB:1', conv: 'convB' })]);
+      await header();
+      await sleep(2500);
+      check(sc, 'on a team page the bell asks about every member\'s chat', JSON.stringify(await js('window.__bn.checks[0]')) === '["convA","convB"]', JSON.stringify(await js('window.__bn.checks')));
+      await humanClick('#th [data-testid="aiondx-bell"]');
+      await sleep(400);
+      check(sc, 'a member\'s notice names the member', (await js(`document.querySelector('.aiondx-bell-title').textContent`)) === 'Reconnect to use Claude Docs (Worker)');
+      await humanClick('.aiondx-bell-act');
+      await sleep(700);
+      const rt = await js(`window.__calls.filter((c) => c.method === 'POST' && /runtime\\/restart$/.test(c.path)).map((c) => c.path)`);
+      check(sc, 'and its Reconnect restarts that member through the team', JSON.stringify(rt) === '["/api/teams/team1/agents/slotB/runtime/restart"]', JSON.stringify(rt));
+      await js('(() => { delete window.aiondxNotices; delete window.aiondxSignin; const h = document.getElementById("th"); if (h) h.remove(); return 0; })()');
+    }
+
+    // ---- Claude Docs inside AionDX (R-110, 2026-11-13) ----
+    {
+      const sc = 'docs';
+      await js("localStorage.removeItem('aionui.dx.options'); localStorage.removeItem('aionui.dx.docs.width'); 0");
+      await load('theme=light');
+      await js(`(() => {
+        window.__stub.routes['POST /api/shell/open-external'] = { success: true };
+        window.__dc = [];
+        window.aiondxDocs = {
+          open: (url, bounds) => { window.__dc.push(['open', url, bounds]); return Promise.resolve({ ok: true }); },
+          bounds: (b) => { window.__dc.push(['bounds', b]); return Promise.resolve({ ok: true }); },
+          close: () => { window.__dc.push(['close']); return Promise.resolve({ ok: true }); },
+          external: () => { window.__dc.push(['external']); return Promise.resolve({ ok: true }); },
+          reload: () => { window.__dc.push(['reload']); return Promise.resolve({ ok: true }); },
+          state: () => Promise.resolve({ ok: true }),
+          onEvent: (cb) => { window.__dcEmit = cb; return () => {}; },
+        };
+        const mk = (id, href, top) => { const a = document.createElement('a'); a.id = id; a.href = href; a.textContent = id; a.style.cssText = 'position:absolute;left:30px;top:' + top + 'px;z-index:5;background:#fff;color:#000;padding:4px'; document.body.appendChild(a); };
+        mk('dl', 'https://claude.ai/artifact/abc123', 300);
+        mk('cl', 'https://claude.ai/new', 340);
+        window.__calls.length = 0; return 0; })()`);
+      await humanClick('#dl');
+      await sleep(600);
+      const op = await js("window.__dc.find((x) => x[0] === 'open')");
+      const ext = () => js(`window.__calls.filter(c => c.path === '/api/shell/open-external').map(c => c.body.url)`);
+      check(sc, 'a Claude Doc link opens in the pane inside AionDX, not the browser', op && op[0] === 'open' && op[1] === 'https://claude.ai/artifact/abc123' && (await ext()).length === 0, JSON.stringify([op, await ext()]));
+      const geo = await js(`(() => { const p = document.querySelector('.aiondx-docs'); const r = p && p.getBoundingClientRect(); const root = document.getElementById('root');
+        return p ? { right: Math.round(window.innerWidth - r.right), w: Math.round(r.width), vw: window.innerWidth, root: root ? Math.round(root.getBoundingClientRect().width) : -1 } : null; })()`);
+      check(sc, 'the pane is docked at the right, about 45% wide, and the chat narrows to make room', geo && geo.right === 0 && geo.w >= 360 && Math.abs(geo.w - Math.max(360, Math.round(geo.vw * 0.45))) <= 2 &&
+        (geo.root < 0 || Math.abs(geo.root + geo.w - geo.vw) <= 2), JSON.stringify(geo));
+      const b = op && op[2];
+      check(sc, 'the view is placed under the pane\'s header, filling the pane', b && b.y >= 35 && b.y <= 40 && Math.abs(b.width - geo.w) <= 2 && b.x >= geo.vw - geo.w - 2, JSON.stringify(b));
+      await js(`(() => { window.__dcEmit({ kind: 'state', open: true, url: 'https://claude.ai/artifact/abc123', title: 'Launch plan - Claude', loading: false, signIn: false }); return 0; })()`);
+      await sleep(200);
+      check(sc, 'the header shows the doc\'s title', (await js(`document.querySelector('.aiondx-docs-title').textContent`)) === 'Launch plan');
+      await js(`(() => { window.__dcEmit({ kind: 'state', open: true, url: 'https://claude.ai/login', title: 'Claude', loading: false, signIn: true }); return 0; })()`);
+      await sleep(200);
+      check(sc, 'on claude.ai\'s sign-in page the header says it is asked once', /^Sign in to Claude \(once/.test(await js(`document.querySelector('.aiondx-docs-title').textContent`)));
+      await humanClick('.aiondx-docs [data-act="external"]');
+      await humanClick('.aiondx-docs [data-act="reload"]');
+      check(sc, 'Open in browser and Reload reach the main process', JSON.stringify((await js('window.__dc')).map((x) => x[0]).filter((x) => x === 'external' || x === 'reload')) === '["external","reload"]');
+      // drag the edge wider
+      const e0 = await centerOf('.aiondx-docs-edge');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: e0.x, y: e0.y });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: e0.x, y: e0.y, button: 'left', clickCount: 1 });
+      for (let i = 1; i <= 5; i++) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: e0.x - i * 20, y: e0.y, button: 'left', buttons: 1 }); await sleep(30); }
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: e0.x - 100, y: e0.y, button: 'left', clickCount: 1 });
+      await sleep(300);
+      const w2 = await js(`Math.round(document.querySelector('.aiondx-docs').getBoundingClientRect().width)`);
+      const lastB = await js(`(window.__dc.filter((x) => x[0] === 'bounds').pop() || [])[1]`);
+      check(sc, 'dragging the edge widens the pane, moves the view with it, and is remembered', Math.abs(w2 - (geo.w + 100)) <= 4 && lastB && Math.abs(lastB.width - w2) <= 2 &&
+        Number(await js(`localStorage.getItem('aionui.dx.docs.width')`)) === w2, JSON.stringify([geo.w, w2, lastB, await js(`localStorage.getItem('aionui.dx.docs.width')`)]));
+      await humanClick('.aiondx-docs [data-act="close"]');
+      await sleep(300);
+      check(sc, 'Close takes the pane away and gives the chat its width back', !(await js(`!!document.querySelector('.aiondx-docs')`)) && (await js('window.__dc.pop()[0]')) === 'close' &&
+        (await js(`(document.getElementById('aiondx-docs-style') || {}).textContent`)) === '');
+      await humanClick('#cl');
+      await sleep(400);
+      check(sc, 'another claude.ai page (not a doc) goes to the browser', JSON.stringify(await ext()) === '["https://claude.ai/new"]', JSON.stringify(await ext()));
+      await js(`(() => { document.getElementById('dl').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, altKey: true })); return 0; })()`);
+      await sleep(400);
+      check(sc, 'Alt+click on a doc uses the other place, the browser', (await ext()).length === 2 && (await ext())[1] === 'https://claude.ai/artifact/abc123' && !(await js(`!!document.querySelector('.aiondx-docs')`)));
+      await js('(() => { delete window.aiondxDocs; return 0; })()');
+      await humanClick('#dl');
+      await sleep(400);
+      check(sc, 'without the Docs bridge (the browser, WebUI) a doc link goes to the browser', (await ext()).length === 3);
+      await js("localStorage.removeItem('aionui.dx.options'); localStorage.removeItem('aionui.dx.docs.width'); 0");
+    }
+
+    // ---- what's new, once after an update (R-107, 2026-11-13) ----
+    {
+      const sc = 'whatsnew';
+      const card = () => js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null;
+        return { title: c.querySelector('.aiondx-whatsnew-title').textContent, names: [...c.querySelectorAll('.aiondx-whatsnew-name')].map((e) => e.textContent),
+          hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
+      await load('theme=light');
+      await sleep(2600);
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.2');
+      await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
+      await load('theme=light&keepls=1');
+      await sleep(2600);
+      const c = await card();
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.2' && c.names.length === 2 &&
+        /^Click a Claude Doc link in a reply\./.test(c.hows[0]) && /Click the bell to see it\. Nothing restarts unless you click\.$/.test(c.hows[1]), JSON.stringify(c));
+      const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
+      check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 340, JSON.stringify(box));
+      await humanClick('.aiondx-whatsnew-ok');
+      await sleep(300);
+      check(sc, 'Got it puts it away', !(await card()));
+      await load('theme=light&keepls=1');
+      await sleep(3600);
+      check(sc, 'and it does not come back', !(await card()));
+    }
+
+    // ---- tips: a bubble pointing at each control until Got it (2026-11-13) ----
+    {
+      const sc = 'tips';
+      const tip = () => js(`(() => { const t = document.querySelector('.aiondx-coach'); if (!t) return null; const r = t.getBoundingClientRect();
+        return { id: t.getAttribute('data-testid'), title: t.querySelector('.aiondx-coach-title').textContent, text: t.querySelector('.aiondx-coach-text').textContent,
+          top: Math.round(r.top), left: Math.round(r.left), w: Math.round(r.width), target: (document.querySelector('.aiondx-coach-target') || {}).getAttribute ? document.querySelector('.aiondx-coach-target').getAttribute('data-testid') : null }; })()`);
+      await load('theme=light&tips=1');
+      await sleep(2600);
+      let t = await tip();
+      check(sc, 'on a chat, the first tip points at the Loop button: what it is and how to use it', t && t.id === 'aiondx-coach-loop' && t.title === 'The Loop' && t.target === 'aiondx-loop' &&
+        /^While it is on, it tells the agent to keep going/.test(t.text), JSON.stringify(t));
+      const lb = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-loop"]').getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), cx: Math.round(r.left + r.width / 2) }; })()`);
+      check(sc, 'the bubble sits beside its control (above or below it) and is on screen', t && (t.top >= lb.bottom || t.top + 60 <= lb.top) && t.left >= 8 && t.left + t.w <= 1100, JSON.stringify([t, lb]));
+      check(sc, 'only one tip at a time', (await js(`document.querySelectorAll('.aiondx-coach').length`)) === 1);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 20, y: 300, button: 'left', clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 20, y: 300, button: 'left', clickCount: 1 });
+      await sleep(1600);
+      t = await tip();
+      check(sc, 'a click elsewhere hides it on this screen; the next tip may show, the Loop tip does not come back here', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
+      await load('theme=light&tips=1&keepls=1');
+      await sleep(2600);
+      t = await tip();
+      check(sc, 'on the next screen it comes back, since it was never put away', t && t.id === 'aiondx-coach-loop', JSON.stringify(t));
+      await humanClick('.aiondx-coach-ok');
+      await sleep(1600);
+      t = await tip();
+      check(sc, 'Got it puts it away for good, and the next tip shows', (!t || t.id !== 'aiondx-coach-loop') && JSON.parse(await js(`localStorage.getItem('aionui.dx.tips.done')`)).loop > 0, JSON.stringify(t));
+      await load('theme=light&tips=1&keepls=1');
+      await sleep(2600);
+      t = await tip();
+      check(sc, 'and after a reload the Loop tip stays away', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
+      // the Docs link tip, on a page with a doc link, once the others are done
+      await js(`(() => { const d = {}; ['bell','loop','ctx','account','sched','bolt','menu','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await load('theme=light&tips=1&keepls=1');
+      await js(`(() => { const a = document.createElement('a'); a.href = 'https://claude.ai/artifact/abc'; a.textContent = 'Launch plan'; a.style.cssText = 'position:absolute;left:300px;top:200px;z-index:5;background:#fff;color:#000;padding:4px'; document.body.appendChild(a); return 0; })()`);
+      await sleep(2600);
+      t = await tip();
+      check(sc, 'a Claude Doc link in a reply gets its tip: it opens here, and how', t && t.id === 'aiondx-coach-docs-link' && /^Click a Claude Doc link to read it in a pane beside the chat\./.test(t.text), JSON.stringify(t));
+      await humanClick('.aiondx-coach-x');
+      await sleep(1600);
+      check(sc, 'the close button puts it away for good too', !(await tip()) && JSON.parse(await js(`localStorage.getItem('aionui.dx.tips.done')`))['docs-link'] > 0);
+      // the option switches them all off
+      await js(`(() => { localStorage.removeItem('aionui.dx.tips.done'); return 0; })()`);
+      await load('theme=light&tips=1&keepls=1');
+      await js(`(() => { window.__aionDx.setOption ? window.__aionDx.setOption('help.tips', false) : 0; return 0; })()`);
+      await sleep(2600);
+      const hasSet = await js(`typeof (window.__aionDx || {}).setOption === 'function'`);
+      if (hasSet) check(sc, 'with the option off, no tip shows', !(await tip()));
+      await js("localStorage.removeItem('aionui.dx.options'); localStorage.removeItem('aionui.dx.tips.done'); 0");
+    }
+
     // ---- clearing agent caches (2026-10-13, a request) ----
     {
       const sc = 'caches';
@@ -3570,7 +3795,7 @@ async function pageTarget() {
       await addSection();
       await sleep(700);
       const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
-      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
       check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.files' && o.default === 'outside' && o.choices.length === 2) && !schema.options.some((o) => o.id === 'links.external') &&
         schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));

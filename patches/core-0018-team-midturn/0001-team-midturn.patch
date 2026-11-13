@@ -1,0 +1,104 @@
+diff --git a/crates/aionui-team/src/session.rs b/crates/aionui-team/src/session.rs
+index 0bea05eb..50dd8351 100644
+--- a/crates/aionui-team/src/session.rs
++++ b/crates/aionui-team/src/session.rs
+@@ -914,6 +914,8 @@ impl TeamSession {
+     ) -> Result<AgentMessageQueueResult, TeamError> {
+         let to_agent = self.scheduler.get_agent(to_slot_id).await?;
+         let from_agent = self.scheduler.get_agent(from_slot_id).await?;
++        let from_name_for_midturn = from_agent.name.clone();
++        let files_for_midturn = files.clone().unwrap_or_default();
+         // Agent-triggered delivery: lazily wake a dormant teammate. On failure
+         // notify the leader so it can re-delegate the work.
+         self.ensure_member_runtime_lazy(to_slot_id, true).await?;
+@@ -978,14 +980,75 @@ impl TeamSession {
+             );
+         }
+ 
++        let mailbox_message_id = mailbox_message.id.clone();
+         let commit = self.commit_persisted_enqueue(&lease, mailbox_message.id).await?;
+         self.event_loops.notify(to_slot_id);
++        // AionDX core-0018: a recipient in the middle of a turn gets the message now, at its next step, instead of when the turn ends.
++        self.deliver_teammate_message_midturn(
++            to_slot_id,
++            &to_agent.conversation_id,
++            from_slot_id,
++            &from_name_for_midturn,
++            &mailbox_message_id,
++            content,
++            files_for_midturn,
++        )
++        .await;
+         Ok(AgentMessageQueueResult {
+             team_run_id: commit.team_run_id,
+             target: TeamRunManager::slot_payload(&commit.slot),
+         })
+     }
+ 
++    /// AionDX core-0018: hand a queued teammate message to the recipient's running turn when it can take one mid-turn
++    /// (Claude and Codex, not waiting on a permission card), and take it out of the queue so the next turn does not read it
++    /// again. Nothing is stopped or cancelled. When there is no running turn, or the backend cannot take a message mid-turn,
++    /// the message stays queued exactly as before. Failures are logged and leave the queue as it was.
++    #[allow(clippy::too_many_arguments)]
++    async fn deliver_teammate_message_midturn(
++        &self,
++        to_slot_id: &str,
++        to_conversation_id: &str,
++        from_slot_id: &str,
++        from_name: &str,
++        mailbox_message_id: &str,
++        content: &str,
++        files: Vec<String>,
++    ) {
++        let text = midturn_teammate_text(from_name, from_slot_id, content);
++        match self
++            .cancellation_port
++            .steer_agent_turn(&self.user_id, to_conversation_id, &text, files, false)
++            .await
++        {
++            Ok(AgentTurnSteerOutcome::Delivered { turn_id }) => {
++                if self.work_coordinator.take_queued_message(to_slot_id, mailbox_message_id) {
++                    if let Err(error) = self
++                        .mailbox
++                        .mark_read_batch(&self.team.id, &[mailbox_message_id.to_owned()])
++                        .await
++                    {
++                        warn!(team_id = %self.team.id, to_slot_id, error = %error, "mid-turn teammate message: mark read failed");
++                    }
++                }
++                info!(
++                    team_id = %self.team.id,
++                    from_slot_id,
++                    to_slot_id,
++                    turn_id = %turn_id,
++                    mailbox_message_id,
++                    "teammate message delivered into the running turn"
++                );
++            }
++            Ok(AgentTurnSteerOutcome::NotAvailable { reason }) => {
++                debug!(team_id = %self.team.id, to_slot_id, reason, "teammate message stays queued for the next turn");
++            }
++            Err(error) => {
++                warn!(team_id = %self.team.id, to_slot_id, error = %error, "mid-turn teammate message failed; it stays queued");
++            }
++        }
++    }
++
+     /// AionDX core-0016: the user (the desktop or a paired phone) asks a teammate to
+     /// shut down, through the same mailbox protocol the lead's tool uses. The agent
+     /// answers `shutdown_approved` (it is then removed) or `shutdown_rejected:<reason>`
+@@ -2397,6 +2460,14 @@ pub(crate) fn spawn_attach_agent_process_bg(
+     });
+ }
+ 
++/// AionDX core-0018: how a teammate's message reads when it arrives inside a running turn. It names the sender as the wake
++/// payload does (`From \`slot\` [message]`) and says it came mid-turn, so the agent folds it into what it is doing.
++pub(crate) fn midturn_teammate_text(from_name: &str, from_slot_id: &str, content: &str) -> String {
++    format!(
++        "## New Messages\n\n(Arrived while you were working. Read it and carry on; nothing was stopped.)\n- From `{from_slot_id}` ({from_name}) [message]: {content}\n"
++    )
++}
++
+ pub(crate) async fn attach_member_runtime(
+     service: Arc<TeamSessionService>,
+     session: Arc<TeamSession>,

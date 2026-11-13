@@ -107,7 +107,7 @@ namespace AionDx
             return dx;
         }
 
-        const string Version = "1.14.0";
+        const string Version = "1.15.0";
         const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aiondx-ui.js HOLD_MIN)
         const long HoldMax = 240;      // aiondx-ui.js HOLD_MIN_MAX
         const long ResumeWarmMaxMs = 50 * 60000;   // aiondx-ui.js RESUME_WARM_MAX_MS
@@ -534,6 +534,8 @@ namespace AionDx
             "  aiondx usage alert --at 80  alert the team lead (or all, or you) the moment usage crosses 80% (see aiondx usage help)\n" +
             "  aiondx member list|set|replace|assistants   (team lead) read and change what each member runs on: agent, model, effort, mode (aiondx member help)\n" +
             "  aiondx config list|get|set|reset   every AionDX option and how to change it (aiondx config help): links, spelling, Stop timing, voice, long chats\n" +
+            "  aiondx team show ID|NAME | team list   a team's layout, lead first, with each member's chat id (a @@ team mention is an invitation to read it)\n" +
+            "  aiondx chat read CHAT_ID [--last N] [--before CURSOR] [--all]   read any of the user's chats: its newest messages, oldest first\n" +
             "  aiondx show PATH [--label TEXT]   show the user a picture, or link a file or folder, in chat: prints the exact Markdown to paste\n" +
             "  aiondx migrate detect|run|backup|verify ...   move from AionUi to AionDX: back up the chats, remove AionUi, check them (aiondx migrate help)\n" +
             "--on and --off switch the Loop; --until-stopped (only when the user asks for it) keeps it on until the user stops it, " +
@@ -1296,6 +1298,161 @@ namespace AionDx
             return Api("GET", "/api/teams/" + Uri.EscapeDataString(teamId), null) as Dictionary<string, object>;
         }
 
+        // ------------------------------------------------------------------ reading a team and a chat (a @@ team mention is an invitation to read)
+
+        const string TeamHelp =
+            "Usage:\n" +
+            "  aiondx team show ID|NAME     a team's layout: its lead first, then each member, with the chat id to read\n" +
+            "  aiondx team list             every team that is not archived\n" +
+            "ID is the team id, or any member's chat id (a @@ team mention gives the lead's chat id); NAME matches the team's name.\n" +
+            "Read a chat with: aiondx chat read CHAT_ID [--last N]";
+
+        const string ChatHelp =
+            "Usage:\n" +
+            "  aiondx chat read CHAT_ID [--last N] [--before CURSOR] [--all]\n" +
+            "The chat's newest N messages (default 20, at most 200), oldest first: what the user wrote and what the agent answered.\n" +
+            "--before CURSOR reads the page before (the cursor is printed at the end); --all also lists tool calls and notices.\n" +
+            "Reading changes nothing in the chat and is not seen by its agent.";
+
+        static object[] TeamMembers(Dictionary<string, object> team)
+        {
+            if (team == null) return new object[0];
+            var rows = team.ContainsKey("assistants") ? team["assistants"] as object[] : null;
+            if (rows == null && team.ContainsKey("agents")) rows = team["agents"] as object[];
+            return rows ?? new object[0];
+        }
+
+        static Dictionary<string, object> FindTeam(string key)
+        {
+            var teams = Api("GET", "/api/teams", null) as object[];
+            if (teams == null) throw new ToolError("AionUi did not list its teams.");
+            var all = teams.OfType<Dictionary<string, object>>().ToList();
+            key = key.Trim();
+            var hit = all.FirstOrDefault(t => Same(Str(t, "id"), key));
+            if (hit == null)
+                hit = all.FirstOrDefault(t => TeamMembers(t).OfType<Dictionary<string, object>>().Any(m => Same(Str(m, "conversation_id"), key)));
+            if (hit == null)
+            {
+                var byName = all.Where(t => Same(Str(t, "name"), key)).ToList();
+                if (byName.Count == 0) byName = all.Where(t => (Str(t, "name") ?? "").IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                if (byName.Count > 1)
+                    throw new ToolError("\"" + key + "\" matches more than one team (" + string.Join(", ", byName.Select(t => Str(t, "name"))) + "). Use the team id.");
+                if (byName.Count == 1) hit = byName[0];
+            }
+            if (hit == null) throw new ToolError("No team matches \"" + key + "\". aiondx team list shows them.");
+            // The full row has each member's agent and model.
+            try { var full = TeamRow(Str(hit, "id")); if (full != null && TeamMembers(full).Length > 0) return full; }
+            catch (ToolError) { }
+            return hit;
+        }
+
+        static string MemberLine(Dictionary<string, object> m)
+        {
+            string agent = Str(m, "assistant_name") ?? Str(m, "backend");
+            string model = Str(m, "model");
+            return (Str(m, "name") ?? Str(m, "slot_id") ?? "?") + (Str(m, "role") == "lead" ? " (lead)" : "") +
+                   ": chat " + (Str(m, "conversation_id") ?? "none yet") +
+                   (agent != null ? ", agent " + agent : "") + (model != null ? ", model " + model : "");
+        }
+
+        static int TeamCli(string[] args, StreamWriter o)
+        {
+            if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h") { o.WriteLine(TeamHelp); return args.Length < 2 ? 2 : 0; }
+            try
+            {
+                string sub = args[1].ToLowerInvariant();
+                if (sub == "list")
+                {
+                    var teams = Api("GET", "/api/teams", null) as object[];
+                    if (teams == null || teams.Length == 0) { o.WriteLine("No teams."); return 0; }
+                    foreach (var t in teams.OfType<Dictionary<string, object>>())
+                    {
+                        var lead = TeamMembers(t).OfType<Dictionary<string, object>>().FirstOrDefault(m => Str(m, "role") == "lead");
+                        o.WriteLine((Str(t, "name") ?? "?") + "  team " + Str(t, "id") + ", " + TeamMembers(t).Length + " members" +
+                                    (lead != null ? ", lead's chat " + Str(lead, "conversation_id") : ""));
+                    }
+                    return 0;
+                }
+                if (sub != "show") throw new ToolError("Unknown team command \"" + args[1] + "\".\n" + TeamHelp);
+                if (args.Length < 3) throw new ToolError("Name the team: aiondx team show ID|NAME.");
+                var team = FindTeam(string.Join(" ", args.Skip(2)));
+                var members = TeamMembers(team).OfType<Dictionary<string, object>>().ToList();
+                var ordered = members.Where(m => Str(m, "role") == "lead").Concat(members.Where(m => Str(m, "role") != "lead")).ToList();
+                o.WriteLine("Team: " + (Str(team, "name") ?? "?") + " (team " + Str(team, "id") + ")" +
+                            (Str(team, "workspace") != null ? ", workspace " + Str(team, "workspace") : ""));
+                foreach (var m in ordered) o.WriteLine("  " + MemberLine(m));
+                o.WriteLine("Read the lead's chat first, then any member's as needed: aiondx chat read CHAT_ID [--last N]");
+                return 0;
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+            catch (Exception e) { o.WriteLine("The team lookup failed: " + e.Message); return 1; }
+        }
+
+        static string MessageText(Dictionary<string, object> msg)
+        {
+            object c = msg.ContainsKey("content") ? msg["content"] : null;
+            var s = c as string;
+            if (s != null) return s;
+            var d = c as Dictionary<string, object>;
+            if (d == null) return null;
+            var t = Str(d, "content") ?? Str(d, "text");
+            if (t != null) return t;
+            return null;
+        }
+
+        static int ChatCli(string[] args, StreamWriter o)
+        {
+            if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h") { o.WriteLine(ChatHelp); return args.Length < 2 ? 2 : 0; }
+            try
+            {
+                if (args[1].ToLowerInvariant() != "read") throw new ToolError("Unknown chat command \"" + args[1] + "\".\n" + ChatHelp);
+                string chat = null, before = null;
+                int last = 20;
+                bool all = false;
+                for (int i = 2; i < args.Length; i++)
+                {
+                    string x = args[i], inline = null;
+                    int eq = x.StartsWith("--") ? x.IndexOf('=') : -1;
+                    if (eq > 0) { inline = x.Substring(eq + 1); x = x.Substring(0, eq); }
+                    if (x == "--last") { int n; if (!int.TryParse(inline ?? Next(args, ref i, x), out n) || n < 1) throw new ToolError("--last takes a number of messages."); last = Math.Min(n, 200); }
+                    else if (x == "--before") before = inline ?? Next(args, ref i, x);
+                    else if (x == "--all") all = true;
+                    else if (x.StartsWith("--")) throw new ToolError("Unknown option " + x + ".\n" + ChatHelp);
+                    else if (chat == null) chat = x.Trim();
+                    else throw new ToolError("One chat id at a time.\n" + ChatHelp);
+                }
+                if (string.IsNullOrEmpty(chat)) throw new ToolError("Name the chat: aiondx chat read CHAT_ID.");
+                string name = null;
+                try { var c = Api("GET", "/api/conversations/" + Uri.EscapeDataString(chat), null) as Dictionary<string, object>; if (c != null) name = Str(c, "name"); }
+                catch (ToolError) { }
+                var page = Api("GET", "/api/conversations/" + Uri.EscapeDataString(chat) + "/messages?limit=" + last +
+                               (before != null ? "&before=" + Uri.EscapeDataString(before) : ""), null) as Dictionary<string, object>;
+                var items = page != null && page.ContainsKey("items") ? page["items"] as object[] : null;
+                if (items == null) throw new ToolError("AionUi did not list that chat's messages.");
+                o.WriteLine("Chat: " + (name ?? chat) + " (" + chat + "), " + items.Length + " message" + (items.Length == 1 ? "" : "s") + (before != null ? " before the cursor" : ", the newest") + ":");
+                int shown = 0;
+                foreach (var m in items.OfType<Dictionary<string, object>>())
+                {
+                    if (m.ContainsKey("hidden") && m["hidden"] is bool && (bool)m["hidden"]) continue;
+                    string type = Str(m, "type") ?? "?";
+                    string pos = Str(m, "position");
+                    string who = pos == "right" ? "user" : pos == "left" ? "agent" : "notice";
+                    string text = type == "text" ? MessageText(m) : null;
+                    long at = Long(m, "created_at");
+                    string when = at > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(at).ToLocalTime().ToString("MMM d HH:mm") : "";
+                    if (text != null) { o.WriteLine("--- " + who + ", " + when); o.WriteLine(text.TrimEnd()); shown++; }
+                    else if (all) { o.WriteLine("--- " + who + ", " + when + " [" + type + "]" + (MessageText(m) != null ? " " + OneLine(MessageText(m)) : "")); shown++; }
+                }
+                if (shown == 0) o.WriteLine("(no text messages on this page" + (all ? "" : "; --all lists tool calls and notices") + ")");
+                bool more = page.ContainsKey("has_more_before") && page["has_more_before"] is bool && (bool)page["has_more_before"];
+                if (more && Str(page, "oldest_cursor") != null)
+                    o.WriteLine("Older messages: aiondx chat read " + chat + " --last " + last + " --before " + Str(page, "oldest_cursor"));
+                return 0;
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+            catch (Exception e) { o.WriteLine("Reading the chat failed: " + e.Message); return 1; }
+        }
+
         static int MemberCli(string[] args, StreamWriter o)
         {
             if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h")
@@ -1939,6 +2096,8 @@ namespace AionDx
             if (args[0] == "usage") return UsageCli(args, o);
             if (args[0] == "config") return ConfigCli(args, o);
             if (args[0] == "member") return MemberCli(args, o);
+            if (args[0] == "team") return TeamCli(args, o);
+            if (args[0] == "chat") return ChatCli(args, o);
             if (args[0] == "migrate") return MigrateCli(args, o);
             if (args[0] == "stop")
             {

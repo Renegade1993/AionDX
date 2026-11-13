@@ -62,6 +62,7 @@
       document.documentElement.setAttribute('data-theme', 'dark');
       document.addEventListener('DOMContentLoaded', function () { document.body.setAttribute('arco-theme', 'dark'); });
     }
+    window.__aionDxTips = q.get('tips') === '1';   // the tips' bubbles would sit over other tests' controls: on only for their own test
     if (q.get('keepls') !== '1') localStorage.clear();   // keepls=1: a reload that keeps what the app saved
     if (q.get('on') === '1') {
       localStorage.setItem('aionui.dx.harness1', JSON.stringify({ on: true, fires: 2, lastFired: Date.now() - 180000 }));

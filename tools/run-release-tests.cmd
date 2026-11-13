@@ -4,7 +4,9 @@ rem   tools\hidden-run.exe cmd.exe /c "C:\AI Projects\AionDX\tools\run-release-t
 rem Writes %TEMP%\dx-release-tests.out and cleans up what the tests leave in %TEMP% at the end (tools\clean-test-leftovers.ps1).
 cd /d "%~dp0.."
 set OUT=%TEMP%\dx-release-tests.out
-echo ==== anchors > "%OUT%"
+echo ==== renderer-names > "%OUT%"
+node tools\check-renderer-names.js >> "%OUT%" 2>&1
+echo ==== anchors >> "%OUT%"
 node tools\test-live-anchors.js >> "%OUT%" 2>&1
 echo ==== nobrowser >> "%OUT%"
 node tools\test-live-nobrowser.js >> "%OUT%" 2>&1

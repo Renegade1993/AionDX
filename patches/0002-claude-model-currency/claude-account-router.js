@@ -447,6 +447,7 @@ function hasFullSignIn(dir) {
   } catch { return false; }
 }
 let fullSignIn = false;
+let signInFolder = '';   // the folder whose sign-in this launch used (R-112: the launch record)
 function proxyOff(env, convId, dbPath, usage, cfg) {
   let proxy;
   try {
@@ -545,7 +546,29 @@ function projectSetup(env, dbPath, convId, facts, label) {
   const docs = proj ? !!(proj.docs === 'on' && owns && allowed) : acctDocs === 'on';
   if (!docs) { env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false'; env.CLAUDE_CODE_DISABLE_ARTIFACT = '1'; }
   else { delete env.ENABLE_CLAUDEAI_MCP_SERVERS; delete env.CLAUDE_CODE_DISABLE_ARTIFACT; }   // an inherited switch (a parent chat with Docs off) must not close it
-  routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'} sign-in=${fullSignIn ? 'full' : 'token or none'}`);
+  // AionCore adds --strict-mcp-config whenever it gives a chat MCP servers (every team chat has the team's), and that flag makes Claude Code
+  // ignore every other MCP source, claude.ai's connectors included (measured 2026-11-13: with it, only the injected server; without it, the
+  // same server plus Claude Docs, Google Drive and the rest). With Docs on, the flag goes; AionCore's own servers still come from --mcp-config.
+  let strictDropped = false;
+  if (docs) {
+    for (let i = args.indexOf('--strict-mcp-config'); i >= 0; i = args.indexOf('--strict-mcp-config')) { args.splice(i, 1); strictDropped = true; }
+  }
+  routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'} sign-in=${fullSignIn ? 'full' : 'token or none'}${strictDropped ? ' strict-mcp dropped' : ''}`);
+  if (isClaude && convId && dataDir) recordLaunch(dataDir, convId, { project: name || null, acct, docs, fullSignIn, signInDir: signInFolder });
+}
+
+/** R-112: one small file per chat, <data folder>\aiondx-launches\<conversation id>.json, rewritten at each launch: when it started, the
+ *  process that lives as long as the agent (this router), and what the launch got. AionDX's notification bell compares it with the current
+ *  settings and offers a reconnect only while the running agent is behind them. Any trouble: no record, and the launch goes on. */
+function recordLaunch(dataDir, convId, got) {
+  try {
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(String(convId))) return;
+    const dir = path.join(dataDir, 'aiondx-launches');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, convId + '.json');
+    fs.writeFileSync(file + '.tmp', JSON.stringify(Object.assign({ v: 1, at: Date.now(), pid: process.pid }, got)));
+    fs.renameSync(file + '.tmp', file);
+  } catch { /* never in the way of a chat */ }
 }
 
 // ---- everything below is best-effort; any throw lands in the catch and passes through ----
@@ -588,6 +611,7 @@ try {
     // make model calls. "signIn": "token" in the account's config keeps the token. Measured November 12th: the full sign-in loads Claude Docs
     // through the usage tap (Research\2026-11-12_claude-docs-connector-measured.md).
     const signInDir = account.configDir || path.join(home || realProfileDir(), '.claude');
+    signInFolder = signInDir;
     if (account.signIn !== 'token' && hasFullSignIn(signInDir)) {
       delete env.CLAUDE_CODE_OAUTH_TOKEN;
       delete env.ANTHROPIC_AUTH_TOKEN;
