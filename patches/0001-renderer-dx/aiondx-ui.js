@@ -711,7 +711,7 @@
   var OPTIONS = [
     { id: 'links.files', group: 'Links', type: 'choice', default: 'outside', choices: [['outside', 'Outside AionDX (its own program, or Explorer for a folder)'], ['preview', 'A preview tab inside AionDX']],
       label: 'Open file and folder links in', desc: 'Where a link to a file or folder on this PC opens. A folder always opens in Explorer. Alt+click uses the other one; Shift+click shows it in its folder.' },
-    { id: 'links.docs', group: 'Links', type: 'choice', default: 'pane', choices: [['pane', 'A pane beside the chat, inside AionDX'], ['browser', 'Your web browser']],
+    { id: 'links.docs', group: 'Links', type: 'choice', default: 'browser', choices: [['pane', 'A pane beside the chat, inside AionDX'], ['browser', 'Your web browser']],
       label: 'Open Claude Docs in', desc: 'Where a Claude Doc link opens. The pane keeps its own Claude sign-in, asked for once. Alt+click uses the other one.' },
     { id: 'help.tips', group: 'Help', type: 'bool', default: true,
       label: 'Show tips for AionDX\u2019s controls', desc: 'A bubble points at each AionDX control the first time it is on screen and says how to use it, until you press Got it. Off hides them all.' },
@@ -7146,7 +7146,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -9986,10 +9986,13 @@
     document.addEventListener('contextmenu', function (ev) { lastContext = { el: ev.target, at: Date.now() }; }, true);
     document.addEventListener('click', function (ev) {
       if (disabled() || ev.defaultPrevented || ev.button !== 0) return;
-      var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
-      if (!a || a.closest('[class*="aiondx"]')) return;
+      var a = linkOf(ev);
+      if (!a) return;
       var href = a.href || '';
       if (!/^https?:\/\//i.test(href)) return;
+      // R-110: a Claude Doc opens in the Docs pane wherever its link is, AionDX's own cards included (not inside the pane itself)
+      var docHere = isDocLink(href) && !(a.closest && a.closest('.aiondx-docs'));
+      if (!docHere && a.closest('[class*="aiondx"]')) return;
       ev.preventDefault();
       ev.stopPropagation();
       if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
@@ -10015,6 +10018,27 @@
       return out;
     }).catch(function () { return fallback(id, { contentMode: 'compact' }); });
   };
+  /** The link a click was on, also inside a shadow root (AionUi draws replies in one): the first <a href> on the event's composed path. */
+  function linkOf(ev) {
+    var path = ev.composedPath ? ev.composedPath() : [];
+    for (var i = 0; i < path.length; i++) {
+      var n = path[i];
+      if (n && n.tagName === 'A' && n.getAttribute && n.getAttribute('href')) return n;
+      if (n === document) break;
+    }
+    var t = ev.target;
+    return t && t.closest ? t.closest('a[href]') : null;
+  }
+  // AionUi's own link handler ends in window.open (patch 0012 sends it on to the system browser): a Claude Doc goes to the Docs pane instead.
+  (function hookOpen() {
+    var nativeOpen = window.open;
+    window.open = function (url) {
+      try {
+        if (!disabled() && typeof url === 'string' && isDocLink(url) && window.aiondxDocs && opt('links.docs') !== 'browser') { openDocsPane(url); return null; }
+      } catch (e) { /* as stock */ }
+      return nativeOpen.apply(window, arguments);
+    };
+  })();
   function openInBrowser(url) {
     return postJson('/api/shell/open-external', { url: url }).then(function (r) {
       if (!r.ok) toast('Could not open the link in your browser.', url);
@@ -10555,8 +10579,9 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.27.4',
+    release: '0.27.5',
     items: [
+      ['DX Docs', 'Ask your agent for a document, report or plan: it appears in the right-hand sidebar and fills in as you watch. Select text in it to comment; the agent is told. Edit, earlier versions and PDF are in its bar.'],
       ['More Claude accounts', 'On the new-chat page, click + Add account at the end of the agent row. Name the account, choose what it may do, and sign in on the page that opens; AionDX checks the key and adds a pill for it.'],
     ],
   };
@@ -10643,6 +10668,8 @@
       text: 'Shows while the agent works and you have typed something. Click it to stop the agent’s current step and have it answer you right away; Enter instead waits for its next step.' },
     { id: 'menu', sel: '[data-testid="aiondx-chat-menu"]', title: 'This chat’s menu',
       text: 'The same menu you get by right-clicking the chat in the list on the left.' },
+    { id: 'dxdocs', sel: '[data-testid="aiondx-dx"] .dx-tab[data-tab="docs"]', title: 'DX Docs',
+      text: 'Documents your agent writes appear here and fill in as you watch. Select text in a doc to comment (the agent is told), or press Edit. Files is the next tab.' },
     { id: 'add-account', sel: '[data-testid="aiondx-add-account"]', title: 'Add another Claude account',
       text: 'Click to sign in another Claude account; you choose what it may do before the sign-in page opens. It then gets its own pill here and shows in every chat\u2019s account button.' },
     { id: 'groups', sel: '[data-testid="aiondx-group-new"]', title: 'Groups',
@@ -10769,6 +10796,391 @@
     setInterval(function () { if (document.visibilityState === 'visible') coachRun(); }, 700);
   }
   coachInstall();
+
+  // ---------------------------------------------------------------- DX Docs in the chat's right-hand sidebar (R-121, a request of 2026-11-13)
+
+  // AionDX's own living documents, Claude Docs' behaviour copied: an agent makes a doc as a skeleton of sections ("Writing: ..." until filled)
+  // and fills them while the user watches here, live; the user comments on a passage (the comment goes to the chat's agent), edits the
+  // Markdown, goes back to an earlier version, exports a PDF. The sidebar is AionUi's workspace panel (files and changes); DX Docs takes it
+  // over, with a Files tab to get AionUi's back. The docs are Markdown files in the DX Docs folder of the chat's project, else its working
+  // folder (main process: aiondx-dxdocs-main.js and the engine dxdocs.js; the Markdown is drawn by aiondx-dxdocs-md.js).
+  var DX_TAB_KEY = KEY_PREFIX + 'dx.tab';
+  var dx = { el: null, conv: null, docsDir: null, view: 'list', doc: null, docs: [], md: '', editing: false, dirty: false, listening: false, opening: false, comments: [] };
+  function dxApi(op, args) { return window.aiondxDx.call(op, Object.assign({ docsDir: dx.docsDir }, args || {})); }
+  function dxSider() {
+    var r = route();
+    if (!r || r.kind !== 'conv' || disabled() || !window.aiondxDx || !window.__dxMd) return null;
+    var s = document.querySelector('.chat-layout-right-sider');
+    return s && !s.closest('.arco-layout-sider-left') ? s : null;
+  }
+  function dxCollapsed(s) { return !s || s.getBoundingClientRect().width < 60; }
+  function dxExpand() {
+    var s = dxSider();
+    if (s && dxCollapsed(s)) window.dispatchEvent(new CustomEvent('aionui-workspace-toggle', { cancelable: true }));
+  }
+  function dxTab() { try { return localStorage.getItem(DX_TAB_KEY) || 'docs'; } catch (e) { return 'docs'; } }
+  function dxSetTab(t) { try { localStorage.setItem(DX_TAB_KEY, t); } catch (e) {} if (dx.el) dx.el.classList.toggle('aiondx-dx--files', t === 'files'); dxPaintTabs(); }
+  function dxPaintTabs() {
+    if (!dx.el) return;
+    var t = dxTab();
+    dx.el.querySelectorAll('.dx-tab').forEach(function (b) { var on = b.getAttribute('data-tab') === t; b.classList.toggle('dx-tab--on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+  }
+  /** Each repaint: the panel inside the sidebar of the open chat, or gone. */
+  function renderDxPanel() {
+    var s = dxSider();
+    var conv = s ? route().id : null;
+    if (!s) { if (dx.el && dx.el.parentNode) dx.el.parentNode.removeChild(dx.el); if (dx.docsDir && dx.conv) { window.aiondxDx && window.aiondxDx.call('unwatch', { docsDir: dx.docsDir }); } dx.conv = null; dx.docsDir = null; return; }
+    if (!dx.el) dxBuild();
+    if (dx.el.parentNode !== s) s.appendChild(dx.el);
+    if (conv !== dx.conv) dxOpenChat(conv);
+  }
+  function dxBuild() {
+    var el = document.createElement('div');
+    el.className = 'aiondx-dx';
+    el.setAttribute('data-testid', 'aiondx-dx');
+    el.innerHTML = '<div class="dx-tabs" role="tablist"><button type="button" class="dx-tab" data-tab="docs" role="tab">DX Docs</button>' +
+      '<button type="button" class="dx-tab" data-tab="files" role="tab">Files</button>' +
+      '<button type="button" class="dx-hide" data-testid="aiondx-dx-hide" title="Hide the sidebar" aria-label="Hide the sidebar">\u21e5</button></div><div class="dx-main"></div>';
+    el.querySelector('.dx-tabs').addEventListener('click', function (ev) {
+      var b = ev.target.closest('.dx-tab');
+      if (b) dxSetTab(b.getAttribute('data-tab'));
+      // DX Docs covers the sidebar's own header, so it carries the sidebar's hide button (AionUi's own toggle)
+      if (ev.target.closest('.dx-hide')) window.dispatchEvent(new CustomEvent('aionui-workspace-toggle', { cancelable: true }));
+    });
+    dx.el = el;
+    dx.main = el.querySelector('.dx-main');
+    el.classList.toggle('aiondx-dx--files', dxTab() === 'files');
+    dxPaintTabs();
+    // the Files tab sits over AionUi's own panel, at its top, so it can always come back
+    if (!dx.listening) {
+      dx.listening = true;
+      window.aiondxDx.onEvent(function (e) { if (e && e.kind === 'changed' && e.docsDir === dx.docsDir) dxChanged(e.id); });
+      document.addEventListener('selectionchange', dxSelection);
+    }
+  }
+  async function dxOpenChat(conv) {
+    if (dx.docsDir) window.aiondxDx.call('unwatch', { docsDir: dx.docsDir });
+    dx.conv = conv; dx.docsDir = null; dx.view = 'list'; dx.doc = null; dx.editing = false; dx.docs = [];
+    dx.main.innerHTML = '<div class="dx-empty">Opening this chat’s docs…</div>';
+    var info = convInfo[conv];
+    if (!info) { loadConvInfo(conv); for (var i = 0; i < 20 && !convInfo[conv]; i++) await new Promise(function (r) { setTimeout(r, 250); }); info = convInfo[conv]; }
+    if (dx.conv !== conv) return;
+    var w = await window.aiondxDx.call('where', { convId: conv, workspace: info ? info.workspace : '' });
+    if (dx.conv !== conv) return;
+    if (!w || !w.ok) { dx.main.innerHTML = '<div class="dx-empty"></div>'; dx.main.firstChild.textContent = (w && w.error) || 'No folder for docs.'; return; }
+    dx.docsDir = w.docsDir;
+    dx.where = w;
+    window.aiondxDx.call('watch', { docsDir: dx.docsDir });
+    await dxList();
+  }
+  function dxWhen(ms) { var d = new Date(ms); return d.toDateString() === new Date().toDateString() ? hhmm(ms) : longDate(ms); }
+  async function dxList() {
+    var r = await dxApi('list');
+    dx.docs = r && r.ok ? r.docs : [];
+    if (dx.view !== 'list') return;
+    var m = dx.main;
+    m.innerHTML = '<div class="dx-bar"><span class="dx-bar-title">DX Docs</span><button type="button" class="dx-btn" data-act="new">+ New doc</button></div><div class="dx-list" data-testid="aiondx-dx-list"></div>';
+    var list = m.querySelector('.dx-list');
+    if (!dx.docs.length) {
+      var e = document.createElement('div');
+      e.className = 'dx-empty';
+      e.textContent = 'No docs in this chat yet. Ask the agent for a document, a report or a plan and it appears here as it is written; or press + New doc.';
+      list.appendChild(e);
+    }
+    dx.docs.forEach(function (d) {
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'dx-row';
+      row.setAttribute('data-doc', d.id);
+      var t = document.createElement('span'); t.className = 'dx-row-title'; t.textContent = d.title;
+      var meta = document.createElement('span'); meta.className = 'dx-row-meta';
+      meta.textContent = dxWhen(d.modified) + (d.pending ? ' · ' + d.pending + ' to write' : '') + (d.openComments ? ' · ' + d.openComments + ' comment' + (d.openComments > 1 ? 's' : '') : '');
+      row.appendChild(t); row.appendChild(meta);
+      row.addEventListener('click', function () { dxOpen(d.id); });
+      list.appendChild(row);
+    });
+    m.querySelector('[data-act="new"]').addEventListener('click', dxNew);
+  }
+  async function dxNew() {
+    var title = window.prompt('Title of the new doc');
+    if (!title || !title.trim()) return;
+    var r = await dxApi('create', { title: title.trim() });
+    if (r && r.ok) dxOpen(r.id); else toast('The doc was not made.', r && r.error);
+  }
+  async function dxOpen(id, keepScroll) {
+    var r = await dxApi('read', { id: id });
+    if (!r || !r.ok) { toast('That doc could not be read.', r && r.error); dx.view = 'list'; return dxList(); }
+    var body = dx.view === 'doc' && dx.doc === id ? dx.main.querySelector('.dx-body') : null;
+    var ratio = keepScroll && body && body.scrollHeight > body.clientHeight ? body.scrollTop / (body.scrollHeight - body.clientHeight) : null;
+    var atEnd = keepScroll && body ? body.scrollTop + body.clientHeight >= body.scrollHeight - 30 : false;
+    dx.view = 'doc'; dx.doc = id; dx.md = r.markdown; dx.comments = r.comments || []; dx.title = r.title || id;
+    if (dx.editing) return dxEditingChanged();
+    dxDrawDoc();
+    var nb = dx.main.querySelector('.dx-body');
+    if (nb && atEnd) nb.scrollTop = nb.scrollHeight;
+    else if (nb && ratio !== null) nb.scrollTop = ratio * (nb.scrollHeight - nb.clientHeight);
+  }
+  function dxDrawDoc() {
+    var m = dx.main;
+    var open = dx.comments.filter(function (c) { return !c.resolved; }).length;
+    m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back" title="All docs">‹</button><span class="dx-bar-title"></span>' +
+      '<button type="button" class="dx-btn" data-act="comments" title="Comments">Comments' + (open ? ' (' + open + ')' : '') + '</button>' +
+      '<button type="button" class="dx-btn" data-act="edit">Edit</button><button type="button" class="dx-btn" data-act="more" title="History and export">⋯</button></div>' +
+      '<div class="dx-body" data-testid="aiondx-dx-body"></div><div class="dx-comments" hidden></div>';
+    m.querySelector('.dx-bar-title').textContent = dx.title;
+    m.querySelector('.dx-body').innerHTML = window.__dxMd.toHtml(dx.md);
+    m.querySelector('.dx-bar').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-act]');
+      if (!b) return;
+      var a = b.getAttribute('data-act');
+      if (a === 'back') { dx.view = 'list'; dx.doc = null; dxList(); }
+      else if (a === 'edit') dxEdit();
+      else if (a === 'comments') dxComments(true);
+      else if (a === 'more') dxMore(b);
+    });
+  }
+  function dxChanged(id) {
+    // a doc an agent made or changed: the sidebar opens (if shut) and shows it; the one on screen redraws in place
+    var known = dx.docs.some(function (d) { return d.id === id; });
+    if (dx.view === 'doc' && dx.doc === id) { dxOpen(id, true); return; }
+    if (dx.view === 'list' || !known) {
+      if (dxTab() !== 'docs') dxSetTab('docs');
+      dxExpand();
+      dxOpen(id);
+      return;
+    }
+    dx.docs = dx.docs; // another doc changed while one is open: the list refreshes on the way back
+  }
+  function dxEdit() {
+    dx.editing = true; dx.dirty = false; dx.theirs = null;
+    var m = dx.main;
+    m.innerHTML = '<div class="dx-bar"><span class="dx-bar-title"></span><button type="button" class="dx-btn" data-act="cancel">Cancel</button>' +
+      '<button type="button" class="dx-btn dx-btn--primary" data-act="save">Save</button></div><div class="dx-note" hidden></div>' +
+      '<textarea class="dx-edit" spellcheck="true" data-testid="aiondx-dx-edit"></textarea>';
+    m.querySelector('.dx-bar-title').textContent = 'Editing ' + dx.title;
+    var ta = m.querySelector('.dx-edit');
+    ta.value = dx.md;
+    ta.addEventListener('input', function () { dx.dirty = true; });
+    ta.addEventListener('keydown', function (ev) { if ((ev.ctrlKey || ev.metaKey) && ev.key === 's') { ev.preventDefault(); dxSave(); } ev.stopPropagation(); });
+    m.querySelector('.dx-bar').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-act]');
+      if (!b) return;
+      if (b.getAttribute('data-act') === 'save') dxSave();
+      else { dx.editing = false; dxOpen(dx.doc); }
+    });
+    ta.focus();
+  }
+  function dxEditingChanged() {
+    var n = dx.main.querySelector('.dx-note');
+    if (!n) return;
+    n.hidden = false;
+    n.innerHTML = 'The agent changed this doc while you were editing. <button type="button" class="dx-btn" data-act="theirs">Show their version</button> <span>or Save to keep yours (theirs stays in the history).</span>';
+    n.querySelector('[data-act="theirs"]').addEventListener('click', function () { dx.editing = false; dxOpen(dx.doc); });
+  }
+  async function dxSave() {
+    var ta = dx.main.querySelector('.dx-edit');
+    if (!ta) return;
+    var r = await dxApi('save', { id: dx.doc, markdown: ta.value });
+    if (!r || !r.ok) { toast('Not saved.', r && r.error); return; }
+    dx.editing = false;
+    dxOpen(dx.doc);
+  }
+  // ---- comments: select text in the doc, press Comment; it is kept with the doc and sent to the chat's agent
+  var dxCommentBtn = null;
+  function dxSelection() {
+    if (!dx.el || dx.view !== 'doc' || dx.editing) { if (dxCommentBtn) dxCommentBtn.hidden = true; return; }
+    var sel = window.getSelection ? window.getSelection() : null;
+    var body = dx.main && dx.main.querySelector('.dx-body');
+    var text = sel && !sel.isCollapsed ? String(sel).trim() : '';
+    if (!text || !body || !body.contains(sel.anchorNode)) { if (dxCommentBtn) dxCommentBtn.hidden = true; return; }
+    if (!dxCommentBtn) {
+      dxCommentBtn = document.createElement('button');
+      dxCommentBtn.type = 'button';
+      dxCommentBtn.className = 'dx-comment-btn';
+      dxCommentBtn.textContent = 'Comment';
+      dxCommentBtn.setAttribute('data-testid', 'aiondx-dx-comment-btn');
+      dxCommentBtn.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+      dxCommentBtn.addEventListener('click', function () { dxCommentBox(dxCommentBtn._quote, dxCommentBtn._section); });
+      document.body.appendChild(dxCommentBtn);
+    }
+    var rr = sel.getRangeAt(0).getBoundingClientRect();
+    dxCommentBtn._quote = text.slice(0, 2000);
+    var h = sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentNode);
+    var sec = '';
+    for (var n = h; n && n !== body; n = n.previousElementSibling || n.parentNode) { if (n.getAttribute && n.getAttribute('data-section') && /^H[1-6]$/.test(n.tagName)) { sec = n.getAttribute('data-section'); break; } }
+    dxCommentBtn._section = sec;
+    dxCommentBtn.style.top = Math.round(rr.bottom + 6) + 'px';
+    dxCommentBtn.style.left = Math.round(Math.min(rr.left, window.innerWidth - 110)) + 'px';
+    dxCommentBtn.hidden = false;
+  }
+  function dxCommentBox(quote, section) {
+    if (dxCommentBtn) dxCommentBtn.hidden = true;
+    dxComments(true, { quote: quote, section: section });
+  }
+  function dxComments(show, draft) {
+    var box = dx.main.querySelector('.dx-comments');
+    if (!box) return;
+    box.hidden = !show;
+    if (!show) return;
+    box.innerHTML = '<div class="dx-comments-head"><span>Comments</span><button type="button" class="dx-btn" data-act="hide">✕</button></div><div class="dx-clist"></div>';
+    box.querySelector('[data-act="hide"]').addEventListener('click', function () { box.hidden = true; });
+    var list = box.querySelector('.dx-clist');
+    if (draft) {
+      var f = document.createElement('div');
+      f.className = 'dx-cdraft';
+      f.innerHTML = '<div class="dx-cquote"></div><textarea class="dx-ctext" placeholder="Your comment; the agent is told" data-testid="aiondx-dx-ctext"></textarea>' +
+        '<div class="dx-crow"><button type="button" class="dx-btn" data-act="cancel">Cancel</button><button type="button" class="dx-btn dx-btn--primary" data-act="send" data-testid="aiondx-dx-csend">Send</button></div>';
+      f.querySelector('.dx-cquote').textContent = '“' + draft.quote + '”';
+      f.querySelector('.dx-ctext').addEventListener('keydown', function (ev) { ev.stopPropagation(); });
+      f.querySelector('[data-act="cancel"]').addEventListener('click', function () { f.remove(); });
+      f.querySelector('[data-act="send"]').addEventListener('click', function () { dxSendComment(draft, f.querySelector('.dx-ctext').value); });
+      list.appendChild(f);
+      setTimeout(function () { f.querySelector('.dx-ctext').focus(); }, 0);
+    }
+    if (!dx.comments.length && !draft) { var e = document.createElement('div'); e.className = 'dx-empty'; e.textContent = 'No comments. Select text in the doc and press Comment.'; list.appendChild(e); }
+    dx.comments.slice().reverse().forEach(function (c) {
+      var it = document.createElement('div');
+      it.className = 'dx-citem' + (c.resolved ? ' dx-citem--done' : '');
+      var q = document.createElement('div'); q.className = 'dx-cquote'; q.textContent = c.quote ? '“' + c.quote + '”' : (c.section || '');
+      var t = document.createElement('div'); t.className = 'dx-ctext-shown'; t.textContent = c.text;
+      it.appendChild(q); it.appendChild(t);
+      (c.replies || []).forEach(function (rp) { var x = document.createElement('div'); x.className = 'dx-creply'; x.textContent = (rp.by === 'user' ? 'You: ' : 'Agent: ') + rp.text; it.appendChild(x); });
+      if (c.resolved) { var d = document.createElement('div'); d.className = 'dx-cstate'; d.textContent = 'Resolved'; it.appendChild(d); }
+      list.appendChild(it);
+    });
+  }
+  async function dxSendComment(draft, text) {
+    text = String(text || '').trim();
+    if (!text) return;
+    var r = await dxApi('comment', { id: dx.doc, quote: draft.quote, section: draft.section, text: text });
+    if (!r || !r.ok) { toast('The comment was not saved.', r && r.error); return; }
+    var msg = '[DX Doc comment] On "' + dx.title + '" (doc ' + dx.doc + (draft.section ? ', section "' + draft.section + '"' : '') + ', comment ' + r.comment.id + '):\n' +
+      '> ' + draft.quote.replace(/\n/g, '\n> ') + '\n\n' + text + '\n\n(Answer with dxdoc_reply, and edit the doc with dxdoc_update when it asks for a change.)';
+    var sent = await postJson('/api/conversations/' + dx.conv + '/messages', { content: msg }).catch(function () { return null; });
+    if (!sent || !sent.ok) toast('The comment is saved with the doc, but the agent could not be told.', 'Send it a message to look at the doc’s comments.');
+    dxOpen(dx.doc, true).then(function () { dxComments(true); });
+  }
+  function dxMore(anchor) {
+    var old = document.querySelector('.dx-menu');
+    if (old) { old.remove(); return; }
+    var m = document.createElement('div');
+    m.className = 'dx-menu';
+    m.innerHTML = '<button type="button" data-act="history">Earlier versions</button><button type="button" data-act="pdf">Export as PDF</button><button type="button" data-act="reveal">Show the file</button>';
+    var rc = anchor.getBoundingClientRect();
+    m.style.top = Math.round(rc.bottom + 4) + 'px';
+    m.style.right = Math.round(window.innerWidth - rc.right) + 'px';
+    document.body.appendChild(m);
+    var off = function (ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('mousedown', off, true); } };
+    setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
+    m.addEventListener('click', async function (ev) {
+      var b = ev.target.closest('[data-act]');
+      if (!b) return;
+      m.remove();
+      var a = b.getAttribute('data-act');
+      if (a === 'reveal') dxApi('reveal', { id: dx.doc });
+      else if (a === 'pdf') {
+        var html = '<!doctype html><meta charset="utf-8"><title>' + window.__dxMd.esc(dx.title) + '</title><style>' + DX_PRINT_CSS + '</style>' + window.__dxMd.toHtml(dx.md);
+        var r = await dxApi('pdf', { id: dx.doc, html: html });
+        toast(r && r.ok ? 'Saved as PDF beside the doc.' : 'The PDF was not made.', r && (r.path || r.error));
+      } else if (a === 'history') dxHistory();
+    });
+  }
+  async function dxHistory() {
+    var r = await dxApi('history', { id: dx.doc });
+    var vs = r && r.ok ? r.versions : [];
+    var m = dx.main;
+    m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back">‹</button><span class="dx-bar-title"></span></div><div class="dx-list"></div>';
+    m.querySelector('.dx-bar-title').textContent = 'Earlier versions of ' + dx.title;
+    m.querySelector('[data-act="back"]').addEventListener('click', function () { dxOpen(dx.doc); });
+    var list = m.querySelector('.dx-list');
+    if (!vs.length) { var e = document.createElement('div'); e.className = 'dx-empty'; e.textContent = 'No earlier versions yet.'; list.appendChild(e); }
+    vs.forEach(function (v) {
+      var row = document.createElement('button');
+      row.type = 'button'; row.className = 'dx-row';
+      row.textContent = dxWhen(v.at) + (new Date(v.at).toDateString() === new Date().toDateString() ? ' today' : '');
+      row.addEventListener('click', async function () {
+        var x = await dxApi('version', { id: dx.doc, version: v.version });
+        if (!x || !x.ok) return;
+        m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back">‹</button><span class="dx-bar-title"></span>' +
+          '<button type="button" class="dx-btn dx-btn--primary" data-act="restore">Restore this version</button></div><div class="dx-body"></div>';
+        m.querySelector('.dx-bar-title').textContent = 'Version of ' + row.textContent;
+        m.querySelector('.dx-body').innerHTML = window.__dxMd.toHtml(x.markdown);
+        m.querySelector('[data-act="back"]').addEventListener('click', dxHistory);
+        m.querySelector('[data-act="restore"]').addEventListener('click', async function () {
+          var rr = await dxApi('restore', { id: dx.doc, version: v.version });
+          if (rr && rr.ok) dxOpen(dx.doc); else toast('Not restored.', rr && rr.error);
+        });
+      });
+      list.appendChild(row);
+    });
+  }
+  var DX_PRINT_CSS = 'body{font:12pt/1.5 Segoe UI,Arial,sans-serif;color:#111;margin:0}h1{font-size:22pt;margin:0 0 12pt}h2{font-size:15pt;margin:16pt 0 6pt}' +
+    'h3{font-size:12.5pt}table{border-collapse:collapse;margin:8pt 0}td,th{border:1px solid #bbb;padding:4pt 7pt}pre{background:#f4f4f4;padding:8pt;white-space:pre-wrap}' +
+    'code{font-family:Consolas,monospace}.dx-pending{color:#888;font-style:italic}blockquote{border-left:3px solid #ccc;margin:0;padding-left:10pt;color:#444}';
+  (function dxStyle() {
+    var st = document.createElement('style');
+    st.id = 'aiondx-dx-style';
+    st.textContent = [
+      '.aiondx-dx{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
+      // Files: AionUi's own panel, whole; the switch back is a small pill at the bottom right
+      '.aiondx-dx--files{inset:auto 10px 10px auto;background:transparent}',
+      '.aiondx-dx--files .dx-main,.aiondx-dx--files .dx-hide{display:none}',
+      '.aiondx-dx--files .dx-tabs{flex:0 0 auto;align-items:center;padding:2px 4px;border:1px solid var(--color-border-2,rgba(0,0,0,.12));border-radius:16px;background:var(--color-bg-1,#fff);box-shadow:0 2px 8px rgba(0,0,0,.12)}',
+      '.aiondx-dx--files .dx-tab{border-bottom:0;padding:4px 10px;border-radius:12px}',
+      '.dx-hide{margin-left:auto;align-self:center;border:0;background:transparent;color:var(--color-text-3);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}',
+      '.dx-hide:hover{background:var(--color-fill-2,rgba(0,0,0,.06));color:var(--color-text-1)}',
+      '.dx-tabs{flex:0 0 34px;display:flex;align-items:flex-end;gap:2px;padding:0 10px;border-bottom:1px solid var(--color-border-2,rgba(0,0,0,.1))}',
+      '.dx-tab{border:0;background:transparent;padding:6px 10px;font-size:12.5px;color:var(--color-text-3);cursor:pointer;border-bottom:2px solid transparent}',
+      '.dx-tab--on{color:var(--color-text-1);border-bottom-color:rgb(var(--primary-6,22,93,255));font-weight:600}',
+      '.dx-main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;position:relative}',
+      '.dx-bar{flex:0 0 38px;display:flex;align-items:center;gap:4px;padding:0 8px 0 12px;border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06))}',
+      '.dx-bar-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}',
+      '.dx-btn{flex:0 0 auto;border:0;background:transparent;color:var(--color-text-2);cursor:pointer;border-radius:5px;padding:4px 8px;font-size:12px}',
+      '.dx-btn:hover{background:var(--color-fill-2,rgba(0,0,0,.06));color:var(--color-text-1)}',
+      '.dx-btn--primary{background:rgb(var(--primary-6,22,93,255));color:#fff}',
+      '.dx-btn--primary:hover{background:rgb(var(--primary-5,64,128,255));color:#fff}',
+      '.dx-back{font-size:16px;padding:2px 8px}',
+      '.dx-list{flex:1 1 auto;overflow:auto;padding:6px}',
+      '.dx-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;border:0;background:transparent;text-align:left;padding:8px 10px;border-radius:6px;cursor:pointer}',
+      '.dx-row:hover{background:var(--color-fill-2,rgba(0,0,0,.05))}',
+      '.dx-row-title{font-size:13px;font-weight:600;color:var(--color-text-1)}',
+      '.dx-row-meta{font-size:11.5px;color:var(--color-text-3)}',
+      '.dx-empty{padding:16px;font-size:12.5px;line-height:1.5;color:var(--color-text-3)}',
+      '.dx-body{flex:1 1 auto;overflow:auto;padding:14px 18px 40px;font-size:13.5px;line-height:1.6;user-select:text}',
+      '.dx-body h1{font-size:21px;margin:4px 0 12px}.dx-body h2{font-size:16px;margin:20px 0 6px}.dx-body h3{font-size:14px;margin:16px 0 4px}',
+      '.dx-body p{margin:0 0 10px}.dx-body ul,.dx-body ol{margin:0 0 10px;padding-left:22px}.dx-body li{margin:2px 0}',
+      '.dx-body .dx-task{list-style:none;margin-left:-18px}',
+      '.dx-body table{border-collapse:collapse;margin:6px 0 12px;font-size:12.5px}.dx-body td,.dx-body th{border:1px solid var(--color-border-2,#ddd);padding:4px 8px}',
+      '.dx-body th{background:var(--color-fill-1,rgba(0,0,0,.03))}',
+      '.dx-body pre{background:var(--color-fill-1,rgba(0,0,0,.04));padding:10px;border-radius:6px;overflow:auto;font-size:12px}',
+      '.dx-body code{font-family:Consolas,monospace;font-size:.92em}',
+      '.dx-body blockquote{margin:0 0 10px;padding-left:12px;border-left:3px solid var(--color-border-2,#ddd);color:var(--color-text-2)}',
+      '.dx-body img{max-width:100%}',
+      '.dx-pending{display:flex;align-items:center;gap:8px;margin:2px 0 12px;padding:8px 10px;border-radius:6px;font-size:12.5px;color:var(--color-text-3);',
+      '  background:linear-gradient(90deg,var(--color-fill-1,rgba(0,0,0,.03)),var(--color-fill-2,rgba(0,0,0,.07)),var(--color-fill-1,rgba(0,0,0,.03)));background-size:200% 100%;animation:dx-shimmer 1.6s linear infinite}',
+      '.dx-pending-dot{width:7px;height:7px;border-radius:50%;background:rgb(var(--primary-6,22,93,255));animation:dx-pulse 1.2s ease-in-out infinite}',
+      '@keyframes dx-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}',
+      '@keyframes dx-pulse{0%,100%{opacity:.35}50%{opacity:1}}',
+      '@media (prefers-reduced-motion: reduce){.dx-pending,.dx-pending-dot{animation:none}}',
+      '.dx-edit{flex:1 1 auto;resize:none;border:0;outline:0;padding:12px 14px;font:12.5px/1.55 Consolas,monospace;background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
+      '.dx-note{padding:8px 12px;font-size:12px;background:rgba(var(--warning-6,255,125,0),.12);color:var(--color-text-1)}',
+      '.dx-comments{flex:0 0 auto;max-height:45%;overflow:auto;border-top:1px solid var(--color-border-2,rgba(0,0,0,.1));background:var(--color-bg-2,var(--color-bg-1))}',
+      '.dx-comments-head{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;font-size:12.5px;font-weight:600}',
+      '.dx-clist{padding:0 10px 10px}',
+      '.dx-citem,.dx-cdraft{padding:8px 10px;margin:0 0 8px;border-radius:6px;background:var(--color-fill-1,rgba(0,0,0,.03));font-size:12.5px}',
+      '.dx-citem--done{opacity:.6}',
+      '.dx-cquote{font-size:12px;color:var(--color-text-3);margin-bottom:4px;max-height:3.2em;overflow:hidden}',
+      '.dx-creply{margin-top:4px;padding-left:8px;border-left:2px solid var(--color-border-2,#ddd);color:var(--color-text-2)}',
+      '.dx-cstate{margin-top:4px;font-size:11px;color:var(--color-text-3)}',
+      '.dx-ctext{width:100%;box-sizing:border-box;min-height:56px;resize:vertical;font:inherit;padding:6px;border-radius:5px;border:1px solid var(--color-border-2,#ccc);background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
+      '.dx-crow{display:flex;justify-content:flex-end;gap:6px;margin-top:6px}',
+      '.dx-comment-btn{position:fixed;z-index:1200;border:0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;background:rgb(var(--primary-6,22,93,255));color:#fff;box-shadow:0 3px 10px rgba(0,0,0,.2)}',
+      '.dx-menu{position:fixed;z-index:1200;display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:8px;background:var(--color-bg-popup,var(--color-bg-1,#fff));border:1px solid var(--color-border-2,rgba(0,0,0,.12));box-shadow:0 6px 20px rgba(0,0,0,.18)}',
+      '.dx-menu button{border:0;background:transparent;text-align:left;padding:7px 10px;font-size:12.5px;border-radius:5px;cursor:pointer;color:var(--color-text-1)}',
+      '.dx-menu button:hover{background:var(--color-fill-2,rgba(0,0,0,.06))}',
+    ].join('\n');
+    document.head.appendChild(st);
+  })();
 
   // ---------------------------------------------------------------- "+ Add account" on the new-chat page (R-119, a request of 2026-11-13)
 

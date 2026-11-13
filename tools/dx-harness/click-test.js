@@ -3194,6 +3194,9 @@ async function pageTarget() {
       const sc = 'docs';
       await js("localStorage.removeItem('aionui.dx.options'); localStorage.removeItem('aionui.dx.docs.width'); 0");
       await load('theme=light');
+      check(sc, 'a claude.ai Claude Doc link goes to the browser by default (DX Docs is AionDX\'s own; the claude.ai pane is a choice)', (await js(`window.__aionDx.option('links.docs')`)) === 'browser');
+      // the rest of this section is the claude.ai pane, chosen in Settings
+      await js(`window.__aionDx.setOption('links.docs', 'pane'); 0`);
       await js(`(() => {
         window.__stub.routes['POST /api/shell/open-external'] = { success: true };
         window.__dc = [];
@@ -3266,13 +3269,13 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.4');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.5');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.4' && c.names.length === 1 &&
-        c.names[0] === 'More Claude accounts' && /^On the new-chat page, click \+ Add account at the end of the agent row\./.test(c.hows[0]), JSON.stringify(c));
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.5' && c.names.length === 2 && c.names[0] === 'DX Docs' && c.names[1] === 'More Claude accounts' &&
+        /^Ask your agent for a document, report or plan: it appears in the right-hand sidebar/.test(c.hows[0]), JSON.stringify(c));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 340, JSON.stringify(box));
       await humanClick('.aiondx-whatsnew-ok');
@@ -3315,7 +3318,7 @@ async function pageTarget() {
       t = await tip();
       check(sc, 'and after a reload the Loop tip stays away', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
       // the Docs link tip, on a page with a doc link, once the others are done
-      await js(`(() => { const d = {}; ['bell','loop','ctx2','account','sched','bolt','menu','add-account','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await js(`(() => { const d = {}; ['bell','loop','ctx2','account','sched','bolt','menu','dxdocs','add-account','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
       await load('theme=light&tips=1&keepls=1');
       await js(`(() => { const a = document.createElement('a'); a.href = 'https://claude.ai/artifact/abc'; a.textContent = 'Launch plan'; a.style.cssText = 'position:absolute;left:300px;top:200px;z-index:5;background:#fff;color:#000;padding:4px'; document.body.appendChild(a); return 0; })()`);
       await sleep(2600);
@@ -3441,6 +3444,122 @@ async function pageTarget() {
       check(sc, 'a key that does not check out adds nothing and says why, with Try again', /The account was not added/.test(await js(`document.querySelector('[data-testid="aiondx-accdlg"]').textContent`)) &&
         /does not accept the saved key/.test(await js(`document.querySelector('[data-testid="aiondx-accdlg"]').textContent`)) && !(await js('window.__ac')).some((x) => x[0] === 'save'));
       await js(`(() => { document.querySelector('.aiondx-accdlg-cancel').click(); const r = document.getElementById('trow'); if (r) r.remove(); delete window.aiondxAccounts; location.hash = '#/conversation/harness1'; return 0; })()`);
+    }
+
+    // ---- DX Docs in the chat's right-hand sidebar (R-121, 2026-11-13) ----
+    {
+      const sc = 'dxdocs';
+      const setup = (collapsed) => js(`(() => {
+        location.hash = '#/conversation/harness1';
+        const old = document.getElementById('tsider'); if (old) old.remove();
+        const s = document.createElement('div'); s.id = 'tsider'; s.className = '!bg-1 relative chat-layout-right-sider layout-sider';
+        s.style.cssText = 'position:fixed;top:40px;right:0;bottom:0;width:${collapsed ? 0 : 420}px;overflow:hidden;z-index:30;background:#fff';
+        s.innerHTML = '<div class="workspace-panel-header">Workspace</div><div class="aionui-files">files</div>';
+        document.body.appendChild(s);
+        window.__dx = { calls: [], docs: {}, comments: {}, versions: {}, cb: null, toggles: 0 };
+        window.addEventListener('aionui-workspace-toggle', () => { window.__dx.toggles++; s.style.width = '420px'; });
+        const md = (id) => window.__dx.docs[id];
+        window.aiondxDx = {
+          call: (op, a) => { window.__dx.calls.push([op, a]); const D = window.__dx;
+            if (op === 'where') return Promise.resolve({ ok: true, docsDir: 'C:/ws/Docs', root: 'C:/ws', project: null });
+            if (op === 'watch' || op === 'unwatch' || op === 'reveal') return Promise.resolve({ ok: true });
+            if (op === 'list') return Promise.resolve({ ok: true, docs: Object.keys(D.docs).map((id) => ({ id, title: (/^# (.*)/m.exec(D.docs[id]) || [])[1] || id, modified: Date.now(), pending: (D.docs[id].match(/aiondx:pending/g) || []).length, openComments: (D.comments[id] || []).length })) });
+            if (op === 'read') return Promise.resolve(md(a.id) ? { ok: true, id: a.id, title: (/^# (.*)/m.exec(md(a.id)) || [])[1], markdown: md(a.id), comments: D.comments[a.id] || [] } : { ok: false, error: 'no doc' });
+            if (op === 'save') { (D.versions[a.id] = D.versions[a.id] || []).push(D.docs[a.id]); D.docs[a.id] = a.markdown; return Promise.resolve({ ok: true }); }
+            if (op === 'comment') { const c = { id: 'c1', quote: a.quote, section: a.section, text: a.text, replies: [], resolved: false }; (D.comments[a.id] = D.comments[a.id] || []).push(c); return Promise.resolve({ ok: true, comment: c }); }
+            if (op === 'history') return Promise.resolve({ ok: true, versions: (D.versions[a.id] || []).map((x, i) => ({ version: 'v' + i, at: Date.now() - 60000 })) });
+            if (op === 'version') return Promise.resolve({ ok: true, markdown: D.versions[a.id][+a.version.slice(1)] });
+            if (op === 'restore') { D.docs[a.id] = D.versions[a.id][+a.version.slice(1)]; return Promise.resolve({ ok: true }); }
+            return Promise.resolve({ ok: false, error: 'stub: ' + op }); },
+          onEvent: (cb) => { window.__dx.cb = cb; return () => {}; },
+        };
+        window.__dxAgent = (id, text) => { window.__dx.docs[id] = text; window.__dx.cb && window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id }); };
+        window.__calls.length = 0; return 0; })()`);
+      const panel = () => js(`(() => { const p = document.querySelector('#tsider [data-testid="aiondx-dx"]'); if (!p) return null;
+        return { files: p.classList.contains('aiondx-dx--files'), tab: (p.querySelector('.dx-tab--on') || {}).textContent, bar: (p.querySelector('.dx-bar-title') || {}).textContent || '',
+          body: (p.querySelector('.dx-body') || {}).innerHTML || '', list: [...p.querySelectorAll('.dx-row-title')].map((e) => e.textContent), empty: (p.querySelector('.dx-empty') || {}).textContent || '' }; })()`);
+      await load('theme=light');
+      await setup(false);
+      await sleep(1800);
+      let p = await panel();
+      check(sc, 'a solo chat\'s right-hand sidebar shows DX Docs, with a Files tab, and says how docs get there', p && p.tab === 'DX Docs' && !p.files &&
+        /Ask the agent for a document, a report or a plan and it appears here/.test(p.empty), JSON.stringify(p));
+      check(sc, 'it asked where this chat\'s docs are, and watches that folder', JSON.stringify((await js('window.__dx.calls')).filter((c) => c[0] === 'where' || c[0] === 'watch').map((c) => c[0])) === '["where","watch"]');
+      await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\n<!-- aiondx:pending the three outcomes -->\\n\\n## Risks\\n\\n<!-- aiondx:pending what could stop it -->\\n'); 0`);
+      await sleep(600);
+      p = await panel();
+      check(sc, 'when the agent creates a doc it opens by itself, drawn: the title and a "Writing: ..." block per section', p.bar === 'Launch plan' &&
+        /<h1 data-section="Launch plan">Launch plan<\/h1>/.test(p.body) && (p.body.match(/class="dx-pending"/g) || []).length === 2 && /Writing: the three outcomes/.test(p.body), JSON.stringify(p));
+      await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\n1. Ship\\n2. Sell\\n\\n## Risks\\n\\n<!-- aiondx:pending what could stop it -->\\n'); 0`);
+      await sleep(600);
+      p = await panel();
+      check(sc, 'as the agent fills a section, the doc redraws in place: the list is there, one section still pending', /<ol><li>Ship<\/li><li>Sell<\/li><\/ol>/.test(p.body) && (p.body.match(/class="dx-pending"/g) || []).length === 1, p.body);
+      await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\n<script>window.__pwned=1</script> **ok**\\n'); 0`);
+      await sleep(600);
+      check(sc, 'what an agent writes is shown, never run (no script, no raw HTML)', !(await js('window.__pwned')) && /&lt;script&gt;/.test((await panel()).body));
+      await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\nShip it this quarter.\\n'); 0`);
+      await sleep(600);
+      // comment on a selection
+      await js(`(() => { const b = document.querySelector('#tsider .dx-body p'); const r = document.createRange(); r.selectNodeContents(b); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.dispatchEvent(new Event('selectionchange')); return 0; })()`);
+      await sleep(300);
+      check(sc, 'selecting text in the doc offers Comment', await js(`(() => { const b = document.querySelector('[data-testid="aiondx-dx-comment-btn"]'); return !!b && !b.hidden; })()`));
+      await humanClick('[data-testid="aiondx-dx-comment-btn"]');
+      await sleep(300);
+      await typeInto('[data-testid="aiondx-dx-ctext"]', 'Which quarter?');
+      await humanClick('[data-testid="aiondx-dx-csend"]');
+      await sleep(700);
+      const cm = (await js('window.__dx.calls')).filter((c) => c[0] === 'comment')[0];
+      const told = await js(`window.__calls.filter((c) => c.method === 'POST' && c.path === '/api/conversations/harness1/messages').map((c) => c.body.content)`);
+      check(sc, 'Send keeps the comment with the doc: the quote, its section and the text', cm && cm[1].quote === 'Ship it this quarter.' && cm[1].section === 'Goals' && cm[1].text === 'Which quarter?', JSON.stringify(cm));
+      check(sc, 'and tells the chat\'s agent: the doc, the section, the quote, the comment and how to answer', told.length === 1 &&
+        /^\[DX Doc comment\] On "Launch plan" \(doc plan, section "Goals", comment c1\):\n> Ship it this quarter\.\n\nWhich quarter\?\n\n\(Answer with dxdoc_reply/.test(told[0]), JSON.stringify(told));
+      check(sc, 'the comment shows in the doc\'s comments', /Which quarter\?/.test(await js(`(document.querySelector('#tsider .dx-comments') || {}).textContent || ''`)) && /Comments \(1\)/.test(await js(`document.querySelector('#tsider [data-act="comments"]').textContent`)));
+      // edit and save
+      await humanClick('#tsider [data-act="edit"]');
+      await sleep(300);
+      check(sc, 'Edit shows the Markdown to change', (await js(`document.querySelector('[data-testid="aiondx-dx-edit"]').value`)) === '# Launch plan\n\n## Goals\n\nShip it this quarter.\n');
+      await js(`(() => { const t = document.querySelector('[data-testid="aiondx-dx-edit"]'); t.value = t.value.replace('this quarter', 'in Q1'); t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await js(`window.__dxAgent('plan', window.__dx.docs.plan + '\\n## Extra\\n\\nmore\\n'); 0`);
+      await sleep(600);
+      check(sc, 'when the agent changes the doc while you edit, you are told and keep your text', /The agent changed this doc while you were editing/.test(await js(`(document.querySelector('#tsider .dx-note') || {}).textContent || ''`)) &&
+        /in Q1/.test(await js(`document.querySelector('[data-testid="aiondx-dx-edit"]').value`)));
+      await humanClick('#tsider [data-act="save"]');
+      await sleep(600);
+      const sv = (await js('window.__dx.calls')).filter((c) => c[0] === 'save')[0];
+      check(sc, 'Save writes your Markdown and shows the doc again', sv && /Ship it in Q1\./.test(sv[1].markdown) && /Ship it in Q1\./.test((await panel()).body), JSON.stringify(sv));
+      // history and restore
+      await humanClick('#tsider [data-act="more"]');
+      await sleep(200);
+      await humanClick('.dx-menu [data-act="history"]');
+      await sleep(400);
+      await humanClick('#tsider .dx-list .dx-row');
+      await sleep(400);
+      await humanClick('#tsider [data-act="restore"]');
+      await sleep(500);
+      check(sc, 'Earlier versions lists them; one is shown and restored', (await js('window.__dx.calls')).some((c) => c[0] === 'restore' && c[1].id === 'plan') && /this quarter/.test((await panel()).body));
+      // back to the list; the Files tab
+      await humanClick('#tsider [data-act="back"]');
+      await sleep(400);
+      check(sc, 'back to the list: the doc is there by its title', JSON.stringify((await panel()).list) === '["Launch plan"]');
+      await humanClick('#tsider .dx-tab[data-tab="files"]');
+      await sleep(200);
+      p = await panel();
+      check(sc, 'Files shows AionUi\'s own panel again, the tabs staying on top', p.files && p.tab === 'Files' &&
+        (await js(`(() => { const r = document.querySelector('#tsider .aionui-files').getBoundingClientRect(); const e = document.elementFromPoint(r.left + 5, r.top + 5); return !!e && e.classList.contains('aionui-files'); })()`)));
+      await humanClick('#tsider .dx-tab[data-tab="docs"]');
+      await sleep(200);
+      check(sc, 'and DX Docs comes back', !(await panel()).files);
+      // a shut sidebar opens when the agent makes a doc
+      await load('theme=light&keepls=1');
+      await setup(true);
+      await sleep(1800);
+      await js(`window.__dxAgent('notes', '# Notes\\n\\n## One\\n\\n<!-- aiondx:pending first -->\\n'); 0`);
+      await sleep(600);
+      check(sc, 'with the sidebar shut, a new doc from the agent opens it (AionUi\'s own toggle) and shows the doc', (await js('window.__dx.toggles')) === 1 && (await panel()).bar === 'Notes');
+      await js(`(() => { location.hash = '#/team/team1'; return 0; })()`);
+      await sleep(1500);
+      check(sc, 'leaving the chat takes the panel away and stops watching', !(await js(`!!document.querySelector('[data-testid="aiondx-dx"]')`)) && (await js('window.__dx.calls')).some((c) => c[0] === 'unwatch'));
+      await js(`(() => { const s = document.getElementById('tsider'); if (s) s.remove(); delete window.aiondxDx; location.hash = '#/conversation/harness1'; return 0; })()`);
     }
 
     // ---- clearing agent caches (2026-10-13, a request) ----

@@ -22,6 +22,18 @@ const tag = opt('--tag'), title = opt('--title'), notesFile = opt('--notes'), as
 if (!tag || !title || !notesFile || !assets.length) { console.error('usage: node tools\\github-release.js --tag T --title TITLE --notes FILE --asset FILE [--asset FILE ...] [--prerelease] [--publish]'); process.exit(2); }
 const sha = (f) => new Promise((resolve, reject) => { const h = crypto.createHash('sha256'); fs.createReadStream(f).on('data', (d) => h.update(d)).on('error', reject).on('end', () => resolve(h.digest('hex'))); });
 
+// The code the installer was built from must be the code on GitHub: nothing tracked left uncommitted, and the branch pushed. On November 13th,
+// 2026 a commit refused by the privacy hook went unnoticed and 0.27.5 was published over the 0.27.4 commit. --allow-unpushed skips this.
+if (!args.includes('--allow-unpushed')) {
+  const { execFileSync } = require('child_process');
+  const git = (a) => execFileSync('git', a, { cwd: path.join(__dirname, '..'), encoding: 'utf8', windowsHide: true }).trim();
+  const dirty = git(['status', '--porcelain', '--untracked-files=no', '--', 'patches', 'tools']);
+  if (dirty) { console.error('github-release: tracked changes are not committed (the commit was refused or never made):\n' + dirty.split('\n').slice(0, 10).join('\n')); process.exit(3); }
+  git(['fetch', '-q', 'origin']);
+  const head = git(['rev-parse', 'HEAD']), remote = git(['rev-parse', 'origin/main']);
+  if (head !== remote) { console.error('github-release: HEAD ' + head.slice(0, 7) + ' is not what origin/main has (' + remote.slice(0, 7) + '); push first.'); process.exit(3); }
+}
+
 (async () => {
   for (const f of assets) if (!fs.existsSync(f)) throw new Error('no such file: ' + f);
   const repo = '/repos/' + OWNER + '/' + REPO;

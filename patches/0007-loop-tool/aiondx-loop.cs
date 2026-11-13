@@ -451,6 +451,66 @@ namespace AionDx
                             { "label", Prop("string", "Optional words for the button, for example 'the installer folder'.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
+                    { "name", "dxdoc_create" },
+                    { "title", "Create a DX Doc" },
+                    { "description", "DX Docs are AionDX's own living documents: Markdown in the DX Docs folder of the chat's project (else its working folder), shown to the user live in the chat's right-hand sidebar. No sign-in to anyone. When the user asks for a document, report, plan, proposal, guide or anything to keep, create a DX Doc FIRST: its title and a section per part, each with the intent it will hold, before any research or file reading; then fill each section with dxdoc_update. Keep findings in the doc and a short line in chat. Use Claude Docs (claude.ai) only when the user asks for it by name." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "title", Prop("string", "The document's title.") },
+                            { "sections", ArrayProp("Its sections, in order: [{heading, intent}] (intent: what the section will hold, shown as Writing: ... until filled).") },
+                            { "lead", Prop("string", "Optional text under the title.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "dxdoc_update" },
+                    { "title", "Edit a DX Doc" },
+                    { "description", "Edits a DX Doc by section. Operations, applied in order, all or nothing: {op:\"replace_section\", heading, body} (fills a pending section or replaces one), {op:\"append_to_section\", heading, body}, {op:\"append_section\", heading, body, level}, {op:\"insert_after\", after, heading, body}, {op:\"rename_section\", heading, to}, {op:\"delete_section\", heading}, {op:\"replace_text\", find, replace, all}, {op:\"set_title\", title}, {op:\"set_lead\", body}, {op:\"write\", markdown}. Headings match without case. The version before is kept; the user sees the change at once." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "doc", Prop("string", "The doc's id: its file name without .md, as dxdoc_create or dxdoc_list gave it.") },
+                            { "ops", ArrayProp("The operations.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "dxdoc_read" },
+                    { "title", "Read a DX Doc" },
+                    { "description", "A DX Doc's Markdown, its sections (with those still pending) and its path." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "doc", Prop("string", "The doc's id: its file name without .md, as dxdoc_create or dxdoc_list gave it.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "dxdoc_list" },
+                    { "title", "List DX Docs" },
+                    { "description", "The DX Docs of this chat's project (or working folder): id, title, sections still to write, open comments, newest first." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+ } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "dxdoc_comments" },
+                    { "title", "Read a DX Doc's comments" },
+                    { "description", "The comments the user left on a DX Doc: each with the passage it is on, its section, the text and the replies. A new comment is also sent to you as a message; answer it with dxdoc_reply, and edit the doc when it asks for a change." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "doc", Prop("string", "The doc's id: its file name without .md, as dxdoc_create or dxdoc_list gave it.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "dxdoc_reply" },
+                    { "title", "Answer a comment on a DX Doc" },
+                    { "description", "Replies to a comment on a DX Doc and, with resolve true, marks it resolved. The user sees the reply under the comment." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "doc", Prop("string", "The doc's id: its file name without .md, as dxdoc_create or dxdoc_list gave it.") },
+                            { "comment", Prop("string", "The comment's id.") },
+                            { "text", Prop("string", "Your reply.") },
+                            { "resolve", Prop("boolean", "true when the comment is dealt with.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
                     { "name", "usage_alert" },
                     { "title", "Usage alerts" },
                     { "description",
@@ -468,6 +528,12 @@ namespace AionDx
                             { "message", Prop("string", "Optional text added to the alert (up to 400 characters).") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } }
             };
+        }
+
+        /** A list of objects: items says so, which Gemini's function declarations require. */
+        static Dictionary<string, object> ArrayProp(string description)
+        {
+            return new Dictionary<string, object> { { "type", "array" }, { "description", description }, { "items", new Dictionary<string, object> { { "type", "object" } } } };
         }
 
         static Dictionary<string, object> Prop(string type, string description)
@@ -494,6 +560,7 @@ namespace AionDx
                 else if (name == "usage_status") text = UsageText(Bool(a, "all") == true);
                 else if (name == "show_file") text = ShowText(Str(a, "path"), Str(a, "label"));
                 else if (name == "usage_alert") text = UsageAlertCmd(Str(a, "action") == null && Dbl(a, "at") > 0 ? new Dictionary<string, object>(a) { { "action", "set" } } : a);
+                else if (name != null && name.StartsWith("dxdoc_")) text = DxText(name, a);
                 else if (name == "github_status") text = GitHubStatusText(Bool(a, "repos") == true);
                 else if (name == "github_create_repo") text = GitHubCreate(Str(a, "name"), Bool(a, "public") == true, Str(a, "description"));
                 else if (name == "mcp_call")
@@ -536,6 +603,7 @@ namespace AionDx
             "  aiondx config list|get|set|reset   every AionDX option and how to change it (aiondx config help): links, spelling, Stop timing, voice, long chats\n" +
             "  aiondx team show ID|NAME | team list   a team's layout, lead first, with each member's chat id (a @@ team mention is an invitation to read it)\n" +
             "  aiondx chat read CHAT_ID [--last N] [--before CURSOR] [--all]   read any of the user's chats: its newest messages, oldest first\n" +
+            "  aiondx doc where|list|create|read|update|comments|reply ...   DX Docs, AionDX's own living documents in the chat's sidebar (aiondx doc help)\n" +
             "  aiondx show PATH [--label TEXT]   show the user a picture, or link a file or folder, in chat: prints the exact Markdown to paste\n" +
             "  aiondx migrate detect|run|backup|verify ...   move from AionUi to AionDX: back up the chats, remove AionUi, check them (aiondx migrate help)\n" +
             "--on and --off switch the Loop; --until-stopped (only when the user asks for it) keeps it on until the user stops it, " +
@@ -1453,6 +1521,156 @@ namespace AionDx
             catch (Exception e) { o.WriteLine("Reading the chat failed: " + e.Message); return 1; }
         }
 
+        // ------------------------------------------------------------------ DX Docs (R-121): AionDX's own living documents
+
+        const string DocHelp =
+            "Usage:\n" +
+            "  aiondx doc where | list\n" +
+            "  aiondx doc create --json '{\"title\":\"...\",\"sections\":[{\"heading\":\"...\",\"intent\":\"what it will hold\"}]}'\n" +
+            "  aiondx doc read --json '{\"doc\":\"<id>\"}'\n" +
+            "  aiondx doc update --json '{\"doc\":\"<id>\",\"ops\":[{\"op\":\"replace_section\",\"heading\":\"...\",\"body\":\"...\"}]}'\n" +
+            "  aiondx doc comments --json '{\"doc\":\"<id>\"}' | reply --json '{\"doc\":\"<id>\",\"comment\":\"<id>\",\"text\":\"...\",\"resolve\":true}'\n" +
+            "  (--json-file FILE instead of --json; in PowerShell 5.1 double quotes inside an argument are lost, so use a file there)\n" +
+            "A DX Doc is a Markdown file in the DX Docs folder of the chat's project (else its working folder). The user watches it in the chat's\n" +
+            "right-hand sidebar, live. Operations: replace_section, append_to_section, append_section, insert_after, rename_section,\n" +
+            "delete_section, replace_text (find, replace, all), set_title, set_lead, write (markdown). Every change keeps the version before it.";
+
+        /** The engine (dxdocs.js) and something to run it with: AionDX's own runtime (AionDX.exe as Node), else node on PATH. */
+        static Tuple<string, string> DxEngine()
+        {
+            var cands = new List<string>();
+            var own = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            cands.Add(Path.Combine(own, "dxdocs.js"));
+            string payload = null;
+            try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\AionDX\AionDX")) payload = k == null ? null : k.GetValue("PayloadDir") as string; } catch (Exception) { }
+            if (!string.IsNullOrEmpty(payload)) cands.Add(Path.Combine(payload, "bin", "dxdocs.js"));
+            var env = Environment.GetEnvironmentVariable("AIONDX_DXDOCS");
+            if (!string.IsNullOrEmpty(env)) cands.Insert(0, env);
+            var engine = cands.FirstOrDefault(File.Exists);
+            if (engine == null) throw new ToolError("DX Docs is not installed with this AionDX (no dxdocs.js beside the aiondx tool). Install AionDX 0.27.5 or later.");
+            string runtime = null;
+            if (!string.IsNullOrEmpty(payload))
+            {
+                var app = Path.GetFullPath(Path.Combine(payload, "..", "..", "AionDX.exe"));
+                if (File.Exists(app)) runtime = app;
+            }
+            if (runtime == null)
+            {
+                foreach (var d in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
+                {
+                    try { var f = Path.Combine(d.Trim('"'), "node.exe"); if (File.Exists(f)) { runtime = f; break; } } catch (Exception) { }
+                }
+            }
+            if (runtime == null) throw new ToolError("Nothing to run DX Docs with: AionDX's own program was not found and node is not on PATH.");
+            return Tuple.Create(engine, runtime);
+        }
+
+        /** AionDX's data folder: %APPDATA%\AionDX, or where AionDX-location.json points (chats on a drive). */
+        static string DxDataDir()
+        {
+            var forced = Environment.GetEnvironmentVariable("AIONDX_DATA_DIR");   // tests
+            if (!string.IsNullOrEmpty(forced)) return forced;
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            try
+            {
+                var ptr = Path.Combine(appData, "AionDX-location.json");
+                if (File.Exists(ptr))
+                {
+                    var j = Json.DeserializeObject(File.ReadAllText(ptr)) as Dictionary<string, object>;
+                    if (j != null) foreach (var v in j.Values) { var s = v as string; if (!string.IsNullOrEmpty(s) && Directory.Exists(s) && File.Exists(Path.Combine(s, "aiondx-projects.json"))) return s; }
+                }
+            }
+            catch (Exception) { }
+            return Path.Combine(appData, "AionDX");
+        }
+
+        static Dictionary<string, object> DxRun(string cmd, Dictionary<string, object> args)
+        {
+            var eng = DxEngine();
+            var id = Id(false);
+            string team = null;
+            try { var ctx = LoadContext(); if (ctx.Self.Kind == "team") team = ctx.Self.TeamId; } catch (ToolError) { }
+            var tmp = Path.Combine(Path.GetTempPath(), "aiondx-dxdoc-" + Guid.NewGuid().ToString("N") + ".json");
+            File.WriteAllText(tmp, Json.Serialize(args ?? new Dictionary<string, object>()), new UTF8Encoding(false));
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo(eng.Item2) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                    StandardOutputEncoding = Encoding.UTF8, WorkingDirectory = Environment.CurrentDirectory };
+                psi.Arguments = Q(eng.Item1) + " " + cmd + " --data-dir " + Q(DxDataDir()) + " --conv " + Q(id.ConvId) + (team != null ? " --team " + Q(team) : "") +
+                    " --workspace " + Q(Environment.CurrentDirectory) + " --json-file " + Q(tmp);
+                psi.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1";
+                using (var p = System.Diagnostics.Process.Start(psi))
+                {
+                    var outTask = p.StandardOutput.ReadToEndAsync();
+                    var errTask = p.StandardError.ReadToEndAsync();
+                    if (!p.WaitForExit(30000)) { try { p.Kill(); } catch (Exception) { } throw new ToolError("DX Docs did not answer in 30 seconds."); }
+                    var text = outTask.Result.Trim();
+                    var j = (text.Length > 0 ? Json.DeserializeObject(text.Split('\n').Last()) : null) as Dictionary<string, object>;
+                    if (j == null) throw new ToolError("DX Docs gave no answer. " + OneLine(errTask.Result));
+                    if (!(j.ContainsKey("ok") && j["ok"] is bool && (bool)j["ok"])) throw new ToolError(Str(j, "error") ?? "DX Docs refused that.");
+                    return j;
+                }
+            }
+            finally { try { File.Delete(tmp); } catch (Exception) { } }
+        }
+        static string Q(string s) { return "\"" + (s ?? "").Replace("\"", "\\\"") + "\""; }
+
+        static string DxText(string tool, Dictionary<string, object> a)
+        {
+            switch (tool)
+            {
+                case "dxdoc_create":
+                {
+                    var r = DxRun("create", a);
+                    return "Created the DX Doc \"" + Str(r, "title") + "\" (id " + Str(r, "id") + ") at " + Str(r, "path") + ". It is open in the user's sidebar; " +
+                        "each section shows \"Writing: ...\" until you fill it with dxdoc_update (replace_section). Fill them in order, one or two per call, so the user watches it build.";
+                }
+                case "dxdoc_update":
+                {
+                    var r = DxRun("update", a);
+                    var pending = r.ContainsKey("pending") ? (r["pending"] as object[] ?? new object[0]) : new object[0];
+                    return "Updated \"" + Str(r, "id") + "\" (" + string.Join(", ", (r["done"] as object[] ?? new object[0]).Select(x => x.ToString())) + "); the version before is kept." +
+                        (pending.Length > 0 ? " Still to write: " + string.Join(", ", pending.Select(x => "\"" + x + "\"")) + "." : " Every section is written.");
+                }
+                case "dxdoc_read": return Json.Serialize(DxRun("read", a));
+                case "dxdoc_list": return Json.Serialize(DxRun("list", a));
+                case "dxdoc_comments": return Json.Serialize(DxRun("comments", a));
+                case "dxdoc_reply": { var r = DxRun("reply", a); return "Replied to the comment" + (r.ContainsKey("resolved") && r["resolved"] is bool && (bool)r["resolved"] ? " and marked it resolved." : "."); }
+            }
+            throw new ToolError("Unknown DX Docs tool " + tool + ".");
+        }
+
+        static int DocCli(string[] args, StreamWriter o)
+        {
+            if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h") { o.WriteLine(DocHelp); return args.Length < 2 ? 2 : 0; }
+            try
+            {
+                string cmd = args[1].ToLowerInvariant();
+                var a = new Dictionary<string, object>();
+                for (int i = 2; i < args.Length; i++)
+                {
+                    if (args[i] == "--json") a = Json.DeserializeObject(Next(args, ref i, "--json")) as Dictionary<string, object> ?? a;
+                    else if (args[i] == "--json-file") a = Json.DeserializeObject(File.ReadAllText(Next(args, ref i, "--json-file"))) as Dictionary<string, object> ?? a;
+                    else throw new ToolError("Unknown option " + args[i] + ".\n" + DocHelp);
+                }
+                if (!new[] { "where", "list", "create", "read", "update", "comments", "reply", "history" }.Contains(cmd)) throw new ToolError("Unknown doc command \"" + args[1] + "\".\n" + DocHelp);
+                if (cmd == "create" || cmd == "update" || cmd == "reply") { o.WriteLine(DxText("dxdoc_" + cmd, a)); return 0; }
+                var r = DxRun(cmd, a);
+                if (cmd == "where") o.WriteLine("DX Docs for this chat are in " + Str(r, "docsDir") + (Str(r, "project") != null ? " (project " + Str(r, "project") + ")" : "") + ".");
+                else if (cmd == "list")
+                {
+                    var docs = r["docs"] as object[] ?? new object[0];
+                    if (docs.Length == 0) o.WriteLine("No DX Docs yet in " + Str(r, "docsDir") + ".");
+                    foreach (var d in docs.OfType<Dictionary<string, object>>())
+                        o.WriteLine(Str(d, "id") + "  " + Str(d, "title") + (Long(d, "pending") > 0 ? "  (" + Long(d, "pending") + " to write)" : "") + (Long(d, "openComments") > 0 ? "  (" + Long(d, "openComments") + " open comments)" : ""));
+                }
+                else o.WriteLine(Json.Serialize(r));
+                return 0;
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+            catch (Exception e) { o.WriteLine("DX Docs failed: " + e.Message); return 1; }
+        }
+
         static int MemberCli(string[] args, StreamWriter o)
         {
             if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h")
@@ -2098,6 +2316,7 @@ namespace AionDx
             if (args[0] == "member") return MemberCli(args, o);
             if (args[0] == "team") return TeamCli(args, o);
             if (args[0] == "chat") return ChatCli(args, o);
+            if (args[0] == "doc") return DocCli(args, o);
             if (args[0] == "migrate") return MigrateCli(args, o);
             if (args[0] == "stop")
             {

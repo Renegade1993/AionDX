@@ -1,6 +1,6 @@
 ---
 name: aiondx-loop
-description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. Also use it when the user @@-mentions a team (its line in the sessions block ends [team]) or asks you to read another of their chats: aiondx team show gives the team's layout, lead first, and aiondx chat read reads any chat. It is the only keep-warm mechanism: do not write a script that pokes agents.
+description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. Also use it whenever the user asks for a document, report, plan, proposal or anything to keep: make it a DX Doc (dxdoc_create, then dxdoc_update section by section), which the user watches being written in the chat's sidebar; and when a message starts [DX Doc comment]. Also use it when the user @@-mentions a team (its line in the sessions block ends [team]) or asks you to read another of their chats: aiondx team show gives the team's layout, lead first, and aiondx chat read reads any chat. It is the only keep-warm mechanism: do not write a script that pokes agents.
 ---
 
 # The AionDX Loop
@@ -256,6 +256,30 @@ itself (Git Credential Manager), the same sign-in the user's other repositories 
   (`.gitignore`), and look for keys before the first push.
 - Make a repository public only when the user says so. `create` reads back what GitHub made and sets it
   right if it differs.
+
+## DX Docs: documents the user watches you write
+
+DX Docs are AionDX's own living documents: Markdown files in the `DX Docs` folder of the chat's project (else its working folder), shown to
+the user live in the chat's right-hand sidebar. No sign-in to anyone; every agent can use them. When the user asks for a document, report,
+plan, proposal, guide or anything to keep, make a DX Doc, and make it FIRST:
+
+1. `dxdoc_create` with the title and one section per part, each with the intent it will hold, before any search, file read or plan.
+   The user sees the outline at once, each section showing "Writing: <intent>".
+2. Fill the sections in order with `dxdoc_update` (`replace_section`), one or two per call, so the user watches it build.
+3. Findings go in the doc; in chat, a short line on what you are writing now, and at the end one line with the doc's name.
+
+When the user comments on a passage, you get a message starting `[DX Doc comment]` with the doc, the quote and the comment. Answer with
+`dxdoc_reply` (resolve it when done), and change the doc with `dxdoc_update` when the comment asks for it. Other edits: `append_to_section`,
+`insert_after`, `rename_section`, `delete_section`, `replace_text`, `set_title`. Every change keeps the version before it.
+
+```
+"{{AIONDX}}" doc where                         the folder this chat's docs are in
+"{{AIONDX}}" doc list                          its docs, with sections still to write and open comments
+"{{AIONDX}}" doc create --json-file plan.json  {"title":"...","sections":[{"heading":"...","intent":"..."}]}
+"{{AIONDX}}" doc update --json-file ops.json   {"doc":"<id>","ops":[{"op":"replace_section","heading":"...","body":"..."}]}
+```
+
+Use Claude Docs (claude.ai) only when the user asks for Claude Docs by name.
 
 ## Reading a team or another chat
 

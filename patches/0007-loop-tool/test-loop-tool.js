@@ -287,9 +287,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const tl = await solo.rpc('tools/list', {});
   const tools = (tl.result && tl.result.tools) || [];
-  check('tools/list offers loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,usage_alert', tools.map((t) => t.name));
+  check('tools/list offers loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the six DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_list,dxdoc_comments,dxdoc_reply,usage_alert', tools.map((t) => t.name));
   const schemaText = JSON.stringify(tools.map((t) => t.inputSchema));
-  check('schemas use only type, properties and description (every backend takes them)', !/additionalProperties|\$schema|"required"|"title"/.test(schemaText), schemaText);
+  check('schemas use only type, properties, description and items (every backend takes them; a parameter may be called title)', !/additionalProperties|\$schema|"required"|"title":"/.test(schemaText), schemaText);
   const set = tools.find((t) => t.name === 'loop_set') || { inputSchema: { properties: {} } };
   check('loop_set takes on, until_stopped, message, compact, hold, resume_at, resume_message, note, member', Object.keys(set.inputSchema.properties).join(',') === 'on,until_stopped,message,compact,hold,resume_at,resume_message,note,member', Object.keys(set.inputSchema.properties));
   check('the descriptions describe the cache window, not the old 30-minute backoff',
@@ -538,7 +538,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const orphan = startTool('convS', { AIONDX_CONVERSATION_ID: '', AIONDX_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
-  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 13, tlOrphan.result && tlOrphan.result.tools.length);
+  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 19, tlOrphan.result && tlOrphan.result.tools.length);
   r = await orphan.call('loop_status');
   check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionUi chat/.test(r.text), r.text);
 
@@ -892,6 +892,39 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   cf = await cli(['config'], 'convL');
   check('config on its own prints the help (and exits 2)', cf.status === 2 && /aiondx config set ID VALUE/.test(cf.stdout), cf.stdout);
   delete kv['aiondx.options']; delete kv['aiondx.options.schema'];
+
+  // ---- DX Docs (R-121, 2026-11-13): the agents' doc commands run the engine in the chat's project or working folder ----
+  {
+    const os = require('os');
+    const dxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-loop-dx-'));
+    const dxData = path.join(dxRoot, 'data'), dxWs = path.join(dxRoot, 'ws');
+    fs.mkdirSync(dxData); fs.mkdirSync(dxWs);
+    fs.writeFileSync(path.join(dxData, 'aiondx-projects.json'), JSON.stringify({ version: 1, projects: {}, bindings: {} }));
+    const dxEnv = Object.assign({}, cliEnv('convS'), { AIONDX_DXDOCS: path.join(__dirname, '..', '0009-identity', 'dxdocs.js'), AIONDX_DATA_DIR: dxData, PATH: process.env.PATH });
+    const dxRun = (argv) => new Promise((resolve) => {
+      const ch = spawn(CLI, argv, { env: dxEnv, cwd: dxWs, windowsHide: true });
+      children.push(ch);
+      let out = '';
+      ch.stdout.on('data', (d) => { out += d; });
+      ch.stderr.on('data', (d) => { out += d; });
+      ch.on('close', (code) => resolve({ status: code, stdout: out }));
+    });
+    let dr = await dxRun(['doc', 'where']);
+    check('doc where: an unbound chat\'s docs are in its working folder', dr.status === 0 && dr.stdout.trim() === 'DX Docs for this chat are in ' + path.join(dxWs, 'DX Docs') + '.', dr.stdout);
+    fs.writeFileSync(path.join(dxRoot, 'c.json'), JSON.stringify({ title: 'Plan', sections: [{ heading: 'Goals', intent: 'goals' }, { heading: 'Risks', intent: 'risks' }] }));
+    dr = await dxRun(['doc', 'create', '--json-file', path.join(dxRoot, 'c.json')]);
+    check('doc create makes the skeleton and says how to fill it', dr.status === 0 && /^Created the DX Doc "Plan" \(id plan\)/.test(dr.stdout) &&
+      /aiondx:pending goals/.test(fs.readFileSync(path.join(dxWs, 'DX Docs', 'plan.md'), 'utf8')), dr.stdout);
+    fs.writeFileSync(path.join(dxRoot, 'u.json'), JSON.stringify({ doc: 'plan', ops: [{ op: 'replace_section', heading: 'Goals', body: 'Ship.' }] }));
+    dr = await dxRun(['doc', 'update', '--json-file', path.join(dxRoot, 'u.json')]);
+    check('doc update fills a section and names what is left to write', dr.status === 0 && /Still to write: "Risks"\./.test(dr.stdout), dr.stdout);
+    dr = await dxRun(['doc', 'list']);
+    check('doc list shows it with one section to write', dr.status === 0 && /^plan {2}Plan {2}\(1 to write\)/.test(dr.stdout), dr.stdout);
+    fs.writeFileSync(path.join(dxRoot, 'b.json'), JSON.stringify({ doc: 'plan', ops: [{ op: 'replace_section', heading: 'Nope', body: 'x' }] }));
+    dr = await dxRun(['doc', 'update', '--json-file', path.join(dxRoot, 'b.json')]);
+    check('a bad update says which sections there are, and exits 1', dr.status === 1 && /No section "Nope"\. Sections: "Goals", "Risks"\./.test(dr.stdout), dr.stdout);
+    try { fs.rmSync(dxRoot, { recursive: true, force: true }); } catch (e) { /* temp */ }
+  }
 
   // ---- aiondx team and aiondx chat read (R-111, 2026-11-13): a @@ team mention is an invitation to read the team ----
   let tm = await cli(['team', 'list'], 'convS');

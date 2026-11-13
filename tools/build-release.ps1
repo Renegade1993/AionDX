@@ -223,6 +223,7 @@ Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\a
 Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\claude.exe", "$root\patches\0005-claude-exe-shim\claude-shim.cs") 'build claude.exe'
 Copy-Item "$root\patches\0002-claude-model-currency\claude-account-router.js" $bin
 Copy-Item "$root\patches\0002-claude-model-currency\claude-stream-proxy.js" $bin
+Copy-Item "$root\patches\0009-identity\dxdocs.js" $bin   # DX Docs engine, run by the aiondx tool's doc commands (R-121)
 Copy-Item "$root\patches\0002-claude-model-currency\claude-model-catalog.js" $bin
 Copy-Item "$root\patches\0002-claude-model-currency\aiondx-model-refresh.js" $bin
 Copy-Item "$root\patches\0016-data-move\aiondx-data-move.js" $bin

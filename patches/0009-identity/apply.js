@@ -182,6 +182,13 @@ function __aiondxIconFile(name) {
     require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-accounts.js")).install(require$$0$2);
   } catch {}
 })();
+/** DX Docs (R-121): AionDX's own living documents in the chat's right-hand sidebar. The work is aiondx-dxdocs-main.js with the engine
+ *  dxdocs.js (patches/0009-identity); the page draws the sidebar and asks through the preload's aiondxDx. */
+(function __aiondxDxDocs() {
+  try {
+    require(path__namespace.join(__dirname, "..", "aiondx", "aiondx-dxdocs-main.js")).install(require$$0$2);
+  } catch {}
+})();
 /** The one-click setup (a request of 2026-09-26). The Welcome screen
  *  asks for it through the preload's aiondxSetup. The setup skill's survey.js and apply.js run in a child of this
  *  process as Node (Electron's own runtime, ELECTRON_RUN_AS_NODE), so no Node.js install and no agent are needed.
@@ -751,6 +758,20 @@ else {
   notes.push('preload: aiondxPortable');
 }
 
+// ... and DX Docs (main process aiondx:dxdocs, R-121).
+if (/aiondxDx\b/.test(preload)) notes.push('preload: aiondxDx already there');
+else {
+  const anchor = 'const backendPort = electron.ipcRenderer.sendSync("get-backend-port");';
+  const n = count(preload, anchor);
+  if (n !== 1) { console.error(`0009: preload (dxdocs): expected 1 match, found ${n}. Nothing written.`); process.exit(1); }
+  preload = preload.replace(anchor, '/* AIONDX-0009: DX Docs (patches/0009-identity, main process aiondx:dxdocs) */\n' +
+    'electron.contextBridge.exposeInMainWorld("aiondxDx", {\n' +
+    '  call: (op, args) => electron.ipcRenderer.invoke("aiondx:dxdocs", Object.assign({}, args, { op })),\n' +
+    '  onEvent: (cb) => { const f = (_e, d) => cb(d); electron.ipcRenderer.on("aiondx:dxdocs-event", f); return () => electron.ipcRenderer.removeListener("aiondx:dxdocs-event", f); }\n' +
+    '});\n' + anchor);
+  notes.push('preload: aiondxDx');
+}
+
 // ... and "+ Add account" (main process aiondx:accounts, R-119).
 if (/aiondxAccounts/.test(preload)) notes.push('preload: aiondxAccounts already there');
 else {
@@ -878,4 +899,19 @@ fs.copyFileSync(path.join(__dirname, 'aiondx-notices.js'), path.join(ext, 'out',
 notes.push('out/aiondx/aiondx-notices.js');
 fs.copyFileSync(path.join(__dirname, 'aiondx-accounts.js'), path.join(ext, 'out', 'aiondx', 'aiondx-accounts.js'));
 notes.push('out/aiondx/aiondx-accounts.js');
+for (const f of ['dxdocs.js', 'aiondx-dxdocs-main.js']) { fs.copyFileSync(path.join(__dirname, f), path.join(ext, 'out', 'aiondx', f)); notes.push('out/aiondx/' + f); }
+// DX Docs' Markdown renderer, loaded in the page before aiondx-ui.js
+fs.copyFileSync(path.join(__dirname, 'dxdocs-md.js'), path.join(ext, 'out', 'renderer', 'aiondx-dxdocs-md.js'));
+notes.push('out/renderer/aiondx-dxdocs-md.js');
+{
+  const idx = path.join(ext, 'out', 'renderer', 'index.html');
+  let h = fs.readFileSync(idx, 'utf8');
+  if (!h.includes('aiondx-dxdocs-md.js')) {
+    const tag = '<script src="./aiondx-ui.js" defer></script>';
+    if (!h.includes(tag)) { console.error('0009: index.html has no aiondx-ui.js tag. Nothing more written.'); process.exit(1); }
+    h = h.replace(tag, '<script src="./aiondx-dxdocs-md.js" defer></script>\n    ' + tag);
+    fs.writeFileSync(idx, h);
+    notes.push('index.html: aiondx-dxdocs-md.js');
+  }
+}
 for (const n of notes) console.log('0009: ' + n);
