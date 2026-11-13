@@ -3,9 +3,12 @@
 // ending (the PASS/FAIL list and the count). A quick check of new work before the full suite (about 15 minutes) runs.
 //   node tools\dx-harness\run-sections.js bell docs whatsnew tips
 //   node tools\dx-harness\run-sections.js --list          the section names, in order
+//   node tools\dx-harness\run-sections.js --upto why      every section from the first through "why" (brings earlier sections' helpers along)
 // A section is the block `    {\n      const sc = '<name>';` ... up to the next such block or a `    // ----` heading. Writes the runner to
 // %TEMP%\aiondx-click-sections.js and runs it with node (headless Edge, as the suite; its own 900 s deadline). Exit code: the suite's.
 // Do not edit patches\0001-renderer-dx\aiondx-ui.js while it runs: every page load reads the file again.
+// Some sections use a helper an earlier section defines (2026-11-13: the context ring's checks stop with "store is not defined"). When a run
+// ends in "ERROR: <name> is not defined", add the section that defines it (grep click-test.js for "const <name> =") or run the full suite.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -26,8 +29,14 @@ for (let i = 0; i < body.length; i++) {
   if (cur) cur.lines.push(body[i]);
 }
 const names = [...new Set(blocks.map((b) => b.name))];
-const want = process.argv.slice(2);
+let want = process.argv.slice(2);
 if (!want.length || want[0] === '--list') { console.log(names.join('\n')); process.exit(want.length ? 0 : 2); }
+// --upto NAME: every section from the first through NAME, so the helpers earlier sections define come along
+if (want[0] === '--upto') {
+  const at = names.indexOf(want[1]);
+  if (at < 0) { console.error('run-sections: no section named ' + want[1] + '. Sections: ' + names.join(' ')); process.exit(2); }
+  want = names.slice(0, at + 1);
+}
 const unknown = want.filter((w) => !names.includes(w));
 if (unknown.length) { console.error('run-sections: no section named ' + unknown.join(', ') + '. Sections: ' + names.join(' ')); process.exit(2); }
 const picked = blocks.filter((b) => want.includes(b.name)).map((b) => b.lines.join('\n')).join('\n');

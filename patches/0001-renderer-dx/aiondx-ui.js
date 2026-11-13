@@ -8048,20 +8048,25 @@
       span: Math.max(1, Math.round((until - Number(r.at)) / 60000)), rebuilt: r.rebuilt || null };
   }
   function spanText(minutes) { return minutes >= 60 && minutes % 60 === 0 ? (minutes / 60) + ' hour' + (minutes > 60 ? 's' : '') : minutes + ' minutes'; }
-  /** The hover line: "Prompt cache warm until 09:12 at the latest (the last call, 08:12, kept it 1 hour)" or "Prompt cache cold since
-   *  09:12 ...", and the last rebuild when there was one in the last day. */
+  /** The hover line (plain words, 2026-11-13): "Cache good until 09:12 (saved at the last reply, 08:12, for 1 hour). Messages before then
+   *  reuse it, so they are cheaper and quicker." or "Cache expired at 09:12, 1 hour after the last reply (08:12). ...", and the last
+   *  rebuild when there was one in the last day. */
   function promptCacheLine(c) {
     if (!c) return '';
-    var kept = c.tail < c.until
-      ? '(the last call, ' + hhmm(c.at) + ', kept the older part 1 hour and the newest part ' + spanText(c.minutes) + ', ' +
-        (Date.now() < c.tail ? 'until ' : 'gone since ') + hhmm(c.tail) + ')'
-      : '(the last call, ' + hhmm(c.at) + ', kept it ' + spanText(c.minutes) + ')';
-    var line = c.warm ? 'Prompt cache warm until ' + hhmm(c.until) + ' at the latest ' + kept
-      : 'Prompt cache cold since ' + hhmm(c.until) + ' ' + kept + ': the next message writes the whole context again';
+    var line;
+    if (c.warm && c.tail < c.until) {
+      line = 'Cache good until ' + hhmm(c.until) + '. The last reply (' + hhmm(c.at) + ') saved most of the chat for 1 hour and its newest part for ' +
+        spanText(c.minutes) + (Date.now() < c.tail ? ', until ' : ', which expired at ') + hhmm(c.tail) + '. Messages before ' + hhmm(c.until) +
+        ' reuse what is saved, so they are cheaper and quicker.';
+    } else if (c.warm) {
+      line = 'Cache good until ' + hhmm(c.until) + ' (saved at the last reply, ' + hhmm(c.at) + ', for ' + spanText(c.span) + '). Messages before then reuse it, so they are cheaper and quicker.';
+    } else {
+      line = 'Cache expired at ' + hhmm(c.until) + ', ' + spanText(c.span) + ' after the last reply (' + hhmm(c.at) + '). Your next message resends the whole conversation, so it costs more and starts slower.';
+    }
     var rb = c.rebuilt;
     if (rb && Number(rb.at) > Date.now() - 86400000) {
-      line += '\nLast rebuilt ' + hhmm(Number(rb.at)) + (rb.afterMin !== null && rb.afterMin !== undefined ? ', ' + rb.afterMin + ' min after the call before' : '') +
-        ' (' + Math.round((Number(rb.tokens) || 0) / 1000) + 'K tokens written' + (rb.early ? ', before its time was up' : '') + ')';
+      line += '\nLast resent in full at ' + hhmm(Number(rb.at)) + (rb.afterMin !== null && rb.afterMin !== undefined ? ', ' + rb.afterMin + ' min after the reply before' : '') +
+        ' (' + Math.round((Number(rb.tokens) || 0) / 1000) + 'K tokens' + (rb.early ? ', although the cache should still have been there' : '') + ').';
     }
     return line;
   }
@@ -8069,8 +8074,8 @@
     var s = host.querySelector(':scope > .aiondx-snow');
     if (!cold) { if (s) s.parentNode.removeChild(s); return; }
     if (!s) { s = document.createElement('span'); s.className = 'aiondx-snow'; s.innerHTML = ICON_SNOW; host.appendChild(s); }
-    var tip = 'Cold: the last call, at ' + hhmm(cold.at) + ', kept the prompt cache ' + spanText(cold.minutes) + ', so it was gone by ' + hhmm(cold.since) +
-      ' (measured from Anthropic\'s answer). The next message writes the whole context again.';
+    var tip = 'Cache expired at ' + hhmm(cold.since) + ', ' + spanText(cold.minutes) + ' after the last reply (' + hhmm(cold.at) +
+      '). Your next message resends the whole conversation, so it costs more and starts slower.';
     if (s.title !== tip) s.title = tip;
   }
   function paintCtx(t, wrap) {
@@ -9164,7 +9169,7 @@
   // usage, so it is a button. Checked when a chat opens, every minute while the window is in front, and after a sign-in or a reconnect.
   var bellBtn = null, bellPop = null, bellNotices = [], bellFor = '', bellAt = 0, bellBusy = false, bellTeam = {};
   var BELL_SEEN_KEY = KEY_PREFIX + 'bell.seen';
-  var SVG_BELL = '<svg width="15" height="15" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 6c-7 0-12 5-12 12v9l-4 7h32l-4-7v-9c0-7-5-12-12-12z" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path d="M19 38c1 3 3 4 5 4s4-1 5-4" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg>';
+  var SVG_BELL = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 5c-7 0-12 5-12 12v9l-4 7h32l-4-7v-9c0-7-5-12-12-12z" stroke="currentColor" stroke-width="3.6" stroke-linejoin="round"/><path d="M19 37c1 3.5 3 5 5 5s4-1.5 5-5" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/></svg>';
   function bellSeen() { try { return JSON.parse(localStorage.getItem(BELL_SEEN_KEY)) || {}; } catch (e) { return {}; } }
   function bellMarkSeen() {
     var s = bellSeen(), now = Date.now();
@@ -9319,9 +9324,10 @@
     var st = document.createElement('style');
     st.id = 'aiondx-bell-style';
     st.textContent = [
-      '.aiondx-bell{display:inline-flex;margin-inline-end:4px}',
-      '.aiondx-bell-wrap{position:relative;display:inline-flex}',
-      '.aiondx-bell-btn{color:var(--color-text-3)!important}',
+      '.aiondx-bell{display:inline-flex;align-items:center;align-self:center;margin-inline-end:4px}',
+      '.aiondx-bell-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px}',
+      '.aiondx-bell-btn{display:inline-flex !important;align-items:center;justify-content:center;width:28px;height:28px;padding:0 !important;color:var(--color-text-2)!important}',
+      '.aiondx-bell-btn svg{display:block}',
       '.aiondx-bell-btn:hover{color:var(--color-text-1)!important}',
       '.aiondx-bell-badge{position:absolute;top:-4px;right:-5px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;',
       '  background:#f53f3f;color:#fff;font-size:10px;font-weight:600;line-height:16px;text-align:center;pointer-events:none;',
@@ -10599,7 +10605,7 @@
     { id: 'loop', sel: '[data-testid="aiondx-loop"]', title: 'The Loop',
       text: 'While it is on, it tells the agent to keep going each time it stops with nothing left to do. Click to switch it on or off; hover it to see what it is doing.' },
     { id: 'ctx', sel: '.context-usage-indicator', title: 'How full this chat is',
-      text: 'The ring fills as the chat’s memory fills. A small blue snowflake inside means the prompt cache is warm, so replies are cheaper and quicker; hover for until when.' },
+      text: 'The ring fills as the chat\u2019s memory fills. A blue snowflake on it means the chat\u2019s cache has expired, so your next message costs more and starts slower. Hover the ring for the times.' },
     { id: 'account', sel: '[data-testid="aiondx-account"]', title: 'Which Claude account',
       text: 'This chat runs on the account named here. Click it to move the chat to another account, for example when one reaches its limit.' },
     { id: 'sched', sel: '[data-testid="aiondx-sched-btn"]', title: 'Schedule send',

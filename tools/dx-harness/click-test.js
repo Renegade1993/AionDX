@@ -3131,6 +3131,10 @@ async function pageTarget() {
       const bell = await js(`(() => { const b = document.querySelector('#th .shrink-0 [data-testid="aiondx-bell"]'); const g = document.querySelector('#th .aiondx-bell-badge');
         return b ? { badge: g && g.style.display !== 'none' ? g.textContent : '', label: b.getAttribute('aria-label') } : null; })()`);
       check(sc, 'the chat header has the bell, with a red bubble counting the 2 new notices', bell && bell.badge === '2' && bell.label === '2 new notices', JSON.stringify(bell));
+      const align = await js(`(() => { const b = document.querySelector('#th [data-testid="aiondx-bell"]').getBoundingClientRect();
+        const m = document.querySelector('#th [data-testid="aiondx-chat-menu"]'); const r = m ? m.getBoundingClientRect() : null;
+        return r ? { bell: Math.round((b.top + b.bottom) / 2), menu: Math.round((r.top + r.bottom) / 2), bh: Math.round(b.height), mh: Math.round(r.height) } : null; })()`);
+      check(sc, 'the bell is the menu button\'s size and sits on the same line', align && Math.abs(align.bell - align.menu) <= 1 && align.bh === align.mh, JSON.stringify(align));
       check(sc, 'the bell asked about this chat', JSON.stringify(await js('window.__bn.checks[0]')) === '["harness1"]', JSON.stringify(await js('window.__bn.checks')));
       const look = await js(`(() => { const g = getComputedStyle(document.querySelector('#th .aiondx-bell-badge')); return [g.backgroundColor, g.color, g.borderTopColor]; })()`);
       check(sc, 'the bubble is red with a white number and a red outline', JSON.stringify(look) === JSON.stringify(['rgb(245, 63, 63)', 'rgb(255, 255, 255)', 'rgb(245, 63, 63)']), JSON.stringify(look));
@@ -3564,8 +3568,8 @@ async function pageTarget() {
       await js('window.__aionDx.pullNow()');
       rg = await again();
       check(sc, 'a measured hour cache whose last call was 75 min ago has the snowflake, saying when it went and why',
-        rg && rg.snow && /^Cold: the last call, at \d\d:\d\d, kept the prompt cache 1 hour, so it was gone by \d\d:\d\d \(measured from Anthropic's answer\)\./.test(rg.snowTitle) &&
-        /Prompt cache cold since \d\d:\d\d \(the last call, \d\d:\d\d, kept it 1 hour\): the next message writes the whole context again/.test(rg.title), JSON.stringify(rg));
+        rg && rg.snow && /^Cache expired at \d\d:\d\d, 1 hour after the last reply \(\d\d:\d\d\)\. Your next message resends the whole conversation, so it costs more and starts slower\.$/.test(rg.snowTitle) &&
+        /Cache expired at \d\d:\d\d, 1 hour after the last reply \(\d\d:\d\d\)\. Your next message resends the whole conversation/.test(rg.title), JSON.stringify(rg));
       // the team's run-state (agentLive) saying working does not hide it: the chat's own conversation is finished (2026-11-11)
       await js(`(() => { window.__aionDx.setLive('conv:harness1', 'working'); return 0; })()`);
       rg = await again();
@@ -3574,27 +3578,27 @@ async function pageTarget() {
       await snowRec(22 * 60000, '1h');
       rg = await again();
       check(sc, 'last call 22 min ago on an hour cache: warm, no snowflake, and the meter says until when', rg && !rg.snow &&
-        /Prompt cache warm until \d\d:\d\d at the latest \(the last call, \d\d:\d\d, kept it 1 hour\)/.test(rg.title), JSON.stringify(rg));
+        /Cache good until \d\d:\d\d \(saved at the last reply, \d\d:\d\d, for 1 hour\)\. Messages before then reuse it, so they are cheaper and quicker\./.test(rg.title), JSON.stringify(rg));
       await snowRec(7 * 60000, '5m');
       rg = await again();
-      check(sc, 'a measured 5-minute cache (extra usage) 7 min after its last call: the snowflake, saying 5 minutes', rg && rg.snow && /kept the prompt cache 5 minutes/.test(rg.snowTitle), JSON.stringify(rg));
+      check(sc, 'a measured 5-minute cache (extra usage) 7 min after its last call: the snowflake, saying 5 minutes', rg && rg.snow && /^Cache expired at \d\d:\d\d, 5 minutes after the last reply/.test(rg.snowTitle), JSON.stringify(rg));
       await snowRec(8 * 60000, '5m', { until: Date.now() + 40 * 60000, longUntil: Date.now() + 40 * 60000, tailUntil: Date.now() - 3 * 60000 });
       rg = await again();
       check(sc, 'after a switch to 5 minutes, with the hour part alive: warm, no snowflake, and the hover names both parts',
-        rg && !rg.snow && /Prompt cache warm until \d\d:\d\d at the latest \(the last call, \d\d:\d\d, kept the older part 1 hour and the newest part 5 minutes, gone since \d\d:\d\d\)/.test(rg.title), JSON.stringify(rg));
+        rg && !rg.snow && /Cache good until \d\d:\d\d\. The last reply \(\d\d:\d\d\) saved most of the chat for 1 hour and its newest part for 5 minutes, which expired at \d\d:\d\d\./.test(rg.title), JSON.stringify(rg));
       await snowRec(30 * 60000, '1h', { rebuilt: { at: Date.now() - 30 * 60000, tokens: 182000, afterMin: 75, early: false } });
       rg = await again();
-      check(sc, 'the meter names the last rebuild: when, after how long, how much was written', rg && !rg.snow && /\nLast rebuilt \d\d:\d\d, 75 min after the call before \(182K tokens written\)/.test(rg.title), JSON.stringify(rg));
+      check(sc, 'the meter names the last rebuild: when, after how long, how much was written', rg && !rg.snow && /\nLast resent in full at \d\d:\d\d, 75 min after the reply before \(182K tokens\)\./.test(rg.title), JSON.stringify(rg));
       await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.status = 'running'; return 0; })()`);
       await snowRec(75 * 60000, '1h');
       rg = await again();
-      check(sc, 'a turn in flight: no snowflake and no cache line, whatever the record says', rg && !rg.snow && !/Prompt cache/.test(rg.title), JSON.stringify(rg));
+      check(sc, 'a turn in flight: no snowflake and no cache line, whatever the record says', rg && !rg.snow && !/Cache (good|expired)/.test(rg.title), JSON.stringify(rg));
       await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.status = 'finished'; return 0; })()`);
       // No record: idle for two hours, but nothing measured it, so no snowflake and no cache line (2026-11-11: only a sure reading shows).
       await js(`(() => { delete window.__stub.store['aiondx.cache.conv.harness1']; const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.modified_at = Date.now() - 120 * 60000; return 0; })()`);
       await js('window.__aionDx.pullNow()');
       rg = await again();
-      check(sc, 'a chat with no measured record shows no snowflake and no cache line, however long it has been idle', rg && !rg.snow && !/Prompt cache/.test(rg.title), JSON.stringify(rg));
+      check(sc, 'a chat with no measured record shows no snowflake and no cache line, however long it has been idle', rg && !rg.snow && !/Cache (good|expired)/.test(rg.title), JSON.stringify(rg));
       await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.backend = 'devin'; return 0; })()`);
       rg = await again();
       check(sc, 'another provider with no record is never shown cold', rg && !rg.snow, JSON.stringify(rg));
