@@ -67,7 +67,7 @@
         i = j + 1; continue;
       }
       var pm = PENDING_RE.exec(l.trim());
-      if (pm) { out.push('<div class="dx-pending" data-section="' + esc(section) + '"><span class="dx-pending-dot"></span>Writing: ' + esc(pm[1] || 'this section') + '</div>'); i++; continue; }
+      if (pm) { out.push('<div class="dx-pending" data-section="' + esc(section) + '" data-intent="' + esc(pm[1] || '') + '"><span class="dx-pending-dot"></span>Writing: ' + esc(pm[1] || 'this section') + '</div>'); i++; continue; }
       var hm = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l);
       if (hm) { section = hm[2]; out.push('<h' + hm[1].length + ' data-section="' + esc(hm[2]) + '">' + inline(hm[2]) + '</h' + hm[1].length + '>'); i++; continue; }
       if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { out.push('<hr>'); i++; continue; }

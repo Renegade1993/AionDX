@@ -3471,7 +3471,7 @@ async function pageTarget() {
         box.innerHTML = '<div class="flex flex-col min-w-0" style="flex:1 1 0;min-width:0"><div class="shrink-0"><header class="chat-layout-header" style="display:flex;align-items:center;height:36px"><span>Chat</span><div class="flex items-center gap-12px shrink-0" style="margin-left:auto"></div></header></div><div>messages</div></div>' +
           '<div id="tsider" class="!bg-1 relative chat-layout-right-sider layout-sider" style="flex:0 0 auto;overflow:hidden;width:${filesOpen ? 300 : 0}px"><div class="aionui-files">files</div></div>';
         document.body.appendChild(box);
-        window.__dx = { calls: [], docs: {}, comments: {}, versions: {}, cb: null, toggles: 0 };
+        window.__dx = { calls: [], docs: {}, comments: {}, versions: {}, sgs: {}, cb: null, toggles: 0 };
         if (!window.__dxToggleHooked) { window.__dxToggleHooked = 1; window.addEventListener('aionui-workspace-toggle', () => { window.__dx.toggles++; const s = document.getElementById('tsider'); if (s) s.style.width = s.style.width === '0px' ? '300px' : '0px'; }); }
         const md = (id) => window.__dx.docs[id];
         window.aiondxDx = {
@@ -3479,12 +3479,13 @@ async function pageTarget() {
             if (op === 'where') return Promise.resolve({ ok: true, docsDir: 'C:/ws/Docs', root: 'C:/ws', project: null });
             if (op === 'watch' || op === 'unwatch' || op === 'reveal') return Promise.resolve({ ok: true });
             if (op === 'list') return Promise.resolve({ ok: true, docs: Object.keys(D.docs).map((id) => ({ id, title: (/^# (.*)/m.exec(D.docs[id]) || [])[1] || id, modified: Date.now(), pending: (D.docs[id].match(/aiondx:pending/g) || []).length, openComments: (D.comments[id] || []).length })) });
-            if (op === 'read') return Promise.resolve(md(a.id) ? { ok: true, id: a.id, title: (/^# (.*)/m.exec(md(a.id)) || [])[1], markdown: md(a.id), comments: D.comments[a.id] || [] } : { ok: false, error: 'no doc' });
+            if (op === 'read') return Promise.resolve(md(a.id) ? { ok: true, id: a.id, title: (/^# (.*)/m.exec(md(a.id)) || [])[1], markdown: md(a.id), comments: D.comments[a.id] || [], suggestions: (D.sgs[a.id] || []).filter((x) => x.status === 'open') } : { ok: false, error: 'no doc' });
             if (op === 'save') { (D.versions[a.id] = D.versions[a.id] || []).push(D.docs[a.id]); D.docs[a.id] = a.markdown; return Promise.resolve({ ok: true }); }
             if (op === 'comment') { const c = { id: 'c1', quote: a.quote, section: a.section, text: a.text, replies: [], resolved: false }; (D.comments[a.id] = D.comments[a.id] || []).push(c); return Promise.resolve({ ok: true, comment: c }); }
             if (op === 'history') return Promise.resolve({ ok: true, versions: (D.versions[a.id] || []).map((x, i) => ({ version: 'v' + i, at: Date.now() - 60000 })) });
             if (op === 'version') return Promise.resolve({ ok: true, markdown: D.versions[a.id][+a.version.slice(1)] });
             if (op === 'restore') { D.docs[a.id] = D.versions[a.id][+a.version.slice(1)]; return Promise.resolve({ ok: true }); }
+            if (op === 'decide') { const sg = (D.sgs[a.id] || []).find((x) => x.id === a.suggestion); if (!sg) return Promise.resolve({ ok: false, error: 'no' }); sg.status = a.verdict === 'accept' ? 'accepted' : 'rejected'; if (a.verdict === 'accept') D.docs[a.id] = D.docs[a.id].replace(sg.find, sg.replace); return Promise.resolve({ ok: true }); }
             if (op === 'image') return Promise.resolve(a.src === 'pictures/massif.jpg' ? { ok: true, url: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' } : { ok: false, error: 'No such picture: ' + a.src });
             return Promise.resolve({ ok: false, error: 'stub: ' + op }); },
           onEvent: (cb) => { window.__dx.cb = cb; return () => {}; },
@@ -3540,8 +3541,10 @@ async function pageTarget() {
       check(sc, 'and tells the chat\'s agent: the doc, the section, the quote, the comment and how to answer', told.length === 1 &&
         /^\[DX Doc comment\] On "Launch plan" \(doc plan, section "Goals", comment c1\):\n> Ship it this quarter\.\n\nWhich quarter\?\n\n\(Answer with dxdoc_reply/.test(told[0]), JSON.stringify(told));
       check(sc, 'the comment shows in the doc\'s comments', /Which quarter\?/.test(await js(`(document.querySelector('#tbox .dx-comments') || {}).textContent || ''`)) && /Comments \(1\)/.test(await js(`document.querySelector('#tbox [data-act="comments"]').textContent`)));
-      // edit and save
-      await humanClick('#tbox [data-act="edit"]');
+      // edit the Markdown (now in the menu: the doc itself is typed in)
+      await humanClick('#tbox [data-act="more"]');
+      await sleep(200);
+      await humanClick('.dx-menu [data-act="mdedit"]');
       await sleep(300);
       check(sc, 'Edit shows the Markdown to change', (await js(`document.querySelector('[data-testid="aiondx-dx-edit"]').value`)) === '# Launch plan\n\n## Goals\n\nShip it this quarter.\n');
       await js(`(() => { const t = document.querySelector('[data-testid="aiondx-dx-edit"]'); t.value = t.value.replace('this quarter', 'in Q1'); t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
@@ -3563,6 +3566,61 @@ async function pageTarget() {
       await humanClick('#tbox [data-act="restore"]');
       await sleep(500);
       check(sc, 'Earlier versions lists them; one is shown and restored', (await js('window.__dx.calls')).some((c) => c[0] === 'restore' && c[1].id === 'plan') && /this quarter/.test((await panel()).body));
+      // typing straight into the doc (the Claude Docs way): autosave, formatting, tables, an agent's change while you type
+      await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\nShip it this quarter.\\n\\n## Risks\\n\\n- Legal review\\n- [ ] Book the room\\n'); 0`);
+      await sleep(700);
+      const caretAtEnd = (sel) => js(`(() => { const p = document.querySelector('${sel}'); const b = document.querySelector('#tbox .dx-body'); b.focus(); const r = document.createRange(); r.selectNodeContents(p); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 0; })()`);
+      const saves = async () => (await js('window.__dx.calls')).filter((c) => c[0] === 'save');
+      const ed = await js(`(() => { const b = document.querySelector('#tbox .dx-body'); const f = document.querySelector('#tbox [data-testid="aiondx-dx-fmt"]'); return { editable: b && b.getAttribute('contenteditable'), fmt: f ? [...f.querySelectorAll('.dx-fmt-b')].map((x) => x.getAttribute('data-fmt')).join(',') : null, md: window.__aionDx.dxMarkdown() }; })()`);
+      check(sc, 'the doc itself is editable, with a formatting bar, and reads back as the same Markdown', ed.editable === 'true' && /^p,h1,h2,h3,bold,italic,strike,code,link,ul,ol,task,quote,pre,hr,table,row,col,undo,redo$/.test(ed.fmt) &&
+        ed.md === '# Launch plan\n\n## Goals\n\nShip it this quarter.\n\n## Risks\n\n- Legal review\n- [ ] Book the room\n', JSON.stringify(ed));
+      let n0 = (await saves()).length;
+      await caretAtEnd('#tbox .dx-body p');
+      await send('Input.insertText', { text: ' Ship the beta first.' });
+      await sleep(400);
+      check(sc, 'typing shows Unsaved, and nothing is written until a pause', (await js(`document.querySelector('#tbox [data-testid="aiondx-dx-saved"]').textContent`)) === 'Unsaved' && (await saves()).length === n0);
+      await sleep(1500);
+      let sv1 = (await saves()).pop();
+      check(sc, 'after a pause it saves by itself: your words, the rest as it was, marked as yours', (await saves()).length === n0 + 1 && sv1[1].markdown === '# Launch plan\n\n## Goals\n\nShip it this quarter. Ship the beta first.\n\n## Risks\n\n- Legal review\n- [ ] Book the room\n' && sv1[1].by === 'you' &&
+        (await js(`document.querySelector('#tbox [data-testid="aiondx-dx-saved"]').textContent`)) === 'Saved', JSON.stringify(sv1 && sv1[1]));
+      // bold on selected words, a heading, a table with a row added
+      await js(`(() => { const p = document.querySelector('#tbox .dx-body p'); const t = p.firstChild; const i = t.nodeValue.indexOf('beta'); const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 4); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 0; })()`);
+      await humanClick('#tbox .dx-fmt-b[data-fmt="bold"]');
+      await caretAtEnd('#tbox .dx-body p');
+      await js(`(() => { document.execCommand('insertParagraph'); return 0; })()`);
+      await humanClick('#tbox .dx-fmt-b[data-fmt="table"]');
+      await sleep(200);
+      await js(`(() => { const c = document.querySelector('#tbox .dx-body table td'); const r = document.createRange(); r.selectNodeContents(c); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 0; })()`);
+      await send('Input.insertText', { text: 'Ana' });
+      await humanClick('#tbox .dx-fmt-b[data-fmt="row"]');
+      await sleep(1800);
+      sv1 = (await saves()).pop();
+      check(sc, 'the bar makes bold words and a table you type in, a row added; all saved as Markdown', sv1 && /Ship the \*\*beta\*\* first\./.test(sv1[1].markdown) &&
+        /\| Column 1 \| Column 2 \|\n\| --- \| --- \|\n\| Ana \|  \|\n\|  \|  \|/.test(sv1[1].markdown) && /- \[ \] Book the room/.test(sv1[1].markdown), JSON.stringify(sv1 && sv1[1].markdown));
+      // the agent changes the doc while you type: your words stay, saving waits, you choose
+      n0 = (await saves()).length;
+      await caretAtEnd('#tbox .dx-body h2');
+      await send('Input.insertText', { text: ' now' });
+      await js(`window.__dxAgent('plan', window.__dx.docs.plan + '\\n## Budget\\n\\n10k\\n'); 0`);
+      await sleep(1900);
+      check(sc, 'an agent\'s change while you type: your words stay on screen, nothing is saved, and you are asked', (await saves()).length === n0 && /Goals now/.test(await js(`document.querySelector('#tbox .dx-body').textContent`)) &&
+        /The agent changed this doc while you were typing/.test(await js(`(document.querySelector('#tbox .dx-note') || {}).textContent || ''`)));
+      await humanClick('#tbox .dx-note [data-act="mine"]');
+      await sleep(600);
+      sv1 = (await saves()).pop();
+      check(sc, 'Keep mine saves your version (theirs stays in Earlier versions)', (await saves()).length === n0 + 1 && /## Goals now/.test(sv1[1].markdown) && !/## Budget/.test(sv1[1].markdown), JSON.stringify(sv1 && sv1[1].markdown));
+      // suggestions: the agent proposes, the doc stays as it is until you accept; the old words struck, the new beside them, a card each
+      await js(`(() => { window.__dx.sgs.plan = [{ id: 's1', find: 'this quarter', replace: 'next quarter', note: 'Legal needs a month.', by: 'agent', status: 'open' }]; window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'plan' }); return 0; })()`);
+      await sleep(900);
+      const sgv = await js(`(() => { const c = document.querySelector('#tbox [data-testid="aiondx-dx-sg"]'); const d = document.querySelector('#tbox .dx-body .dx-sg-del'); const i = document.querySelector('#tbox .dx-body .dx-sg-ins');
+        return { card: c ? c.textContent : null, del: d ? d.textContent : null, ins: i ? i.textContent : null, md: window.__aionDx.dxMarkdown() }; })()`);
+      check(sc, 'an agent\'s suggestion shows as a card (who, the change, the note) and in the text: old words struck, new ones beside', sgv.card && /The agent suggests/.test(sgv.card) && /this quarter \u2192 next quarter/.test(sgv.card) && /Legal needs a month\./.test(sgv.card) &&
+        sgv.del === 'this quarter' && sgv.ins === 'next quarter' && /Ship it this quarter\./.test(sgv.md) && !/next quarter/.test(sgv.md), JSON.stringify(sgv));
+      await humanClick('#tbox [data-testid="aiondx-dx-sg"] [data-sgact="accept"]');
+      await sleep(900);
+      const dc = (await js('window.__dx.calls')).filter((c) => c[0] === 'decide').pop();
+      check(sc, 'Accept applies it: the doc now reads the new words, and the card is gone', dc && dc[1].suggestion === 's1' && dc[1].verdict === 'accept' && /Ship it next quarter\./.test((await panel()).body) &&
+        !(await js(`!!document.querySelector('#tbox [data-testid="aiondx-dx-sg"]')`)), JSON.stringify(dc));
       // back to the list; the Files tab
       await humanClick('#tbox [data-act="back"]');
       await sleep(400);
@@ -3614,7 +3672,7 @@ async function pageTarget() {
       await js(`(() => { document.querySelector('#tbox .dx-body input.dx-tick[data-line]').scrollIntoView({ block: 'center' }); return 0; })()`);
       await sleep(200);
       await humanClick('#tbox .dx-body input.dx-tick[data-line]');
-      await sleep(500);
+      await sleep(1900);
       const tk = (await js('window.__dx.calls')).filter((c) => c[0] === 'save').pop();
       check(sc, 'ticking a task saves the doc with that line ticked, the rest as it was', tk && /\n- \[x\] Call the bank\n- \[x\] Send the plan/.test(tk[1].markdown) && /```chart/.test(tk[1].markdown), JSON.stringify(tk && tk[1].markdown).slice(0, 300));
       await humanClick('#tbox [data-testid="aiondx-dx-close"]');

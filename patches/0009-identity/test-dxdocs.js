@@ -106,6 +106,41 @@ try {
   check('a known one is written', /flowchart LR/.test(fs.readFileSync(path.join(dd, c0.id + '.md'), 'utf8')));
 }
 
+// attribution (DX Docs mirror, step 2): who wrote each version
+{
+  const dd = fs.mkdtempSync(path.join(os.tmpdir(), 'dxd-by-'));
+  const a0 = D.create(dd, { title: 'Who', sections: [{ heading: 'One', intent: 'x' }] });
+  D.update(dd, a0.id, [{ op: 'replace_section', heading: 'One', body: 'agent words' }]);
+  D.save(dd, a0.id, '# Who\n\n## One\n\nmy words\n', 'you');
+  const h = D.history(dd, a0.id);
+  check('each kept version says who wrote it: the agent twice, the newest version is yours', h.length === 2 && h[0].by === 'agent' && h[1].by === 'agent' && D.author(dd, a0.id).by === 'you', JSON.stringify([h, D.author(dd, a0.id)]));
+  D.restore(dd, a0.id, h[0].version);
+  check('a restore is yours, the version it replaced says you wrote it', D.author(dd, a0.id).by === 'you (restored an earlier version)' && D.history(dd, a0.id)[0].by === 'you', JSON.stringify(D.history(dd, a0.id)[0]));
+}
+
+// suggestions (DX Docs mirror, step 3)
+{
+  const dd = fs.mkdtempSync(path.join(os.tmpdir(), 'dxd-sg-'));
+  const g0 = D.create(dd, { title: 'Plan', sections: [{ heading: 'Goals', intent: 'x' }] });
+  D.update(dd, g0.id, [{ op: 'replace_section', heading: 'Goals', body: 'Ship in Q3. Ship well.' }]);
+  const before = fs.readFileSync(path.join(dd, g0.id + '.md'), 'utf8');
+  const s1 = D.suggest(dd, g0.id, { find: 'Q3', replace: 'Q4', note: 'legal needs a month' }).suggestion;
+  check('a suggestion leaves the doc as it was and is listed open', fs.readFileSync(path.join(dd, g0.id + '.md'), 'utf8') === before && s1.id === 's1' && D.suggestions(dd, g0.id).length === 1 && D.suggestions(dd, g0.id)[0].note === 'legal needs a month');
+  let er = null; try { D.suggest(dd, g0.id, { find: 'Ship', replace: 'Send' }); } catch (e) { er = e.message; }
+  check('words that occur twice are refused with how to fix it', /occur 2 times; quote more of them/.test(er || ''), er);
+  er = null; try { D.suggest(dd, g0.id, { find: 'nowhere', replace: 'x' }); } catch (e) { er = e.message; }
+  check('words not in the doc are refused', /were not found in the doc/.test(er || ''), er);
+  const s2 = D.suggest(dd, g0.id, { find: ' Ship well.', replace: '' }).suggestion;
+  D.decide(dd, g0.id, s1.id, 'accept', 'you');
+  const after = fs.readFileSync(path.join(dd, g0.id + '.md'), 'utf8');
+  check('accept applies it, keeps the version before and says whose it was', /Ship in Q4\. Ship well\./.test(after) && D.author(dd, g0.id).by === 'the agent, accepted by you' && D.suggestions(dd, g0.id).map((s) => s.id).join() === 's2', JSON.stringify([after, D.author(dd, g0.id)]));
+  D.decide(dd, g0.id, s2.id, 'reject', 'you');
+  check('reject leaves the doc alone and closes it', fs.readFileSync(path.join(dd, g0.id + '.md'), 'utf8') === after && D.suggestions(dd, g0.id).length === 0);
+  const s3 = D.suggest(dd, g0.id, { find: 'Q4', replace: 'Q1' }).suggestion;
+  D.save(dd, g0.id, after.replace('Q4', 'Q2'), 'you');
+  check('a suggestion whose words changed since is marked stale, and cannot be accepted', D.suggestions(dd, g0.id)[0].stale === true && (() => { try { D.decide(dd, g0.id, s3.id, 'accept', 'you'); return false; } catch (e) { return /no longer in the doc/.test(e.message); } })());
+}
+
 } catch (e) {
   check('no exception', false, e.stack);
 } finally {

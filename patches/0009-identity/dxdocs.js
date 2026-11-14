@@ -142,6 +142,12 @@ function list(docsDir) {
     .map((f) => { try { return info(docsDir, f.slice(0, -3)); } catch { return null; } }).filter(Boolean)
     .sort((a, b) => b.modified - a.modified);
 }
+/** Who wrote what (DX Docs mirror, step 2): { current: { by, at }, versions: { <version>: by } } beside the kept versions. */
+function authorsFile(docsDir, id) { return path.join(docsDir, '.history', id, 'authors.json'); }
+function readAuthors(docsDir, id) { try { const a = JSON.parse(fs.readFileSync(authorsFile(docsDir, id), 'utf8')); return a && typeof a === 'object' ? a : {}; } catch { return {}; } }
+function writeAuthors(docsDir, id, a) { fs.mkdirSync(path.dirname(authorsFile(docsDir, id)), { recursive: true }); writeAtomic(authorsFile(docsDir, id), JSON.stringify(a, null, 1)); }
+/** The doc as it now stands was written by `by` ('you', 'agent', or 'you (restored ...)'). */
+function wroteBy(docsDir, id, by) { const a = readAuthors(docsDir, id); a.current = { by: String(by || 'agent').slice(0, 80), at: Date.now() }; writeAuthors(docsDir, id, a); }
 function snapshot(docsDir, id) {
   const f = docPath(docsDir, id);
   if (!fs.existsSync(f)) return null;
@@ -149,6 +155,7 @@ function snapshot(docsDir, id) {
   fs.mkdirSync(dir, { recursive: true });
   const name = stamp(new Date()) + '.md';
   fs.copyFileSync(f, path.join(dir, name));
+  { const a = readAuthors(docsDir, id); a.versions = a.versions || {}; a.versions[name.slice(0, -3)] = (a.current && a.current.by) || ''; writeAuthors(docsDir, id, a); }
   const all = fs.readdirSync(dir).filter((x) => x.endsWith('.md')).sort();
   for (const old of all.slice(0, Math.max(0, all.length - HISTORY_KEEP))) { try { fs.unlinkSync(path.join(dir, old)); } catch { /* next time */ } }
   return name.slice(0, -3);
@@ -166,6 +173,7 @@ function create(docsDir, o) {
     doc.sections.push({ heading, level: s.level || 2, body });
   }
   writeAtomic(docPath(docsDir, id), render(doc));
+  wroteBy(docsDir, id, (o && o.by) || 'agent');
   return { id, path: docPath(docsDir, id), title };
 }
 function read(docsDir, id) {
@@ -230,31 +238,82 @@ function update(docsDir, id, ops) {
   if (bad.length) throw new Error('Nothing was written: ' + bad.join('; ') + '. ' + CHART_HELP);
   const version = snapshot(docsDir, id);
   writeAtomic(f, text);
+  wroteBy(docsDir, id, 'agent');
   return { id, path: f, done, previous: version, pending: parse(fs.readFileSync(f, 'utf8')).sections.filter((s) => pendingOf(s.body)).map((s) => s.heading) };
 }
 /** The user's own edit from the sidebar: the whole Markdown, the version before kept. */
-function save(docsDir, id, markdown) {
+function save(docsDir, id, markdown, by) {
   const previous = snapshot(docsDir, id);
   writeAtomic(docPath(docsDir, id), String(markdown || '').replace(/\r\n/g, '\n'));
+  wroteBy(docsDir, id, by || 'you');
   return { id, previous };
 }
 function history(docsDir, id) {
   docPath(docsDir, id);
   const dir = path.join(docsDir, '.history', id);
   if (!fs.existsSync(dir)) return [];
+  const who = readAuthors(docsDir, id).versions || {};
   return fs.readdirSync(dir).filter((x) => x.endsWith('.md')).sort().reverse().map((x) => {
     const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(x);
-    return { version: x.slice(0, -3), at: m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : 0 };
+    return { version: x.slice(0, -3), at: m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : 0, by: who[x.slice(0, -3)] || '' };
   });
 }
 function readVersion(docsDir, id, version) {
   if (!/^[0-9-]+$/.test(String(version || ''))) throw new Error('Which version?');
   return fs.readFileSync(path.join(docsDir, '.history', id, version + '.md'), 'utf8');
 }
-function restore(docsDir, id, version) { return save(docsDir, id, readVersion(docsDir, id, version)); }
+function restore(docsDir, id, version) { return save(docsDir, id, readVersion(docsDir, id, version), 'you (restored an earlier version)'); }
+/** Who wrote the doc as it stands, and when. */
+function author(docsDir, id) { const a = readAuthors(docsDir, id); return a.current || null; }
 
 // ---------------------------------------------------------------- comments
 
+// ---- suggestions (DX Docs mirror, step 3): proposed changes the user accepts or rejects; the doc is untouched until then
+function suggestionsFile(docsDir, id) { docPath(docsDir, id); return path.join(docsDir, '.suggestions', id + '.json'); }
+function readSuggestions(docsDir, id) { try { const a = JSON.parse(fs.readFileSync(suggestionsFile(docsDir, id), 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } }
+function writeSuggestions(docsDir, id, all) { fs.mkdirSync(path.dirname(suggestionsFile(docsDir, id)), { recursive: true }); writeAtomic(suggestionsFile(docsDir, id), JSON.stringify(all, null, 1)); }
+function countOf(text, find) { return find ? String(text).split(find).length - 1 : 0; }
+/** An agent proposes: these words (find, as they stand in the doc, once) become these (replace; '' deletes them). */
+function suggest(docsDir, id, o) {
+  const md = fs.readFileSync(docPath(docsDir, id), 'utf8');
+  const find = String((o && o.find) || ''), replace = String((o && o.replace) == null ? '' : o.replace);
+  if (!find) throw new Error('A suggestion needs "find": the words as they stand in the doc.');
+  if (find === replace) throw new Error('"replace" is the same as "find": nothing would change.');
+  const n = countOf(md, find);
+  if (!n) throw new Error('The words to change were not found in the doc: "' + find.slice(0, 80) + '". Quote them exactly as they stand (dxdoc_read shows the doc).');
+  if (n > 1) throw new Error('Those words occur ' + n + ' times; quote more of them so they occur once.');
+  const bad = drawProblems(md.replace(find, () => replace));
+  if (bad.length) throw new Error('Nothing was suggested: ' + bad.join('; ') + '. ' + CHART_HELP);
+  const all = readSuggestions(docsDir, id);
+  const s = { id: 's' + (all.reduce((m, x) => Math.max(m, Number(String(x.id).slice(1)) || 0), 0) + 1), find, replace, note: String((o && o.note) || '').slice(0, 2000),
+    by: String((o && o.by) || 'agent').slice(0, 80), at: Date.now(), status: 'open' };
+  all.push(s);
+  writeSuggestions(docsDir, id, all);
+  return { suggestion: s };
+}
+/** The open suggestions; one whose words are no longer in the doc (or no longer once) is marked stale. */
+function suggestions(docsDir, id) {
+  const md = fs.existsSync(docPath(docsDir, id)) ? fs.readFileSync(docPath(docsDir, id), 'utf8') : '';
+  return readSuggestions(docsDir, id).filter((s) => s.status === 'open').map((s) => Object.assign({}, s, { stale: countOf(md, s.find) !== 1 }));
+}
+/** accept (applies it, a version kept), reject (the user says no), withdraw (the agent takes it back). */
+function decide(docsDir, id, sid, verdict, by) {
+  const all = readSuggestions(docsDir, id);
+  const s = all.find((x) => x.id === sid && x.status === 'open');
+  if (!s) throw new Error('No open suggestion "' + sid + '" on that doc.');
+  if (['accept', 'reject', 'withdraw'].indexOf(verdict) < 0) throw new Error('verdict: accept, reject or withdraw.');
+  let saved = null;
+  if (verdict === 'accept') {
+    const md = fs.readFileSync(docPath(docsDir, id), 'utf8');
+    const n = countOf(md, s.find);
+    if (n !== 1) throw new Error(n ? 'The words it changes now occur ' + n + ' times; it cannot be applied as it is.' : 'The words it changes are no longer in the doc; it cannot be applied.');
+    saved = save(docsDir, id, md.replace(s.find, () => s.replace), (s.by === 'agent' ? 'the agent' : s.by) + ', accepted by ' + (by || 'you'));
+  }
+  s.status = verdict === 'accept' ? 'accepted' : verdict === 'reject' ? 'rejected' : 'withdrawn';
+  s.decidedAt = Date.now(); s.decidedBy = verdict === 'withdraw' ? s.by : (by || 'you');
+  writeSuggestions(docsDir, id, all);
+  return { suggestion: s, saved };
+}
 function commentsFile(docsDir, id) { docPath(docsDir, id); return path.join(docsDir, '.comments', id + '.json'); }
 function comments(docsDir, id) { return readJson(commentsFile(docsDir, id)) || []; }
 function addComment(docsDir, id, o) {
@@ -278,7 +337,7 @@ function replyComment(docsDir, id, commentId, o) {
   return c;
 }
 
-module.exports = { drawProblems, DOCS_FOLDER, resolveRoot, parse, render, pendingOf, list, info, create, read, update, save, history, readVersion, restore,
+module.exports = { suggest, suggestions, decide, author, drawProblems, DOCS_FOLDER, resolveRoot, parse, render, pendingOf, list, info, create, read, update, save, history, readVersion, restore,
   comments, addComment, replyComment, slugOf, ID_RE, PENDING_RE };
 
 // ---------------------------------------------------------------- command line: node dxdocs.js <command> --json '<args>' | --json-file F
@@ -307,8 +366,11 @@ if (require.main === module) {
       : cmd === 'comments' ? { comments: comments(docsDir, args.doc) }
       : cmd === 'reply' ? replyComment(docsDir, args.doc, args.comment, { text: args.text, resolve: args.resolve, by: args.by || 'agent' })
       : cmd === 'history' ? { versions: history(docsDir, args.doc) }
+      : cmd === 'suggest' ? suggest(docsDir, args.doc, { find: args.find, replace: args.replace, note: args.note, by: args.by || 'agent' })
+      : cmd === 'suggestions' ? { suggestions: suggestions(docsDir, args.doc) }
+      : cmd === 'withdraw' ? decide(docsDir, args.doc, args.suggestion, 'withdraw', 'agent')
       : null;
-    if (!r) done({ ok: false, error: 'Commands: where, list, create, read, update, comments, reply, history.' }, 2);
+    if (!r) done({ ok: false, error: 'Commands: where, list, create, read, update, comments, reply, history, suggest, suggestions, withdraw.' }, 2);
     done(Object.assign({ ok: true, docsDir }, r));
   } catch (e) {
     done({ ok: false, error: e.message }, 1);

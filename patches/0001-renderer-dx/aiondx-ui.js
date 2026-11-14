@@ -11241,7 +11241,15 @@
     var body = dx.view === 'doc' && dx.doc === id ? dx.main.querySelector('.dx-body') : null;
     var ratio = keepScroll && body && body.scrollHeight > body.clientHeight ? body.scrollTop / (body.scrollHeight - body.clientHeight) : null;
     var atEnd = keepScroll && body ? body.scrollTop + body.clientHeight >= body.scrollHeight - 30 : false;
-    dx.view = 'doc'; dx.doc = id; dx.md = r.markdown; dx.comments = r.comments || []; dx.title = r.title || id;
+    if (keepScroll && dx.view === 'doc' && dx.doc === id && r.markdown === dx.md && dx.main.querySelector('.dx-body[contenteditable="true"]')) {   // our own save coming back, or comments only
+      dx.comments = r.comments || [];
+      var cb = dx.main.querySelector('.dx-bar [data-act="comments"]'), oc = dx.comments.filter(function (x) { return !x.resolved; }).length;
+      if (cb) cb.textContent = 'Comments' + (oc ? ' (' + oc + ')' : '');
+      if (JSON.stringify(r.suggestions || []) !== JSON.stringify(dx.suggestions || [])) { dx.suggestions = r.suggestions || []; dxShowSuggestions(); }
+      return;
+    }
+    if (keepScroll && dx.view === 'doc' && dx.doc === id && (dx.typed || dx.saving)) { dx.theirs = r; return dxTheirsWhileTyping(); }
+    dx.view = 'doc'; dx.doc = id; dx.md = r.markdown; dx.comments = r.comments || []; dx.title = r.title || id; dx.suggestions = r.suggestions || [];
     if (dx.editing) return dxEditingChanged();
     dxDrawDoc();
     var nb = dx.main.querySelector('.dx-body');
@@ -11252,25 +11260,327 @@
     var m = dx.main;
     var open = dx.comments.filter(function (c) { return !c.resolved; }).length;
     m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back" title="All docs">‹</button><span class="dx-bar-title"></span>' +
+      '<span class="dx-saved" data-testid="aiondx-dx-saved"></span>' +
       '<button type="button" class="dx-btn" data-act="comments" title="Comments">Comments' + (open ? ' (' + open + ')' : '') + '</button>' +
-      '<button type="button" class="dx-btn" data-act="edit">Edit</button><button type="button" class="dx-btn" data-act="more" title="History and export">⋯</button></div>' +
+      '<button type="button" class="dx-btn" data-act="more" title="History, export, Markdown" data-testid="aiondx-dx-more">⋯</button></div>' +
+      DX_FMT_BAR + '<div class="dx-note" hidden></div><div class="dx-sgs" data-testid="aiondx-dx-sgs" hidden></div>' +
       '<div class="dx-body" data-testid="aiondx-dx-body"></div><div class="dx-comments" hidden></div>';
     m.querySelector('.dx-bar-title').textContent = dx.title;
-    m.querySelector('.dx-body').innerHTML = window.__dxMd.toHtml(dx.md);
-    dxPictures(m.querySelector('.dx-body'));
-    dxDiagrams(m.querySelector('.dx-body'));
+    var bodyEl = m.querySelector('.dx-body');
+    bodyEl.innerHTML = window.__dxMd.toHtml(dx.md);
+    dxPictures(bodyEl);
+    dxDiagrams(bodyEl);
+    dxMakeEditable(bodyEl, m.querySelector('.dx-fmt'));
+    dxShowSuggestions();
     m.querySelector('.dx-bar').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-act]');
       if (!b) return;
       var a = b.getAttribute('data-act');
-      if (a === 'back') { dx.view = 'list'; dx.doc = null; dxList(); }
+      if (a === 'back') { dxFlush().then(function () { dx.view = 'list'; dx.doc = null; dxList(); }); }
       else if (a === 'edit') dxEdit();
       else if (a === 'comments') dxComments(true);
       else if (a === 'more') dxMore(b);
     });
   }
+  // ---- typing in the doc (the Claude Docs way): formatting bar, autosave, Markdown written back by the page
+  var DX_FMT = [
+    ['p', 'Text', 'Normal text'], ['h1', 'H1', 'Title'], ['h2', 'H2', 'Heading'], ['h3', 'H3', 'Subheading'], ['|'],
+    ['bold', 'B', 'Bold (Ctrl+B)'], ['italic', 'I', 'Italic (Ctrl+I)'], ['strike', 'S', 'Strikethrough'], ['code', '</>', 'Code'], ['link', 'Link', 'Link (Ctrl+K)'], ['|'],
+    ['ul', '\u2022 List', 'Bulleted list'], ['ol', '1. List', 'Numbered list'], ['task', '\u2610 Task', 'Task list'], ['quote', '\u201c Quote', 'Quote'],
+    ['pre', '{ }', 'Code block'], ['hr', '\u2015', 'Divider'], ['table', 'Table', 'Insert a table'], ['row', '+Row', 'Add a row below'], ['col', '+Col', 'Add a column'], ['|'],
+    ['undo', '\u21b6', 'Undo (Ctrl+Z)'], ['redo', '\u21b7', 'Redo (Ctrl+Y)']
+  ];
+  var DX_FMT_BAR = '<div class="dx-fmt" data-testid="aiondx-dx-fmt" role="toolbar" aria-label="Formatting">' + DX_FMT.map(function (f) {
+    return f[0] === '|' ? '<span class="dx-fmt-sep"></span>' : '<button type="button" class="dx-fmt-b" data-fmt="' + f[0] + '" title="' + f[2] + '" tabindex="-1">' + f[1] + '</button>';
+  }).join('') + '</div>';
+  /** The doc body becomes the editor. Drawn blocks (charts, diagrams, pending sections) stay whole and keep their source. */
+  function dxMakeEditable(body, bar) {
+    if (!body) return;
+    body.setAttribute('contenteditable', 'true');
+    body.setAttribute('spellcheck', 'true');
+    body.querySelectorAll('figure.dx-chart, .dx-chart--bad, .dx-mermaid, .dx-pending').forEach(function (b) { b.setAttribute('contenteditable', 'false'); });
+    dx.typed = false; dx.saving = false; dx.theirs = null;
+    dxSavedText('');
+    try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch (e) {}
+    body.addEventListener('input', dxTyped);
+    body.addEventListener('keydown', function (ev) {
+      ev.stopPropagation();   // AionUi's own shortcuts stay out of the doc
+      var k = (ev.key || '').toLowerCase();
+      if ((ev.ctrlKey || ev.metaKey) && k === 's') { ev.preventDefault(); dxFlush(); }
+      else if ((ev.ctrlKey || ev.metaKey) && k === 'k') { ev.preventDefault(); dxFormat('link'); }
+    });
+    body.addEventListener('paste', function (ev) {
+      // plain text only: nothing from another page's markup lands in the doc
+      var t = ev.clipboardData && ev.clipboardData.getData('text/plain');
+      if (t == null) return;
+      ev.preventDefault();
+      document.execCommand('insertText', false, t);
+    });
+    body.addEventListener('drop', function (ev) { var t = ev.dataTransfer && ev.dataTransfer.getData('text/plain'); if (t == null || !t) { ev.preventDefault(); } });
+    if (bar) {
+      bar.addEventListener('mousedown', function (ev) { if (ev.target.closest('.dx-fmt-b')) ev.preventDefault(); });   // keep the caret in the doc
+      bar.addEventListener('click', function (ev) { var b = ev.target.closest('.dx-fmt-b'); if (b) dxFormat(b.getAttribute('data-fmt')); });
+    }
+  }
+  function dxSavedText(t, bad) {
+    var el = dx.main && dx.main.querySelector('.dx-saved');
+    if (!el) return;
+    el.textContent = t;
+    el.classList.toggle('dx-saved--bad', !!bad);
+  }
+  var dxSaveTimer = null;
+  function dxTyped() {
+    if (dx.view !== 'doc') return;
+    dx.typed = true;
+    dxSavedText('Unsaved');
+    clearTimeout(dxSaveTimer);
+    if (!dx.theirs) dxSaveTimer = setTimeout(dxFlush, 1200);
+  }
+  /** Saves what was typed (now): the doc's Markdown from the page, a version kept. Resolves when done. */
+  async function dxFlush() {
+    clearTimeout(dxSaveTimer);
+    if (!dx.typed || dx.view !== 'doc' || dx.theirs) return;
+    var body = dx.main && dx.main.querySelector('.dx-body[contenteditable="true"]');
+    if (!body) return;
+    var md = dxToMarkdown(body);
+    dx.typed = false;
+    if (md === dx.md) { dxSavedText('Saved'); return; }
+    dx.saving = true;
+    dxSavedText('Saving\u2026');
+    var r = await dxApi('save', { id: dx.doc, markdown: md, by: 'you' }).catch(function (e) { return { ok: false, error: e && e.message }; });
+    dx.saving = false;
+    if (!r || !r.ok) { dx.typed = true; dxSavedText('Not saved', true); toast('Your change was not saved.', r && r.error); return; }
+    dx.md = md;
+    dxSavedText('Saved');
+  }
+  /** The agent changed the doc while you were typing: your text stays on screen, saving waits, and you choose. */
+  function dxTheirsWhileTyping() {
+    clearTimeout(dxSaveTimer);
+    var n = dx.main && dx.main.querySelector('.dx-note');
+    if (!n) return;
+    dxSavedText('Waiting', true);
+    n.hidden = false;
+    n.innerHTML = 'The agent changed this doc while you were typing. <button type="button" class="dx-btn" data-act="mine">Keep mine</button> ' +
+      '<button type="button" class="dx-btn" data-act="theirs">Show theirs</button> <span>(whichever you do not keep stays in Earlier versions)</span>';
+    n.querySelector('[data-act="mine"]').addEventListener('click', function () { dx.theirs = null; dx.typed = true; n.hidden = true; dxFlush(); });
+    n.querySelector('[data-act="theirs"]').addEventListener('click', function () { var r = dx.theirs; dx.theirs = null; dx.typed = false; dx.md = r.markdown; dx.comments = r.comments || []; dxDrawDoc(); });
+  }
+  /** A formatting button or shortcut. */
+  function dxFormat(f) {
+    var body = dx.main && dx.main.querySelector('.dx-body[contenteditable="true"]');
+    if (!body) return;
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !body.contains(sel.anchorNode)) { body.focus(); }
+    var ex = function (cmd, val) { try { document.execCommand(cmd, false, val); } catch (e) {} };
+    var blockOf = function () { var n = sel && sel.anchorNode; while (n && n !== body && !(n.nodeType === 1 && /^(P|H[1-6]|LI|PRE|BLOCKQUOTE|DIV|TD|TH)$/.test(n.tagName))) n = n.parentNode; return n && n !== body ? n : null; };
+    var cellOf = function () { var n = sel && sel.anchorNode; while (n && n !== body && !(n.nodeType === 1 && /^(TD|TH)$/.test(n.tagName))) n = n.parentNode; return n && n !== body ? n : null; };
+    if (f === 'p') ex('formatBlock', 'p');
+    else if (/^h[1-3]$/.test(f)) ex('formatBlock', f);
+    else if (f === 'bold' || f === 'italic') ex(f);
+    else if (f === 'strike') ex('strikeThrough');
+    else if (f === 'code') { var t = String(sel || ''); ex('insertHTML', '<code>' + window.__dxMd.esc(t || 'code') + '</code>\u200b'); }
+    else if (f === 'ul') ex('insertUnorderedList');
+    else if (f === 'ol') ex('insertOrderedList');
+    else if (f === 'task') {
+      var b0 = blockOf();
+      var txt = b0 && b0.tagName !== 'LI' ? b0.textContent : '';
+      if (b0 && b0.tagName !== 'LI' && b0.tagName !== 'TD' && b0.tagName !== 'TH') { var range = document.createRange(); range.selectNode(b0); sel.removeAllRanges(); sel.addRange(range); }
+      ex('insertHTML', '<ul><li class="dx-task"><input type="checkbox" class="dx-tick"> ' + window.__dxMd.esc(txt || 'Task') + '</li></ul>');
+    }
+    else if (f === 'quote') ex('formatBlock', 'blockquote');
+    else if (f === 'pre') ex('formatBlock', 'pre');
+    else if (f === 'hr') ex('insertHorizontalRule');
+    else if (f === 'table') ex('insertHTML', '<table><thead><tr><th>Column 1</th><th>Column 2</th></tr></thead><tbody><tr><td>\u200b</td><td>\u200b</td></tr></tbody></table><p><br></p>');
+    else if (f === 'row' || f === 'col') {
+      var cell = cellOf();
+      if (!cell) { toast('Put the cursor in a table first.'); return; }
+      var tr = cell.parentNode, table = cell.closest('table');
+      if (f === 'row') {
+        var nr = document.createElement('tr');
+        for (var i = 0; i < tr.children.length; i++) { var td = document.createElement('td'); td.textContent = '\u200b'; nr.appendChild(td); }
+        if (tr.parentNode.tagName === 'THEAD') { var tb = table.querySelector('tbody') || table.appendChild(document.createElement('tbody')); tb.insertBefore(nr, tb.firstChild); }
+        else tr.parentNode.insertBefore(nr, tr.nextSibling);
+      } else {
+        var idx = Array.prototype.indexOf.call(tr.children, cell);
+        table.querySelectorAll('tr').forEach(function (row) {
+          var head = row.parentNode.tagName === 'THEAD';
+          var nc = document.createElement(head ? 'th' : 'td');
+          nc.textContent = head ? 'Column' : '\u200b';
+          row.insertBefore(nc, row.children[idx + 1] || null);
+        });
+      }
+      dxTyped();
+    }
+    else if (f === 'link') dxLinkBox(sel);
+    else if (f === 'undo' || f === 'redo') ex(f);
+    body.focus();
+  }
+  /** Ctrl+K or Link: a small box for the address (no window prompt in this app). */
+  function dxLinkBox(sel) {
+    var range = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    var old = document.querySelector('.dx-linkbox'); if (old) old.remove();
+    var box = document.createElement('div');
+    box.className = 'dx-linkbox';
+    box.setAttribute('data-testid', 'aiondx-dx-linkbox');
+    box.innerHTML = '<input type="text" placeholder="https://\u2026" data-testid="aiondx-dx-linkurl"><button type="button" class="dx-btn dx-btn--primary">Link</button>';
+    var r = range ? range.getBoundingClientRect() : (dx.main.getBoundingClientRect());
+    box.style.top = Math.round(r.bottom + 6) + 'px';
+    box.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 300))) + 'px';
+    document.body.appendChild(box);
+    var input = box.querySelector('input');
+    var go = function () {
+      var url = input.value.trim();
+      box.remove();
+      if (!url) return;
+      if (!/^(https?:|mailto:|#)/i.test(url)) url = 'https://' + url;
+      var body = dx.main.querySelector('.dx-body[contenteditable="true"]');
+      if (body) body.focus();
+      if (range) { var s2 = window.getSelection(); s2.removeAllRanges(); s2.addRange(range); }
+      if (range && !range.collapsed) document.execCommand('createLink', false, url);
+      else document.execCommand('insertHTML', false, '<a href="' + window.__dxMd.esc(url) + '">' + window.__dxMd.esc(url) + '</a>\u200b');
+      dxTyped();
+    };
+    input.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); go(); } else if (ev.key === 'Escape') box.remove(); });
+    box.querySelector('button').addEventListener('click', go);
+    setTimeout(function () { input.focus(); }, 0);
+  }
+  /** The doc body back to Markdown: what dxdocs-md draws, nothing more. Unknown markup keeps its words. */
+  function dxToMarkdown(body) {
+    var clean = function (t) { return String(t).replace(/\u200b/g, '').replace(/\u00a0/g, ' '); };
+    function inl(n) {
+      var out = '';
+      n.childNodes.forEach(function (c) {
+        if (c.nodeType === 3) { out += clean(c.nodeValue); return; }
+        if (c.nodeType !== 1) return;
+        var t = c.tagName, inner;
+        if (t === 'BR') { out += '\n'; return; }
+        if (t === 'INPUT') return;
+        if (c.classList && c.classList.contains('dx-sg-ins')) return;          // a suggestion's new words: not in the doc yet
+        if (c.classList && c.classList.contains('dx-sg-del')) { out += inl(c); return; }   // its old words: still the doc's
+        if (t === 'IMG') { out += '![' + (c.getAttribute('alt') || '').replace(/ \((No such picture|That picture|Not a picture|Too large|picture not found)[^)]*\)$/, '') + '](' + (c.getAttribute('data-dx-src') || c.getAttribute('src') || '') + ')'; return; }
+        inner = inl(c);
+        if (!inner.trim() && t !== 'CODE') { out += inner; return; }
+        var lead = inner.match(/^\s*/)[0], trail = inner.match(/\s*$/)[0], core = inner.trim();
+        if (t === 'B' || t === 'STRONG') out += lead + '**' + core + '**' + trail;
+        else if (t === 'I' || t === 'EM') out += lead + '*' + core + '*' + trail;
+        else if (t === 'S' || t === 'DEL' || t === 'STRIKE') out += lead + '~~' + core + '~~' + trail;
+        else if (t === 'CODE') out += '`' + clean(c.textContent) + '`';
+        else if (t === 'A') out += lead + '[' + core + '](' + (c.getAttribute('href') || '') + ')' + trail;
+        else out += inner;
+      });
+      return out;
+    }
+    function list(el, depth) {
+      var lines = [], k = 0, ordered = el.tagName === 'OL';
+      el.childNodes.forEach(function (li) {
+        if (li.nodeType !== 1) return;
+        if (li.tagName === 'UL' || li.tagName === 'OL') { lines = lines.concat(list(li, depth + 1)); return; }
+        if (li.tagName !== 'LI') return;
+        k++;
+        var box = null;
+        for (var i = 0; i < li.childNodes.length; i++) { var x = li.childNodes[i]; if (x.nodeType === 1 && x.tagName === 'INPUT' && x.type === 'checkbox') { box = x; break; } }
+        var own = document.createElement('div'), subs = [];
+        li.childNodes.forEach(function (x) { if (x.nodeType === 1 && (x.tagName === 'UL' || x.tagName === 'OL')) subs.push(x); else own.appendChild(x.cloneNode(true)); });
+        var text = inl(own).replace(/\n+/g, ' ').trim();
+        var mark = ordered ? k + '.' : '-';
+        lines.push(new Array(depth + 1).join('  ') + mark + ' ' + (box ? (box.checked ? '[x] ' : '[ ] ') : '') + text);
+        subs.forEach(function (sub) { lines = lines.concat(list(sub, depth + 1)); });
+      });
+      return lines;
+    }
+    function table(el) {
+      var rows = [];
+      el.querySelectorAll('tr').forEach(function (tr) { var cells = []; tr.childNodes.forEach(function (c) { if (c.nodeType === 1 && /^(TD|TH)$/.test(c.tagName)) cells.push(inl(c).replace(/\n+/g, ' ').replace(/\|/g, '\\|').trim()); }); if (cells.length) rows.push(cells); });
+      if (!rows.length) return '';
+      var w = Math.max.apply(null, rows.map(function (r) { return r.length; }));
+      rows = rows.map(function (r) { while (r.length < w) r.push(''); return r; });
+      var line = function (r) { return '| ' + r.join(' | ') + ' |'; };
+      return [line(rows[0]), '|' + rows[0].map(function () { return ' --- '; }).join('|') + '|'].concat(rows.slice(1).map(line)).join('\n');
+    }
+    function blocks(root) {
+      var out = [], para = '';
+      var flush = function () { if (para.trim()) out.push(para.trim()); para = ''; };
+      root.childNodes.forEach(function (n) {
+        if (n.nodeType === 3) { para += clean(n.nodeValue); return; }
+        if (n.nodeType !== 1) return;
+        var t = n.tagName, cl = n.classList;
+        if (/^(B|STRONG|I|EM|S|DEL|STRIKE|CODE|A|SPAN|IMG|BR|U|FONT)$/.test(t)) { var wrap = document.createElement('div'); wrap.appendChild(n.cloneNode(true)); para += inl(wrap); return; }
+        flush();
+        if (/^H[1-6]$/.test(t)) { var h = inl(n).replace(/\n+/g, ' ').trim(); if (h) out.push(new Array(+t[1] + 1).join('#') + ' ' + h); }
+        else if (cl.contains('dx-pending')) out.push('<!-- aiondx:pending ' + (n.getAttribute('data-intent') || '') + ' -->');
+        else if (cl.contains('dx-mermaid')) out.push('```mermaid\n' + (n.getAttribute('data-src') || '') + '\n```');
+        else if (cl.contains('dx-chart')) out.push('```chart\n' + (n.getAttribute('data-src') || '') + '\n```');
+        else if (t === 'UL' || t === 'OL') { var l = list(n, 0); if (l.length) out.push(l.join('\n')); }
+        else if (t === 'BLOCKQUOTE') { var q = blocks(n); if (q.trim()) out.push(q.split('\n').map(function (x) { return x ? '> ' + x : '>'; }).join('\n')); }
+        else if (t === 'PRE') { var code = n.querySelector('code'); var lang = code && /language-([\w+-]+)/.exec(code.className || ''); out.push('```' + (lang ? lang[1] : '') + '\n' + clean(n.textContent).replace(/\n$/, '') + '\n```'); }
+        else if (t === 'HR') out.push('---');
+        else if (t === 'TABLE') { var tb = table(n); if (tb) out.push(tb); }
+        else if (t === 'FIGURE') { var im = n.querySelector('img'); if (im) { var w2 = document.createElement('div'); w2.appendChild(im.cloneNode(true)); out.push(inl(w2)); } }
+        else { var inner = n.querySelector('h1,h2,h3,h4,h5,h6,ul,ol,blockquote,pre,table,hr,p,div') ? blocks(n) : inl(n).trim(); if (inner.trim()) out.push(inner.trim()); }
+      });
+      flush();
+      return out.join('\n\n');
+    }
+    return blocks(body).replace(/\n{3,}/g, '\n\n') + '\n';
+  }
+  // ---- suggestions (the agent proposes; you accept or reject): marks in the text, a card each
+  function dxShowSuggestions() {
+    var box = dx.main && dx.main.querySelector('.dx-sgs');
+    var body = dx.main && dx.main.querySelector('.dx-body');
+    if (!box || !body) return;
+    // marks first: clear old ones (their words go back to plain text), then mark each open suggestion where its words stand once
+    body.querySelectorAll('.dx-sg-ins').forEach(function (n) { n.remove(); });
+    body.querySelectorAll('.dx-sg-del').forEach(function (n) { var p = n.parentNode; while (n.firstChild) p.insertBefore(n.firstChild, n); p.removeChild(n); p.normalize(); });
+    var open = (dx.suggestions || []).filter(function (s) { return s.status === 'open'; });
+    open.forEach(function (s) {
+      if (s.stale) return;
+      var walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, null), tn, hit = null;
+      var plain = s.find.replace(/\*\*|__|~~|`/g, '');
+      while ((tn = walker.nextNode())) { if (tn.parentNode.closest && tn.parentNode.closest('[contenteditable="false"]')) continue; var i = tn.nodeValue.indexOf(plain); if (i >= 0) { hit = { n: tn, i: i }; break; } }
+      if (!hit || !plain) return;
+      var r = document.createRange(); r.setStart(hit.n, hit.i); r.setEnd(hit.n, hit.i + plain.length);
+      var del = document.createElement('del'); del.className = 'dx-sg-del'; del.setAttribute('data-sg', s.id);
+      try { r.surroundContents(del); } catch (e) { return; }
+      var ins = document.createElement('ins'); ins.className = 'dx-sg-ins'; ins.setAttribute('data-sg', s.id); ins.setAttribute('contenteditable', 'false');
+      ins.textContent = s.replace.replace(/\*\*|__|~~|`/g, '');
+      del.parentNode.insertBefore(ins, del.nextSibling);
+    });
+    box.hidden = !open.length;
+    box.innerHTML = '';
+    if (!open.length) return;
+    var head = document.createElement('div'); head.className = 'dx-sgs-head'; head.textContent = open.length === 1 ? '1 suggestion' : open.length + ' suggestions'; box.appendChild(head);
+    open.forEach(function (s) {
+      var card = document.createElement('div'); card.className = 'dx-sg-card'; card.setAttribute('data-sg', s.id); card.setAttribute('data-testid', 'aiondx-dx-sg');
+      var who = document.createElement('div'); who.className = 'dx-sg-who'; who.textContent = (s.by === 'agent' ? 'The agent' : s.by) + ' suggests' + (s.stale ? ' (its words have changed since; it cannot be applied)' : '');
+      var what = document.createElement('div'); what.className = 'dx-sg-what';
+      var d = document.createElement('del'); d.textContent = s.find.length > 140 ? s.find.slice(0, 139) + '\u2026' : s.find;
+      var a = document.createElement('ins'); a.textContent = s.replace ? (s.replace.length > 140 ? s.replace.slice(0, 139) + '\u2026' : s.replace) : '(delete)';
+      what.appendChild(d); what.appendChild(document.createTextNode(' \u2192 ')); what.appendChild(a);
+      card.appendChild(who); card.appendChild(what);
+      if (s.note) { var nt = document.createElement('div'); nt.className = 'dx-sg-note'; nt.textContent = s.note; card.appendChild(nt); }
+      var row = document.createElement('div'); row.className = 'dx-crow';
+      row.innerHTML = '<button type="button" class="dx-btn" data-sgact="reject">Reject</button><button type="button" class="dx-btn dx-btn--primary" data-sgact="accept"' + (s.stale ? ' disabled' : '') + '>Accept</button>';
+      card.appendChild(row);
+      card.addEventListener('mouseenter', function () { body.querySelectorAll('[data-sg="' + s.id + '"]').forEach(function (x) { x.classList.add('dx-sg-on'); }); });
+      card.addEventListener('mouseleave', function () { body.querySelectorAll('.dx-sg-on').forEach(function (x) { x.classList.remove('dx-sg-on'); }); });
+      card.addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-sgact]');
+        if (!b) { var mk = body.querySelector('.dx-sg-del[data-sg="' + s.id + '"]'); if (mk) mk.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+        dxDecide(s.id, b.getAttribute('data-sgact'));
+      });
+      box.appendChild(card);
+    });
+  }
+  async function dxDecide(sid, verdict) {
+    await dxFlush();
+    var r = await dxApi('decide', { id: dx.doc, suggestion: sid, verdict: verdict });
+    if (!r || !r.ok) { toast(verdict === 'accept' ? 'The suggestion was not applied.' : 'Not done.', r && r.error); return; }
+    var x = await dxApi('read', { id: dx.doc });
+    if (x && x.ok) { dx.md = x.markdown; dx.comments = x.comments || []; dx.suggestions = x.suggestions || []; dx.typed = false; dxDrawDoc(); }
+  }
   /** A tick-box task ticked in the doc: its line changes ([ ] or [x]) and the doc is saved (the version before kept). */
   async function dxTick(box) {
+    if (box.closest && box.closest('.dx-body[contenteditable="true"]')) { dxTyped(); return; }
     var line = Number(box.getAttribute('data-line'));
     var lines = String(dx.md || '').split('\n');
     if (dx.editing || dx.view !== 'doc' || !(line >= 0) || line >= lines.length || !/^\s*([-*+]|\d+[.)])\s+\[[ xX]\]/.test(lines[line])) { box.checked = !box.checked; return; }
@@ -11467,7 +11777,8 @@
     if (old) { old.remove(); return; }
     var m = document.createElement('div');
     m.className = 'dx-menu';
-    m.innerHTML = '<button type="button" data-act="history">Earlier versions</button><button type="button" data-act="pdf">Export as PDF</button><button type="button" data-act="reveal">Show the file</button>';
+    m.innerHTML = '<button type="button" data-act="history">Earlier versions</button><button type="button" data-act="mdedit">Edit the Markdown</button>' +
+      '<button type="button" data-act="pdf">Export as PDF</button><button type="button" data-act="reveal">Show the file</button>';
     var rc = anchor.getBoundingClientRect();
     m.style.top = Math.round(rc.bottom + 4) + 'px';
     m.style.right = Math.round(window.innerWidth - rc.right) + 'px';
@@ -11485,8 +11796,11 @@
         var r = await dxApi('pdf', { id: dx.doc, html: html });
         toast(r && r.ok ? 'Saved as PDF beside the doc.' : 'The PDF was not made.', r && (r.path || r.error));
       } else if (a === 'history') dxHistory();
+      else if (a === 'mdedit') { await dxFlush(); dxEdit(); }
     });
   }
+  /** Who wrote it, in words: you, or the agent. */
+  function dxWho(by) { by = String(by || ''); return by === 'agent' ? 'the agent' : by.indexOf('you') === 0 ? by : by || 'unknown'; }
   async function dxHistory() {
     var r = await dxApi('history', { id: dx.doc });
     var vs = r && r.ok ? r.versions : [];
@@ -11499,7 +11813,7 @@
     vs.forEach(function (v) {
       var row = document.createElement('button');
       row.type = 'button'; row.className = 'dx-row';
-      row.textContent = dxWhen(v.at) + (new Date(v.at).toDateString() === new Date().toDateString() ? ' today' : '');
+      row.textContent = dxWhen(v.at) + (new Date(v.at).toDateString() === new Date().toDateString() ? ' today' : '') + (v.by ? ' \u00b7 written by ' + dxWho(v.by) : '');
       row.addEventListener('click', async function () {
         var x = await dxApi('version', { id: dx.doc, version: v.version });
         if (!x || !x.ok) return;
@@ -11541,6 +11855,26 @@
       '.aiondx-dxbtn{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px;color:var(--color-text-2)}',
       '.aiondx-dxbtn[aria-pressed="true"]{color:rgb(var(--primary-6));background:var(--color-fill-2,rgba(0,0,0,.06))}',
       '.dx-body img{max-width:100%;height:auto}',
+      // typing in the doc: the formatting bar, the save state, the link box
+      '.dx-fmt{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:1px;padding:3px 8px;border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06))}',
+      '.dx-fmt-b{border:0;background:transparent;color:var(--color-text-2);cursor:pointer;border-radius:4px;padding:2px 6px;font-size:12px;line-height:20px;min-width:24px}',
+      '.dx-fmt-b:hover{background:var(--color-fill-2,rgba(0,0,0,.06));color:var(--color-text-1)}',
+      '.dx-fmt-b[data-fmt="bold"]{font-weight:700}.dx-fmt-b[data-fmt="italic"]{font-style:italic}.dx-fmt-b[data-fmt="strike"]{text-decoration:line-through}',
+      '.dx-fmt-sep{width:1px;height:16px;margin:0 4px;background:var(--color-border-2,rgba(0,0,0,.12))}',
+      '.dx-body[contenteditable="true"]{outline:none;cursor:text}.dx-body[contenteditable="true"] [contenteditable="false"]{cursor:default}',
+      '.dx-saved{flex:0 0 auto;font-size:11px;color:var(--color-text-3);margin-right:4px}.dx-saved--bad{color:var(--color-danger-6,#d33)}',
+      '.dx-linkbox{position:fixed;z-index:1250;display:flex;gap:6px;padding:6px;border-radius:8px;background:var(--color-bg-popup,var(--color-bg-1,#fff));box-shadow:0 4px 16px rgba(0,0,0,.18);border:1px solid var(--color-border-2,rgba(0,0,0,.1))}',
+      '.dx-linkbox input{width:220px;font:inherit;font-size:12px;padding:4px 6px;border-radius:5px;border:1px solid var(--color-border-2,#ccc);background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
+      '.dx-note{flex:0 0 auto}',
+      // suggestions: old words struck in red, new ones underlined in green; a card each above the doc
+      '.dx-sg-del{color:var(--color-danger-6,#c33);text-decoration:line-through;background:rgba(220,60,60,.08)}',
+      '.dx-sg-ins{color:var(--color-success-6,#1a7f37);text-decoration:underline;background:rgba(40,160,80,.10);margin-left:2px}',
+      '.dx-sg-on{outline:2px solid rgba(var(--primary-6),.45);border-radius:2px}',
+      '.dx-sgs{flex:0 0 auto;max-height:40%;overflow:auto;padding:6px 10px;border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06));background:var(--color-bg-2,var(--color-fill-1))}',
+      '.dx-sgs-head{font-size:11.5px;font-weight:600;color:var(--color-text-2);margin:2px 2px 6px}',
+      '.dx-sg-card{border:1px solid var(--color-border-2,rgba(0,0,0,.1));border-radius:8px;padding:8px 10px;margin-bottom:6px;background:var(--color-bg-1,#fff);cursor:pointer;font-size:12.5px}',
+      '.dx-sg-who{font-size:11.5px;color:var(--color-text-3);margin-bottom:3px}.dx-sg-what del{color:var(--color-danger-6,#c33)}.dx-sg-what ins{color:var(--color-success-6,#1a7f37)}',
+      '.dx-sg-note{margin-top:4px;color:var(--color-text-2)}',
       // charts and diagrams (R-125): a palette that reads on both themes
       '.aiondx-dx{--dxc1:#2f6fdb;--dxc2:#e8743b;--dxc3:#19a979;--dxc4:#945ecf;--dxc5:#d64a7b;--dxc6:#13a4b4;--dxc7:#b88a12;--dxc8:#6e7b8b;--dxc-bg:var(--color-bg-1,#fff)}',
       "html[data-theme='dark'] .aiondx-dx{--dxc1:#5b93f0;--dxc2:#f08c5a;--dxc3:#3cc394;--dxc4:#b085e6;--dxc5:#ec6e98;--dxc6:#3cc0cf;--dxc7:#d9aa3a;--dxc8:#93a1b2}",
@@ -12071,6 +12405,7 @@
     off: function () { var t = firstTarget(); if (t) setOn(t, false, 'console'); },
     tickNow: function () { return tick(); },
     autoCompactNow: function () { return checkAutoCompact(); },
+    dxMarkdown: function () { var b = dx.main && dx.main.querySelector('.dx-body[contenteditable="true"]'); return b ? dxToMarkdown(b) : null; },
     forgetCtx: function () { Object.keys(ctxInfo).forEach(function (k) { delete ctxInfo[k]; }); },
     stored: function () { return storedTargets().map(function (t) { return { key: t.key, on: state(t).on }; }); },
     repaint: function () { sweepAt = {}; render(); },

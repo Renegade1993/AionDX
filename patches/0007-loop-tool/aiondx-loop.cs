@@ -528,6 +528,20 @@ namespace AionDx
                             { "resolve", Prop("boolean", "true when the comment is dealt with.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
+                    { "name", "dxdoc_suggest" },
+                    { "title", "Suggest a change to a DX Doc" },
+                    { "description", "Proposes a change the user accepts or rejects, as Claude Docs' suggestions: the doc is untouched until then. The user sees the old words struck and yours beside them, with a card holding your note and Accept and Reject. Use it when the user asks you to suggest, propose, review or tighten, or when the doc is theirs and they did not ask you to change it; a direct change goes through dxdoc_update. One suggestion per change (a word, a sentence, a bullet); quote only the words that change, exactly as they stand, occurring once. replace \"\" deletes them. withdraw: true with suggestion takes one back." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "doc", Prop("string", "The doc's id: its file name without .md, as dxdoc_create or dxdoc_list gave it.") },
+                            { "find", Prop("string", "The words to change, exactly as they stand in the doc (once).") },
+                            { "replace", Prop("string", "What they become (\"\" deletes them).") },
+                            { "note", Prop("string", "Why, in a line: shown on the card.") },
+                            { "withdraw", Prop("boolean", "true, with suggestion, to take back one of yours.") },
+                            { "suggestion", Prop("string", "The suggestion's id (s1, s2 ...), to withdraw it.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
                     { "name", "usage_alert" },
                     { "title", "Usage alerts" },
                     { "description",
@@ -1551,6 +1565,8 @@ namespace AionDx
             "  aiondx doc read --json '{\"doc\":\"<id>\"}'\n" +
             "  aiondx doc update --json '{\"doc\":\"<id>\",\"ops\":[{\"op\":\"replace_section\",\"heading\":\"...\",\"body\":\"...\"}]}'\n" +
             "  aiondx doc comments --json '{\"doc\":\"<id>\"}' | reply --json '{\"doc\":\"<id>\",\"comment\":\"<id>\",\"text\":\"...\",\"resolve\":true}'\n" +
+            "  aiondx doc suggest --json '{\"doc\":\"<id>\",\"find\":\"words as they stand\",\"replace\":\"new words\",\"note\":\"why\"}'   a change the user accepts or rejects\n" +
+            "  aiondx doc suggestions --json '{\"doc\":\"<id>\"}' | withdraw --json '{\"doc\":\"<id>\",\"suggestion\":\"s1\"}'\n" +
             "  (--json-file FILE instead of --json; in PowerShell 5.1 double quotes inside an argument are lost, so use a file there)\n" +
             "A DX Doc is a Markdown file in the DX Docs folder of the chat's project (else its working folder). The user watches it in the chat's\n" +
             "right-hand sidebar, live. Operations: replace_section, append_to_section, append_section, insert_after, rename_section,\n" +
@@ -1657,6 +1673,13 @@ namespace AionDx
                 case "dxdoc_read": return Json.Serialize(DxRun("read", a));
                 case "dxdoc_list": return Json.Serialize(DxRun("list", a));
                 case "dxdoc_comments": return Json.Serialize(DxRun("comments", a));
+                case "dxdoc_suggest":
+                {
+                    if (a.ContainsKey("withdraw") && a["withdraw"] is bool && (bool)a["withdraw"]) { DxRun("withdraw", a); return "Took back suggestion " + Str(a, "suggestion") + "."; }
+                    var r = DxRun("suggest", a);
+                    var sg = r.ContainsKey("suggestion") ? r["suggestion"] as Dictionary<string, object> : null;
+                    return "Suggested (" + (sg != null ? Str(sg, "id") : "?") + "): the user sees the old words struck and yours beside them, with Accept and Reject. The doc changes only if they accept; dxdoc_read shows whether it did.";
+                }
                 case "dxdoc_reply": { var r = DxRun("reply", a); return "Replied to the comment" + (r.ContainsKey("resolved") && r["resolved"] is bool && (bool)r["resolved"] ? " and marked it resolved." : "."); }
             }
             throw new ToolError("Unknown DX Docs tool " + tool + ".");
@@ -1675,8 +1698,9 @@ namespace AionDx
                     else if (args[i] == "--json-file") a = Json.DeserializeObject(File.ReadAllText(Next(args, ref i, "--json-file"))) as Dictionary<string, object> ?? a;
                     else throw new ToolError("Unknown option " + args[i] + ".\n" + DocHelp);
                 }
-                if (!new[] { "where", "list", "create", "read", "update", "comments", "reply", "history" }.Contains(cmd)) throw new ToolError("Unknown doc command \"" + args[1] + "\".\n" + DocHelp);
-                if (cmd == "create" || cmd == "update" || cmd == "reply") { o.WriteLine(DxText("dxdoc_" + cmd, a)); return 0; }
+                if (!new[] { "where", "list", "create", "read", "update", "comments", "reply", "history", "suggest", "suggestions", "withdraw" }.Contains(cmd)) throw new ToolError("Unknown doc command \"" + args[1] + "\".\n" + DocHelp);
+                if (cmd == "create" || cmd == "update" || cmd == "reply" || cmd == "suggest") { o.WriteLine(DxText("dxdoc_" + cmd, a)); return 0; }
+                if (cmd == "withdraw") { a["withdraw"] = true; o.WriteLine(DxText("dxdoc_suggest", a)); return 0; }
                 var r = DxRun(cmd, a);
                 if (cmd == "where") o.WriteLine("DX Docs for this chat are in " + Str(r, "docsDir") + (Str(r, "project") != null ? " (project " + Str(r, "project") + ")" : "") + ".");
                 else if (cmd == "list")

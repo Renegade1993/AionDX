@@ -8,7 +8,7 @@ const check = (name, got, want) => { const ok = got === want; if (ok) pass++; el
 const H = M.toHtml;
 check('a title and a section heading carry their section', H('# Plan\n\n## Goals'), '<h1 data-section="Plan">Plan</h1>\n<h2 data-section="Goals">Goals</h2>');
 check('a pending section becomes "Writing: ..." under its section', H('## Goals\n\n<!-- aiondx:pending the three outcomes -->'),
-  '<h2 data-section="Goals">Goals</h2>\n<div class="dx-pending" data-section="Goals"><span class="dx-pending-dot"></span>Writing: the three outcomes</div>');
+  '<h2 data-section="Goals">Goals</h2>\n<div class="dx-pending" data-section="Goals" data-intent="the three outcomes"><span class="dx-pending-dot"></span>Writing: the three outcomes</div>');
 check('a paragraph with bold, italic, code, strikethrough', H('A **b** *i* `c<d>` ~~x~~'), '<p>A <strong>b</strong> <em>i</em> <code>c&lt;d&gt;</code> <del>x</del></p>');
 check('lines of one paragraph keep their breaks', H('one\ntwo'), '<p>one<br>two</p>');
 check('raw HTML is shown as text, never run', H('<script>alert(1)</script> <img src=x onerror=y>'), '<p>&lt;script&gt;alert(1)&lt;/script&gt; &lt;img src=x onerror=y&gt;</p>');
@@ -19,7 +19,7 @@ check('a bullet list, nested', H('- a\n  - a1\n- b'), '<ul><li>a<ul><li>a1</li><
 check('a numbered list', H('1. one\n2. two'), '<ol><li>one</li><li>two</li></ol>');
 check('a task list: each box carries its line, so it can be ticked', H('- [x] done\n- [ ] open'), '<ul><li class="dx-task"><input type="checkbox" class="dx-tick" data-line="0" checked> done</li><li class="dx-task"><input type="checkbox" class="dx-tick" data-line="1"> open</li></ul>');
 check('a task inside a quote cannot be ticked (no line of its own)', /<input type="checkbox" class="dx-tick" disabled>/.test(H('> - [ ] quoted')), true);
-check('a chart block is drawn as a chart (R-125)', /^<figure class="dx-chart"><svg class="dx-chart-svg"/.test(H('```chart\n{"type":"bar","x":["a"],"series":[{"name":"s","values":[1]}]}\n```')), true);
+check('a chart block is drawn as a chart (R-125)', /^<figure class="dx-chart" data-src="[^"]*"><svg class="dx-chart-svg"/.test(H('```chart\n{"type":"bar","x":["a"],"series":[{"name":"s","values":[1]}]}\n```')), true);
 check('a bad chart block says why', /dx-chart--bad/.test(H('```chart\n{nope}\n```')), true);
 check('a mermaid block becomes a holder with its text, escaped', H('```mermaid\nflowchart LR\n  A["<b>x</b>"]-->B\n```'),
   '<div class="dx-mermaid" data-src="flowchart LR\n  A[&quot;&lt;b&gt;x&lt;/b&gt;&quot;]--&gt;B"><pre><code class="language-mermaid">flowchart LR\n  A[&quot;&lt;b&gt;x&lt;/b&gt;&quot;]--&gt;B</code></pre></div>');

@@ -37,7 +37,7 @@ check('a pie of two series is refused with what to use', /a pie has one series/.
 // nothing an agent writes becomes markup
 const evil = C.toHtml({ type: 'bar', title: '<script>alert(1)</script>', x: ['<img src=x onerror=alert(1)>'], series: [{ name: '"><b>', values: [1] }] });
 check('titles, labels and names are escaped, never markup', !/<script|<img|"><b>/.test(evil) && /&lt;script&gt;/.test(evil), evil.slice(0, 300));
-check('the HTML has the chart, a Data button and the hidden table of numbers', /<figure class="dx-chart"><svg/.test(evil) && /data-act="chart-data"/.test(evil) && /<div class="dx-chart-tablewrap" hidden><table/.test(evil));
+check('the HTML has the chart, a Data button and the hidden table of numbers', /<figure class="dx-chart" data-src="{&quot;type&quot;:&quot;bar&quot;[^"]*"><svg/.test(evil) && /data-act="chart-data"/.test(evil) && /<div class="dx-chart-tablewrap" hidden><table/.test(evil));
 check('a bad chart becomes a box saying why', /dx-chart--bad[\s\S]*not valid JSON/.test(C.toHtml('nope')));
 // the engine's check over a whole doc
 const md = '# Plan\n\n## Sales\n\n```chart\n{"type":"bar","x":["a"],"series":[{"name":"s","values":[1]}]}\n```\n\n## Costs\n\n```chart\n{"type":"bar","x":["a","b"],"series":[{"name":"s","values":[1]}]}\n```\n';

@@ -226,8 +226,9 @@
   /** The block as HTML for the doc: the chart, its note, a Data button and the hidden table; or a box saying what is wrong. */
   function toHtml(text) {
     var r = parse(text);
-    if (r.error) return '<div class="dx-chart dx-chart--bad"><b>This chart could not be drawn:</b> ' + esc(r.error) + '.</div>';
-    return '<figure class="dx-chart">' + toSvg(r.spec) + (r.spec.note ? '<figcaption>' + esc(r.spec.note) + '</figcaption>' : '') +
+    var src = esc(typeof text === 'string' ? text : JSON.stringify(text));
+    if (r.error) return '<div class="dx-chart dx-chart--bad" data-src="' + src + '"><b>This chart could not be drawn:</b> ' + esc(r.error) + '.</div>';
+    return '<figure class="dx-chart" data-src="' + src + '">' + toSvg(r.spec) + (r.spec.note ? '<figcaption>' + esc(r.spec.note) + '</figcaption>' : '') +
       '<button type="button" class="dx-chart-data" data-act="chart-data">Data</button><div class="dx-chart-tablewrap" hidden>' + toTable(r.spec) + '</div></figure>';
   }
   /** Every chart block in a doc's Markdown that cannot be drawn: [{ line, section, error }]. */

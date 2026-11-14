@@ -32,13 +32,16 @@ function create(o) {
       fs.mkdirSync(dir, { recursive: true });
       const pending = new Set();
       w = { subs: new Set(), timer: null, w: null };
-      w.w = fs.watch(dir, { persistent: false }, (_ev, name) => {
-        const n = String(name || '');
-        if (!n.endsWith('.md') || n.endsWith('.tmp')) return;
-        pending.add(n.slice(0, -3));
+      const onName = (_ev, name) => {
+        const n = String(name || '').replace(/\\/g, '/');
+        const m = /^(?:\.(?:comments|suggestions)\/)?([^/]+)\.(md|json)$/.exec(n);
+        if (!m || n.endsWith('.tmp') || (m[2] === 'json' && n.indexOf('/') < 0) || (m[2] === 'md' && n.indexOf('/') >= 0)) return;
+        pending.add(m[1]);
         clearTimeout(w.timer);
         w.timer = setTimeout(() => { for (const id of pending) emit(dir, { kind: 'changed', docsDir: dir, id }); pending.clear(); }, 120);
-      });
+      };
+      for (const sub of ['.comments', '.suggestions']) { try { fs.mkdirSync(path.join(dir, sub), { recursive: true }); } catch { /* read-only */ } }
+      try { w.w = fs.watch(dir, { persistent: false, recursive: true }, onName); } catch { w.w = fs.watch(dir, { persistent: false }, onName); }
       w.w.on('error', () => { /* the folder went: the page's next list says so */ });
       watchers.set(dir, w);
     }
@@ -64,8 +67,8 @@ function create(o) {
     const dir = ok(req.docsDir);
     if (op === 'list') return { ok: true, docs: D.list(dir) };
     if (op === 'create') return Object.assign({ ok: true }, D.create(dir, { title: req.title, sections: req.sections }));
-    if (op === 'read') return Object.assign({ ok: true }, D.read(dir, req.id), { comments: D.comments(dir, req.id) });
-    if (op === 'save') return Object.assign({ ok: true }, D.save(dir, req.id, req.markdown));
+    if (op === 'read') return Object.assign({ ok: true }, D.read(dir, req.id), { comments: D.comments(dir, req.id), author: D.author(dir, req.id), suggestions: D.suggestions(dir, req.id) });
+    if (op === 'save') return Object.assign({ ok: true }, D.save(dir, req.id, req.markdown, req.by === 'you' ? 'you' : 'you'));
     if (op === 'history') return { ok: true, versions: D.history(dir, req.id) };
     if (op === 'version') return { ok: true, markdown: D.readVersion(dir, req.id, req.version) };
     if (op === 'restore') return Object.assign({ ok: true }, D.restore(dir, req.id, req.version));
@@ -88,6 +91,8 @@ function create(o) {
       if (!st.isFile() || st.size > 15 * 1048576) return { ok: false, error: 'Too large to show (over 15 MB).' };
       return { ok: true, url: 'data:' + type + ';base64,' + fs.readFileSync(f).toString('base64') };
     }
+    if (op === 'suggestions') return { ok: true, suggestions: D.suggestions(dir, req.id) };
+    if (op === 'decide') return Object.assign({ ok: true }, D.decide(dir, req.id, req.suggestion, req.verdict === 'accept' ? 'accept' : 'reject', 'you'));
     if (op === 'watch') { watch(dir, sender); return { ok: true }; }
     if (op === 'unwatch') { unwatch(dir, sender); return { ok: true }; }
     if (op === 'reveal') {
