@@ -100,6 +100,14 @@ function create(o) {
       if (opts.shell && fs.existsSync(f)) opts.shell.showItemInFolder(f);
       return { ok: true };
     }
+    if (op === 'docx') {
+      const r = D.read(dir, req.id);   // the id must be a doc in this folder
+      const out = path.join(dir, req.id + '.docx');
+      const pics = Array.isArray(req.pictures) ? req.pictures.slice(0, 64).map((p) => (p && typeof p.png === 'string' && p.png.length < 20 * 1048576 ? { png: p.png, w: Number(p.w) || 640, h: Number(p.h) || 360 } : null)) : [];
+      fs.writeFileSync(out, await require('./dxdocs-word.js').toDocx(r.markdown, { docsDir: dir, title: r.title, pictures: pics }));
+      if (opts.shell) opts.shell.showItemInFolder(out);
+      return { ok: true, path: out };
+    }
     if (op === 'pdf') {
       if (!opts.printPdf) return { ok: false, error: 'PDF export is not available here.' };
       D.read(dir, req.id);   // the id must be a doc in this folder

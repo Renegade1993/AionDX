@@ -3485,6 +3485,7 @@ async function pageTarget() {
             if (op === 'history') return Promise.resolve({ ok: true, versions: (D.versions[a.id] || []).map((x, i) => ({ version: 'v' + i, at: Date.now() - 60000 })) });
             if (op === 'version') return Promise.resolve({ ok: true, markdown: D.versions[a.id][+a.version.slice(1)] });
             if (op === 'restore') { D.docs[a.id] = D.versions[a.id][+a.version.slice(1)]; return Promise.resolve({ ok: true }); }
+            if (op === 'docx') return Promise.resolve({ ok: true, path: 'C:/ws/Docs/' + a.id + '.docx' });
             if (op === 'decide') { const sg = (D.sgs[a.id] || []).find((x) => x.id === a.suggestion); if (!sg) return Promise.resolve({ ok: false, error: 'no' }); sg.status = a.verdict === 'accept' ? 'accepted' : 'rejected'; if (a.verdict === 'accept') D.docs[a.id] = D.docs[a.id].replace(sg.find, sg.replace); return Promise.resolve({ ok: true }); }
             if (op === 'image') return Promise.resolve(a.src === 'pictures/massif.jpg' ? { ok: true, url: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' } : { ok: false, error: 'No such picture: ' + a.src });
             return Promise.resolve({ ok: false, error: 'stub: ' + op }); },
@@ -3669,6 +3670,14 @@ async function pageTarget() {
       let mm = null;
       for (let i = 0; i < 30 && !(mm && mm.drawn); i++) { await sleep(500); mm = await js(`(() => { const h = document.querySelector('#tbox .dx-mermaid'); return h ? { drawn: h.getAttribute('data-drawn'), svg: !!h.querySelector('svg'), text: [...h.querySelectorAll('svg text, svg foreignObject')].map((e) => e.textContent).join(' ').replace(/\\s+/g, ' ').slice(0, 120) } : null; })()`); }
       check(sc, 'a mermaid block is drawn as a diagram by the app\'s own Mermaid', mm && mm.drawn === '1' && mm.svg && /Ask/.test(mm.text) && /Ship/.test(mm.text), JSON.stringify(mm));
+      // Export as Word: the main side gets a picture of each chart and diagram as drawn, in order
+      await humanClick('#tbox [data-act="more"]');
+      await sleep(200);
+      await humanClick('.dx-menu [data-act="docx"]');
+      await sleep(1500);
+      const wx = (await js('window.__dx.calls')).filter((c) => c[0] === 'docx').pop();
+      check(sc, 'Export as Word sends a picture of the chart and of the diagram, as drawn', wx && wx[1].id === 'draw' && wx[1].pictures.length === 2 && wx[1].pictures.every((p) => p && /^data:image\/png;base64,/.test(p.png) && p.w > 100 && p.h > 50),
+        JSON.stringify(wx && wx[1].pictures.map((p) => p && [String(p.png).slice(0, 30), p.w, p.h])));
       await js(`(() => { document.querySelector('#tbox .dx-body input.dx-tick[data-line]').scrollIntoView({ block: 'center' }); return 0; })()`);
       await sleep(200);
       await humanClick('#tbox .dx-body input.dx-tick[data-line]');

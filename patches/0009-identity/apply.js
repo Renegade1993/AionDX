@@ -899,7 +899,7 @@ fs.copyFileSync(path.join(__dirname, 'aiondx-notices.js'), path.join(ext, 'out',
 notes.push('out/aiondx/aiondx-notices.js');
 fs.copyFileSync(path.join(__dirname, 'aiondx-accounts.js'), path.join(ext, 'out', 'aiondx', 'aiondx-accounts.js'));
 notes.push('out/aiondx/aiondx-accounts.js');
-for (const f of ['dxdocs.js', 'dxcharts.js', 'aiondx-dxdocs-main.js']) { fs.copyFileSync(path.join(__dirname, f), path.join(ext, 'out', 'aiondx', f)); notes.push('out/aiondx/' + f); }
+for (const f of ['dxdocs.js', 'dxcharts.js', 'dxdocs-word.js', 'aiondx-dxdocs-main.js']) { fs.copyFileSync(path.join(__dirname, f), path.join(ext, 'out', 'aiondx', f)); notes.push('out/aiondx/' + f); }
 // DX Docs' Markdown renderer, loaded in the page before aiondx-ui.js
 fs.copyFileSync(path.join(__dirname, 'dxdocs-md.js'), path.join(ext, 'out', 'renderer', 'aiondx-dxdocs-md.js'));
 notes.push('out/renderer/aiondx-dxdocs-md.js');

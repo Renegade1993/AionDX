@@ -41,6 +41,8 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-dxdocs-main-'));
     check('save (the user\'s edit) keeps the version before', r.ok && r.previous && (await svc.handle({ op: 'history', docsDir: dir, id: 'plan' }, wc)).versions.length === 2);
     r = await svc.handle({ op: 'pdf', docsDir: dir, id: 'plan', html: '<h1>Plan</h1>' }, wc);
     check('PDF export writes Docs\\<id>.pdf', r.ok && fs.readFileSync(path.join(dir, 'plan.pdf'), 'utf8').startsWith('%PDF'), JSON.stringify(r));
+    r = await svc.handle({ op: 'docx', docsDir: dir, id: 'plan', pictures: [] }, wc);
+    check('Word export writes Docs\\<id>.docx (DX Docs mirror, step 4)', r.ok && fs.readFileSync(path.join(dir, 'plan.docx')).slice(0, 2).toString() === 'PK', JSON.stringify(r));
     r = await svc.handle({ op: 'read', docsDir: dir, id: '..\\..\\x' }, wc).catch((e) => ({ ok: false, error: e.message }));
     check('an id that leaves the folder is refused', r.ok === false);
     // pictures (November 13th): relative to the DX Docs folder, under the project's root only, pictures only

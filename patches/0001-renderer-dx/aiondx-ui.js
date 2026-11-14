@@ -11523,6 +11523,46 @@
     }
     return blocks(body).replace(/\n{3,}/g, '\n\n') + '\n';
   }
+  /** Pictures of the doc's charts and diagrams as drawn (PNG, twice the size), in the order they stand; null where one is not drawn. */
+  async function dxPicturesForExport() {
+    var body = dx.main && dx.main.querySelector('.dx-body');
+    if (!body) return [];
+    var blocks = body.querySelectorAll('figure.dx-chart, .dx-chart--bad, .dx-mermaid');
+    var out = [];
+    for (var i = 0; i < blocks.length; i++) {
+      var svg = blocks[i].querySelector('svg');
+      out.push(svg && !blocks[i].classList.contains('dx-chart--bad') ? await dxSvgToPng(svg).catch(function () { return null; }) : null);
+    }
+    return out;
+  }
+  function dxSvgToPng(svg) {
+    return new Promise(function (resolve, reject) {
+      var box = svg.getBoundingClientRect();
+      var w = Math.max(1, Math.round(box.width)), h = Math.max(1, Math.round(box.height));
+      var copy = svg.cloneNode(true);
+      // the page's styles (theme colours, fonts) written onto the copy, so it draws the same on its own
+      var a = [svg].concat(Array.prototype.slice.call(svg.querySelectorAll('*'))), b = [copy].concat(Array.prototype.slice.call(copy.querySelectorAll('*')));
+      var props = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'opacity', 'fill-opacity', 'stroke-opacity', 'font-size', 'font-family', 'font-weight', 'text-anchor', 'dominant-baseline', 'visibility', 'display'];
+      for (var k = 0; k < a.length && k < b.length; k++) {
+        if (b[k].tagName === 'style' || b[k].tagName === 'title') continue;
+        var cs = getComputedStyle(a[k]), st = '';
+        props.forEach(function (p) { var v = cs.getPropertyValue(p); if (v) st += p + ':' + v + ';'; });
+        b[k].setAttribute('style', st + (b[k].getAttribute('style') || '').replace(/var\([^)]*\)/g, ''));
+      }
+      copy.setAttribute('width', w); copy.setAttribute('height', h);
+      copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      var bg = getComputedStyle(dx.main).backgroundColor;
+      var img = new Image();
+      img.onload = function () {
+        var c = document.createElement('canvas'); c.width = w * 2; c.height = h * 2;
+        var g = c.getContext('2d'); g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, c.height); g.scale(2, 2); g.drawImage(img, 0, 0, w, h);
+        try { resolve({ png: c.toDataURL('image/png'), w: w, h: h }); } catch (e) { reject(e); }
+      };
+      img.onerror = function () { reject(new Error('picture')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(copy));
+      void bg;
+    });
+  }
   // ---- suggestions (the agent proposes; you accept or reject): marks in the text, a card each
   function dxShowSuggestions() {
     var box = dx.main && dx.main.querySelector('.dx-sgs');
@@ -11778,7 +11818,8 @@
     var m = document.createElement('div');
     m.className = 'dx-menu';
     m.innerHTML = '<button type="button" data-act="history">Earlier versions</button><button type="button" data-act="mdedit">Edit the Markdown</button>' +
-      '<button type="button" data-act="pdf">Export as PDF</button><button type="button" data-act="reveal">Show the file</button>';
+      '<button type="button" data-act="docx">Export as Word</button><button type="button" data-act="pdf">Export as PDF</button>' +
+      '<button type="button" data-act="copymd">Copy as Markdown</button><button type="button" data-act="reveal">Show the file</button>';
     var rc = anchor.getBoundingClientRect();
     m.style.top = Math.round(rc.bottom + 4) + 'px';
     m.style.right = Math.round(window.innerWidth - rc.right) + 'px';
@@ -11797,6 +11838,15 @@
         toast(r && r.ok ? 'Saved as PDF beside the doc.' : 'The PDF was not made.', r && (r.path || r.error));
       } else if (a === 'history') dxHistory();
       else if (a === 'mdedit') { await dxFlush(); dxEdit(); }
+      else if (a === 'docx') {
+        await dxFlush();
+        var pics = await dxPicturesForExport();
+        var rw = await dxApi('docx', { id: dx.doc, pictures: pics });
+        toast(rw && rw.ok ? 'Saved as a Word document beside the doc.' : 'The Word document was not made.', rw && (rw.path || rw.error));
+      } else if (a === 'copymd') {
+        await dxFlush();
+        try { await navigator.clipboard.writeText(dx.md); toast('The doc\u2019s Markdown is on the clipboard.'); } catch (er) { toast('Could not copy.', er && er.message); }
+      }
     });
   }
   /** Who wrote it, in words: you, or the agent. */
