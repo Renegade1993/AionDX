@@ -8095,11 +8095,12 @@
     }
     return line;
   }
-  function ctxSnow(host, cold) {
+  function ctxSnow(host, cold, reading) {
     var s = host.querySelector(':scope > .aiondx-snow');
     if (!cold) { if (s) s.parentNode.removeChild(s); return; }
     if (!s) { s = document.createElement('span'); s.className = 'aiondx-snow'; s.innerHTML = ICON_SNOW; host.appendChild(s); }
-    var tip = 'Cache expired at ' + hhmm(cold.since) + ', ' + spanText(cold.minutes) + ' after the last reply (' + hhmm(cold.at) +
+    // the snowflake takes the ring's hover, so it carries the ring's reading first, then the cache
+    var tip = (reading ? reading + '\n' : '') + 'Cache expired at ' + hhmm(cold.since) + ', ' + spanText(cold.minutes) + ' after the last reply (' + hhmm(cold.at) +
       '). Your next message resends the whole conversation, so it costs more and starts slower.';
     if (s.title !== tip) s.title = tip;
   }
@@ -8112,7 +8113,7 @@
     var cmp = compactView(info);
     if (stock && !cmp) {
       if (stock.getAttribute('data-aiondx-hidden')) { stock.style.display = ''; stock.removeAttribute('data-aiondx-hidden'); }
-      if (el && el.parentNode) el.parentNode.removeChild(el); ctxSnow(stock, cold); return;
+      if (el && el.parentNode) el.parentNode.removeChild(el); ctxSnow(stock, cold, info ? ctxReading(info, null) : ''); return;
     }
     if (stock && cmp && !stock.getAttribute('data-aiondx-hidden')) { stock.style.display = 'none'; stock.setAttribute('data-aiondx-hidden', '1'); }
     var send = t.actions && t.actions.querySelector('.sendbox-send-tooltip-anchor');
@@ -8134,16 +8135,23 @@
     if (arc.getAttribute('stroke-dashoffset') !== off) arc.setAttribute('stroke-dashoffset', off);
     var disp = info.limit > 0 ? '' : 'none';
     if (arc.style.display !== disp) arc.style.display = disp;
-    var tip = (cmp ? 'Compacted at ' + hhmm(Number(cmp.at)) + ': about ' + Math.round(usedNow / 1000) + 'K now' + (info.limit > 0 ? ' (' + pct.toFixed(1) + '% of ' + Math.round(info.limit / 1000) + 'K)' : '') +
-        ', down from ' + Math.round(Number(cmp.pre) / 1000) + 'K. An estimate until the next reply measures it.'
-      : info.limit > 0 ? pct.toFixed(1) + '% of the context window used (' + Math.round(info.used / 1000) + 'K of ' + Math.round(info.limit / 1000) + 'K)'
-      : info.used > 0 ? Math.round(info.used / 1000) + 'K tokens used; the window size is not known' : 'No context count yet for this chat') +
-      (info.cost ? '\nSession cost ≈ ' + costText(info.cost) : '');
+    var reading = ctxReading(info, cmp);
+    var tip = reading;
     var cl = promptCacheLine(ctxCache(t, info));
     if (cl) tip += '\n' + cl;
     if (el.title !== tip) el.title = tip;
     if (el.parentNode !== send.parentNode || el.nextSibling !== send) send.parentNode.insertBefore(el, send);
-    ctxSnow(el, cold);
+    ctxSnow(el, cold, reading);
+  }
+  /** The ring's reading: how full the chat is (or the estimate after a compaction), and the session's cost when known. */
+  function ctxReading(info, cmp) {
+    var usedNow = cmp ? Number(cmp.tokens) : info.used;
+    var pct = info.limit > 0 ? Math.max(0, Math.min(100, usedNow / info.limit * 100)) : 0;
+    return (cmp ? 'Compacted at ' + hhmm(Number(cmp.at)) + ': about ' + Math.round(usedNow / 1000) + 'K now' + (info.limit > 0 ? ' (' + pct.toFixed(1) + '% of ' + Math.round(info.limit / 1000) + 'K)' : '') +
+        ', down from ' + Math.round(Number(cmp.pre) / 1000) + 'K. An estimate until the next reply measures it.'
+      : info.limit > 0 ? pct.toFixed(1) + '% of the context window used (' + Math.round(info.used / 1000) + 'K of ' + Math.round(info.limit / 1000) + 'K)'
+      : info.used > 0 ? Math.round(info.used / 1000) + 'K tokens used; the window size is not known' : 'No context count yet for this chat') +
+      (info.cost ? '\nSession cost ≈ ' + costText(info.cost) : '');
   }
   function costText(c) {
     var a = Number(c && c.amount) || 0, cur = String((c && c.currency) || 'USD');

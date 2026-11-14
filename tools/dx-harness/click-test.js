@@ -3795,8 +3795,9 @@ async function pageTarget() {
       await js(`(() => { delete window.__stub.store['aiondx.ctx.conv.harness1']; const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.last_token_usage = { total_tokens: 84000 }; return 0; })()`);
       await js('window.__aionDx.pullNow()');
       rg = await again();
+      check(sc, 'the snowflake\'s hover keeps the ring\'s reading (how full the chat is) above the cache line', rg && rg.snow && /^[^\n]*(context window used|tokens used|No context count)/.test(rg.snowTitle), JSON.stringify(rg));
       check(sc, 'a measured hour cache whose last call was 75 min ago has the snowflake, saying when it went and why',
-        rg && rg.snow && /^Cache expired at \d\d:\d\d, 1 hour after the last reply \(\d\d:\d\d\)\. Your next message resends the whole conversation, so it costs more and starts slower\.$/.test(rg.snowTitle) &&
+        rg && rg.snow && /^(\d+\.\d% of the context window used \(\d+K of \d+K\)|\d+K tokens used; the window size is not known|No context count yet for this chat)(\nSession cost[^\n]*)?\nCache expired at \d\d:\d\d, 1 hour after the last reply \(\d\d:\d\d\)\. Your next message resends the whole conversation, so it costs more and starts slower\.$/.test(rg.snowTitle) &&
         /Cache expired at \d\d:\d\d, 1 hour after the last reply \(\d\d:\d\d\)\. Your next message resends the whole conversation/.test(rg.title), JSON.stringify(rg));
       // the team's run-state (agentLive) saying working does not hide it: the chat's own conversation is finished (2026-11-11)
       await js(`(() => { window.__aionDx.setLive('conv:harness1', 'working'); return 0; })()`);
@@ -3809,7 +3810,7 @@ async function pageTarget() {
         /Cache good until \d\d:\d\d \(saved at the last reply, \d\d:\d\d, for 1 hour\)\. Messages before then reuse it, so they are cheaper and quicker\./.test(rg.title), JSON.stringify(rg));
       await snowRec(7 * 60000, '5m');
       rg = await again();
-      check(sc, 'a measured 5-minute cache (extra usage) 7 min after its last call: the snowflake, saying 5 minutes', rg && rg.snow && /^Cache expired at \d\d:\d\d, 5 minutes after the last reply/.test(rg.snowTitle), JSON.stringify(rg));
+      check(sc, 'a measured 5-minute cache (extra usage) 7 min after its last call: the snowflake, saying 5 minutes', rg && rg.snow && /\nCache expired at \d\d:\d\d, 5 minutes after the last reply/.test(rg.snowTitle), JSON.stringify(rg));
       await snowRec(8 * 60000, '5m', { until: Date.now() + 40 * 60000, longUntil: Date.now() + 40 * 60000, tailUntil: Date.now() - 3 * 60000 });
       rg = await again();
       check(sc, 'after a switch to 5 minutes, with the hour part alive: warm, no snowflake, and the hover names both parts',
