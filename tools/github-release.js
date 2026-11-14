@@ -29,7 +29,8 @@ const sha = (f) => new Promise((resolve, reject) => { const h = crypto.createHas
 if (!args.includes('--allow-unpushed')) {
   const { execFileSync } = require('child_process');
   const git = (a) => execFileSync('git', a, { cwd: path.join(__dirname, '..'), encoding: 'utf8', windowsHide: true }).trim();
-  const dirty = git(['status', '--porcelain', '--untracked-files=no', '--', 'patches', 'tools']);
+  // the click suite rewrites its own screenshots (tools\dx-harness\shots) on every run: pictures, not code
+  const dirty = git(['status', '--porcelain', '--untracked-files=no', '--', 'patches', 'tools', ':(exclude)tools/dx-harness/shots']);
   if (dirty) { console.error('github-release: tracked changes are not committed (the commit was refused or never made):\n' + dirty.split('\n').slice(0, 10).join('\n')); process.exit(3); }
   git(['fetch', '-q', 'origin']);
   const head = git(['rev-parse', 'HEAD']), remote = git(['rev-parse', 'origin/main']);
