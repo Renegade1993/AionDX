@@ -43,6 +43,19 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-dxdocs-main-'));
     check('PDF export writes Docs\\<id>.pdf', r.ok && fs.readFileSync(path.join(dir, 'plan.pdf'), 'utf8').startsWith('%PDF'), JSON.stringify(r));
     r = await svc.handle({ op: 'read', docsDir: dir, id: '..\\..\\x' }, wc).catch((e) => ({ ok: false, error: e.message }));
     check('an id that leaves the folder is refused', r.ok === false);
+    // pictures (November 13th): relative to the DX Docs folder, under the project's root only, pictures only
+    fs.mkdirSync(path.join(dir, 'pictures'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pictures', 'massif.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
+    r = await svc.handle({ op: 'image', docsDir: dir, src: 'pictures/massif.jpg' }, wc);
+    check('a picture beside the doc comes back as a data URL', r.ok && r.url === 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]).toString('base64'), JSON.stringify(r).slice(0, 120));
+    r = await svc.handle({ op: 'image', docsDir: dir, src: 'pictures/massif%20x.jpg' }, wc);
+    check('a missing one says so', r.ok === false && /No such picture/.test(r.error), JSON.stringify(r));
+    fs.writeFileSync(path.join(path.dirname(path.dirname(dir)), 'outside.png'), 'x');
+    r = await svc.handle({ op: 'image', docsDir: dir, src: '../../outside.png' }, wc);
+    check('one outside the project is refused', r.ok === false && /outside this project/.test(r.error), JSON.stringify(r));
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'x');
+    r = await svc.handle({ op: 'image', docsDir: dir, src: 'notes.txt' }, wc);
+    check('a file that is not a picture is refused', r.ok === false && /Not a picture/.test(r.error), JSON.stringify(r));
     await svc.handle({ op: 'unwatch', docsDir: dir }, wc);
     check('unwatch closes the watcher when nobody watches', svc.watchers.size === 0);
   } catch (e) {

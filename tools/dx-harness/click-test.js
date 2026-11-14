@@ -3269,18 +3269,18 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.7');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.9');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.7' && c.names.length === 1 && c.names[0] === 'Compaction by itself' &&
-        /Click the context ring \(next to the send button\) to switch it off or on, or to compact now\.$/.test(c.hows[0]), JSON.stringify(c));
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.9' && c.names.length === 1 && c.names[0] === 'Charts and diagrams' &&
+        /^Ask any agent for a chart or a diagram in a DX Doc/.test(c.hows[0]) && /a doc\u2019s link in a reply is a card that opens it\.$/.test(c.hows[0]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
       const c4 = await card();
-      check(sc, 'someone updating from 0.27.4 sees everything new since: this release\'s and 0.27.5\'s', c4 && JSON.stringify(c4.names) === JSON.stringify(['Compaction by itself', 'DX Docs', 'More Claude accounts']), JSON.stringify(c4));
+      check(sc, 'someone updating from 0.27.4 sees everything new since: this release\'s, 0.27.8\'s, 0.27.7\'s and 0.27.5\'s', c4 && JSON.stringify(c4.names) === JSON.stringify(['Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts']), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 340, JSON.stringify(box));
       await humanClick('.aiondx-whatsnew-ok');
@@ -3323,7 +3323,15 @@ async function pageTarget() {
       t = await tip();
       check(sc, 'and after a reload the Loop tip stays away', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
       // the Docs link tip, on a page with a doc link, once the others are done
-      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','sched','bolt','menu','dxdocs','add-account','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','sched','bolt','menu','dxdocs','dxcharts','add-account','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await load('theme=light&tips=1&keepls=1');
+      await sleep(2600);
+      t = await tip();
+      check(sc, 'on a chat, the DX Doc tip points at the send button and says what to type', t && t.id === 'aiondx-coach-dxdocs-ask' && t.title === 'Ask for a DX Doc' &&
+        /^Type \u201cmake a DX Doc about \u2026\u201d in any chat/.test(t.text), JSON.stringify(t));
+      await humanClick('.aiondx-coach-ok');
+      await sleep(400);
+      check(sc, 'Got it puts the DX Doc tip away for good', JSON.parse(await js(`localStorage.getItem('aionui.dx.tips.done')`))['dxdocs-ask'] > 0);
       await load('theme=light&tips=1&keepls=1');
       await js(`(() => { const a = document.createElement('a'); a.href = 'https://claude.ai/artifact/abc'; a.textContent = 'Launch plan'; a.style.cssText = 'position:absolute;left:300px;top:200px;z-index:5;background:#fff;color:#000;padding:4px'; document.body.appendChild(a); return 0; })()`);
       await sleep(2600);
@@ -3451,18 +3459,20 @@ async function pageTarget() {
       await js(`(() => { document.querySelector('.aiondx-accdlg-cancel').click(); const r = document.getElementById('trow'); if (r) r.remove(); delete window.aiondxAccounts; location.hash = '#/conversation/harness1'; return 0; })()`);
     }
 
-    // ---- DX Docs in the chat's right-hand sidebar (R-121, 2026-11-13) ----
+    // ---- DX Docs: a wide panel at the chat's right edge, like the Claude app's (R-121, 2026-11-13) ----
     {
       const sc = 'dxdocs';
-      const setup = (collapsed) => js(`(() => {
+      // AionUi's ChatLayout as the page has it: the chat column (its header with the top bar's right-hand group) and the files sidebar
+      const setup = (filesOpen) => js(`(() => {
         location.hash = '#/conversation/harness1';
-        const old = document.getElementById('tsider'); if (old) old.remove();
-        const s = document.createElement('div'); s.id = 'tsider'; s.className = '!bg-1 relative chat-layout-right-sider layout-sider';
-        s.style.cssText = 'position:fixed;top:40px;right:0;bottom:0;width:${collapsed ? 0 : 420}px;overflow:hidden;z-index:30;background:#fff';
-        s.innerHTML = '<div class="workspace-panel-header">Workspace</div><div class="aionui-files">files</div>';
-        document.body.appendChild(s);
+        for (const id of ['tsider', 'tbox']) { const o = document.getElementById(id); if (o) o.remove(); }
+        const box = document.createElement('div'); box.id = 'tbox'; box.className = 'flex flex-1 relative w-full overflow-hidden';
+        box.style.cssText = 'position:fixed;top:40px;left:100px;width:calc(100% - 100px);bottom:0;display:flex;z-index:1000;background:#fff';
+        box.innerHTML = '<div class="flex flex-col min-w-0" style="flex:1 1 0;min-width:0"><div class="shrink-0"><header class="chat-layout-header" style="display:flex;align-items:center;height:36px"><span>Chat</span><div class="flex items-center gap-12px shrink-0" style="margin-left:auto"></div></header></div><div>messages</div></div>' +
+          '<div id="tsider" class="!bg-1 relative chat-layout-right-sider layout-sider" style="flex:0 0 auto;overflow:hidden;width:${filesOpen ? 300 : 0}px"><div class="aionui-files">files</div></div>';
+        document.body.appendChild(box);
         window.__dx = { calls: [], docs: {}, comments: {}, versions: {}, cb: null, toggles: 0 };
-        window.addEventListener('aionui-workspace-toggle', () => { window.__dx.toggles++; s.style.width = '420px'; });
+        if (!window.__dxToggleHooked) { window.__dxToggleHooked = 1; window.addEventListener('aionui-workspace-toggle', () => { window.__dx.toggles++; const s = document.getElementById('tsider'); if (s) s.style.width = s.style.width === '0px' ? '300px' : '0px'; }); }
         const md = (id) => window.__dx.docs[id];
         window.aiondxDx = {
           call: (op, a) => { window.__dx.calls.push([op, a]); const D = window.__dx;
@@ -3475,19 +3485,30 @@ async function pageTarget() {
             if (op === 'history') return Promise.resolve({ ok: true, versions: (D.versions[a.id] || []).map((x, i) => ({ version: 'v' + i, at: Date.now() - 60000 })) });
             if (op === 'version') return Promise.resolve({ ok: true, markdown: D.versions[a.id][+a.version.slice(1)] });
             if (op === 'restore') { D.docs[a.id] = D.versions[a.id][+a.version.slice(1)]; return Promise.resolve({ ok: true }); }
+            if (op === 'image') return Promise.resolve(a.src === 'pictures/massif.jpg' ? { ok: true, url: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' } : { ok: false, error: 'No such picture: ' + a.src });
             return Promise.resolve({ ok: false, error: 'stub: ' + op }); },
           onEvent: (cb) => { window.__dx.cb = cb; return () => {}; },
         };
         window.__dxAgent = (id, text) => { window.__dx.docs[id] = text; window.__dx.cb && window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id }); };
         window.__calls.length = 0; return 0; })()`);
-      const panel = () => js(`(() => { const p = document.querySelector('#tsider [data-testid="aiondx-dx"]'); if (!p) return null;
+      const side = () => js(`(() => { const o = document.querySelector('#tbox > [data-testid="aiondx-dx-sider"]'); const b = document.querySelector('#tbox .chat-layout-header [data-testid="aiondx-dx-open"]');
+        return { w: o ? Math.round(o.getBoundingClientRect().width) : -1, bw: Math.round(document.getElementById('tbox').getBoundingClientRect().width), last: !!o && o === document.getElementById('tbox').lastElementChild, files: Math.round(document.getElementById('tsider').getBoundingClientRect().width),
+          btn: b ? b.textContent : null, pressed: b ? b.getAttribute('aria-pressed') : null }; })()`);
+      const panel = () => js(`(() => { const p = document.querySelector('#tbox [data-testid="aiondx-dx"]'); if (!p) return null;
         return { files: p.classList.contains('aiondx-dx--files'), tab: (p.querySelector('.dx-tab--on') || {}).textContent, bar: (p.querySelector('.dx-bar-title') || {}).textContent || '',
           body: (p.querySelector('.dx-body') || {}).innerHTML || '', list: [...p.querySelectorAll('.dx-row-title')].map((e) => e.textContent), empty: (p.querySelector('.dx-empty') || {}).textContent || '' }; })()`);
       await load('theme=light');
-      await setup(false);
+      await setup(true);
       await sleep(1800);
+      let sd = await side();
+      check(sc, 'a chat with no docs: the panel is closed (no room taken), AionUi\'s files sidebar as it was, and a Docs button in the top bar', sd.w === 0 && sd.last && sd.files >= 300 && sd.btn === 'Docs' && sd.pressed === 'false', JSON.stringify(sd));
+      await humanClick('#tbox [data-testid="aiondx-dx-open"]');
+      await sleep(500);
+      sd = await side();
       let p = await panel();
-      check(sc, 'a solo chat\'s right-hand sidebar shows DX Docs, with a Files tab, and says how docs get there', p && p.tab === 'DX Docs' && !p.files &&
+      check(sc, 'Docs opens it: half the chat area, AionUi\'s files sidebar folded so one panel shows', sd.w === Math.max(480, Math.round(sd.bw / 2)) && sd.files <= 1 && (await js('window.__dx.toggles')) === 1 && sd.pressed === 'true', JSON.stringify(sd));
+      check(sc, 'it shows DX Docs with no Files tab and says how docs get there', p && p.tab === 'DX Docs' &&
+        !(await js(`(() => { const f = document.querySelector('#tbox .dx-tab[data-tab="files"]'); return !!f && getComputedStyle(f).display !== 'none'; })()`)) &&
         /Ask the agent for a document, a report or a plan and it appears here/.test(p.empty), JSON.stringify(p));
       check(sc, 'it asked where this chat\'s docs are, and watches that folder', JSON.stringify((await js('window.__dx.calls')).filter((c) => c[0] === 'where' || c[0] === 'watch').map((c) => c[0])) === '["where","watch"]');
       await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\n<!-- aiondx:pending the three outcomes -->\\n\\n## Risks\\n\\n<!-- aiondx:pending what could stop it -->\\n'); 0`);
@@ -3505,7 +3526,7 @@ async function pageTarget() {
       await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\nShip it this quarter.\\n'); 0`);
       await sleep(600);
       // comment on a selection
-      await js(`(() => { const b = document.querySelector('#tsider .dx-body p'); const r = document.createRange(); r.selectNodeContents(b); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.dispatchEvent(new Event('selectionchange')); return 0; })()`);
+      await js(`(() => { const b = document.querySelector('#tbox .dx-body p'); const r = document.createRange(); r.selectNodeContents(b); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.dispatchEvent(new Event('selectionchange')); return 0; })()`);
       await sleep(300);
       check(sc, 'selecting text in the doc offers Comment', await js(`(() => { const b = document.querySelector('[data-testid="aiondx-dx-comment-btn"]'); return !!b && !b.hidden; })()`));
       await humanClick('[data-testid="aiondx-dx-comment-btn"]');
@@ -3518,53 +3539,111 @@ async function pageTarget() {
       check(sc, 'Send keeps the comment with the doc: the quote, its section and the text', cm && cm[1].quote === 'Ship it this quarter.' && cm[1].section === 'Goals' && cm[1].text === 'Which quarter?', JSON.stringify(cm));
       check(sc, 'and tells the chat\'s agent: the doc, the section, the quote, the comment and how to answer', told.length === 1 &&
         /^\[DX Doc comment\] On "Launch plan" \(doc plan, section "Goals", comment c1\):\n> Ship it this quarter\.\n\nWhich quarter\?\n\n\(Answer with dxdoc_reply/.test(told[0]), JSON.stringify(told));
-      check(sc, 'the comment shows in the doc\'s comments', /Which quarter\?/.test(await js(`(document.querySelector('#tsider .dx-comments') || {}).textContent || ''`)) && /Comments \(1\)/.test(await js(`document.querySelector('#tsider [data-act="comments"]').textContent`)));
+      check(sc, 'the comment shows in the doc\'s comments', /Which quarter\?/.test(await js(`(document.querySelector('#tbox .dx-comments') || {}).textContent || ''`)) && /Comments \(1\)/.test(await js(`document.querySelector('#tbox [data-act="comments"]').textContent`)));
       // edit and save
-      await humanClick('#tsider [data-act="edit"]');
+      await humanClick('#tbox [data-act="edit"]');
       await sleep(300);
       check(sc, 'Edit shows the Markdown to change', (await js(`document.querySelector('[data-testid="aiondx-dx-edit"]').value`)) === '# Launch plan\n\n## Goals\n\nShip it this quarter.\n');
       await js(`(() => { const t = document.querySelector('[data-testid="aiondx-dx-edit"]'); t.value = t.value.replace('this quarter', 'in Q1'); t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
       await js(`window.__dxAgent('plan', window.__dx.docs.plan + '\\n## Extra\\n\\nmore\\n'); 0`);
       await sleep(600);
-      check(sc, 'when the agent changes the doc while you edit, you are told and keep your text', /The agent changed this doc while you were editing/.test(await js(`(document.querySelector('#tsider .dx-note') || {}).textContent || ''`)) &&
+      check(sc, 'when the agent changes the doc while you edit, you are told and keep your text', /The agent changed this doc while you were editing/.test(await js(`(document.querySelector('#tbox .dx-note') || {}).textContent || ''`)) &&
         /in Q1/.test(await js(`document.querySelector('[data-testid="aiondx-dx-edit"]').value`)));
-      await humanClick('#tsider [data-act="save"]');
+      await humanClick('#tbox [data-act="save"]');
       await sleep(600);
       const sv = (await js('window.__dx.calls')).filter((c) => c[0] === 'save')[0];
       check(sc, 'Save writes your Markdown and shows the doc again', sv && /Ship it in Q1\./.test(sv[1].markdown) && /Ship it in Q1\./.test((await panel()).body), JSON.stringify(sv));
       // history and restore
-      await humanClick('#tsider [data-act="more"]');
+      await humanClick('#tbox [data-act="more"]');
       await sleep(200);
       await humanClick('.dx-menu [data-act="history"]');
       await sleep(400);
-      await humanClick('#tsider .dx-list .dx-row');
+      await humanClick('#tbox .dx-list .dx-row');
       await sleep(400);
-      await humanClick('#tsider [data-act="restore"]');
+      await humanClick('#tbox [data-act="restore"]');
       await sleep(500);
       check(sc, 'Earlier versions lists them; one is shown and restored', (await js('window.__dx.calls')).some((c) => c[0] === 'restore' && c[1].id === 'plan') && /this quarter/.test((await panel()).body));
       // back to the list; the Files tab
-      await humanClick('#tsider [data-act="back"]');
+      await humanClick('#tbox [data-act="back"]');
       await sleep(400);
       check(sc, 'back to the list: the doc is there by its title', JSON.stringify((await panel()).list) === '["Launch plan"]');
-      await humanClick('#tsider .dx-tab[data-tab="files"]');
-      await sleep(200);
-      p = await panel();
-      check(sc, 'Files shows AionUi\'s own panel again, the tabs staying on top', p.files && p.tab === 'Files' &&
-        (await js(`(() => { const r = document.querySelector('#tsider .aionui-files').getBoundingClientRect(); const e = document.elementFromPoint(r.left + 5, r.top + 5); return !!e && e.classList.contains('aionui-files'); })()`)));
-      await humanClick('#tsider .dx-tab[data-tab="docs"]');
-      await sleep(200);
-      check(sc, 'and DX Docs comes back', !(await panel()).files);
-      // a shut sidebar opens when the agent makes a doc
-      await load('theme=light&keepls=1');
-      await setup(true);
-      await sleep(1800);
+      // the X closes it; a doc the agent writes opens it again, on that doc; Docs closes and opens it
+      await humanClick('#tbox [data-testid="aiondx-dx-close"]');
+      await sleep(400);
+      sd = await side();
+      check(sc, 'the X closes the panel (no room taken); the Docs button now counts the chat\'s docs', sd.w === 0 && sd.btn === 'Docs 1' && sd.pressed === 'false', JSON.stringify(sd));
       await js(`window.__dxAgent('notes', '# Notes\\n\\n## One\\n\\n<!-- aiondx:pending first -->\\n'); 0`);
-      await sleep(600);
-      check(sc, 'with the sidebar shut, a new doc from the agent opens it (AionUi\'s own toggle) and shows the doc', (await js('window.__dx.toggles')) === 1 && (await panel()).bar === 'Notes');
-      await js(`(() => { location.hash = '#/team/team1'; return 0; })()`);
+      await sleep(700);
+      sd = await side();
+      const wHalf = Math.max(480, Math.round(sd.bw / 2));
+      check(sc, 'a doc the agent writes opens the panel and shows that doc', sd.w === wHalf && (await panel()).bar === 'Notes', JSON.stringify(sd));
+      await humanClick('#tbox [data-testid="aiondx-dx-open"]');
+      await sleep(300);
+      check(sc, 'Docs closes it', (await side()).w === 0);
+      await humanClick('#tbox [data-testid="aiondx-dx-open"]');
+      await sleep(300);
+      check(sc, 'and opens it again, on the same doc', (await side()).w === wHalf && (await panel()).bar === 'Notes');
+      // resize by dragging the left edge; the share is kept
+      const g0 = await centerOf('#tbox [data-testid="aiondx-dx-grip"]');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g0.x, y: g0.y });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: g0.x, y: g0.y, button: 'left', clickCount: 1 });
+      for (let i = 1; i <= 5; i++) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g0.x - i * 20, y: g0.y, button: 'left', buttons: 1 }); await sleep(30); }
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: g0.x - 100, y: g0.y, button: 'left', clickCount: 1 });
+      await sleep(300);
+      sd = await side();
+      check(sc, 'dragging its left edge 100 px resizes it, and the size is kept', Math.abs(sd.w - (wHalf + 100)) <= 2 && Math.abs(Number(await js(`localStorage.getItem('aionui.dx.dx.share')`)) - (wHalf + 100) / sd.bw) < 0.01, JSON.stringify(sd));
+      const wDrag = sd.w;
+      // a picture beside the doc (pictures/massif.jpg) is read by the main side; a missing one says so
+      await js(`window.__dxAgent('pics', '# Site\\n\\n## Map\\n\\n![Massif](pictures/massif.jpg)\\n\\n![Gone](pictures/gone.png)\\n'); 0`);
+      await sleep(700);
+      const pics = await js(`[...document.querySelectorAll('#tbox .dx-body img')].map((i) => ({ src: (i.getAttribute('src') || '').slice(0, 22), alt: i.alt, missing: i.classList.contains('dx-img-missing') }))`);
+      check(sc, 'a picture beside the doc shows (read by AionDX, not the page\'s address); a missing one says so', pics.length === 2 && pics[0].src.indexOf('data:image/gif;base64') === 0 && !pics[0].missing &&
+        pics[1].missing && /No such picture: pictures\/gone\.png/.test(pics[1].alt), JSON.stringify(pics));
+      // R-125: a chart (values on hover, a Data button), a diagram (the app's own Mermaid), a task to tick, a doc card in a reply
+      await js(`window.__dxAgent('draw', '# Numbers\\n\\n## Sales\\n\\n\`\`\`chart\\n{"type":"bar","title":"Sales","unit":"$k","columns":["Quarter","2025","2026"],"rows":[["Q1",10,12],["Q2",14,18]]}\\n\`\`\`\\n\\n## Flow\\n\\n\`\`\`mermaid\\nflowchart LR\\n  A[Ask] --> B[Draft] --> C[Ship]\\n\`\`\`\\n\\n## To do\\n\\n- [ ] Call the bank\\n- [x] Send the plan\\n'); 0`);
+      await sleep(900);
+      const ch = await js(`(() => { const f = document.querySelector('#tbox .dx-body figure.dx-chart'); if (!f) return null; const r = f.querySelector('svg').getBoundingClientRect();
+        return { bars: f.querySelectorAll('rect.dx-ch-mark').length, tip: (f.querySelector('rect.dx-ch-mark title') || {}).textContent, w: Math.round(r.width), fill: getComputedStyle(f.querySelector('rect.dx-ch-mark')).fill }; })()`);
+      check(sc, 'a chart block is drawn in the doc: a bar per value, its value on hover, coloured, as wide as the doc', ch && ch.bars === 4 && ch.tip === 'Q1\n2025: 10 $k' && ch.w > 300 && /^rgb\(47, 111, 219\)$/.test(ch.fill), JSON.stringify(ch));
+      await humanClick('#tbox .dx-body [data-act="chart-data"]');
+      await sleep(300);
+      check(sc, 'its Data button shows the numbers behind it', await js(`(() => { const w = document.querySelector('#tbox .dx-chart-tablewrap'); return !!w && !w.hidden && w.querySelectorAll('tbody tr').length === 2 && document.querySelector('#tbox [data-act="chart-data"]').textContent === 'Hide data'; })()`));
+      let mm = null;
+      for (let i = 0; i < 30 && !(mm && mm.drawn); i++) { await sleep(500); mm = await js(`(() => { const h = document.querySelector('#tbox .dx-mermaid'); return h ? { drawn: h.getAttribute('data-drawn'), svg: !!h.querySelector('svg'), text: [...h.querySelectorAll('svg text, svg foreignObject')].map((e) => e.textContent).join(' ').replace(/\\s+/g, ' ').slice(0, 120) } : null; })()`); }
+      check(sc, 'a mermaid block is drawn as a diagram by the app\'s own Mermaid', mm && mm.drawn === '1' && mm.svg && /Ask/.test(mm.text) && /Ship/.test(mm.text), JSON.stringify(mm));
+      await js(`(() => { document.querySelector('#tbox .dx-body input.dx-tick[data-line]').scrollIntoView({ block: 'center' }); return 0; })()`);
+      await sleep(200);
+      await humanClick('#tbox .dx-body input.dx-tick[data-line]');
+      await sleep(500);
+      const tk = (await js('window.__dx.calls')).filter((c) => c[0] === 'save').pop();
+      check(sc, 'ticking a task saves the doc with that line ticked, the rest as it was', tk && /\n- \[x\] Call the bank\n- \[x\] Send the plan/.test(tk[1].markdown) && /```chart/.test(tk[1].markdown), JSON.stringify(tk && tk[1].markdown).slice(0, 300));
+      await humanClick('#tbox [data-testid="aiondx-dx-close"]');
+      await sleep(300);
+      await js(`(() => { const a = document.createElement('a'); a.id = 'tcard'; a.href = 'https://aiondx.invalid/doc?id=notes'; a.textContent = 'Notes'; a.style.cssText = 'position:fixed;left:200px;top:300px;z-index:1100;background:#fff;padding:4px'; document.body.appendChild(a); return 0; })()`);
+      await humanClick('#tcard');
+      await sleep(900);
+      check(sc, 'a doc link in a reply opens the panel on that doc', Math.abs((await side()).w - wDrag) <= 2 && (await panel()).bar === 'Notes', JSON.stringify(await side()));
+      await js(`(() => { document.getElementById('tcard').remove(); return 0; })()`);
+      // a chat with docs opens with the panel open; one the user closed last stays closed
+      await js(`(() => { window.__dx.calls.length = 0; location.hash = '#/conversation/other1'; return 0; })()`);
+      await sleep(6000);
+      check(sc, 'another chat with docs opens with its panel open, at the kept size', (await side()).w === wDrag);
+      await humanClick('#tbox [data-testid="aiondx-dx-close"]');
+      await sleep(300);
+      await js(`(() => { location.hash = '#/conversation/harness1'; return 0; })()`);
+      await sleep(2500);
+      sd = await side();
+      check(sc, 'after the user closed it, the next chat opens with it closed, its Docs button ready', sd.w === 0 && /^Docs \d/.test(sd.btn), JSON.stringify(sd));
+      await js(`(() => { localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
+      // a team page: the team's docs (its id and its lead's chat), the same panel
+      await js(`(() => { window.__dx.calls.length = 0; location.hash = '#/team/team1'; return 0; })()`);
+      await sleep(6000);
+      const wt = (await js('window.__dx.calls')).find((c) => c[0] === 'where');
+      check(sc, 'a team page gets the same panel, for the team: its id and its lead\'s chat', (await side()).w === wDrag && wt && wt[1].teamId === 'team1' && wt[1].convId === 'convA', JSON.stringify(wt));
+      await js(`(() => { location.hash = '#/guid'; return 0; })()`);
       await sleep(1500);
-      check(sc, 'leaving the chat takes the panel away and stops watching', !(await js(`!!document.querySelector('[data-testid="aiondx-dx"]')`)) && (await js('window.__dx.calls')).some((c) => c[0] === 'unwatch'));
-      await js(`(() => { const s = document.getElementById('tsider'); if (s) s.remove(); delete window.aiondxDx; location.hash = '#/conversation/harness1'; return 0; })()`);
+      check(sc, 'leaving the chat takes the panel and its button away and stops watching', !(await js(`!!document.querySelector('[data-testid="aiondx-dx"]') || !!document.querySelector('[data-testid="aiondx-dx-open"]')`)) && (await js('window.__dx.calls')).some((c) => c[0] === 'unwatch'));
+      await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.share'); location.hash = '#/conversation/harness1'; return 0; })()`);
     }
 
     // ---- compaction by itself, and the context ring's menu (R-122, 2026-11-13) ----
@@ -3632,7 +3711,57 @@ async function pageTarget() {
       await sleep(300);
       check(sc, 'Compact now asks for a compaction that goes when the agent stops', JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0 &&
         (await toasts()).some((t) => /^Compaction requested\./.test(t)));
-      await js(`(() => { window.__aionDx.setOption('compact.auto', true); localStorage.removeItem('aionui.dx.options'); return 0; })()`);
+      // the note follows this chat's measured cache, and a missing reading is fetched
+      await load('theme=light');
+      await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 850000, size: 1000000 } }; return 0; })()`);
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 60000, until: Date.now() + 240000, tailUntil: Date.now() + 240000, ttl: '5m' });
+      await js('window.__aionDx.tickNow()');
+      await sleep(400);
+      await humanClick('.context-usage-indicator');
+      await sleep(600);
+      const n5 = await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); return m ? { note: m.querySelector('.aiondx-ctxmenu-note').textContent, read: m.querySelector('.aiondx-ctxmenu-read').textContent } : null; })()`);
+      check(sc, 'a chat on a 5-minute cache: the note says it compacts 30 seconds before, as measured', n5 && /30 seconds before its prompt cache runs out, once the agent has stopped: .* keeps it 5 minutes, as AionDX measures it\.$/.test(n5.note), JSON.stringify(n5));
+      await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (m) m.remove(); return 0; })()`);
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 60000, until: Date.now() + 3540000, longUntil: Date.now() + 3540000, ttl: '1h' });
+      await js('window.__aionDx.tickNow()');
+      await sleep(400);
+      await humanClick('.context-usage-indicator');
+      await sleep(600);
+      const n1 = await js(`document.querySelector('[data-testid="aiondx-ctxmenu"] .aiondx-ctxmenu-note').textContent`);
+      check(sc, 'a chat on an hour cache: the note says 5 minutes before, as measured', /5 minutes before its prompt cache runs out, once the agent has stopped: .* keeps it an hour, as AionDX measures it\.$/.test(n1), n1);
+      // a 5-minute cache is compacted too, 30 seconds before its end
+      await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (m) m.remove(); localStorage.removeItem('aionui.dx.harness1'); return 0; })()`);
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 280000, until: Date.now() + 20000, tailUntil: Date.now() + 20000, ttl: '5m' });
+      await js('window.__aionDx.tickNow()');
+      await sleep(400);
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(400);
+      check(sc, 'a 5-minute cache 20 seconds from its end, the chat 85% full: compacted too', /^Compacting by itself: 85% full/.test(JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactNote || ''));
+      await js(`(() => { localStorage.removeItem('aionui.dx.harness1'); return 0; })()`);
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 60000, until: Date.now() + 240000, tailUntil: Date.now() + 240000, ttl: '5m' });
+      await js('window.__aionDx.tickNow()');
+      await sleep(400);
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(400);
+      check(sc, 'and not 4 minutes before its end', !(JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0));
+      // compacted already: AionCore still says 85% (the size before), the launcher's estimate says 8%; not compacted again (November 13th)
+      await putStore('aiondx.ctx.conv.harness1', { v: 1, at: Date.now() - 60000, pre: 850000, post: 60000, fixed: 20000, tokens: 80000, estimated: true });
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 280000, until: Date.now() + 20000, tailUntil: Date.now() + 20000, ttl: '5m' });
+      await js('window.__aionDx.tickNow()');
+      await sleep(400);
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(400);
+      check(sc, 'a chat compacted already, AionCore still giving the size before: not compacted again', !(JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0));
+      await js(`(() => { delete window.__stub.store['aiondx.ctx.conv.harness1']; return 0; })()`);
+      await js('window.__aionDx.tickNow()');
+      await sleep(300);
+      await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (m) m.remove(); for (const k in (window.__aionDx.ctx ? window.__aionDx.ctx() : {})) {} return 0; })()`);
+      await js(`(() => { window.__aionDx.forgetCtx && window.__aionDx.forgetCtx(); return 0; })()`);
+      await humanClick('.context-usage-indicator');
+      await sleep(900);
+      const rd = await js(`document.querySelector('[data-testid="aiondx-ctxmenu"] .aiondx-ctxmenu-read').textContent`);
+      check(sc, 'with no reading taken yet, the menu asks AionCore and shows the count', /^85\.0% of the context window used \(850K of 1000K\)/.test(rd), rd);
+      await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (m) m.remove(); window.__aionDx.setOption('compact.auto', true); localStorage.removeItem('aionui.dx.options'); return 0; })()`);
     }
 
     // ---- clearing agent caches (2026-10-13, a request) ----
@@ -4294,7 +4423,8 @@ async function pageTarget() {
     }
     finish(failed ? 1 : 0, `\n${results.length - failed}/${results.length} passed`);
   } catch (e) {
-    for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.scenario.padEnd(13)} ${r.name}`);
+    // the details too: a run that ends in an error is the one that most needs them (November 13th, 2026)
+    for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.scenario.padEnd(13)} ${r.name}${r.ok || !r.detail ? '' : `   [${r.detail}]`}`);
     finish(2, `ERROR: ${e.message}`);
   }
 })();

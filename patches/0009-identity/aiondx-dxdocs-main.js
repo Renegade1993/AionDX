@@ -5,7 +5,7 @@
 // rendered doc with Electron's own printer (no Office). Only DX Docs folders handed out by "where" can be read or written.
 //
 // ipc "aiondx:dxdocs": where {convId, teamId, workspace} | list | read | save | history | version | restore | comments | comment | reply |
-//   watch | unwatch | pdf {docsDir, id, html} | reveal {docsDir, id}. Events: "aiondx:dxdocs-event".
+//   watch | unwatch | pdf {docsDir, id, html} | reveal {docsDir, id} | image {docsDir, src}. Events: "aiondx:dxdocs-event".
 
 const fs = require('fs');
 const path = require('path');
@@ -72,6 +72,22 @@ function create(o) {
     if (op === 'comments') return { ok: true, comments: D.comments(dir, req.id) };
     if (op === 'comment') return { ok: true, comment: D.addComment(dir, req.id, { quote: req.quote, text: req.text, section: req.section, by: 'user' }) };
     if (op === 'reply') return { ok: true, comment: D.replyComment(dir, req.id, req.comment, { text: req.text, resolve: req.resolve, by: 'user' }) };
+    if (op === 'image') {
+      // a picture a doc shows: relative to the DX Docs folder, or a path or file: URL under the project's root (the folder above it)
+      let src = String(req.src || '');
+      if (/^file:/i.test(src)) { try { src = require('url').fileURLToPath(src); } catch { return { ok: false, error: 'bad file URL' }; } }
+      else { try { src = decodeURIComponent(src); } catch { /* as written */ } }
+      const root = path.dirname(dir);
+      const f = path.resolve(dir, src);
+      const rel = path.relative(root, f);
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { ok: false, error: 'That picture is outside this project.' };
+      const types = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp' };
+      const type = types[path.extname(f).toLowerCase()];
+      if (!type) return { ok: false, error: 'Not a picture.' };
+      let st; try { st = fs.statSync(f); } catch { return { ok: false, error: 'No such picture: ' + rel }; }
+      if (!st.isFile() || st.size > 15 * 1048576) return { ok: false, error: 'Too large to show (over 15 MB).' };
+      return { ok: true, url: 'data:' + type + ';base64,' + fs.readFileSync(f).toString('base64') };
+    }
     if (op === 'watch') { watch(dir, sender); return { ok: true }; }
     if (op === 'unwatch') { unwatch(dir, sender); return { ok: true }; }
     if (op === 'reveal') {

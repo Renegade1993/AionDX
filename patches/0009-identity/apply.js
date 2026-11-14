@@ -899,10 +899,19 @@ fs.copyFileSync(path.join(__dirname, 'aiondx-notices.js'), path.join(ext, 'out',
 notes.push('out/aiondx/aiondx-notices.js');
 fs.copyFileSync(path.join(__dirname, 'aiondx-accounts.js'), path.join(ext, 'out', 'aiondx', 'aiondx-accounts.js'));
 notes.push('out/aiondx/aiondx-accounts.js');
-for (const f of ['dxdocs.js', 'aiondx-dxdocs-main.js']) { fs.copyFileSync(path.join(__dirname, f), path.join(ext, 'out', 'aiondx', f)); notes.push('out/aiondx/' + f); }
+for (const f of ['dxdocs.js', 'dxcharts.js', 'aiondx-dxdocs-main.js']) { fs.copyFileSync(path.join(__dirname, f), path.join(ext, 'out', 'aiondx', f)); notes.push('out/aiondx/' + f); }
 // DX Docs' Markdown renderer, loaded in the page before aiondx-ui.js
 fs.copyFileSync(path.join(__dirname, 'dxdocs-md.js'), path.join(ext, 'out', 'renderer', 'aiondx-dxdocs-md.js'));
 notes.push('out/renderer/aiondx-dxdocs-md.js');
+// charts (R-125): drawn by the page from a doc's chart blocks; loaded before the Markdown renderer
+fs.copyFileSync(path.join(__dirname, 'dxcharts.js'), path.join(ext, 'out', 'renderer', 'aiondx-dxcharts.js'));
+notes.push('out/renderer/aiondx-dxcharts.js');
+// diagrams (R-125): the app's own Mermaid (AionUi draws chat diagrams with it), copied where the page can load it when a doc has one
+{
+  const mm = path.join(ext, 'node_modules', 'mermaid', 'dist', 'mermaid.min.js');
+  if (fs.existsSync(mm)) { fs.copyFileSync(mm, path.join(ext, 'out', 'renderer', 'aiondx-mermaid.min.js')); notes.push('out/renderer/aiondx-mermaid.min.js'); }
+  else notes.push('no node_modules/mermaid/dist/mermaid.min.js: DX Docs diagrams show as their text');
+}
 {
   const idx = path.join(ext, 'out', 'renderer', 'index.html');
   let h = fs.readFileSync(idx, 'utf8');
@@ -912,6 +921,12 @@ notes.push('out/renderer/aiondx-dxdocs-md.js');
     h = h.replace(tag, '<script src="./aiondx-dxdocs-md.js" defer></script>\n    ' + tag);
     fs.writeFileSync(idx, h);
     notes.push('index.html: aiondx-dxdocs-md.js');
+  }
+  if (!h.includes('aiondx-dxcharts.js')) {
+    const tag = '<script src="./aiondx-dxdocs-md.js" defer></script>';
+    h = h.replace(tag, '<script src="./aiondx-dxcharts.js" defer></script>\n    ' + tag);
+    fs.writeFileSync(idx, h);
+    notes.push('index.html: aiondx-dxcharts.js');
   }
 }
 for (const n of notes) console.log('0009: ' + n);

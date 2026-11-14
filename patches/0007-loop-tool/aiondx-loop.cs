@@ -481,7 +481,7 @@ namespace AionDx
                 new Dictionary<string, object> {
                     { "name", "dxdoc_update" },
                     { "title", "Edit a DX Doc" },
-                    { "description", "Edits a DX Doc by section. Operations, applied in order, all or nothing: {op:\"replace_section\", heading, body} (fills a pending section or replaces one), {op:\"append_to_section\", heading, body}, {op:\"append_section\", heading, body, level}, {op:\"insert_after\", after, heading, body}, {op:\"rename_section\", heading, to}, {op:\"delete_section\", heading}, {op:\"replace_text\", find, replace, all}, {op:\"set_title\", title}, {op:\"set_lead\", body}, {op:\"write\", markdown}. Headings match without case. The version before is kept; the user sees the change at once." },
+                    { "description", "Edits a DX Doc by section. Operations, applied in order, all or nothing: {op:\"replace_section\", heading, body} (fills a pending section or replaces one), {op:\"append_to_section\", heading, body}, {op:\"append_section\", heading, body, level}, {op:\"insert_after\", after, heading, body}, {op:\"rename_section\", heading, to}, {op:\"delete_section\", heading}, {op:\"replace_text\", find, replace, all}, {op:\"set_title\", title}, {op:\"set_lead\", body}, {op:\"write\", markdown}. Headings match without case. The version before is kept; the user sees the change at once. A body can hold a ```chart block of JSON ({\"type\":\"bar|stacked|hbar|line|area|pie|scatter\", \"title\", \"unit\", \"columns\":[x label, series names...], \"rows\":[[x, values...]]}, or \"x\" with \"series\":[{\"name\", \"values\"}]) for numbers with a shape, and a ```mermaid block (flowchart, sequenceDiagram, gantt, timeline, quadrantChart, mindmap and the rest of Mermaid 11) for structure; the panel draws both. A block that cannot be drawn is refused with its line and the fix." },
                     { "inputSchema", new Dictionary<string, object> {
                         { "type", "object" },
                         { "properties", new Dictionary<string, object> {
@@ -1643,7 +1643,8 @@ namespace AionDx
                 case "dxdoc_create":
                 {
                     var r = DxRun("create", a);
-                    return "Created the DX Doc \"" + Str(r, "title") + "\" (id " + Str(r, "id") + ") at " + Str(r, "path") + ". It is open in the user's sidebar; " +
+                    return "Created the DX Doc \"" + Str(r, "title") + "\" (id " + Str(r, "id") + ") at " + Str(r, "path") + ". The user sees it in the DX Docs panel on the right of this chat (solo or team), which opens it by itself while the chat is on screen; " +
+                        "if they say they cannot see it, tell them to press Docs in the chat's top bar. In chat, give its link as [" + Str(r, "title") + "](https://aiondx.invalid/doc?id=" + Str(r, "id") + "): it shows as a card that opens the doc. " +
                         "each section shows \"Writing: ...\" until you fill it with dxdoc_update (replace_section). Fill them in order, one or two per call, so the user watches it build.";
                 }
                 case "dxdoc_update":

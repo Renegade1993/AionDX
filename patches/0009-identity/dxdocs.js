@@ -14,6 +14,34 @@
 
 const fs = require('fs');
 const path = require('path');
+// charts (R-125): beside this file wherever it goes (patches, out/aiondx, the aiondx tool's bin folder)
+const CHARTS = (() => { try { return require('./dxcharts.js'); } catch { return null; } })();
+// the diagram kinds the page's Mermaid (11.x) draws, by a block's first word
+const MERMAID_KINDS = ['flowchart', 'graph', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'stateDiagram-v2', 'erDiagram', 'journey', 'gantt', 'pie',
+  'quadrantChart', 'requirementDiagram', 'gitGraph', 'mindmap', 'timeline', 'sankey-beta', 'xychart-beta', 'block-beta', 'packet-beta', 'kanban',
+  'architecture-beta', 'radar-beta', 'C4Context', 'C4Container', 'C4Component', 'C4Dynamic', 'C4Deployment', 'zenuml', 'treemap-beta'];
+/** What in a doc's Markdown cannot be drawn: chart blocks that do not read, mermaid blocks of an unknown kind. [] when all is well. */
+function drawProblems(md) {
+  const out = CHARTS ? CHARTS.check(md).map((p) => 'the chart at line ' + p.line + (p.section ? ' (section "' + p.section + '")' : '') + ': ' + p.error) : [];
+  const lines = String(md || '').replace(/\r\n/g, '\n').split('\n');
+  let section = '';
+  for (let i = 0; i < lines.length; i++) {
+    const h = /^#{1,6}\s+(.*?)\s*#*\s*$/.exec(lines[i]);
+    if (h) { section = h[1]; continue; }
+    const f = /^(```|~~~)\s*mermaid\s*$/.exec(lines[i]);
+    if (!f) continue;
+    let j = i + 1, first = '';
+    while (j < lines.length && lines[j].indexOf(f[1]) !== 0) { const t = lines[j].trim(); if (!first && t && !t.startsWith('%%') && t !== '---') first = t; j++; }
+    if (j >= lines.length) out.push('the diagram at line ' + (i + 1) + (section ? ' (section "' + section + '")' : '') + ' has no closing ' + f[1]);
+    else {
+      const kind = (first.split(/[\s:]/)[0] || '');
+      if (MERMAID_KINDS.indexOf(kind) < 0) out.push('the diagram at line ' + (i + 1) + (section ? ' (section "' + section + '")' : '') + ' starts with "' + kind.slice(0, 40) + '"; a mermaid block starts with its kind: ' + MERMAID_KINDS.slice(0, 18).join(', ') + ' ...');
+    }
+    i = j;
+  }
+  return out;
+}
+const CHART_HELP = 'A chart block is JSON, like {"type":"bar","title":"...","unit":"...","x":["Q1","Q2"],"series":[{"name":"2026","values":[3,5]}]} or {"type":"line","columns":["Month","Sales"],"rows":[["Jan",3],["Feb",5]]}; types: bar, stacked, hbar, line, area, pie, scatter.';
 
 const PENDING_RE = /^<!--\s*aiondx:pending\s*([\s\S]*?)\s*-->\s*$/;
 const HISTORY_KEEP = 50;
@@ -197,8 +225,11 @@ function update(docsDir, id, ops) {
     }
     done.push(k);
   }
+  const text = body !== null ? body.replace(/\r\n/g, '\n') : render(doc);
+  const bad = drawProblems(text);
+  if (bad.length) throw new Error('Nothing was written: ' + bad.join('; ') + '. ' + CHART_HELP);
   const version = snapshot(docsDir, id);
-  writeAtomic(f, body !== null ? body.replace(/\r\n/g, '\n') : render(doc));
+  writeAtomic(f, text);
   return { id, path: f, done, previous: version, pending: parse(fs.readFileSync(f, 'utf8')).sections.filter((s) => pendingOf(s.body)).map((s) => s.heading) };
 }
 /** The user's own edit from the sidebar: the whole Markdown, the version before kept. */
@@ -247,7 +278,7 @@ function replyComment(docsDir, id, commentId, o) {
   return c;
 }
 
-module.exports = { DOCS_FOLDER, resolveRoot, parse, render, pendingOf, list, info, create, read, update, save, history, readVersion, restore,
+module.exports = { drawProblems, DOCS_FOLDER, resolveRoot, parse, render, pendingOf, list, info, create, read, update, save, history, readVersion, restore,
   comments, addComment, replyComment, slugOf, ID_RE, PENDING_RE };
 
 // ---------------------------------------------------------------- command line: node dxdocs.js <command> --json '<args>' | --json-file F

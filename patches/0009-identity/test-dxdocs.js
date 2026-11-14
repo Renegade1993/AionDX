@@ -90,6 +90,22 @@ try {
   check('command line: update', o.ok && o.done[0] === 'replace_section' && o.pending.length === 0, JSON.stringify(o));
   o = cli(['read'].concat(base, ['--json', '{"doc":"nope"}']));
   check('command line: an error is a JSON answer with ok false', o.ok === false && /No doc "nope"/.test(o.error), JSON.stringify(o));
+// R-125: charts and diagrams are checked when an agent writes
+{
+  const dd = fs.mkdtempSync(path.join(os.tmpdir(), 'dxd-ch-'));
+  const c0 = D.create(dd, { title: 'Numbers', sections: [{ heading: 'Sales', intent: 'a chart' }] });
+  let err = null;
+  try { D.update(dd, c0.id, [{ op: 'replace_section', heading: 'Sales', body: '```chart\n{"type":"bar","x":["a","b"],"series":[{"name":"s","values":[1]}]}\n```' }]); } catch (e) { err = e.message; }
+  check('a chart that does not read is refused, nothing written, with where, why and how it should look', err && /^Nothing was written: the chart at line \d+ \(section "Sales"\): "x" has 2 labels/.test(err) && /A chart block is JSON/.test(err) && /a chart/.test(fs.readFileSync(path.join(dd, c0.id + '.md'), 'utf8')), err);
+  D.update(dd, c0.id, [{ op: 'replace_section', heading: 'Sales', body: '```chart\n{"type":"bar","x":["a","b"],"series":[{"name":"s","values":[1,2]}]}\n```' }]);
+  check('a good one is written', /"values":\[1,2\]/.test(fs.readFileSync(path.join(dd, c0.id + '.md'), 'utf8')));
+  err = null;
+  try { D.update(dd, c0.id, [{ op: 'append_section', heading: 'Flow', body: '```mermaid\nflowchat LR\n  A-->B\n```' }]); } catch (e) { err = e.message; }
+  check('a diagram of an unknown kind is refused, naming the kinds', err && /the diagram at line \d+ \(section "Flow"\) starts with "flowchat"; a mermaid block starts with its kind: flowchart, graph/.test(err), err);
+  D.update(dd, c0.id, [{ op: 'append_section', heading: 'Flow', body: '```mermaid\n%% the steps\nflowchart LR\n  A-->B\n```' }]);
+  check('a known one is written', /flowchart LR/.test(fs.readFileSync(path.join(dd, c0.id + '.md'), 'utf8')));
+}
+
 } catch (e) {
   check('no exception', false, e.stack);
 } finally {

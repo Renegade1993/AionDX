@@ -17,7 +17,12 @@ check('an address on its own becomes a link', H('see https://example.com/a now')
 check('an image', H('![chart](./chart.png "Q1")'), '<p><img src="./chart.png" alt="chart" title="Q1"></p>');
 check('a bullet list, nested', H('- a\n  - a1\n- b'), '<ul><li>a<ul><li>a1</li></ul></li><li>b</li></ul>');
 check('a numbered list', H('1. one\n2. two'), '<ol><li>one</li><li>two</li></ol>');
-check('a task list', H('- [x] done\n- [ ] open'), '<ul><li class="dx-task"><input type="checkbox" disabled checked> done</li><li class="dx-task"><input type="checkbox" disabled> open</li></ul>');
+check('a task list: each box carries its line, so it can be ticked', H('- [x] done\n- [ ] open'), '<ul><li class="dx-task"><input type="checkbox" class="dx-tick" data-line="0" checked> done</li><li class="dx-task"><input type="checkbox" class="dx-tick" data-line="1"> open</li></ul>');
+check('a task inside a quote cannot be ticked (no line of its own)', /<input type="checkbox" class="dx-tick" disabled>/.test(H('> - [ ] quoted')), true);
+check('a chart block is drawn as a chart (R-125)', /^<figure class="dx-chart"><svg class="dx-chart-svg"/.test(H('```chart\n{"type":"bar","x":["a"],"series":[{"name":"s","values":[1]}]}\n```')), true);
+check('a bad chart block says why', /dx-chart--bad/.test(H('```chart\n{nope}\n```')), true);
+check('a mermaid block becomes a holder with its text, escaped', H('```mermaid\nflowchart LR\n  A["<b>x</b>"]-->B\n```'),
+  '<div class="dx-mermaid" data-src="flowchart LR\n  A[&quot;&lt;b&gt;x&lt;/b&gt;&quot;]--&gt;B"><pre><code class="language-mermaid">flowchart LR\n  A[&quot;&lt;b&gt;x&lt;/b&gt;&quot;]--&gt;B</code></pre></div>');
 check('a code block keeps its text escaped, and headings inside it are not headings', H('```js\n## not\n<b>\n```'), '<pre><code class="language-js">## not\n&lt;b&gt;</code></pre>');
 check('a table with alignment', H('| A | B |\n|:--|--:|\n| 1 | **2** |'),
   '<table><thead><tr><th style="text-align:">A</th><th style="text-align:right">B</th></tr></thead><tbody><tr><td style="text-align:">1</td><td style="text-align:right"><strong>2</strong></td></tr></tbody></table>'.replace(/ style="text-align:"/g, ''));

@@ -43,6 +43,13 @@ process.stdin.on('data', (d) => {
     else if (j.type === 'exit') process.exit(j.code);
     else if (j.type === 'turn') out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, result: 'done' });
     else if (j.type === 'compact') out({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: j.pre, post_tokens: j.post } });
+    else if (j.type === 'compactlong') {
+      // as Claude Code 2.1.323 writes it: session and uuid first, then metadata with the preserved segment, well past 256 bytes; in two writes
+      const line = JSON.stringify({ type: 'system', subtype: 'compact_boundary', session_id: 's'.repeat(36), uuid: 'u'.repeat(36),
+        compact_metadata: { trigger: 'manual', pre_tokens: j.pre, preserved_segment: { uuids: Array.from({ length: 40 }, (_, k) => 'id-' + k + '-' + 'x'.repeat(30)) }, post_tokens: j.post } }) + '\\n';
+      process.stdout.write(line.slice(0, 300));
+      setTimeout(() => { process.stdout.write(line.slice(300)); out({ type: 'after_compact' }); }, 50);
+    }
     else if (j.type === 'api') {
       // Plain http and a synchronous unzip: Node's fetch decompresses with zlib streams, and a process that exits right after one
       // prints a libuv assertion on Windows (seen November 11th; it was this stand-in, not the proxy).
@@ -539,6 +546,13 @@ server.listen(0, '127.0.0.1', async () => {
       check('a finished compaction writes the size after it: the compacted conversation plus the fixed part, measured from the last call\'s request',
         cx.pre === 100003 && cx.post === 4000 && cx.fixed === wantFixed && cx.tokens === wantFixed + 4000 && cx.estimated === true, JSON.stringify([cx, wantFixed]));
       check('the log says so', F.logs.some((l) => new RegExp('compaction: about ' + (wantFixed + 4000) + ' tokens now').test(l)), F.logs.join(' | ').slice(0, 300));
+      // November 13th: Claude Code's real compaction line is longer than the 256-byte head and came in pieces; it was never read
+      F.input.write(frame({ type: 'compactlong', pre: 880453, post: 22989 }));
+      await waitFor(() => ctxPuts().length >= 2 && F.json().some((x) => x.type === 'after_compact'));
+      const cl = ctxPuts()[1] || {};
+      check('a compaction line longer than the head, in pieces: read whole, size written', cl.pre === 880453 && cl.post === 22989 && cl.tokens === cl.fixed + 22989, JSON.stringify(cl));
+      const fwd = F.json().find((x) => x.type === 'system' && x.subtype === 'compact_boundary' && x.compact_metadata && x.compact_metadata.pre_tokens === 880453);
+      check('and AionCore still gets the line whole, then the next one', !!fwd && fwd.compact_metadata.preserved_segment.uuids.length === 40 && F.json().some((x) => x.type === 'after_compact'));
       F.input.end();
       await Promise.race([F.done, sleep(5000)]);
     }

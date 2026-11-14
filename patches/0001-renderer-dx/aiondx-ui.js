@@ -716,7 +716,7 @@
     { id: 'help.tips', group: 'Help', type: 'bool', default: true,
       label: 'Show tips for AionDX\u2019s controls', desc: 'A bubble points at each AionDX control the first time it is on screen and says how to use it, until you press Got it. Off hides them all.' },
     { id: 'compact.auto', group: 'Long chats', type: 'bool', default: true,
-      label: 'Compact a full chat by itself', desc: 'A chat over half full is compacted 5 minutes before its hour-long prompt cache runs out, while its Loop is off and once its agent has stopped. Also on the context ring\u2019s menu (click the ring).' },
+      label: 'Compact a full chat by itself', desc: 'A chat over half full is compacted just before its prompt cache runs out (5 minutes before an hour-long cache, 30 seconds before a 5-minute one, as measured for its account), while its Loop is off and once its agent has stopped. Also on the context ring\u2019s menu (click the ring).' },
     { id: 'loop.skillsLine', group: 'The Loop', type: 'bool', default: true,
       label: 'Remind agents of their skills', desc: 'Each Loop nudge to keep working ends with one line: check the project\u2019s skills before a task, and update the matching skill when you learn a better way. Agents rarely open a skill unless told (measured on a team, November 10th).' },
     { id: 'spellcheck', group: 'Typing', type: 'bool', default: true,
@@ -4095,6 +4095,7 @@
     var newCompact = Object.keys(cx).some(function (id) { return !ctxCompact[id] || ctxCompact[id].at !== cx[id].at; });
     ctxCompact = cx;
     if (newCompact) { ctxAsk = {}; try { renderSched(); } catch (e) {} }
+    cacheAcct = ca;
     try { checkCacheLength(ca); } catch (e) { console.log('[dx] cache length check failed', e); }
     usageAlerts = al;
     usageFired = fi;
@@ -4107,6 +4108,7 @@
   // shows as a rebuild.
   var CACHE_CONV = 'aiondx.cache.conv.';
   var cacheConv = {};        // conversation id -> record
+  var cacheAcct = {};        // account key -> { ttl, label, at, ... }: the cache length measured for each account (claude-stream-proxy.js)
   // Each account's length, as its chats' answers last showed it (2026-11-11.3): aiondx.cache.acct.<account> = { label, ttl, at, from,
   // changedAt }. A request of 2026-11-11: if Anthropic moves an account back to 5 minutes (or to an hour), say so once, the day it happens.
   // The length this window last told the user about is kept per account in the browser's storage, so several pages tell it once; the first
@@ -10000,6 +10002,13 @@
       if (!a) return;
       var href = a.href || '';
       if (!/^https?:\/\//i.test(href)) return;
+      var dl = /^https?:\/\/aiondx\.invalid\/doc\?(.*)$/i.exec(href);
+      if (dl) {
+        ev.preventDefault(); ev.stopPropagation(); if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+        var did = ''; try { did = new URLSearchParams(dl[1]).get('id') || ''; } catch (er) {}
+        dxOpenLink(did);
+        return;
+      }
       // R-110: a Claude Doc opens in the Docs pane wherever its link is, AionDX's own cards included (not inside the pane itself)
       var docHere = isDocLink(href) && !(a.closest && a.closest('.aiondx-docs'));
       if (!docHere && a.closest('[class*="aiondx"]')) return;
@@ -10589,12 +10598,16 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.27.7',
+    release: '0.27.9',
     items: [
-      ['Compaction by itself', 'A chat over half full is compacted 5 minutes before its prompt cache runs out, while its Loop is off. Click the context ring (next to the send button) to switch it off or on, or to compact now.'],
+      ['Charts and diagrams', 'Ask any agent for a chart or a diagram in a DX Doc (\u201cput the numbers in a chart\u201d, \u201cdraw the steps as a flowchart\u201d): the panel draws it. Hover a bar or a point for its value; Data shows the numbers. Tasks in a doc can be ticked, and a doc\u2019s link in a reply is a card that opens it.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
-    earlier: [{ release: '0.27.5', items: [
+    earlier: [{ release: '0.27.8', items: [
+      ['Ask for a DX Doc', 'Type \u201cmake a DX Doc about \u2026\u201d in any chat: it opens in a wide panel beside the chat and fills in while you watch. The Docs button at the top opens and closes it. Say \u201cDX Doc\u201d by name: a Claude chat may otherwise use Anthropic\u2019s Claude Docs, which needs a claude.ai sign-in. Select text in it to comment; the agent is told.'],
+    ] }, { release: '0.27.7', items: [
+      ['Compaction by itself', 'A chat over half full is compacted just before its prompt cache runs out, timed by the cache length measured for its account, while its Loop is off. Click the context ring (next to the send button) to switch it off or on, or to compact now.'],
+    ] }, { release: '0.27.5', items: [
       ['DX Docs', 'Ask your agent for a document, report or plan: it appears in the right-hand sidebar and fills in as you watch. Select text in it to comment; the agent is told. Edit, earlier versions and PDF are in its bar.'],
       ['More Claude accounts', 'On the new-chat page, click + Add account at the end of the agent row. Name the account, choose what it may do, and sign in on the page that opens; AionDX checks the key and adds a pill for it.'],
     ] }],
@@ -10688,8 +10701,12 @@
       text: 'Shows while the agent works and you have typed something. Click it to stop the agent’s current step and have it answer you right away; Enter instead waits for its next step.' },
     { id: 'menu', sel: '[data-testid="aiondx-chat-menu"]', title: 'This chat’s menu',
       text: 'The same menu you get by right-clicking the chat in the list on the left.' },
-    { id: 'dxdocs', sel: '[data-testid="aiondx-dx"] .dx-tab[data-tab="docs"]', title: 'DX Docs',
-      text: 'Documents your agent writes appear here and fill in as you watch. Select text in a doc to comment (the agent is told), or press Edit. Files is the next tab.' },
+    { id: 'dxdocs', sel: '[data-testid="aiondx-dx-open"]', title: 'DX Docs',
+      text: 'Opens and closes this chat\u2019s docs in a wide panel beside the chat. Docs your agent writes open there by themselves. Drag the panel\u2019s left edge to resize it; select text in a doc to comment.' },
+    { id: 'dxdocs-ask', sel: '.sendbox-send-tooltip-anchor', title: 'Ask for a DX Doc',
+      text: 'Type \u201cmake a DX Doc about \u2026\u201d in any chat: it opens in a wide panel beside the chat and fills in while you watch. The Docs button at the top opens and closes it. Say \u201cDX Doc\u201d by name: a Claude chat may otherwise use Anthropic\u2019s Claude Docs, which needs a claude.ai sign-in. Select text in it to comment; the agent is told.' },
+    { id: 'dxcharts', sel: '[data-testid="aiondx-dx"] .dx-chart-data', title: 'Charts and diagrams',
+      text: 'Hover a bar or a point for its value; Data shows the numbers behind the chart. Ask any agent for a chart or a diagram in a DX Doc and the panel draws it.' },
     { id: 'add-account', sel: '[data-testid="aiondx-add-account"]', title: 'Add another Claude account',
       text: 'Click to sign in another Claude account; you choose what it may do before the sign-in page opens. It then gets its own pill here and shows in every chat\u2019s account button.' },
     { id: 'groups', sel: '[data-testid="aiondx-group-new"]', title: 'Groups',
@@ -10824,7 +10841,18 @@
   // off: with the Loop on, the Loop keeps the cache warm and compacts on its own terms. The compaction is the Loop's own: a request that the
   // tick sends as the agent's /compact once the agent has stopped and the box holds no draft. Option compact.auto (on by default); the user
   // switches it from the ring's menu (click the ring). Solo chats; a team's members follow their Loops.
-  var AUTO_LEAD_MS = 5 * 60000;
+  var AUTO_LEAD_MS = { '1h': 5 * 60000, '5m': 30000 };
+  /** The prompt cache length AionDX measured for this chat ('1h' or '5m'): its own last call's, else its account's. { ttl, label } or null. */
+  function chatCacheLength(convId) {
+    var rec = convId ? cacheRecord(convId) : null;
+    var u = usageConv[convId] || (convId ? usageGuess(convId) : null);
+    var acct = u && u.acct ? cacheAcct[u.acct] : null;
+    var label = (acct && acct.label) || (u && u.label) || '';
+    if (rec && (rec.ttl === '1h' || rec.ttl === '5m')) return { ttl: rec.ttl, label: label };
+    if (rec && Number(rec.longUntil) > 0) return { ttl: '1h', label: label };
+    if (acct && (acct.ttl === '1h' || acct.ttl === '5m')) return { ttl: acct.ttl, label: label };
+    return null;
+  }
   var autoAsked = {};   // conversation id -> the last call (record at) a compaction was asked for
   var autoBusy = false;
   async function checkAutoCompact() {
@@ -10837,8 +10865,11 @@
         var convId = ids[i];
         var rec = cacheRecord(convId);
         if (!rec) continue;
-        var long = Number(rec.longUntil) > 0 ? Number(rec.longUntil) : (rec.ttl === '1h' ? Number(rec.until) : 0);
-        if (!(long > now) || long - now > AUTO_LEAD_MS) continue;       // no hour cache alive, or not due yet
+        var len = chatCacheLength(convId);
+        if (!len) continue;                                               // no length measured for this chat or its account
+        // when the cache this chat's next message would reuse runs out: the hour part, or the 5-minute newest part
+        var long = len.ttl === '1h' ? (Number(rec.longUntil) > 0 ? Number(rec.longUntil) : Number(rec.until)) : tailOf(rec);
+        if (!(long > now) || long - now > AUTO_LEAD_MS[len.ttl]) continue; // gone already, or not due yet
         if (autoAsked[convId] === Number(rec.at)) continue;              // asked already for this reply
         var t = { kind: 'conv', key: 'conv:' + convId, convId: convId };
         var s = state(t);
@@ -10846,6 +10877,9 @@
         if ((Number(s.compactSentAt) || 0) > Number(rec.at)) continue;  // compacted since that reply
         var g = await getJson('/api/conversations/' + encodeURIComponent(convId) + '/usage');
         var u = g && g.data;
+        // AionCore keeps the size from before a compaction until the next reply; the launcher's estimate after it wins while that holds
+        var cmpd = u ? compactView({ convId: convId, used: Number(u.used) }) : null;
+        if (u && cmpd) u = { used: Number(cmpd.tokens), size: u.size };
         if (!u || !(Number(u.size) > 0) || Number(u.used) / Number(u.size) < 0.5) { autoAsked[convId] = Number(rec.at); continue; }
         autoAsked[convId] = Number(rec.at);
         s.compactAt = Date.now();
@@ -10859,6 +10893,14 @@
 
   // The ring's menu: a click on the context ring (AionUi's own, which only has a hover card, or AionDX's) opens it.
   var ctxMenuEl = null;
+  /** What compaction by itself does for this chat, by the cache length measured for it: an hour, 5 minutes, or not measured yet. */
+  function autoCompactNote(convId) {
+    var len = chatCacheLength(convId);
+    var who = len && len.label ? 'the ' + len.label + ' account' : 'this chat\u2019s account';
+    if (len && len.ttl === '1h') return 'When this chat is over half full and its Loop is off, AionDX sends its /compact 5 minutes before its prompt cache runs out, once the agent has stopped: ' + who + ' keeps it an hour, as AionDX measures it.';
+    if (len && len.ttl === '5m') return 'When this chat is over half full and its Loop is off, AionDX sends its /compact 30 seconds before its prompt cache runs out, once the agent has stopped: ' + who + ' keeps it 5 minutes, as AionDX measures it.';
+    return 'When a chat is over half full and its Loop is off, AionDX sends its /compact just before its prompt cache runs out (5 minutes before an hour-long cache, 30 seconds before a 5-minute one). It has not measured this chat\u2019s cache yet.';
+  }
   function closeCtxMenu() { if (ctxMenuEl && ctxMenuEl.parentNode) ctxMenuEl.parentNode.removeChild(ctxMenuEl); ctxMenuEl = null; }
   function openCtxMenu(ring) {
     closeCtxMenu();
@@ -10878,8 +10920,19 @@
       '<div class="arco-dropdown-menu-item aiondx-ctxmenu-auto" role="menuitemcheckbox" aria-checked="' + on + '" data-act="auto">' +
       '<span class="aiondx-ctxmenu-check">' + (on ? '✓' : '') + '</span>Compact by itself before the cache runs out</div>' +
       (convId ? '<div class="arco-dropdown-menu-item" role="menuitem" data-act="now"><span class="aiondx-ctxmenu-check"></span>Compact now</div>' : '') +
-      '<div class="aiondx-note aiondx-ctxmenu-note">When a chat is over half full and its Loop is off, AionDX sends its /compact 5 minutes before its hour-long cache runs out, once the agent has stopped.</div></div>';
+      '<div class="aiondx-note aiondx-ctxmenu-note"></div></div>';
     m.querySelector('.aiondx-ctxmenu-read').textContent = reading + (cl ? '\n' + cl : '');
+    m.querySelector('.aiondx-ctxmenu-note').textContent = autoCompactNote(convId);
+    // no reading yet (the app has just started, say): ask AionCore for this chat's count and fill it in
+    if (convId && !(info && info.used > 0)) {
+      m.querySelector('.aiondx-ctxmenu-read').textContent = 'Reading how full this chat is\u2026';
+      getJson('/api/conversations/' + encodeURIComponent(convId) + '/usage').then(function (g) {
+        var u = g && g.data;
+        if (!ctxMenuEl || ctxMenuEl !== m) return;
+        var fresh = u && Number(u.used) > 0 ? { used: Number(u.used), limit: Number(u.size) || 0, cost: u.cost && Number(u.cost.amount) > 0 ? { amount: Number(u.cost.amount), currency: String(u.cost.currency || 'USD') } : null } : null;
+        m.querySelector('.aiondx-ctxmenu-read').textContent = fresh ? ctxReading(fresh, compactView({ convId: convId, used: fresh.used })) +(cl ? '\n' + cl : '') : 'No context count yet for this chat (it starts after its first reply).';
+      }, function () {});
+    }
     m.addEventListener('click', function (ev) {
       var it = ev.target.closest('[data-act]');
       if (!it) return;
@@ -10936,18 +10989,136 @@
   // over, with a Files tab to get AionUi's back. The docs are Markdown files in the DX Docs folder of the chat's project, else its working
   // folder (main process: aiondx-dxdocs-main.js and the engine dxdocs.js; the Markdown is drawn by aiondx-dxdocs-md.js).
   var DX_TAB_KEY = KEY_PREFIX + 'dx.tab';
-  var dx = { el: null, conv: null, docsDir: null, view: 'list', doc: null, docs: [], md: '', editing: false, dirty: false, listening: false, opening: false, comments: [] };
+  var dx = { el: null, conv: null, docsDir: null, view: 'list', doc: null, docs: [], md: '', editing: false, dirty: false, listening: false, opening: false, comments: [], open: false };
   function dxApi(op, args) { return window.aiondxDx.call(op, Object.assign({ docsDir: dx.docsDir }, args || {})); }
-  function dxSider() {
+  var DX_CLOSED_KEY = KEY_PREFIX + 'dx.closed';   // '1' when the user closed the panel last (chats with docs then open with it closed)
+  var DX_SHARE_KEY = KEY_PREFIX + 'dx.share';     // the panel's share of the chat area, 0.25 to 0.75
+  var SVG_DOC = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M10 4h20l8 8v32H10z" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M17 22h14M17 30h14M17 38h8" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>';
+  function dxRoute() {
     var r = route();
-    if (!r || r.kind !== 'conv' || disabled() || !window.aiondxDx || !window.__dxMd) return null;
-    var s = document.querySelector('.chat-layout-right-sider');
-    return s && !s.closest('.arco-layout-sider-left') ? s : null;
+    return r && (r.kind === 'conv' || r.kind === 'team') && !disabled() && window.aiondxDx && window.__dxMd ? r : null;
   }
-  function dxCollapsed(s) { return !s || s.getBoundingClientRect().width < 60; }
-  function dxExpand() {
-    var s = dxSider();
-    if (s && dxCollapsed(s)) window.dispatchEvent(new CustomEvent('aionui-workspace-toggle', { cancelable: true }));
+  /** The chat's (or team's) key for the panel: the conversation id, or team:<id>. */
+  function dxKey(r) { return r.kind === 'team' ? 'team:' + r.id : r.id; }
+  function dxShare() { var v = NaN; try { v = parseFloat(localStorage.getItem(DX_SHARE_KEY)); } catch (e) {} return v >= 0.25 && v <= 0.75 ? v : 0.5; }
+  function dxUserClosed() { try { return localStorage.getItem(DX_CLOSED_KEY) === '1'; } catch (e) { return false; } }
+  /** The chat area (AionUi's ChatLayout: the chat column, its files sidebar, and now this panel). */
+  function dxBox() { var h = document.querySelector('.chat-layout-header'); return h ? h.closest('.relative.w-full.overflow-hidden') : null; }
+  /** AionDX's own panel at the chat's right edge (solo and team pages; AionUi's sidebar is narrow and missing in projects). */
+  function dxSider() {
+    if (!dxRoute()) return null;
+    var box = dxBox();
+    if (!box) return null;
+    var own = null;
+    for (var i = 0; i < box.children.length; i++) if (box.children[i].classList.contains('aiondx-dx-sider')) own = box.children[i];
+    if (!own) {
+      own = document.createElement('div');
+      own.className = 'aiondx-dx-sider';
+      own.setAttribute('data-testid', 'aiondx-dx-sider');
+      var grip = document.createElement('div');
+      grip.className = 'aiondx-dx-grip';
+      grip.setAttribute('data-testid', 'aiondx-dx-grip');
+      grip.title = 'Drag to resize';
+      grip.addEventListener('mousedown', dxGrab);
+      own.appendChild(grip);
+    }
+    if (own !== box.lastElementChild) box.appendChild(own);   // after AionUi's own sidebar
+    dxSize(own, box);
+    dxHeaderButton();
+    return own;
+  }
+  function dxSize(own, box) {
+    if (own.classList.contains('aiondx-dx-sider--open') !== dx.open) own.classList.toggle('aiondx-dx-sider--open', dx.open);
+    var bw = box.getBoundingClientRect().width;
+    var w = dx.open ? Math.min(Math.max(480, Math.round(bw * dxShare())), Math.max(360, Math.round(bw - 360))) : 0;
+    if (own.style.width !== w + 'px') { own.style.width = w + 'px'; own.style.flexBasis = w + 'px'; }
+  }
+  /** Dragging the panel's left edge: its share of the chat area, kept for every chat. */
+  function dxGrab(ev) {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    var box = dxBox();
+    if (!box) return;
+    document.body.classList.add('aiondx-dx-dragging');
+    function move(e) {
+      var r = box.getBoundingClientRect();
+      var share = Math.min(0.75, Math.max(0.25, (r.right - e.clientX) / r.width));
+      try { localStorage.setItem(DX_SHARE_KEY, share.toFixed(3)); } catch (er) {}
+      var own = dxSider();
+      if (own) dxSize(own, box);
+    }
+    function up() { document.removeEventListener('mousemove', move, true); document.removeEventListener('mouseup', up, true); document.body.classList.remove('aiondx-dx-dragging'); }
+    document.addEventListener('mousemove', move, true);
+    document.addEventListener('mouseup', up, true);
+  }
+  /** Open or close the panel. Opening folds AionUi's files sidebar (one panel at the right). byUser: remembered for the next chat. */
+  function dxSetOpen(v, byUser) {
+    var was = dx.open;
+    dx.open = !!v;
+    if (byUser) { try { if (v) localStorage.removeItem(DX_CLOSED_KEY); else localStorage.setItem(DX_CLOSED_KEY, '1'); } catch (e) {} }
+    var box = dxBox();
+    if (v && !was && box) {
+      var a = box.querySelector('.chat-layout-right-sider');
+      if (a && a.getBoundingClientRect().width >= 60) window.dispatchEvent(new CustomEvent('aionui-workspace-toggle', { cancelable: true }));
+    }
+    dxSider();
+  }
+  function dxCollapsed() { return !dx.open; }
+  /** A doc card clicked in a chat: the panel opens on that doc (this chat's or team's docs). */
+  async function dxOpenLink(id) {
+    if (!/^[\w.-]{1,120}$/.test(id)) { toast('That doc link has no doc in it.'); return; }
+    if (!dxSider()) { toast('Open the chat the doc belongs to, then click its card again.'); return; }
+    for (var i = 0; i < 40 && !dx.docsDir; i++) await new Promise(function (r) { setTimeout(r, 100); });
+    if (dxTab() !== 'docs') dxSetTab('docs');
+    dxSetOpen(true, true);
+    var r = await dxApi('read', { id: id });
+    if (!r || !r.ok) { toast('That doc is not in this chat\u2019s DX Docs.', r && r.error); return; }
+    dxOpen(id);
+  }
+  /** Doc links in replies look like cards: AionDX's style, put in each reply's own (shadow) root. */
+  var dxCardAt = 0;
+  var DX_CARD_CSS = 'a[href^="https://aiondx.invalid/doc"]{display:inline-flex;align-items:center;gap:8px;margin:4px 0;padding:8px 14px 8px 12px;' +
+    'border:1px solid rgba(128,128,128,.35);border-radius:8px;text-decoration:none !important;font-weight:600;color:inherit !important;background:rgba(128,128,128,.07);cursor:pointer}' +
+    'a[href^="https://aiondx.invalid/doc"]:hover{background:rgba(128,128,128,.16)}' +
+    'a[href^="https://aiondx.invalid/doc"]::before{content:"";width:14px;height:17px;flex:0 0 auto;border:2px solid currentColor;border-radius:2px;opacity:.7;' +
+    'background:linear-gradient(currentColor,currentColor) 2px 5px/7px 1.5px no-repeat,linear-gradient(currentColor,currentColor) 2px 9px/7px 1.5px no-repeat}' +
+    'a[href^="https://aiondx.invalid/doc"]::after{content:"Open";font-weight:400;font-size:12px;opacity:.65;margin-left:6px}';
+  function dxCards() {
+    if (Date.now() - dxCardAt < 1500) return;
+    dxCardAt = Date.now();
+    markdownRoots().forEach(function (root) {
+      if (root.querySelector('style[data-aiondx-doccard]') || !root.querySelector('a[href^="https://aiondx.invalid/doc"]')) return;
+      var st = document.createElement('style');
+      st.setAttribute('data-aiondx-doccard', '1');
+      st.textContent = DX_CARD_CSS;
+      root.appendChild(st);
+    });
+  }
+  function dxExpand() { if (!dx.open) dxSetOpen(true, false); }
+  function dxHide() { dxSetOpen(false, true); }
+  /** The Docs button in the chat's top bar (beside the bell): opens and closes the panel, with the chat's doc count. */
+  var dxBtn = null;
+  function dxHeaderButton() {
+    var h = document.querySelector('.chat-layout-header');
+    var right = h ? h.querySelector(':scope > .shrink-0') : null;
+    if (!right) { if (dxBtn && dxBtn.parentNode) dxBtn.parentNode.removeChild(dxBtn); return; }
+    if (!dxBtn) {
+      dxBtn = document.createElement('button');
+      dxBtn.type = 'button';
+      dxBtn.className = 'arco-btn arco-btn-text arco-btn-size-mini aiondx-dxbtn';
+      dxBtn.setAttribute('data-testid', 'aiondx-dx-open');
+      dxBtn.innerHTML = SVG_DOC + '<span class="aiondx-dxbtn-label">Docs</span>';
+      dxBtn.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); dxSetOpen(!dx.open, true); });
+    }
+    if (dxBtn.parentNode !== right) right.insertBefore(dxBtn, right.firstChild);
+    var n = dx.docs.length;
+    var label = 'Docs' + (n ? ' ' + n : '');
+    var lb = dxBtn.querySelector('.aiondx-dxbtn-label');
+    if (lb.textContent !== label) lb.textContent = label;
+    var tip = (dx.open ? 'Close' : 'Open') + ' this chat\u2019s DX Docs' + (n ? ' (' + n + ')' : '');
+    if (dxBtn.title !== tip) dxBtn.title = tip;
+    var pr = dx.open ? 'true' : 'false';
+    if (dxBtn.getAttribute('aria-pressed') !== pr) dxBtn.setAttribute('aria-pressed', pr);
   }
   function dxTab() { try { return localStorage.getItem(DX_TAB_KEY) || 'docs'; } catch (e) { return 'docs'; } }
   function dxSetTab(t) { try { localStorage.setItem(DX_TAB_KEY, t); } catch (e) {} if (dx.el) dx.el.classList.toggle('aiondx-dx--files', t === 'files'); dxPaintTabs(); }
@@ -10958,11 +11129,13 @@
   }
   /** Each repaint: the panel inside the sidebar of the open chat, or gone. */
   function renderDxPanel() {
+    try { dxCards(); } catch (e) {}
     var s = dxSider();
-    var conv = s ? route().id : null;
-    if (!s) { if (dx.el && dx.el.parentNode) dx.el.parentNode.removeChild(dx.el); if (dx.docsDir && dx.conv) { window.aiondxDx && window.aiondxDx.call('unwatch', { docsDir: dx.docsDir }); } dx.conv = null; dx.docsDir = null; return; }
+    var conv = s ? dxKey(route()) : null;
+    if (!s) { if (dxBtn && dxBtn.parentNode) dxBtn.parentNode.removeChild(dxBtn); if (dx.el && dx.el.parentNode) dx.el.parentNode.removeChild(dx.el); if (dx.docsDir && dx.conv) { window.aiondxDx && window.aiondxDx.call('unwatch', { docsDir: dx.docsDir }); } dx.conv = null; dx.docsDir = null; return; }
     if (!dx.el) dxBuild();
     if (dx.el.parentNode !== s) s.appendChild(dx.el);
+    if (dxTab() === 'files') dxSetTab('docs');   // AionUi's files are its own sidebar's again
     if (conv !== dx.conv) dxOpenChat(conv);
   }
   function dxBuild() {
@@ -10971,12 +11144,12 @@
     el.setAttribute('data-testid', 'aiondx-dx');
     el.innerHTML = '<div class="dx-tabs" role="tablist"><button type="button" class="dx-tab" data-tab="docs" role="tab">DX Docs</button>' +
       '<button type="button" class="dx-tab" data-tab="files" role="tab">Files</button>' +
-      '<button type="button" class="dx-hide" data-testid="aiondx-dx-hide" title="Hide the sidebar" aria-label="Hide the sidebar">\u21e5</button></div><div class="dx-main"></div>';
+      '<button type="button" class="dx-hide" data-testid="aiondx-dx-close" title="Close (the Docs button at the top opens it again)" aria-label="Close DX Docs">\u2715</button></div><div class="dx-main"></div>';
     el.querySelector('.dx-tabs').addEventListener('click', function (ev) {
       var b = ev.target.closest('.dx-tab');
       if (b) dxSetTab(b.getAttribute('data-tab'));
       // DX Docs covers the sidebar's own header, so it carries the sidebar's hide button (AionUi's own toggle)
-      if (ev.target.closest('.dx-hide')) window.dispatchEvent(new CustomEvent('aionui-workspace-toggle', { cancelable: true }));
+      if (ev.target.closest('.dx-hide')) dxHide();
     });
     dx.el = el;
     dx.main = el.querySelector('.dx-main');
@@ -10986,6 +11159,15 @@
     if (!dx.listening) {
       dx.listening = true;
       window.aiondxDx.onEvent(function (e) { if (e && e.kind === 'changed' && e.docsDir === dx.docsDir) dxChanged(e.id); });
+      dx.main.addEventListener('click', function (ev) {
+        var b = ev.target.closest && ev.target.closest('[data-act="chart-data"]');
+        if (!b) return;
+        var w = b.parentNode.querySelector('.dx-chart-tablewrap');
+        if (!w) return;
+        w.hidden = !w.hidden;
+        b.textContent = w.hidden ? 'Data' : 'Hide data';
+      });
+      dx.main.addEventListener('change', function (ev) { var t = ev.target; if (t && t.classList && t.classList.contains('dx-tick')) dxTick(t); });
       document.addEventListener('selectionchange', dxSelection);
     }
   }
@@ -10993,16 +11175,31 @@
     if (dx.docsDir) window.aiondxDx.call('unwatch', { docsDir: dx.docsDir });
     dx.conv = conv; dx.docsDir = null; dx.view = 'list'; dx.doc = null; dx.editing = false; dx.docs = [];
     dx.main.innerHTML = '<div class="dx-empty">Opening this chat’s docs…</div>';
-    var info = convInfo[conv];
-    if (!info) { loadConvInfo(conv); for (var i = 0; i < 20 && !convInfo[conv]; i++) await new Promise(function (r) { setTimeout(r, 250); }); info = convInfo[conv]; }
+    dx.open = false;
+    var teamId = conv.indexOf('team:') === 0 ? conv.slice(5) : null;
+    var agentConv = conv;
+    dx.sendPath = '/api/conversations/' + conv + '/messages';
+    if (teamId) {
+      dx.sendPath = '/api/teams/' + teamId + '/messages';
+      var g = await getJson('/api/teams/' + teamId);
+      if (dx.conv !== conv) return;
+      var tc = g && g.data ? readTeam(teamId, g.data) : teamCache[teamId];
+      agentConv = null;
+      if (tc) Object.keys(tc.roles).forEach(function (sl) { if (!agentConv && isLeadRole(tc.roles[sl])) agentConv = tc.map[sl]; });
+    }
+    var info = agentConv ? convInfo[agentConv] : null;
+    if (agentConv && !info) { loadConvInfo(agentConv); for (var i = 0; i < 20 && !convInfo[agentConv]; i++) await new Promise(function (r) { setTimeout(r, 250); }); info = convInfo[agentConv]; }
     if (dx.conv !== conv) return;
-    var w = await window.aiondxDx.call('where', { convId: conv, workspace: info ? info.workspace : '' });
+    var w = await window.aiondxDx.call('where', { convId: agentConv || '', teamId: teamId || '', workspace: info ? info.workspace : '' });
     if (dx.conv !== conv) return;
     if (!w || !w.ok) { dx.main.innerHTML = '<div class="dx-empty"></div>'; dx.main.firstChild.textContent = (w && w.error) || 'No folder for docs.'; return; }
     dx.docsDir = w.docsDir;
     dx.where = w;
     window.aiondxDx.call('watch', { docsDir: dx.docsDir });
     await dxList();
+    // a chat with docs opens with its panel, unless the user closed it last time
+    if (dx.conv === conv && dx.docs.length && !dxUserClosed() && !dx.open) dxSetOpen(true, false);
+    else dxSider();
   }
   function dxWhen(ms) { var d = new Date(ms); return d.toDateString() === new Date().toDateString() ? hhmm(ms) : longDate(ms); }
   async function dxList() {
@@ -11060,6 +11257,8 @@
       '<div class="dx-body" data-testid="aiondx-dx-body"></div><div class="dx-comments" hidden></div>';
     m.querySelector('.dx-bar-title').textContent = dx.title;
     m.querySelector('.dx-body').innerHTML = window.__dxMd.toHtml(dx.md);
+    dxPictures(m.querySelector('.dx-body'));
+    dxDiagrams(m.querySelector('.dx-body'));
     m.querySelector('.dx-bar').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-act]');
       if (!b) return;
@@ -11068,6 +11267,78 @@
       else if (a === 'edit') dxEdit();
       else if (a === 'comments') dxComments(true);
       else if (a === 'more') dxMore(b);
+    });
+  }
+  /** A tick-box task ticked in the doc: its line changes ([ ] or [x]) and the doc is saved (the version before kept). */
+  async function dxTick(box) {
+    var line = Number(box.getAttribute('data-line'));
+    var lines = String(dx.md || '').split('\n');
+    if (dx.editing || dx.view !== 'doc' || !(line >= 0) || line >= lines.length || !/^\s*([-*+]|\d+[.)])\s+\[[ xX]\]/.test(lines[line])) { box.checked = !box.checked; return; }
+    lines[line] = lines[line].replace(/\[[ xX]\]/, box.checked ? '[x]' : '[ ]');
+    var md = lines.join('\n');
+    var r = await dxApi('save', { id: dx.doc, markdown: md });
+    if (!r || !r.ok) { box.checked = !box.checked; toast('The tick was not saved.', r && r.error); return; }
+    dx.md = md;
+  }
+  /** A doc's diagrams (```mermaid blocks): the app's own Mermaid, loaded once when a doc first has one; strict security (no scripts, no
+   *  links that run anything); light or dark as AionDX is. One that cannot be drawn keeps its text, with why. */
+  var dxMermaid = null, dxMermaidN = 0;
+  function dxLoadMermaid() {
+    if (dxMermaid) return dxMermaid;
+    dxMermaid = new Promise(function (resolve, reject) {
+      if (window.mermaid) { resolve(window.mermaid); return; }
+      var sc = document.createElement('script');
+      sc.src = window.__dxMermaidSrc || './aiondx-mermaid.min.js';
+      sc.onload = function () { window.mermaid ? resolve(window.mermaid) : reject(new Error('no mermaid')); };
+      sc.onerror = function () { dxMermaid = null; reject(new Error('Diagrams are not available in this build.')); };
+      document.head.appendChild(sc);
+    });
+    return dxMermaid;
+  }
+  function dxDiagrams(body) {
+    if (!body) return;
+    var holders = body.querySelectorAll('.dx-mermaid:not([data-drawn])');
+    if (!holders.length) return;
+    var dark = document.documentElement.getAttribute('data-theme') === 'dark' || document.body.getAttribute('arco-theme') === 'dark';
+    dxLoadMermaid().then(function (mm) {
+      mm.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default', fontFamily: 'inherit', flowchart: { htmlLabels: false } });
+      var chain = Promise.resolve();
+      holders.forEach(function (h) {
+        chain = chain.then(function () {
+          if (!h.isConnected || h.getAttribute('data-drawn')) return;
+          var src = h.getAttribute('data-src') || '';
+          return mm.render('dxmm' + (++dxMermaidN), src).then(function (out) {
+            h.setAttribute('data-drawn', '1');
+            h.innerHTML = out.svg;
+          }, function (e) {
+            h.setAttribute('data-drawn', 'bad');
+            var why = document.createElement('div');
+            why.className = 'dx-chart dx-chart--bad';
+            why.textContent = 'This diagram could not be drawn: ' + String((e && (e.message || e.str)) || e).split('\n')[0].slice(0, 200);
+            h.insertBefore(why, h.firstChild);
+            var junk = document.getElementById('d' + 'dxmm' + dxMermaidN); if (junk) junk.remove();
+          });
+        });
+      });
+    }, function (e) {
+      holders.forEach(function (h) { h.setAttribute('data-drawn', 'bad'); });
+      toast('Diagrams cannot be drawn here.', e && e.message);
+    });
+  }
+  /** A doc's pictures that are files (pictures/x.jpg beside the doc, or a file: URL in the project): read by the main side, shown as data. */
+  function dxPictures(body) {
+    if (!body) return;
+    var dir = dx.docsDir;
+    body.querySelectorAll('img').forEach(function (img) {
+      var src = img.getAttribute('src') || '';
+      if (!src || /^(https?:|data:|blob:)/i.test(src)) return;
+      img.removeAttribute('src');
+      img.setAttribute('data-dx-src', src);
+      dxApi('image', { src: src }).then(function (r) {
+        if (dx.docsDir !== dir) return;
+        if (r && r.ok && r.url) img.src = r.url;
+        else { img.alt = (img.alt || src) + ' (' + ((r && r.error) || 'picture not found') + ')'; img.classList.add('dx-img-missing'); }
+      }, function () {});
     });
   }
   function dxChanged(id) {
@@ -11187,7 +11458,7 @@
     if (!r || !r.ok) { toast('The comment was not saved.', r && r.error); return; }
     var msg = '[DX Doc comment] On "' + dx.title + '" (doc ' + dx.doc + (draft.section ? ', section "' + draft.section + '"' : '') + ', comment ' + r.comment.id + '):\n' +
       '> ' + draft.quote.replace(/\n/g, '\n> ') + '\n\n' + text + '\n\n(Answer with dxdoc_reply, and edit the doc with dxdoc_update when it asks for a change.)';
-    var sent = await postJson('/api/conversations/' + dx.conv + '/messages', { content: msg }).catch(function () { return null; });
+    var sent = await postJson(dx.sendPath || '/api/conversations/' + dx.conv + '/messages', { content: msg }).catch(function () { return null; });
     if (!sent || !sent.ok) toast('The comment is saved with the doc, but the agent could not be told.', 'Send it a message to look at the doc’s comments.');
     dxOpen(dx.doc, true).then(function () { dxComments(true); });
   }
@@ -11210,7 +11481,7 @@
       var a = b.getAttribute('data-act');
       if (a === 'reveal') dxApi('reveal', { id: dx.doc });
       else if (a === 'pdf') {
-        var html = '<!doctype html><meta charset="utf-8"><title>' + window.__dxMd.esc(dx.title) + '</title><style>' + DX_PRINT_CSS + '</style>' + window.__dxMd.toHtml(dx.md);
+        var html = '<!doctype html><meta charset="utf-8"><title>' + window.__dxMd.esc(dx.title) + '</title><style>' + DX_PRINT_CSS + '</style>' + ((dx.main.querySelector('.dx-body') || {}).innerHTML || window.__dxMd.toHtml(dx.md));
         var r = await dxApi('pdf', { id: dx.doc, html: html });
         toast(r && r.ok ? 'Saved as PDF beside the doc.' : 'The PDF was not made.', r && (r.path || r.error));
       } else if (a === 'history') dxHistory();
@@ -11236,6 +11507,8 @@
           '<button type="button" class="dx-btn dx-btn--primary" data-act="restore">Restore this version</button></div><div class="dx-body"></div>';
         m.querySelector('.dx-bar-title').textContent = 'Version of ' + row.textContent;
         m.querySelector('.dx-body').innerHTML = window.__dxMd.toHtml(x.markdown);
+        dxPictures(m.querySelector('.dx-body'));
+        dxDiagrams(m.querySelector('.dx-body'));
         m.querySelector('[data-act="back"]').addEventListener('click', dxHistory);
         m.querySelector('[data-act="restore"]').addEventListener('click', async function () {
           var rr = await dxApi('restore', { id: dx.doc, version: v.version });
@@ -11247,12 +11520,44 @@
   }
   var DX_PRINT_CSS = 'body{font:12pt/1.5 Segoe UI,Arial,sans-serif;color:#111;margin:0}h1{font-size:22pt;margin:0 0 12pt}h2{font-size:15pt;margin:16pt 0 6pt}' +
     'h3{font-size:12.5pt}table{border-collapse:collapse;margin:8pt 0}td,th{border:1px solid #bbb;padding:4pt 7pt}pre{background:#f4f4f4;padding:8pt;white-space:pre-wrap}' +
-    'code{font-family:Consolas,monospace}.dx-pending{color:#888;font-style:italic}blockquote{border-left:3px solid #ccc;margin:0;padding-left:10pt;color:#444}';
+    'code{font-family:Consolas,monospace}.dx-pending{color:#888;font-style:italic}blockquote{border-left:3px solid #ccc;margin:0;padding-left:10pt;color:#444}' +
+    ':root{--dxc1:#2f6fdb;--dxc2:#e8743b;--dxc3:#19a979;--dxc4:#945ecf;--dxc5:#d64a7b;--dxc6:#13a4b4;--dxc7:#b88a12;--dxc8:#6e7b8b;--dxc-bg:#fff}' +
+    '.dx-chart{margin:8pt 0}.dx-chart-svg{width:100%;height:auto}.dx-chart-data,.dx-chart-tablewrap{display:none}.dx-ch-title{font:600 13px Segoe UI,Arial;fill:#111}' +
+    '.dx-ch-tick,.dx-ch-legend,.dx-ch-axis{font:11px Segoe UI,Arial;fill:#555}.dx-ch-grid{stroke:#e3e3e3}.dx-ch-zero{stroke:#999}.dx-ch-line{fill:none;stroke-width:2}' +
+    '.dx-ch-area{opacity:.18}.dx-ch-pct{font:600 11px Segoe UI,Arial;fill:#fff}.dx-mermaid svg{max-width:100%;height:auto}';
   (function dxStyle() {
     var st = document.createElement('style');
     st.id = 'aiondx-dx-style';
     st.textContent = [
       '.aiondx-dx{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
+      // AionDX's own panel at the chat's right edge: closed it takes no room; open, half the chat area, its left edge a drag handle
+      '.aiondx-dx-sider{position:relative;box-sizing:border-box;flex:0 0 0px;width:0;min-width:0;overflow:hidden;background:var(--color-bg-1,#fff)}',
+      '.aiondx-dx-sider--open{overflow:visible;border-left:1px solid var(--bg-3,rgba(0,0,0,.1))}',
+      '.aiondx-dx-sider:not(.aiondx-dx-sider--open)>*{display:none}',
+      '.aiondx-dx-grip{position:absolute;top:0;bottom:0;left:-4px;width:8px;z-index:8;cursor:col-resize}',
+      '.aiondx-dx-grip:hover,.aiondx-dx-dragging .aiondx-dx-grip{background:rgba(var(--primary-6),.25)}',
+      'body.aiondx-dx-dragging{cursor:col-resize !important;user-select:none !important}',
+      '.aiondx-dx-sider .dx-tab[data-tab="files"]{display:none}',
+      '.aiondx-dxbtn{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px;color:var(--color-text-2)}',
+      '.aiondx-dxbtn[aria-pressed="true"]{color:rgb(var(--primary-6));background:var(--color-fill-2,rgba(0,0,0,.06))}',
+      '.dx-body img{max-width:100%;height:auto}',
+      // charts and diagrams (R-125): a palette that reads on both themes
+      '.aiondx-dx{--dxc1:#2f6fdb;--dxc2:#e8743b;--dxc3:#19a979;--dxc4:#945ecf;--dxc5:#d64a7b;--dxc6:#13a4b4;--dxc7:#b88a12;--dxc8:#6e7b8b;--dxc-bg:var(--color-bg-1,#fff)}',
+      "html[data-theme='dark'] .aiondx-dx{--dxc1:#5b93f0;--dxc2:#f08c5a;--dxc3:#3cc394;--dxc4:#b085e6;--dxc5:#ec6e98;--dxc6:#3cc0cf;--dxc7:#d9aa3a;--dxc8:#93a1b2}",
+      '.dx-chart{margin:10px 0 16px;position:relative}.dx-chart-svg{display:block;width:100%;height:auto;max-height:440px}',
+      '.dx-chart figcaption{font-size:12px;color:var(--color-text-3);margin-top:2px}',
+      '.dx-ch-title{font:600 13px var(--font-family,inherit);fill:var(--color-text-1)}',
+      '.dx-ch-tick,.dx-ch-legend,.dx-ch-axis{font:11px var(--font-family,inherit);fill:var(--color-text-3)}',
+      '.dx-ch-grid{stroke:var(--color-border-1,rgba(0,0,0,.08))}.dx-ch-zero{stroke:var(--color-text-4,#999)}',
+      '.dx-ch-line{fill:none;stroke-width:2;stroke-linejoin:round}.dx-ch-area{opacity:.18}.dx-ch-pct{font:600 11px var(--font-family,inherit);fill:#fff}',
+      '.dx-ch-mark{cursor:default}.dx-ch-mark:hover{opacity:.78}',
+      '.dx-chart-data{position:absolute;top:0;right:0;border:1px solid var(--color-border-2,rgba(0,0,0,.12));background:var(--color-bg-1,#fff);color:var(--color-text-2);border-radius:5px;font-size:11px;padding:2px 8px;cursor:pointer;opacity:.75}',
+      '.dx-chart-data:hover{opacity:1}.dx-chart-tablewrap{margin-top:6px;overflow:auto}',
+      '.dx-chart--bad{padding:8px 10px;border:1px dashed var(--color-danger-6,#d33);border-radius:6px;color:var(--color-text-2);font-size:12px;margin:8px 0}',
+      '.dx-mermaid{margin:10px 0 16px;overflow:auto}.dx-mermaid svg{display:block;max-width:100%;height:auto;margin:0 auto}',
+      '.dx-mermaid:not([data-drawn]) pre{opacity:.5}.dx-mermaid[data-drawn="1"] pre{display:none}',
+      '.dx-body .dx-task{list-style:none;margin-left:-18px}.dx-tick{margin-right:6px;vertical-align:-2px;cursor:pointer}',
+      '.dx-img-missing{display:inline-block;padding:4px 8px;border:1px dashed var(--color-border-2,rgba(0,0,0,.2));color:var(--color-text-3);font-size:12px}',
       // Files: AionUi's own panel, whole; the switch back is a small pill at the bottom right
       '.aiondx-dx--files{inset:auto 10px 10px auto;background:transparent}',
       '.aiondx-dx--files .dx-main,.aiondx-dx--files .dx-hide{display:none}',
@@ -11766,6 +12071,7 @@
     off: function () { var t = firstTarget(); if (t) setOn(t, false, 'console'); },
     tickNow: function () { return tick(); },
     autoCompactNow: function () { return checkAutoCompact(); },
+    forgetCtx: function () { Object.keys(ctxInfo).forEach(function (k) { delete ctxInfo[k]; }); },
     stored: function () { return storedTargets().map(function (t) { return { key: t.key, on: state(t).on }; }); },
     repaint: function () { sweepAt = {}; render(); },
     pulseNow: function () { return Promise.resolve(pulseRun).then(function () { return pulse(); }); },

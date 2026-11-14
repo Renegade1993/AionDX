@@ -283,7 +283,27 @@ plan, proposal, guide or anything to keep, make a DX Doc, and make it FIRST:
 1. `dxdoc_create` with the title and one section per part, each with the intent it will hold, before any search, file read or plan.
    The user sees the outline at once, each section showing "Writing: <intent>".
 2. Fill the sections in order with `dxdoc_update` (`replace_section`), one or two per call, so the user watches it build.
-3. Findings go in the doc; in chat, a short line on what you are writing now, and at the end one line with the doc's name.
+3. Findings go in the doc; in chat, a short line on what you are writing now, and at the end one line with the doc's link,
+   `[<title>](https://aiondx.invalid/doc?id=<id>)`: in the chat it is a card that opens the doc in the panel.
+
+Show, don't describe. The panel draws two kinds of block, and every agent type can write them (plain text in the doc's Markdown):
+
+- Numbers with a shape (a quantity over time, one measure across items, parts of a whole; five or more values) go in a `chart` block of
+  JSON. The panel draws it with each value on hover and a Data button for the numbers; no table of the same numbers beside it.
+  ````
+  ```chart
+  {"type":"line","title":"Weekly sign-ups","unit":"users","columns":["Week","Free","Paid"],"rows":[["W1",120,8],["W2",140,11],["W3",180,15]]}
+  ```
+  ````
+  `type`: bar (items side by side), stacked (parts adding to a total), hbar (long item names), line (over time), area, pie (one series,
+  parts of a whole), scatter (values are [x, y] pairs). Data as `columns` + `rows` (first column = the x labels) or as `x` + `series`
+  (`[{"name":"2026","values":[3,5]}]`); `null` is a gap. Optional: `title`, `unit`, `yLabel`, `xLabel`, `yMin`, `yMax`, `note`.
+- Anything with a structure (steps that branch, an architecture, who reports to whom, a timeline or plan of milestones, items placed on two
+  axes, a sequence of calls) goes in a `mermaid` block: flowchart, sequenceDiagram, gantt, timeline, quadrantChart, mindmap, classDiagram,
+  stateDiagram-v2, erDiagram, journey, pie, xychart-beta and the rest of Mermaid 11. Keep labels short; one sentence under it says what to read.
+
+A block that cannot be drawn (bad JSON, a value that is not a number, an unknown diagram kind) is refused when you write it: nothing is
+written and the error names the line, the section and the fix. Correct it and send the operation again.
 
 When the user comments on a passage, you get a message starting `[DX Doc comment]` with the doc, the quote and the comment. Answer with
 `dxdoc_reply` (resolve it when done), and change the doc with `dxdoc_update` when the comment asks for it. Other edits: `append_to_section`,

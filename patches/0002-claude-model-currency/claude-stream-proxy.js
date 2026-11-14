@@ -258,8 +258,8 @@ function startCache(opts, log) {
   let fixedTokens = 0;       // the fixed part of the last main call, in tokens (estimated)
   function compacted(meta) {
     if (stopped || !meta) return;
-    const post = Number(meta.post_tokens) || 0, pre = Number(meta.pre_tokens) || 0;
-    if (!(post > 0)) return;
+    const post = Number(meta.post_tokens) || Number(meta.postTokens) || 0, pre = Number(meta.pre_tokens) || Number(meta.preTokens) || 0;
+    if (!(post > 0)) { log('compaction: Claude gave no size after it (pre ' + pre + ')'); return; }
     const tokens = fixedTokens + post;
     const body = {};
     body[CTX_KEY + opts.convId] = { v: 1, at: Date.now(), pre, post, fixed: fixedTokens, tokens, estimated: true };
@@ -681,7 +681,8 @@ function startProxy(opts) {
     child.stdin.on('error', () => { /* Claude has gone; its exit ends this */ });
 
     // ---- Claude -> AionCore: streamed; the first PREFIX bytes of each line decide whether it is ours
-    let mode = 'start';        // 'start' reading a line's head, 'pass' forwarding its tail, 'swallow' collecting ours
+    let mode = 'start';        // 'start' reading a line's head, 'pass' forwarding its tail, 'swallow' collecting ours, 'tee' forwarding and collecting
+    let tee = [], teeLen = 0;  // a compaction line longer than the head: forwarded as it comes, and kept to be read at its end
     let head = [];
     let headLen = 0;
     let swallow = [];
@@ -727,6 +728,21 @@ function startProxy(opts) {
       let i = 0;
       const out = [];
       while (i < chunk.length) {
+        if (mode === 'tee') {
+          const nl = chunk.indexOf(10, i);
+          const end = nl < 0 ? chunk.length : nl + 1;
+          const part = chunk.subarray(i, end);
+          out.push(part);
+          if (teeLen < 1048576) { tee.push(part); teeLen += part.length; }
+          i = end;
+          if (nl >= 0) {
+            const whole = Buffer.concat(tee);
+            tee = []; teeLen = 0;
+            mode = 'start';
+            try { const j = JSON.parse(whole.toString('utf8')); if (j && j.type === 'system' && j.subtype === 'compact_boundary') cache.compacted(j.compact_metadata || j.compactMetadata); } catch { /* cut short, or not that line */ }
+          }
+          continue;
+        }
         if (mode === 'pass' || mode === 'swallow') {
           const nl = chunk.indexOf(10, i);
           const end = nl < 0 ? chunk.length : nl + 1;
@@ -753,8 +769,11 @@ function startProxy(opts) {
         const h = head.length === 1 ? head[0] : Buffer.concat(head);
         head = []; headLen = 0;
         if (h.indexOf(RESULT) >= 0) { usage.turnEnded(); cache.flush(); }
-        if (complete && h.indexOf(COMPACT) >= 0) {
-          try { const j = JSON.parse(h.toString('utf8')); if (j && j.type === 'system' && j.subtype === 'compact_boundary') cache.compacted(j.compact_metadata); } catch { /* not that line */ }
+        let teeing = false;
+        if (h.indexOf(COMPACT) >= 0) {
+          if (complete) {
+            try { const j = JSON.parse(h.toString('utf8')); if (j && j.type === 'system' && j.subtype === 'compact_boundary') cache.compacted(j.compact_metadata || j.compactMetadata); } catch { /* not that line */ }
+          } else teeing = true;
         }
         if (h.indexOf(CONTROL) >= 0 && h.indexOf(OURS) >= 0) {
           swallowKind = 'ours';
@@ -764,6 +783,10 @@ function startProxy(opts) {
           if (complete) permLine(h, out); else { swallow = [h]; mode = 'swallow'; }
         } else if (autoIds.size && h.indexOf('control_cancel_request') >= 0 && complete && [...autoIds].some((id) => h.indexOf(id) >= 0)) {
           /* a retraction of a request answered here: AionCore never saw the request */
+        } else if (teeing) {
+          out.push(h);
+          tee = [h]; teeLen = h.length;
+          mode = 'tee';
         } else {
           out.push(h);
           mode = complete ? 'start' : 'pass';

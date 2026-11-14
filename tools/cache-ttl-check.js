@@ -5,7 +5,8 @@
 const fs = require('fs');
 const path = require('path');
 const home = process.env.USERPROFILE;
-const since = Date.now() - (Number(process.argv[2]) || 6) * 3600000;
+function tailText(fp, max) { const size = fs.statSync(fp).size; if (size <= max) return fs.readFileSync(fp, 'utf8'); const fd = fs.openSync(fp, 'r'); const b = Buffer.alloc(max); fs.readSync(fd, b, 0, max, size - max); fs.closeSync(fd); return b.toString('utf8'); }
+const since =Date.now() - (Number(process.argv[2]) || 6) * 3600000;
 for (const dir of ['.claude', '.claude-work']) {
   const proj = path.join(home, dir, 'projects');
   if (!fs.existsSync(proj)) continue;
@@ -26,7 +27,7 @@ for (const dir of ['.claude', '.claude-work']) {
   const tally = { only1h: 0, only5m: 0, both: 0, none: 0 };
   const recent5m = [];
   for (const { fp, slug } of files.slice(0, 40)) {
-    const lines = fs.readFileSync(fp, 'utf8').split('\n');
+    const lines = tailText(fp, 32 * 1048576).split('\n'); // a long chat's transcript passes Node's string limit (ERR_STRING_TOO_LONG, 2026-11-13)
     for (const ln of lines) {
       if (!ln.includes('"usage"')) continue;
       let o; try { o = JSON.parse(ln); } catch { continue; }
