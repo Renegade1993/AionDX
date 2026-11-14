@@ -11182,7 +11182,7 @@
   }
   async function dxOpenChat(conv) {
     if (dx.docsDir) window.aiondxDx.call('unwatch', { docsDir: dx.docsDir });
-    dx.conv = conv; dx.docsDir = null; dx.view = 'list'; dx.doc = null; dx.editing = false; dx.docs = [];
+    dx.conv = conv; dx.docsDir = null; dx.view = 'list'; dx.doc = null; dx.editing = false; dx.docs = []; dx.cdraft = null; dx.pendingDoc = null;
     dx.main.innerHTML = '<div class="dx-empty">Opening this chat’s docs…</div>';
     dx.open = false;
     var teamId = conv.indexOf('team:') === 0 ? conv.slice(5) : null;
@@ -11258,6 +11258,13 @@
       return;
     }
     if (keepScroll && dx.view === 'doc' && dx.doc === id && (dx.typed || dx.saving)) { dx.theirs = r; return dxTheirsWhileTyping(); }
+    if (keepScroll && dx.view === 'doc' && dx.doc === id && dx.cdraft && dx.cdraft.doc === id) {
+      // a comment is being written: nothing redraws under it; the agent's change shows when it is sent or cancelled
+      dx.pendingDoc = r;
+      var nn = dx.main.querySelector('.dx-note');
+      if (nn) { nn.hidden = false; nn.textContent = 'The agent changed this doc. It shows when you send or cancel your comment.'; }
+      return;
+    }
     dx.view = 'doc'; dx.doc = id; dx.md = r.markdown; dx.comments = r.comments || []; dx.title = r.title || id; dx.suggestions = r.suggestions || [];
     if (dx.editing) return dxEditingChanged();
     dxDrawDoc();
@@ -11267,6 +11274,8 @@
   }
   function dxDrawDoc() {
     var m = dx.main;
+    var oldC = m.querySelector('.dx-comments');
+    var commentsOpen = !!(oldC && !oldC.hidden);
     var open = dx.comments.filter(function (c) { return !c.resolved; }).length;
     m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back" title="All docs">‹</button><span class="dx-bar-title"></span>' +
       '<span class="dx-saved" data-testid="aiondx-dx-saved"></span>' +
@@ -11281,6 +11290,8 @@
     dxDiagrams(bodyEl);
     dxMakeEditable(bodyEl, m.querySelector('.dx-fmt'));
     dxShowSuggestions();
+    if (dx.cdraft && dx.cdraft.doc === dx.doc) dxComments(true, { quote: dx.cdraft.quote, section: dx.cdraft.section });
+    else if (commentsOpen) dxComments(true);
     m.querySelector('.dx-bar').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-act]');
       if (!b) return;
@@ -11792,11 +11803,22 @@
       f.innerHTML = '<div class="dx-cquote"></div><textarea class="dx-ctext" placeholder="Your comment; the agent is told" data-testid="aiondx-dx-ctext"></textarea>' +
         '<div class="dx-crow"><button type="button" class="dx-btn" data-act="cancel">Cancel</button><button type="button" class="dx-btn dx-btn--primary" data-act="send" data-testid="aiondx-dx-csend">Send</button></div>';
       f.querySelector('.dx-cquote').textContent = '“' + draft.quote + '”';
-      f.querySelector('.dx-ctext').addEventListener('keydown', function (ev) { ev.stopPropagation(); });
-      f.querySelector('[data-act="cancel"]').addEventListener('click', function () { f.remove(); });
+      var ta = f.querySelector('.dx-ctext');
+      if (dx.cdraft && dx.cdraft.doc === dx.doc && dx.cdraft.quote === draft.quote) ta.value = dx.cdraft.text || '';
+      dx.cdraft = { doc: dx.doc, quote: draft.quote, section: draft.section, text: ta.value };
+      var grow = function () {
+        var cap = Math.max(120, Math.round((dx.main ? dx.main.getBoundingClientRect().height : 600) / 2));
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(cap, ta.scrollHeight + 2) + 'px';
+        ta.style.overflowY = ta.scrollHeight + 2 > cap ? 'auto' : 'hidden';
+      };
+      ta.addEventListener('input', function () { if (dx.cdraft) dx.cdraft.text = ta.value; grow(); });
+      setTimeout(grow, 0);
+      ta.addEventListener('keydown', function (ev) { ev.stopPropagation(); });
+      f.querySelector('[data-act="cancel"]').addEventListener('click', function () { f.remove(); dx.cdraft = null; dxAfterDraft(); });
       f.querySelector('[data-act="send"]').addEventListener('click', function () { dxSendComment(draft, f.querySelector('.dx-ctext').value); });
       list.appendChild(f);
-      setTimeout(function () { f.querySelector('.dx-ctext').focus(); }, 0);
+      setTimeout(function () { var t2 = f.querySelector('.dx-ctext'); t2.focus(); t2.setSelectionRange(t2.value.length, t2.value.length); }, 0);
     }
     if (!dx.comments.length && !draft) { var e = document.createElement('div'); e.className = 'dx-empty'; e.textContent = 'No comments. Select text in the doc and press Comment.'; list.appendChild(e); }
     dx.comments.slice().reverse().forEach(function (c) {
@@ -11810,11 +11832,20 @@
       list.appendChild(it);
     });
   }
+  /** A comment was sent or cancelled: an agent's change that waited for it shows now. */
+  function dxAfterDraft() {
+    var r = dx.pendingDoc;
+    dx.pendingDoc = null;
+    var nn = dx.main && dx.main.querySelector('.dx-note');
+    if (nn && /It shows when you send or cancel your comment/.test(nn.textContent)) nn.hidden = true;
+    if (r && dx.view === 'doc' && dx.doc === r.id) { dx.md = r.markdown; dx.comments = r.comments || []; dx.suggestions = r.suggestions || []; dxDrawDoc(); }
+  }
   async function dxSendComment(draft, text) {
     text = String(text || '').trim();
     if (!text) return;
     var r = await dxApi('comment', { id: dx.doc, quote: draft.quote, section: draft.section, text: text });
     if (!r || !r.ok) { toast('The comment was not saved.', r && r.error); return; }
+    dx.cdraft = null; dx.pendingDoc = null;   // the redraw below reads the doc as it now stands, the agent's change included
     var msg = '[DX Doc comment] On "' + dx.title + '" (doc ' + dx.doc + (draft.section ? ', section "' + draft.section + '"' : '') + ', comment ' + r.comment.id + '):\n' +
       '> ' + draft.quote.replace(/\n/g, '\n> ') + '\n\n' + text + '\n\n(Answer with dxdoc_reply, and edit the doc with dxdoc_update when it asks for a change.)';
     var sent = await postJson(dx.sendPath || '/api/conversations/' + dx.conv + '/messages', { content: msg }).catch(function () { return null; });
@@ -11993,7 +12024,7 @@
       '@media (prefers-reduced-motion: reduce){.dx-pending,.dx-pending-dot{animation:none}}',
       '.dx-edit{flex:1 1 auto;resize:none;border:0;outline:0;padding:12px 14px;font:12.5px/1.55 Consolas,monospace;background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
       '.dx-note{padding:8px 12px;font-size:12px;background:rgba(var(--warning-6,255,125,0),.12);color:var(--color-text-1)}',
-      '.dx-comments{flex:0 0 auto;max-height:45%;overflow:auto;border-top:1px solid var(--color-border-2,rgba(0,0,0,.1));background:var(--color-bg-2,var(--color-bg-1))}',
+      '.dx-comments{flex:0 0 auto;max-height:70%;overflow:auto;border-top:1px solid var(--color-border-2,rgba(0,0,0,.1));background:var(--color-bg-2,var(--color-bg-1))}',
       '.dx-comments-head{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;font-size:12.5px;font-weight:600}',
       '.dx-clist{padding:0 10px 10px}',
       '.dx-citem,.dx-cdraft{padding:8px 10px;margin:0 0 8px;border-radius:6px;background:var(--color-fill-1,rgba(0,0,0,.03));font-size:12.5px}',
@@ -12001,7 +12032,7 @@
       '.dx-cquote{font-size:12px;color:var(--color-text-3);margin-bottom:4px;max-height:3.2em;overflow:hidden}',
       '.dx-creply{margin-top:4px;padding-left:8px;border-left:2px solid var(--color-border-2,#ddd);color:var(--color-text-2)}',
       '.dx-cstate{margin-top:4px;font-size:11px;color:var(--color-text-3)}',
-      '.dx-ctext{width:100%;box-sizing:border-box;min-height:56px;resize:vertical;font:inherit;padding:6px;border-radius:5px;border:1px solid var(--color-border-2,#ccc);background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
+      '.dx-ctext{width:100%;box-sizing:border-box;min-height:56px;resize:none;overflow-y:hidden;font:inherit;padding:6px;border-radius:5px;border:1px solid var(--color-border-2,#ccc);background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
       '.dx-crow{display:flex;justify-content:flex-end;gap:6px;margin-top:6px}',
       '.dx-comment-btn{position:fixed;z-index:1200;border:0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;background:rgb(var(--primary-6,22,93,255));color:#fff;box-shadow:0 3px 10px rgba(0,0,0,.2)}',
       '.dx-menu{position:fixed;z-index:1200;display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:8px;background:var(--color-bg-popup,var(--color-bg-1,#fff));border:1px solid var(--color-border-2,rgba(0,0,0,.12));box-shadow:0 6px 20px rgba(0,0,0,.18)}',

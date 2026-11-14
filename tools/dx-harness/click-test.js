@@ -3533,7 +3533,18 @@ async function pageTarget() {
       check(sc, 'selecting text in the doc offers Comment', await js(`(() => { const b = document.querySelector('[data-testid="aiondx-dx-comment-btn"]'); return !!b && !b.hidden; })()`));
       await humanClick('[data-testid="aiondx-dx-comment-btn"]');
       await sleep(300);
-      await typeInto('[data-testid="aiondx-dx-ctext"]', 'Which quarter?');
+      await typeInto('[data-testid="aiondx-dx-ctext"]', 'Which');
+      // the agent changes the doc while the comment is being written: the draft stays, the change waits (November 14th)
+      await js(`window.__dxAgent('plan', window.__dx.docs.plan + '\\n## Later\\n\\nadded while you typed\\n'); 0`);
+      await sleep(700);
+      const keep = await js(`(() => { const t = document.querySelector('[data-testid="aiondx-dx-ctext"]'); return { text: t ? t.value : null, focus: document.activeElement === t, note: (document.querySelector('#tbox .dx-note') || {}).textContent || '', body: document.querySelector('#tbox .dx-body').textContent }; })()`);
+      check(sc, 'an agent\'s change while you write a comment: your words stay, the change waits and a note says so', keep.text === 'Which' && keep.focus && /It shows when you send or cancel your comment/.test(keep.note) && !/added while you typed/.test(keep.body), JSON.stringify(keep));
+      await send('Input.insertText', { text: ' quarter?' });
+      await sleep(150);
+      const h0 = await js(`Math.round(document.querySelector('[data-testid="aiondx-dx-ctext"]').getBoundingClientRect().height)`);
+      await js(`(() => { const t = document.querySelector('[data-testid="aiondx-dx-ctext"]'); const keep = t.value; t.value = keep + '\\n2\\n3\\n4\\n5\\n6'; t.dispatchEvent(new Event('input', { bubbles: true })); window.__h1 = Math.round(t.getBoundingClientRect().height); t.value = keep; t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      const h1 = await js('window.__h1');
+      check(sc, 'the comment box grows with more lines (November 14th)', h1 > h0 + 40, JSON.stringify([h0, h1]));
       await humanClick('[data-testid="aiondx-dx-csend"]');
       await sleep(700);
       const cm = (await js('window.__dx.calls')).filter((c) => c[0] === 'comment')[0];
@@ -3541,13 +3552,14 @@ async function pageTarget() {
       check(sc, 'Send keeps the comment with the doc: the quote, its section and the text', cm && cm[1].quote === 'Ship it this quarter.' && cm[1].section === 'Goals' && cm[1].text === 'Which quarter?', JSON.stringify(cm));
       check(sc, 'and tells the chat\'s agent: the doc, the section, the quote, the comment and how to answer', told.length === 1 &&
         /^\[DX Doc comment\] On "Launch plan" \(doc plan, section "Goals", comment c1\):\n> Ship it this quarter\.\n\nWhich quarter\?\n\n\(Answer with dxdoc_reply/.test(told[0]), JSON.stringify(told));
+      check(sc, 'once it is sent, the agent\'s change shows', /added while you typed/.test(await js(`document.querySelector('#tbox .dx-body').textContent`)));
       check(sc, 'the comment shows in the doc\'s comments', /Which quarter\?/.test(await js(`(document.querySelector('#tbox .dx-comments') || {}).textContent || ''`)) && /Comments \(1\)/.test(await js(`document.querySelector('#tbox [data-act="comments"]').textContent`)));
       // edit the Markdown (now in the menu: the doc itself is typed in)
       await humanClick('#tbox [data-act="more"]');
       await sleep(200);
       await humanClick('.dx-menu [data-act="mdedit"]');
       await sleep(300);
-      check(sc, 'Edit shows the Markdown to change', (await js(`document.querySelector('[data-testid="aiondx-dx-edit"]').value`)) === '# Launch plan\n\n## Goals\n\nShip it this quarter.\n');
+      check(sc, 'Edit shows the Markdown to change', (await js(`document.querySelector('[data-testid="aiondx-dx-edit"]').value`)) === '# Launch plan\n\n## Goals\n\nShip it this quarter.\n\n## Later\n\nadded while you typed\n');
       await js(`(() => { const t = document.querySelector('[data-testid="aiondx-dx-edit"]'); t.value = t.value.replace('this quarter', 'in Q1'); t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
       await js(`window.__dxAgent('plan', window.__dx.docs.plan + '\\n## Extra\\n\\nmore\\n'); 0`);
       await sleep(600);
