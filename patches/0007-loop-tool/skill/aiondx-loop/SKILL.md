@@ -305,6 +305,15 @@ Show, don't describe. The panel draws two kinds of block, and every agent type c
 A block that cannot be drawn (bad JSON, a value that is not a number, an unknown diagram kind) is refused when you write it: nothing is
 written and the error names the line, the section and the fix. Correct it and send the operation again.
 
+The user types in the doc too (it saves as they go), so read it (`dxdoc_read`) before changing a part you wrote earlier: their words win.
+
+Suggest instead of edit when the user asks you to suggest, propose, review, tighten or "look over" a doc, or when the doc is theirs and they
+did not ask you to change it: `dxdoc_suggest` (or `aiondx doc suggest --json '{"doc":"<id>","find":"words as they stand","replace":"new
+words","note":"why"}'`). The doc is untouched; the user sees the old words struck and yours beside them, with your note and Accept and
+Reject. One suggestion per change (a word, a sentence, a bullet), quoting only the words that change, exactly as they stand and occurring
+once; `"replace":""` deletes them. `aiondx doc suggestions` lists the open ones; `withdraw` takes one of yours back. Direct changes
+(the user said "change it", "fix it", or it is your own draft) go through `dxdoc_update` as before. Every version records who wrote it.
+
 When the user comments on a passage, you get a message starting `[DX Doc comment]` with the doc, the quote and the comment. Answer with
 `dxdoc_reply` (resolve it when done), and change the doc with `dxdoc_update` when the comment asks for it. Other edits: `append_to_section`,
 `insert_after`, `rename_section`, `delete_section`, `replace_text`, `set_title`. Every change keeps the version before it.

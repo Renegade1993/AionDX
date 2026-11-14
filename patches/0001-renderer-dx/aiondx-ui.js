@@ -10598,12 +10598,16 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.27.9',
+    release: '0.27.10',
     items: [
-      ['Charts and diagrams', 'Ask any agent for a chart or a diagram in a DX Doc (\u201cput the numbers in a chart\u201d, \u201cdraw the steps as a flowchart\u201d): the panel draws it. Hover a bar or a point for its value; Data shows the numbers. Tasks in a doc can be ticked, and a doc\u2019s link in a reply is a card that opens it.'],
+      ['Type in your docs', 'Click into a DX Doc and type, as in Claude Docs. The bar above it has headings, bold, italic, lists, tasks, tables and links. It saves by itself a moment after you stop, and every save keeps the version before: \u22ef > Earlier versions says who wrote each one.'],
+      ['Suggestions', 'Ask an agent to suggest changes to a doc (\u201csuggest edits to the plan\u201d): each shows in the doc, the old words struck and the new ones beside them, with a card to Accept or Reject. The doc changes only when you accept.'],
+      ['Export to Word', 'In a doc\u2019s \u22ef menu: Export as Word (charts and diagrams come as pictures), Export as PDF, or Copy as Markdown.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
-    earlier: [{ release: '0.27.8', items: [
+    earlier: [{ release: '0.27.9', items: [
+      ['Charts and diagrams', 'Ask any agent for a chart or a diagram in a DX Doc (\u201cput the numbers in a chart\u201d, \u201cdraw the steps as a flowchart\u201d): the panel draws it. Hover a bar or a point for its value; Data shows the numbers. Tasks in a doc can be ticked, and a doc\u2019s link in a reply is a card that opens it.'],
+    ] }, { release: '0.27.8', items: [
       ['Ask for a DX Doc', 'Type \u201cmake a DX Doc about \u2026\u201d in any chat: it opens in a wide panel beside the chat and fills in while you watch. The Docs button at the top opens and closes it. Say \u201cDX Doc\u201d by name: a Claude chat may otherwise use Anthropic\u2019s Claude Docs, which needs a claude.ai sign-in. Select text in it to comment; the agent is told.'],
     ] }, { release: '0.27.7', items: [
       ['Compaction by itself', 'A chat over half full is compacted just before its prompt cache runs out, timed by the cache length measured for its account, while its Loop is off. Click the context ring (next to the send button) to switch it off or on, or to compact now.'],
@@ -10707,6 +10711,12 @@
       text: 'Type \u201cmake a DX Doc about \u2026\u201d in any chat: it opens in a wide panel beside the chat and fills in while you watch. The Docs button at the top opens and closes it. Say \u201cDX Doc\u201d by name: a Claude chat may otherwise use Anthropic\u2019s Claude Docs, which needs a claude.ai sign-in. Select text in it to comment; the agent is told.' },
     { id: 'dxcharts', sel: '[data-testid="aiondx-dx"] .dx-chart-data', title: 'Charts and diagrams',
       text: 'Hover a bar or a point for its value; Data shows the numbers behind the chart. Ask any agent for a chart or a diagram in a DX Doc and the panel draws it.' },
+    { id: 'dxedit', sel: '[data-testid="aiondx-dx-fmt"]', title: 'Type in the doc',
+      text: 'Click anywhere in the doc and type; this bar formats it (headings, bold, lists, tasks, tables, links). It saves by itself a moment after you stop.' },
+    { id: 'dxsuggest', sel: '[data-testid="aiondx-dx-sg"]', title: 'A suggestion',
+      text: 'An agent proposes this change; the doc is untouched until you press Accept. Reject drops it. Hover the card to see where it is in the doc.' },
+    { id: 'dxexport', sel: '[data-testid="aiondx-dx-more"]', title: 'Export and history',
+      text: 'Export as Word or PDF, copy as Markdown, see earlier versions and who wrote them, or edit the raw Markdown.' },
     { id: 'add-account', sel: '[data-testid="aiondx-add-account"]', title: 'Add another Claude account',
       text: 'Click to sign in another Claude account; you choose what it may do before the sign-in page opens. It then gets its own pill here and shows in every chat\u2019s account button.' },
     { id: 'groups', sel: '[data-testid="aiondx-group-new"]', title: 'Groups',
