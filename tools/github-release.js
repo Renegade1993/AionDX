@@ -5,6 +5,8 @@
  * then, with --publish, makes it public. Without --publish it stops at the draft.
  *
  *   node tools\github-release.js --tag v0.25.0-beta --title "AionDX beta v.25" --notes FILE --asset F [--asset F ...] [--prerelease] [--publish]
+ *   ... --check-only        run the checks (committed and pushed; a what's-new pop-up for every new feature) and stop; GitHub is not touched
+ *   ... --no-whats-new      a release with no feature a user sees; --allow-unpushed skips the committed-and-pushed check
  *
  * The update check in the app reads the published releases for an asset named AionDX-<semver>-setup.exe and the release's
  * SHA256SUMS.txt, so both go up together. Refuses when the tag already has a release.
@@ -33,6 +35,32 @@ if (!args.includes('--allow-unpushed')) {
   const head = git(['rev-parse', 'HEAD']), remote = git(['rev-parse', 'origin/main']);
   if (head !== remote) { console.error('github-release: HEAD ' + head.slice(0, 7) + ' is not what origin/main has (' + remote.slice(0, 7) + '); push first.'); process.exit(3); }
 }
+
+// Every new feature gets its pop-up for every user, until they press Got it (a rule since November 13th, 2026). Each top-level bullet under
+// "## New" in the notes (its bold name) must be an item of WHATS_NEW in the renderer, and WHATS_NEW.release must be this version. A bullet
+// that starts "For agents" is for agents, not a control a user sees, and is skipped. --no-whats-new skips the check (a release with no
+// user-facing feature needs no "## New" section at all).
+if (!args.includes('--no-whats-new')) {
+  const notes = fs.readFileSync(notesFile, 'utf8').replace(/\r\n/g, '\n');
+  const sec = /^## New\n([\s\S]*?)(?=^## |$(?![\s\S]))/m.exec(notes);
+  if (sec) {
+    const wanted = [...sec[1].matchAll(/^- \*\*([^*]+?)\*\*/gm)].map((m) => m[1].replace(/[.:]$/, '').trim()).filter((n) => !/^For agents/i.test(n));
+    const ui = fs.readFileSync(path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'), 'utf8');
+    const wn = /var WHATS_NEW = \{\s*release: '([^']+)',\s*items: \[([\s\S]*?)\n\s*\],/.exec(ui);
+    const version = tag.replace(/^v/, '').replace(/-.*$/, '');
+    const names = wn ? [...wn[2].matchAll(/\[\s*'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1].toLowerCase()) : [];
+    const missing = wanted.filter((w) => !names.some((n) => n.length > 2 && (w.toLowerCase().includes(n) || n.includes(w.toLowerCase().split(':')[0]))));
+    if (!wn || wn[1] !== version || missing.length) {
+      console.error('github-release: every new feature needs its what\'s-new pop-up (WHATS_NEW in aiondx-ui.js) for this version.\n' +
+        '  WHATS_NEW.release: ' + (wn ? wn[1] : 'not found') + ' (this release: ' + version + ')\n' +
+        (missing.length ? '  no pop-up item for: ' + missing.join('; ') + '\n' : '') + '  (add them, or pass --no-whats-new for a release with no feature a user sees)');
+      process.exit(4);
+    }
+  }
+}
+
+// --check-only: the checks above, then stop before GitHub is touched (testing this tool once made a real draft release, November 13th).
+if (args.includes('--check-only')) { console.log('github-release: checks passed for ' + tag + ' (--check-only: nothing sent to GitHub)'); process.exit(0); }
 
 (async () => {
   for (const f of assets) if (!fs.existsSync(f)) throw new Error('no such file: ' + f);

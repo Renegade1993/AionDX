@@ -3269,13 +3269,18 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.5');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.27.7');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.5' && c.names.length === 2 && c.names[0] === 'DX Docs' && c.names[1] === 'More Claude accounts' &&
-        /^Ask your agent for a document, report or plan: it appears in the right-hand sidebar/.test(c.hows[0]), JSON.stringify(c));
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.27.7' && c.names.length === 1 && c.names[0] === 'Compaction by itself' &&
+        /Click the context ring \(next to the send button\) to switch it off or on, or to compact now\.$/.test(c.hows[0]), JSON.stringify(c));
+      await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
+      await load('theme=light&keepls=1');
+      await sleep(3600);
+      const c4 = await card();
+      check(sc, 'someone updating from 0.27.4 sees everything new since: this release\'s and 0.27.5\'s', c4 && JSON.stringify(c4.names) === JSON.stringify(['Compaction by itself', 'DX Docs', 'More Claude accounts']), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 340, JSON.stringify(box));
       await humanClick('.aiondx-whatsnew-ok');
@@ -3318,7 +3323,7 @@ async function pageTarget() {
       t = await tip();
       check(sc, 'and after a reload the Loop tip stays away', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
       // the Docs link tip, on a page with a doc link, once the others are done
-      await js(`(() => { const d = {}; ['bell','loop','ctx2','account','sched','bolt','menu','dxdocs','add-account','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','sched','bolt','menu','dxdocs','add-account','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
       await load('theme=light&tips=1&keepls=1');
       await js(`(() => { const a = document.createElement('a'); a.href = 'https://claude.ai/artifact/abc'; a.textContent = 'Launch plan'; a.style.cssText = 'position:absolute;left:300px;top:200px;z-index:5;background:#fff;color:#000;padding:4px'; document.body.appendChild(a); return 0; })()`);
       await sleep(2600);
@@ -3560,6 +3565,74 @@ async function pageTarget() {
       await sleep(1500);
       check(sc, 'leaving the chat takes the panel away and stops watching', !(await js(`!!document.querySelector('[data-testid="aiondx-dx"]')`)) && (await js('window.__dx.calls')).some((c) => c[0] === 'unwatch'));
       await js(`(() => { const s = document.getElementById('tsider'); if (s) s.remove(); delete window.aiondxDx; location.hash = '#/conversation/harness1'; return 0; })()`);
+    }
+
+    // ---- compaction by itself, and the context ring's menu (R-122, 2026-11-13) ----
+    {
+      const sc = 'autocompact';
+      await load('theme=light');
+      const now = Date.now();
+      await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 150000, size: 200000 } };
+        window.__stub.routes['GET /api/conversations/harness1/slash-commands'] = { success: true, data: [{ command: 'compact' }, { command: 'clear' }] }; window.__calls.length = 0; return 0; })()`);
+      // a chat 75% full whose hour cache runs out in 4 minutes, its Loop off
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: now - 56 * 60000, until: now + 4 * 60000, longUntil: now + 4 * 60000, tailUntil: now + 4 * 60000, ttl: '1h', read: 1000, write: 0, ctx: 150000 });
+      await js('window.__aionDx.tickNow()');
+      await sleep(400);
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(400);
+      let st = await js(`JSON.parse(localStorage.getItem('aionui.dx.harness1') || '{}')`);
+      check(sc, 'a chat over half full, its Loop off, 4 minutes before its hour cache runs out: a compaction is asked for, saying why',
+        st.compactAt > 0 && /^Compacting by itself: 75% full, cache runs out at \d\d:\d\d\.$/.test(st.compactNote || ''), JSON.stringify(st));
+      await js('window.__aionDx.tickNow()');
+      await sleep(500);
+      const sent = await posts('/api/conversations/harness1/messages');
+      check(sc, 'and the Loop\'s tick sends the agent\'s own /compact once it is idle', sent.length === 1 && sent[0].body.content === '/compact', JSON.stringify(sent));
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(300);
+      check(sc, 'not asked again for the same reply', (await js(`JSON.parse(localStorage.getItem('aionui.dx.harness1') || '{}').compactAt`)) === st.compactAt);
+      // not due yet, under half, Loop on, option off: nothing
+      await load('theme=light');
+      await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 150000, size: 200000 } }; return 0; })()`);
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 20 * 60000, until: Date.now() + 40 * 60000, longUntil: Date.now() + 40 * 60000, ttl: '1h' });
+      await js('window.__aionDx.tickNow()');
+      await sleep(300);
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(300);
+      check(sc, '40 minutes before the cache runs out: not yet', !(JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0));
+      await load('theme=light');
+      await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 50000, size: 200000 } }; return 0; })()`);
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 56 * 60000, until: Date.now() + 4 * 60000, longUntil: Date.now() + 4 * 60000, ttl: '1h' });
+      await js('window.__aionDx.tickNow()');
+      await sleep(300);
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(300);
+      check(sc, 'a chat a quarter full: left alone', !(JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0));
+      await load('theme=light');
+      await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 150000, size: 200000 } }; window.__aionDx.setOption('compact.auto', false); return 0; })()`);
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 56 * 60000, until: Date.now() + 4 * 60000, longUntil: Date.now() + 4 * 60000, ttl: '1h' });
+      await js('window.__aionDx.tickNow()');
+      await sleep(300);
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(300);
+      check(sc, 'with the option off: left alone', !(JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0));
+      // the ring's menu
+      await js(`window.__aionDx.setOption('compact.auto', true); 0`);
+      await humanClick('.context-usage-indicator');
+      await sleep(300);
+      const menu = await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (!m) return null;
+        return { read: m.querySelector('.aiondx-ctxmenu-read').textContent, auto: m.querySelector('[data-act="auto"]').getAttribute('aria-checked'), now: !!m.querySelector('[data-act="now"]') }; })()`);
+      check(sc, 'a click on the context ring opens its menu: the reading, compaction by itself (on), Compact now', menu && /context window used|tokens used|No context count/.test(menu.read) && menu.auto === 'true' && menu.now, JSON.stringify(menu));
+      await humanClick('[data-testid="aiondx-ctxmenu"] [data-act="auto"]');
+      await sleep(300);
+      check(sc, 'its switch turns compaction by itself off (the option), and says so', (await js(`window.__aionDx.option('compact.auto')`)) === false && (await toasts()).some((t) => /^Compaction by itself is off\./.test(t)));
+      await humanClick('.context-usage-indicator');
+      await sleep(300);
+      check(sc, 'and the menu shows it off', (await js(`document.querySelector('[data-testid="aiondx-ctxmenu"] [data-act="auto"]').getAttribute('aria-checked')`)) === 'false');
+      await humanClick('[data-testid="aiondx-ctxmenu"] [data-act="now"]');
+      await sleep(300);
+      check(sc, 'Compact now asks for a compaction that goes when the agent stops', JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0 &&
+        (await toasts()).some((t) => /^Compaction requested\./.test(t)));
+      await js(`(() => { window.__aionDx.setOption('compact.auto', true); localStorage.removeItem('aionui.dx.options'); return 0; })()`);
     }
 
     // ---- clearing agent caches (2026-10-13, a request) ----
@@ -4028,7 +4101,7 @@ async function pageTarget() {
       await addSection();
       await sleep(700);
       const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
-      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'compact.auto', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
       check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.files' && o.default === 'outside' && o.choices.length === 2) && !schema.options.some((o) => o.id === 'links.external') &&
         schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));

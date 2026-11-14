@@ -257,6 +257,23 @@ itself (Git Credential Manager), the same sign-in the user's other repositories 
 - Make a repository public only when the user says so. `create` reads back what GitHub made and sets it
   right if it differs.
 
+## How full your context is, and compaction
+
+`"{{AIONDX}}" context` (tool: `context_status`) gives the chat's tokens used, its window and the percentage, until when its prompt cache
+is good, and whether AionDX compacts it by itself. `loop status` shows the same line. Over half full: AionDX compacts the chat by itself
+a few minutes before the cache runs out, while the Loop is off and no turn is running (the user can switch that off by clicking the
+context ring). If it says automatic compaction is off, compact now with `"{{AIONDX}}" loop set --compact --note "over half full"`.
+
+## Telling another chat something
+
+```
+"{{AIONDX}}" send --to <chat id> --message "text"          or --message-file FILE (quotes and line breaks kept)
+```
+
+(tool: `chat_send`). It goes through AionCore's own delivery: into that chat's running turn when it can take one, else queued ("queued"
+means not read yet). Only when the user asked for it or @@-mentioned the chat. A wrong id or an empty message says so. Chats on a team
+use the team's own messaging.
+
 ## DX Docs: documents the user watches you write
 
 DX Docs are AionDX's own living documents: Markdown files in the `DX Docs` folder of the chat's project (else its working folder), shown to

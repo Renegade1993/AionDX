@@ -715,6 +715,8 @@
       label: 'Open Claude Docs in', desc: 'Where a Claude Doc link opens. The pane keeps its own Claude sign-in, asked for once. Alt+click uses the other one.' },
     { id: 'help.tips', group: 'Help', type: 'bool', default: true,
       label: 'Show tips for AionDX\u2019s controls', desc: 'A bubble points at each AionDX control the first time it is on screen and says how to use it, until you press Got it. Off hides them all.' },
+    { id: 'compact.auto', group: 'Long chats', type: 'bool', default: true,
+      label: 'Compact a full chat by itself', desc: 'A chat over half full is compacted 5 minutes before its hour-long prompt cache runs out, while its Loop is off and once its agent has stopped. Also on the context ring\u2019s menu (click the ring).' },
     { id: 'loop.skillsLine', group: 'The Loop', type: 'bool', default: true,
       label: 'Remind agents of their skills', desc: 'Each Loop nudge to keep working ends with one line: check the project\u2019s skills before a task, and update the matching skill when you learn a better way. Agents rarely open a skill unless told (measured on a team, November 10th).' },
     { id: 'spellcheck', group: 'Typing', type: 'bool', default: true,
@@ -10587,21 +10589,31 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.27.5',
+    release: '0.27.7',
     items: [
+      ['Compaction by itself', 'A chat over half full is compacted 5 minutes before its prompt cache runs out, while its Loop is off. Click the context ring (next to the send button) to switch it off or on, or to compact now.'],
+    ],
+    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
+    earlier: [{ release: '0.27.5', items: [
       ['DX Docs', 'Ask your agent for a document, report or plan: it appears in the right-hand sidebar and fills in as you watch. Select text in it to comment; the agent is told. Edit, earlier versions and PDF are in its bar.'],
       ['More Claude accounts', 'On the new-chat page, click + Add account at the end of the agent row. Name the account, choose what it may do, and sign in on the page that opens; AionDX checks the key and adds a pill for it.'],
-    ],
+    ] }],
   };
   var WHATS_NEW_KEY = KEY_PREFIX + 'whatsnew.seen';
   // Decided at load (so a reload inside the delay cannot show it twice); shown 3 seconds later.
+  function verNum(v) { var p = String(v || '').split('.').map(function (x) { return parseInt(x, 10) || 0; }); return (p[0] || 0) * 1e6 + (p[1] || 0) * 1e3 + (p[2] || 0); }
+  var whatsNewItems = [];
   function whatsNewDue() {
     var seen = null;
     try { seen = localStorage.getItem(WHATS_NEW_KEY); } catch (e) { return false; }
     if (seen === WHATS_NEW.release || disabled()) return false;
     var fresh = !seen && !Object.keys(localStorage).some(function (k) { return k.indexOf(KEY_PREFIX) === 0 && k !== WHATS_NEW_KEY; });
     try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW.release); } catch (e) {}
-    return !fresh && WHATS_NEW.items.length > 0;
+    if (fresh) return false;
+    // everything new since the release this person last saw (none recorded: this release only)
+    whatsNewItems = WHATS_NEW.items.slice();
+    (WHATS_NEW.earlier || []).forEach(function (e) { if (seen && verNum(e.release) > verNum(seen)) whatsNewItems = whatsNewItems.concat(e.items); });
+    return whatsNewItems.length > 0;
   }
   function showWhatsNew() {
     if (document.querySelector('[data-testid="aiondx-whatsnew"]')) return;
@@ -10616,7 +10628,7 @@
     x.setAttribute('aria-label', 'Close');
     head.appendChild(x);
     card.appendChild(head);
-    WHATS_NEW.items.forEach(function (it) {
+    (whatsNewItems.length ? whatsNewItems : WHATS_NEW.items).forEach(function (it) {
       var row = gEl('div', 'aiondx-whatsnew-item');
       row.appendChild(gEl('div', 'aiondx-whatsnew-name', it[0]));
       row.appendChild(gEl('div', 'aiondx-whatsnew-how', it[1]));
@@ -10665,9 +10677,9 @@
       text: 'Click a Claude Doc link to read it in a pane beside the chat. Drag the pane’s left edge to resize it, ✕ closes it, and Alt+click opens a doc in your browser instead.' },
     { id: 'loop', sel: '[data-testid="aiondx-loop"]', title: 'The Loop',
       text: 'While it is on, it tells the agent to keep going each time it stops with nothing left to do. Click to switch it on or off; hover it to see what it is doing.' },
-    // 'ctx2': the first version (0.27.2) said the snowflake meant a warm cache; a new id shows the corrected tip to those who put it away
-    { id: 'ctx2', sel: '.context-usage-indicator', title: 'How full this chat is',
-      text: 'The ring fills as the chat\u2019s memory fills. A blue snowflake on it means the chat\u2019s cache has expired, so your next message costs more and starts slower. Hover the ring for the times.' },
+    // 'ctx3' (0.27.7, the ring's click menu); 'ctx2' corrected 0.27.2's wording; each new id shows the tip again to those who put it away
+    { id: 'ctx3', sel: '.context-usage-indicator', title: 'How full this chat is',
+      text: 'The ring fills as the chat\u2019s memory fills; a blue snowflake on it means its cache has expired. Click the ring to compact now, or to switch compaction by itself on or off.' },
     { id: 'account', sel: '[data-testid="aiondx-account"]', title: 'Which Claude account',
       text: 'This chat runs on the account named here. Click it to move the chat to another account, for example when one reaches its limit.' },
     { id: 'sched', sel: '[data-testid="aiondx-sched-btn"]', title: 'Schedule send',
@@ -10804,6 +10816,117 @@
     setInterval(function () { if (document.visibilityState === 'visible') coachRun(); }, 700);
   }
   coachInstall();
+
+  // ---------------------------------------------------------------- compaction by itself, and the context ring's menu (R-122, 2026-11-13)
+
+  // A chat over half full is compacted a few minutes before its hour-long prompt cache runs out, so the next message does not resend a large
+  // conversation at full price (a chat over 80% lost its cache on November 13th and nothing warned its agent). Only while that chat's Loop is
+  // off: with the Loop on, the Loop keeps the cache warm and compacts on its own terms. The compaction is the Loop's own: a request that the
+  // tick sends as the agent's /compact once the agent has stopped and the box holds no draft. Option compact.auto (on by default); the user
+  // switches it from the ring's menu (click the ring). Solo chats; a team's members follow their Loops.
+  var AUTO_LEAD_MS = 5 * 60000;
+  var autoAsked = {};   // conversation id -> the last call (record at) a compaction was asked for
+  var autoBusy = false;
+  async function checkAutoCompact() {
+    if (disabled() || autoBusy || opt('compact.auto') === false) return;
+    autoBusy = true;
+    try {
+      var now = Date.now();
+      var ids = Object.keys(cacheConv);
+      for (var i = 0; i < ids.length; i++) {
+        var convId = ids[i];
+        var rec = cacheRecord(convId);
+        if (!rec) continue;
+        var long = Number(rec.longUntil) > 0 ? Number(rec.longUntil) : (rec.ttl === '1h' ? Number(rec.until) : 0);
+        if (!(long > now) || long - now > AUTO_LEAD_MS) continue;       // no hour cache alive, or not due yet
+        if (autoAsked[convId] === Number(rec.at)) continue;              // asked already for this reply
+        var t = { kind: 'conv', key: 'conv:' + convId, convId: convId };
+        var s = state(t);
+        if (s.on || compactPending(s)) continue;                          // the Loop has it, or a compaction is already waiting
+        if ((Number(s.compactSentAt) || 0) > Number(rec.at)) continue;  // compacted since that reply
+        var g = await getJson('/api/conversations/' + encodeURIComponent(convId) + '/usage');
+        var u = g && g.data;
+        if (!u || !(Number(u.size) > 0) || Number(u.used) / Number(u.size) < 0.5) { autoAsked[convId] = Number(rec.at); continue; }
+        autoAsked[convId] = Number(rec.at);
+        s.compactAt = Date.now();
+        s.compactNote = 'Compacting by itself: ' + Math.round(Number(u.used) / Number(u.size) * 100) + '% full, cache runs out at ' + hhmm(long) + '.';
+        save(t, s);
+        diagnose('auto-compact', convId.slice(0, 8), { pct: Math.round(Number(u.used) / Number(u.size) * 100), until: long });
+      }
+    } catch (e) { /* the next check tries again */ } finally { autoBusy = false; }
+  }
+  setInterval(function () { checkAutoCompact(); }, 60000);
+
+  // The ring's menu: a click on the context ring (AionUi's own, which only has a hover card, or AionDX's) opens it.
+  var ctxMenuEl = null;
+  function closeCtxMenu() { if (ctxMenuEl && ctxMenuEl.parentNode) ctxMenuEl.parentNode.removeChild(ctxMenuEl); ctxMenuEl = null; }
+  function openCtxMenu(ring) {
+    closeCtxMenu();
+    var r = route();
+    var convId = r && r.kind === 'conv' ? r.id : null;
+    var key = null;
+    for (var k in ctxInfo) { if (ctxInfo[k] && ctxInfo[k].convId === convId) { key = k; break; } }
+    var info = key ? ctxInfo[key] : null;
+    var m = document.createElement('div');
+    m.className = 'aiondx-menu aiondx-ctxmenu';
+    m.setAttribute('role', 'menu');
+    m.setAttribute('data-testid', 'aiondx-ctxmenu');
+    var reading = info ? ctxReading(info, compactView(info)) : 'No context count yet for this chat';
+    var cl = info ? promptCacheLine(ctxCache({ key: key, convId: convId }, info)) : '';
+    var on = opt('compact.auto') !== false;
+    m.innerHTML = '<div class="arco-dropdown-menu"><div class="aiondx-ctxmenu-read"></div>' +
+      '<div class="arco-dropdown-menu-item aiondx-ctxmenu-auto" role="menuitemcheckbox" aria-checked="' + on + '" data-act="auto">' +
+      '<span class="aiondx-ctxmenu-check">' + (on ? '✓' : '') + '</span>Compact by itself before the cache runs out</div>' +
+      (convId ? '<div class="arco-dropdown-menu-item" role="menuitem" data-act="now"><span class="aiondx-ctxmenu-check"></span>Compact now</div>' : '') +
+      '<div class="aiondx-note aiondx-ctxmenu-note">When a chat is over half full and its Loop is off, AionDX sends its /compact 5 minutes before its hour-long cache runs out, once the agent has stopped.</div></div>';
+    m.querySelector('.aiondx-ctxmenu-read').textContent = reading + (cl ? '\n' + cl : '');
+    m.addEventListener('click', function (ev) {
+      var it = ev.target.closest('[data-act]');
+      if (!it) return;
+      ev.preventDefault();
+      var act = it.getAttribute('data-act');
+      if (act === 'auto') {
+        setOption('compact.auto', !on);
+        toast(!on ? 'Compaction by itself is on.' : 'Compaction by itself is off.', !on ? 'Chats over half full are compacted before their cache runs out, while their Loop is off.' : 'Compact a full chat yourself from this menu.');
+      } else if (act === 'now' && convId) {
+        var t = { kind: 'conv', key: 'conv:' + convId, convId: convId };
+        var s = state(t);
+        s.compactAt = Date.now();
+        s.compactNote = 'Compaction asked from the context ring at ' + hhmm(Date.now()) + '; it goes when the agent stops.';
+        save(t, s); publishStatus(t); render();
+        toast('Compaction requested.', 'It goes as soon as the agent stops.');
+      }
+      closeCtxMenu();
+    });
+    document.body.appendChild(m);
+    var rc = ring.getBoundingClientRect();
+    m.style.left = Math.max(8, Math.min(Math.round(rc.left + rc.width / 2 - 160), window.innerWidth - 330)) + 'px';
+    m.style.top = Math.max(8, Math.round(rc.top - m.offsetHeight - 8)) + 'px';
+    ctxMenuEl = m;
+    setTimeout(function () {
+      var off = function (ev) { if (!ctxMenuEl || ctxMenuEl.contains(ev.target)) return; closeCtxMenu(); document.removeEventListener('mousedown', off, true); };
+      document.addEventListener('mousedown', off, true);
+    }, 0);
+  }
+  document.addEventListener('click', function (ev) {
+    if (disabled()) return;
+    var ring = ev.target && ev.target.closest ? ev.target.closest('.context-usage-indicator') : null;
+    if (!ring) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    openCtxMenu(ring);
+  }, true);
+  (function ctxMenuStyle() {
+    var st = document.createElement('style');
+    st.id = 'aiondx-ctxmenu-style';
+    st.textContent = [
+      '.aiondx-ctxmenu{position:fixed;z-index:1100;width:320px}',
+      '.aiondx-ctxmenu-read{padding:8px 12px;font-size:12px;line-height:1.45;color:var(--color-text-2);white-space:pre-line;border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06))}',
+      '.aiondx-ctxmenu-check{display:inline-block;width:16px;color:rgb(var(--primary-6))}',
+      '.aiondx-ctxmenu-note{padding:6px 12px 8px;font-size:11.5px;line-height:1.4;color:var(--color-text-3)}',
+    ].join('\n');
+    document.head.appendChild(st);
+  })();
 
   // ---------------------------------------------------------------- DX Docs in the chat's right-hand sidebar (R-121, a request of 2026-11-13)
 
@@ -11642,6 +11765,7 @@
     on: function () { var t = firstTarget(); if (t) setOn(t, true, 'console'); },
     off: function () { var t = firstTarget(); if (t) setOn(t, false, 'console'); },
     tickNow: function () { return tick(); },
+    autoCompactNow: function () { return checkAutoCompact(); },
     stored: function () { return storedTargets().map(function (t) { return { key: t.key, on: state(t).on }; }); },
     repaint: function () { sweepAt = {}; render(); },
     pulseNow: function () { return Promise.resolve(pulseRun).then(function () { return pulse(); }); },

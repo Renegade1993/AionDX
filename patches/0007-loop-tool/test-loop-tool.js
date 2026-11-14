@@ -160,6 +160,15 @@ server = http.createServer((req, res) => {
       if (work[m[1]]) work[m[1]].fg++;
       return reply(res, 200, { success: true, data: { enqueue_status: 'queued', target: { slot_id: m[1] } } });
     }
+    if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/conversations\/([^/]+)\/usage$/))) {
+      // AionCore's own count for a chat (the context ring's numbers): /api/conversations/{id}/usage
+      return reply(res, 200, { success: true, data: m[1] === 'convS' ? { used: 123456, size: 200000 } : { used: 0, size: 0 } });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/runtime/session-messages/send') {
+      const b = entry.body || {};
+      if (!conversations[b.to]) return reply(res, 404, { success: false, error: { code: 'TARGET_NOT_FOUND', message: 'target conversation not found: ' + b.to } });
+      return reply(res, 200, { success: true, data: { status: b.to === 'convN' ? 'queued' : 'delivered' } });
+    }
     if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/conversations\/([^/]+)\/messages$/))) {
       // A chat's newest page (aionui-api-types MessageListResponse); before= gives the page ahead of it.
       if (!conversations[m[1]]) return reply(res, 404, { success: false, message: 'Conversation ' + m[1] + ' not found' });
@@ -287,7 +296,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const tl = await solo.rpc('tools/list', {});
   const tools = (tl.result && tl.result.tools) || [];
-  check('tools/list offers loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the six DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_list,dxdoc_comments,dxdoc_reply,usage_alert', tools.map((t) => t.name));
+  check('tools/list offers loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the six DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,context_status,chat_send,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_list,dxdoc_comments,dxdoc_reply,usage_alert', tools.map((t) => t.name));
   const schemaText = JSON.stringify(tools.map((t) => t.inputSchema));
   check('schemas use only type, properties, description and items (every backend takes them; a parameter may be called title)', !/additionalProperties|\$schema|"required"|"title":"/.test(schemaText), schemaText);
   const set = tools.find((t) => t.name === 'loop_set') || { inputSchema: { properties: {} } };
@@ -538,7 +547,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const orphan = startTool('convS', { AIONDX_CONVERSATION_ID: '', AIONDX_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
-  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 19, tlOrphan.result && tlOrphan.result.tools.length);
+  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 21, tlOrphan.result && tlOrphan.result.tools.length);
   r = await orphan.call('loop_status');
   check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionUi chat/.test(r.text), r.text);
 
@@ -892,6 +901,39 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   cf = await cli(['config'], 'convL');
   check('config on its own prints the help (and exits 2)', cf.status === 2 && /aiondx config set ID VALUE/.test(cf.stdout), cf.stdout);
   delete kv['aiondx.options']; delete kv['aiondx.options.schema'];
+
+  // ---- the context fill and telling another chat (R-122, 2026-11-13) ----
+  {
+    const now = Date.now();
+    kv['aiondx.cache.conv.convS'] = { v: 1, at: now - 600000, until: now + 3000000, ttl: '1h' };
+    let cx = await cli(['context'], 'convS');
+    check('aiondx context: tokens used, the window, the percentage, until when the cache is good, and that AionDX compacts it by itself',
+      cx.status === 0 && /^Context: 123K of 200K tokens, 61\.7% full\. Prompt cache good until \d\d:\d\d \(saved at the last reply, \d\d:\d\d\)\. Over half full: AionDX compacts this chat by itself/.test(cx.stdout), cx.stdout);
+    kv['aiondx.options'] = { values: { 'compact.auto': false } };
+    cx = await cli(['context'], 'convS');
+    check('with automatic compaction off, it says to compact now or switch it on', /automatic compaction is off: compact now with aiondx loop set --compact/.test(cx.stdout), cx.stdout);
+    delete kv['aiondx.options'];
+    cx = await cli(['context', '--json'], 'convS');
+    let cj = null; try { cj = JSON.parse(cx.stdout); } catch (e) { /* shown below */ }
+    check('aiondx context --json gives the numbers', cj && cj.used === 123456 && cj.size === 200000 && cj.pct === 61.7 && cj.autoCompact === true, cx.stdout);
+    const ls = await cli(['loop', 'status'], 'convS');
+    check('loop status carries the same context line', /\nContext: 123K of 200K tokens, 61\.7% full\./.test(ls.stdout), ls.stdout);
+    const ctool = await solo.rpc('tools/call', { name: 'context_status', arguments: {} });
+    check('the context_status tool answers the same', /^Context: 123K of 200K tokens/.test(ctool.result.content[0].text), JSON.stringify(ctool));
+    delete kv['aiondx.cache.conv.convS'];
+    let sd = await cli(['send', '--to', 'convL', '--message', 'Plan is in DX Docs.'], 'convS');
+    const sent = requests.filter((q) => q.path === '/api/runtime/session-messages/send').pop();
+    check('aiondx send delivers through AionCore\'s runtime send, {to, message}, as this chat', sd.status === 0 && /^Delivered to convL\.$/.test(sd.stdout.trim()) &&
+      sent && sent.body.to === 'convL' && sent.body.message === 'Plan is in DX Docs.' && sent.headers['x-aiondx-conversation-id'] === 'convS', sd.stdout + JSON.stringify(sent && sent.body));
+    fs.writeFileSync(path.join(LOGDIR, 'msg.txt'), 'Line one\nLine "two" with quotes');
+    sd = await cli(['send', '--to', 'convN', '--message-file', path.join(LOGDIR, 'msg.txt')], 'convS');
+    check('a message from a file (quotes and line breaks kept); a busy chat says queued, not read', sd.status === 0 && /^Queued for convN: that chat is busy/.test(sd.stdout) &&
+      requests.filter((q) => q.path === '/api/runtime/session-messages/send').pop().body.message === 'Line one\nLine "two" with quotes', sd.stdout);
+    sd = await cli(['send', '--to', 'nope', '--message', 'x'], 'convS');
+    check('a wrong chat id says it was not delivered and why', sd.status === 1 && /^Not delivered \(404\): target conversation not found: nope Is the chat id right\?/.test(sd.stdout), sd.stdout);
+    sd = await cli(['send', '--to', 'convL'], 'convS');
+    check('no message says so', sd.status === 1 && /The message is empty/.test(sd.stdout), sd.stdout);
+  }
 
   // ---- DX Docs (R-121, 2026-11-13): the agents' doc commands run the engine in the chat's project or working folder ----
   {

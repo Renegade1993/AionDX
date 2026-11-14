@@ -451,6 +451,23 @@ namespace AionDx
                             { "label", Prop("string", "Optional words for the button, for example 'the installer folder'.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
+                    { "name", "context_status" },
+                    { "title", "How full this chat is" },
+                    { "description", "How full this chat's context is (tokens used, the window, the percentage), when its prompt cache runs out, and whether AionDX " +
+                        "compacts it automatically before then. Check it at the end of a long turn; over half full, compaction is due before the cache runs out." },
+                    { "inputSchema", new Dictionary<string, object> { { "type", "object" }, { "properties", new Dictionary<string, object> {
+                        { "json", Prop("boolean", "true for the numbers as JSON.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "chat_send" },
+                    { "title", "Tell another chat" },
+                    { "description", "Delivers a message to another of the user's chats (its conversation id from @@, aiondx team show or aiondx chat read), through AionCore's " +
+                        "own delivery: into its running turn when it can take one, else queued. Only when the user asked for it or @@-mentioned the chat. " +
+                        "Chats on a team use the team's own messaging." },
+                    { "inputSchema", new Dictionary<string, object> { { "type", "object" }, { "properties", new Dictionary<string, object> {
+                        { "to", Prop("string", "The other chat's conversation id.") }, { "message", Prop("string", "What to tell it.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
                     { "name", "dxdoc_create" },
                     { "title", "Create a DX Doc" },
                     { "description", "DX Docs are AionDX's own living documents: Markdown in the DX Docs folder of the chat's project (else its working folder), shown to the user live in the chat's right-hand sidebar. No sign-in to anyone. When the user asks for a document, report, plan, proposal, guide or anything to keep, create a DX Doc FIRST: its title and a section per part, each with the intent it will hold, before any research or file reading; then fill each section with dxdoc_update. Keep findings in the doc and a short line in chat. Use Claude Docs (claude.ai) only when the user asks for it by name." },
@@ -561,6 +578,8 @@ namespace AionDx
                 else if (name == "show_file") text = ShowText(Str(a, "path"), Str(a, "label"));
                 else if (name == "usage_alert") text = UsageAlertCmd(Str(a, "action") == null && Dbl(a, "at") > 0 ? new Dictionary<string, object>(a) { { "action", "set" } } : a);
                 else if (name != null && name.StartsWith("dxdoc_")) text = DxText(name, a);
+                else if (name == "context_status") text = ContextText(Bool(a, "json") == true);
+                else if (name == "chat_send") text = SendText(Str(a, "to"), Str(a, "message"));
                 else if (name == "github_status") text = GitHubStatusText(Bool(a, "repos") == true);
                 else if (name == "github_create_repo") text = GitHubCreate(Str(a, "name"), Bool(a, "public") == true, Str(a, "description"));
                 else if (name == "mcp_call")
@@ -604,6 +623,8 @@ namespace AionDx
             "  aiondx team show ID|NAME | team list   a team's layout, lead first, with each member's chat id (a @@ team mention is an invitation to read it)\n" +
             "  aiondx chat read CHAT_ID [--last N] [--before CURSOR] [--all]   read any of the user's chats: its newest messages, oldest first\n" +
             "  aiondx doc where|list|create|read|update|comments|reply ...   DX Docs, AionDX's own living documents in the chat's sidebar (aiondx doc help)\n" +
+            "  aiondx context [--json]   how full this chat's context is, when its cache runs out, and whether AionDX compacts it automatically\n" +
+            "  aiondx send --to CHAT_ID --message TEXT | --message-file FILE   tell another of the user's chats something (aiondx send help)\n" +
             "  aiondx show PATH [--label TEXT]   show the user a picture, or link a file or folder, in chat: prints the exact Markdown to paste\n" +
             "  aiondx migrate detect|run|backup|verify ...   move from AionUi to AionDX: back up the chats, remove AionUi, check them (aiondx migrate help)\n" +
             "--on and --off switch the Loop; --until-stopped (only when the user asks for it) keeps it on until the user stops it, " +
@@ -1671,6 +1692,124 @@ namespace AionDx
             catch (Exception e) { o.WriteLine("DX Docs failed: " + e.Message); return 1; }
         }
 
+        // ------------------------------------------------------------------ the context fill, readable by the agent (R-122, 2026-11-13)
+
+        const string ContextHelp =
+            "Usage:\n" +
+            "  aiondx context [--json]   how full this chat's context is (tokens used, the window, the percentage), when its prompt cache\n" +
+            "                            runs out, and whether AionDX compacts it automatically before then.\n" +
+            "Over half full: let the automatic compaction run, or compact now with aiondx loop set --compact.";
+
+        /** { used, size, pct, cacheUntil, lastCall, auto } for a chat, from AionCore's own count (the ring's numbers) and the launcher's cache record. */
+        static Dictionary<string, object> ContextReading(string convId)
+        {
+            var r = new Dictionary<string, object>();
+            var u = Api("GET", "/api/conversations/" + Uri.EscapeDataString(convId) + "/usage", null) as Dictionary<string, object>;
+            long used = u != null ? Long(u, "used") : 0, size = u != null ? Long(u, "size") : 0;
+            r["used"] = used; r["size"] = size;
+            r["pct"] = size > 0 ? Math.Round(used * 1000.0 / size) / 10.0 : -1.0;
+            long until = 0, at = 0;
+            bool auto = true;
+            try
+            {
+                var keys = "aiondx.cache.conv." + convId + ",aiondx.options";
+                var d = Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(keys), null) as Dictionary<string, object>;
+                var rec = d != null && d.ContainsKey("aiondx.cache.conv." + convId) ? d["aiondx.cache.conv." + convId] as Dictionary<string, object> : null;
+                if (rec != null) { until = Long(rec, "until"); at = Long(rec, "at"); }
+                var opts = d != null && d.ContainsKey("aiondx.options") ? d["aiondx.options"] as Dictionary<string, object> : null;
+                var vals = opts != null && opts.ContainsKey("values") ? opts["values"] as Dictionary<string, object> : null;
+                if (vals != null && vals.ContainsKey("compact.auto") && vals["compact.auto"] is bool) auto = (bool)vals["compact.auto"];
+            }
+            catch (ToolError) { }
+            r["cacheUntil"] = until; r["lastCall"] = at; r["autoCompact"] = auto;
+            return r;
+        }
+
+        static string ContextLine(Dictionary<string, object> c)
+        {
+            long used = Long(c, "used"), size = Long(c, "size");
+            double pct = c["pct"] is double ? (double)c["pct"] : -1;
+            var sb = new StringBuilder();
+            if (used <= 0) sb.Append("Context: no count yet for this chat (it starts after its first reply).");
+            else if (size > 0) sb.Append("Context: " + (used / 1000) + "K of " + (size / 1000) + "K tokens, " + pct.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "% full.");
+            else sb.Append("Context: " + (used / 1000) + "K tokens; the window size is not known.");
+            long until = Long(c, "cacheUntil"), at = Long(c, "lastCall");
+            if (until > 0)
+                sb.Append(until > NowMs() ? " Prompt cache good until " + Hhmm(until) + " (saved at the last reply, " + Hhmm(at) + ")." : " Prompt cache expired at " + Hhmm(until) + "; the next message resends the whole conversation.");
+            bool auto = c["autoCompact"] is bool && (bool)c["autoCompact"];
+            if (pct >= 50)
+                sb.Append(auto ? " Over half full: AionDX compacts this chat by itself a few minutes before the cache runs out, unless the Loop is on or a turn is running."
+                               : " Over half full, and automatic compaction is off: compact now with aiondx loop set --compact, or ask the user to switch it on (click the context ring).");
+            return sb.ToString();
+        }
+
+        static string ContextText(bool json)
+        {
+            var id = Id(false);
+            var c = ContextReading(id.ConvId);
+            return json ? Json.Serialize(c) : ContextLine(c);
+        }
+
+        static int ContextCli(string[] args, StreamWriter o)
+        {
+            if (args.Length > 1 && (args[1] == "help" || args[1] == "--help" || args[1] == "-h")) { o.WriteLine(ContextHelp); return 0; }
+            try { o.WriteLine(ContextText(args.Contains("--json"))); return 0; }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+        }
+
+        // ------------------------------------------------------------------ telling another chat something (R-122)
+
+        const string SendHelp =
+            "Usage:\n" +
+            "  aiondx send --to CHAT_ID --message TEXT\n" +
+            "  aiondx send --to CHAT_ID --message-file FILE      (or --message-stdin)\n" +
+            "Delivers a message to another of the user's chats, as the session-message skill does, through AionCore's own delivery\n" +
+            "(into the running turn when that chat can take one, else queued). Only when the user asked for it or @@-mentioned the chat.\n" +
+            "Chats on a team talk through the team's own messaging.";
+
+        static string SendText(string to, string message)
+        {
+            to = (to ?? "").Trim();
+            if (to.Length == 0) throw new ToolError("Name the chat: --to CHAT_ID (its id from @@, aiondx team show, or aiondx chat read).");
+            if (string.IsNullOrWhiteSpace(message)) throw new ToolError("The message is empty: give --message TEXT, --message-file FILE or --message-stdin.");
+            var body = Json.Serialize(new Dictionary<string, object> { { "to", to }, { "message", message } });
+            var r = Http("POST", "/api/runtime/session-messages/send", body);
+            Dictionary<string, object> j = null;
+            try { j = Json.DeserializeObject(r.Item2) as Dictionary<string, object>; } catch (Exception) { }
+            if (r.Item1 >= 200 && r.Item1 < 300 && j != null && j.ContainsKey("success") && j["success"] is bool && (bool)j["success"])
+            {
+                var d = j.ContainsKey("data") ? j["data"] as Dictionary<string, object> : null;
+                var status = d != null ? (Str(d, "status") ?? "") : "";
+                return status == "queued" ? "Queued for " + to + ": that chat is busy and will read it when it frees up (not read yet)."
+                     : "Delivered to " + to + (status.Length > 0 && status != "delivered" ? " (" + status + ")" : "") + ".";
+            }
+            var err = j != null ? (j.ContainsKey("error") ? (j["error"] is Dictionary<string, object> ? (Str((Dictionary<string, object>)j["error"], "message") ?? Json.Serialize(j["error"])) : Convert.ToString(j["error"])) : Str(j, "message")) : null;
+            throw new ToolError("Not delivered (" + r.Item1 + "): " + OneLine(err ?? r.Item2) + (r.Item1 == 404 ? " Is the chat id right?" : ""));
+        }
+
+        static int SendCli(string[] args, StreamWriter o)
+        {
+            if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h") { o.WriteLine(SendHelp); return args.Length < 2 ? 2 : 0; }
+            try
+            {
+                string to = null, msg = null;
+                for (int i = 1; i < args.Length; i++)
+                {
+                    string x = args[i], inline = null;
+                    int eq = x.StartsWith("--") ? x.IndexOf('=') : -1;
+                    if (eq > 0) { inline = x.Substring(eq + 1); x = x.Substring(0, eq); }
+                    if (x == "--to") to = inline ?? Next(args, ref i, x);
+                    else if (x == "--message") msg = inline ?? Next(args, ref i, x);
+                    else if (x == "--message-file") msg = MessageFromFile(inline ?? Next(args, ref i, x));
+                    else if (x == "--message-stdin") msg = MessageFromStdin();
+                    else throw new ToolError("Unknown option " + x + ".\n" + SendHelp);
+                }
+                o.WriteLine(SendText(to, msg));
+                return 0;
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+        }
+
         static int MemberCli(string[] args, StreamWriter o)
         {
             if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h")
@@ -2317,6 +2456,8 @@ namespace AionDx
             if (args[0] == "team") return TeamCli(args, o);
             if (args[0] == "chat") return ChatCli(args, o);
             if (args[0] == "doc") return DocCli(args, o);
+            if (args[0] == "context") return ContextCli(args, o);
+            if (args[0] == "send") return SendCli(args, o);
             if (args[0] == "migrate") return MigrateCli(args, o);
             if (args[0] == "stop")
             {
@@ -3947,6 +4088,12 @@ namespace AionDx
                 if (t.Kind == "team") { var w = SlotWork(t); if (w != null) sb.Append(QueueLine(t, w)); }
             }
             sb.Append(EngineLine(prefs));
+            // R-122: the chat's context fill, so an agent sees when it is over half full
+            if (targets.Count == 1)
+            {
+                try { var cl = ContextLine(ContextReading(targets[0].ConvId)); if (sb.Length > 0 && sb[sb.Length - 1] != '\n') sb.Append('\n'); sb.Append(cl).Append('\n'); }
+                catch (ToolError) { }
+            }
             var usageLine = UsageLine(ctx);
             if (usageLine.Length > 0) { if (sb.Length > 0 && sb[sb.Length - 1] != '\n') sb.Append('\n'); sb.Append(usageLine); }
             return sb.ToString();
