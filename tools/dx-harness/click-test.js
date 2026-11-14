@@ -108,7 +108,8 @@ function finish(code, msg) {
   try { edge.kill(); } catch { /* already gone */ }
   process.exit(code);
 }
-const deadline = setTimeout(() => finish(2, "DEADLINE: suite did not finish within 900 s"), 900000);
+// 1500 s: the suite passed 730 checks in its own runs but outgrew 900 s inside the release tests (November 14th, 2026)
+const deadline = setTimeout(() => finish(2, "DEADLINE: suite did not finish within 1500 s"), 1500000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function pageTarget() {
