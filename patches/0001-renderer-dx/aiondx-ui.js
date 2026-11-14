@@ -11073,7 +11073,6 @@
     }
     dxSider();
   }
-  function dxCollapsed() { return !dx.open; }
   /** A doc card clicked in a chat: the panel opens on that doc (this chat's or team's docs). */
   async function dxOpenLink(id) {
     if (!/^[\w.-]{1,120}$/.test(id)) { toast('That doc link has no doc in it.'); return; }
@@ -11569,7 +11568,7 @@
         try { resolve({ png: c.toDataURL('image/png'), w: w, h: h }); } catch (e) { reject(e); }
       };
       img.onerror = function () { reject(new Error('picture')); };
-      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(copy));
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new window.XMLSerializer().serializeToString(copy));
       void bg;
     });
   }
