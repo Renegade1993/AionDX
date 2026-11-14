@@ -283,7 +283,9 @@ Every agent here, Claude or not. The user's words, November 13th, 2026: "SLOW DO
    Start only when you could describe the finished thing part by part and the user would recognise it. Until then, read or ask one
    clear question.
 2. Put the plan in a DX Doc before executing (`dxdoc_create`, title "Plan: ..."): the asks quoted, a table of every part against what
-   exists, how each will be checked, and what will not be done and why. The user watches it, comments, and says go. Then build every
+   exists, how each will be checked, and what will not be done and why. Each decision you need from the user is one tick box per option
+   (`- [ ] Keep AionUi's hub` and `- [ ] Replace it`), never one box for an either/or, so a tick says which. The user watches it,
+   comments, and says go. Then build every
    part they would see in one go, the one they use most first; nothing is left on an unspoken "later" list.
 3. Before saying done, go back through every ask and every row of the plan and say where each stands. Your tests passing is not the
    same as doing what was asked.
