@@ -6806,6 +6806,15 @@
     '.aiondx-tip-foot{margin-top:4px;font-size:12px;opacity:.75}',
 
     '.aiondx-menu{position:fixed;z-index:1050;width:300px;font-size:14px;color:var(--color-text-1)}',
+    // @@ and @@@ lists (R-129), the look of AionUi's own @@ list: a card over the box
+    '.aiondx-mention-menu{position:fixed;z-index:1100;max-height:320px;overflow:auto;padding:4px;border-radius:8px;background:var(--color-bg-popup,var(--color-bg-2,#fff));' +
+      'border:1px solid var(--color-border-2,rgba(0,0,0,.1));box-shadow:0 4px 16px rgba(0,0,0,.12);font-size:13px;color:var(--color-text-1)}',
+    '.aiondx-mention-head{padding:4px 8px 6px;font-size:12px;color:var(--color-text-3)}',
+    '.aiondx-mention-empty{padding:8px;color:var(--color-text-3)}',
+    '.aiondx-mention-item{padding:6px 8px;border-radius:6px;cursor:pointer}',
+    '.aiondx-mention-item:hover,.aiondx-mention-active{background:var(--color-fill-2,rgba(0,0,0,.05))}',
+    '.aiondx-mention-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-mention-sub{font-size:12px;color:var(--color-text-3)}',
     // Arco caps .arco-dropdown-menu at 200px with overflow:auto, which cut the
     // message box in half. Lift the cap on ours only.
     '.aiondx-menu .arco-dropdown-menu{max-height:none;overflow:visible}',
@@ -10442,12 +10451,250 @@
     if (r.status === 409 && /\/api\/conversations\/[^/?#]+\/messages/.test(url)) { holdUnsent(input, init, text); return; }
     restoreUnsent(url, text, 'HTTP ' + r.status);
   }
+  // ---------------------------------------------------------------- @@ and @@@ in every message box (R-129, November 15th, 2026)
+  // The user: "@@ SHOULD SEND IT TO A CONVERSATION OR TEAM AND DEAFAULT TO THE TEAM LEAD/FIRST LANE, BUT @@@ SHOULD ALLOW ME TO DIRECT
+  // CHATS TO INDIIVIDUAL LANES". AionUi turns @@ off in team chats and has no @@@ (its token needs a boundary before "@@", so "@@@" never
+  // opens its list). AionDX's own list: @@ in a team chat's box (chats and teams, a team being its lead's chat), @@@ in every box (every
+  // lane of every team; GET /api/session-messages/mentionable?lanes=true, AionCore core-0019). What is picked goes with the message as the
+  // [[AION_SESSIONS]] block a solo chat's @@ gets: in a solo chat the ids join AionUi's own `sessions` list, so AionCore builds one block;
+  // on a team's routes, which carry no references, AionCore builds the block (POST /api/session-messages/block) and it goes in the text.
+  var MENTION_BOUNDARY = /[\s,;!?()[\]{}]/;
+  var mentionPicked = [];   // { token, id }: picked from AionDX's list, until the message carrying them is sent
+  var mentionMenu = null;   // { el, ta, start, end, lanes, q, items, active, loading, err }
+  var mentionSeq = 0, mentionTimer = 0;
+  function mentionEscape(name) { return String(name).replace(/([\\\s,;!?()[\]{}])/g, '\\$1'); }
+  function mentionEscapedAt(v, i) { var n = 0; for (var k = i - 1; k >= 0 && v.charAt(k) === '\\'; k--) n++; return n % 2 === 1; }
+  /** The @@ or @@@ token the caret is in: { start, end, lanes, q }, or null. */
+  function mentionQuery(ta) {
+    var v = String(ta.value || '');
+    var caret = typeof ta.selectionStart === 'number' ? ta.selectionStart : v.length;
+    for (var i = caret - 1; i >= 0; i--) {
+      var c = v.charAt(i);
+      if (c === '@' && !mentionEscapedAt(v, i)) {
+        var s = i;
+        while (s > 0 && v.charAt(s - 1) === '@') s--;
+        var n = i - s + 1;
+        if (n !== 2 && n !== 3) return null;
+        var prev = s > 0 ? v.charAt(s - 1) : '';
+        if (prev && !MENTION_BOUNDARY.test(prev)) return null;
+        var end = caret;
+        while (end < v.length && !(MENTION_BOUNDARY.test(v.charAt(end)) && !mentionEscapedAt(v, end))) end++;
+        return { start: s, end: end, lanes: n === 3, q: v.slice(i + 1, caret).replace(/\\([\s\S])/g, '$1') };
+      }
+      if (MENTION_BOUNDARY.test(c) && !mentionEscapedAt(v, i)) return null;
+    }
+    return null;
+  }
+  function mentionTeamPage() { var r = route(); return !!r && r.kind === 'team'; }
+  /** The chat a box writes to: a solo chat's id, or the team member's chat for a team tab's box (the lead's when it cannot tell). */
+  function mentionBoxConv(ta) {
+    var r = route();
+    if (!r) return '';
+    if (r.kind === 'conv') return r.id;
+    var tc = teamCache[r.id];
+    if (!tc || !tc.ok) return '';
+    var slotEl = ta.closest && ta.closest('[data-slot-id]');
+    var slot = slotEl ? slotEl.getAttribute('data-slot-id') : '';
+    if (slot && tc.map[slot]) return tc.map[slot];
+    for (var k in tc.roles) if (tc.roles[k] === 'lead' && tc.map[k]) return tc.map[k];
+    return '';
+  }
+  /** The chat a send goes to, from its route: a solo chat, a team member, or a team's lead. */
+  function mentionUrlConv(url) {
+    var m = /\/api\/conversations\/([^/?#]+)\/messages/.exec(url);
+    if (m) return decodeURIComponent(m[1]);
+    m = /\/api\/teams\/([^/?#]+)(?:\/agents\/([^/?#]+))?\/messages/.exec(url);
+    if (!m) return '';
+    var tc = teamCache[decodeURIComponent(m[1])];
+    if (!tc || !tc.ok) return '';
+    if (m[2]) return tc.map[decodeURIComponent(m[2])] || '';
+    for (var k in tc.roles) if (tc.roles[k] === 'lead' && tc.map[k]) return tc.map[k];
+    return '';
+  }
+  function mentionClose() {
+    if (mentionMenu && mentionMenu.el && mentionMenu.el.parentNode) mentionMenu.el.parentNode.removeChild(mentionMenu.el);
+    mentionMenu = null;
+    clearTimeout(mentionTimer);
+  }
+  function mentionRender() {
+    var m = mentionMenu;
+    if (!m) return;
+    if (!m.el) {
+      m.el = document.createElement('div');
+      m.el.className = 'aiondx-mention-menu';
+      m.el.setAttribute('data-testid', 'aiondx-mention-menu');
+      m.el.setAttribute('role', 'listbox');
+      m.el.addEventListener('mousedown', function (ev) {
+        var it = ev.target.closest('[data-i]');
+        ev.preventDefault();   // the box keeps its focus and caret
+        if (it) mentionAccept(Number(it.getAttribute('data-i')));
+      });
+      document.body.appendChild(m.el);
+    }
+    m.el.innerHTML = '';
+    var head = document.createElement('div');
+    head.className = 'aiondx-mention-head';
+    head.textContent = m.lanes ? 'One lane of a team (@@@)' : 'A chat, or a team through its lead (@@)';
+    m.el.appendChild(head);
+    if (!m.items.length) {
+      var e = document.createElement('div');
+      e.className = 'aiondx-mention-empty';
+      e.textContent = m.loading ? 'Looking…' : m.err ? 'Could not read the list (' + m.err + ').' : m.lanes ? 'No lane matches.' : 'Nothing matches.';
+      m.el.appendChild(e);
+    }
+    m.items.forEach(function (it, i) {
+      var row = document.createElement('div');
+      row.className = 'aiondx-mention-item' + (i === m.active ? ' aiondx-mention-active' : '');
+      row.setAttribute('data-i', String(i));
+      row.setAttribute('data-testid', 'aiondx-mention-item');
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(i === m.active));
+      var n = document.createElement('div');
+      n.className = 'aiondx-mention-name';
+      n.textContent = it.name;
+      row.appendChild(n);
+      if (it.project) { var p = document.createElement('div'); p.className = 'aiondx-mention-sub'; p.textContent = it.project; row.appendChild(p); }
+      m.el.appendChild(row);
+    });
+    var rc = m.ta.getBoundingClientRect();
+    var w = Math.min(440, Math.max(280, rc.width));
+    m.el.style.width = w + 'px';
+    m.el.style.left = Math.max(8, Math.min(rc.left, window.innerWidth - w - 8)) + 'px';
+    m.el.style.bottom = Math.max(8, window.innerHeight - rc.top + 6) + 'px';
+    var act = m.el.querySelector('.aiondx-mention-active');
+    if (act && act.scrollIntoView) act.scrollIntoView({ block: 'nearest' });
+  }
+  async function mentionLoad() {
+    var m = mentionMenu;
+    if (!m) return;
+    var seq = ++mentionSeq;
+    var cur = mentionBoxConv(m.ta);
+    var g = await getJson('/api/session-messages/mentionable?limit=40' + (m.q ? '&q=' + encodeURIComponent(m.q) : '') +
+      (cur ? '&current_conversation_id=' + encodeURIComponent(cur) : '') + (m.lanes ? '&lanes=true' : ''));
+    if (seq !== mentionSeq || mentionMenu !== m) return;
+    var d = g && g.data;
+    m.items = d && Array.isArray(d.items) ? d.items.filter(function (it) { return it && it.id && it.name; }) : [];
+    m.err = g && g.err ? g.err : 0;
+    m.loading = false;
+    if (m.active >= m.items.length) m.active = 0;
+    mentionRender();
+  }
+  function mentionUpdate(ta) {
+    var q = mentionQuery(ta);
+    // a solo chat's @@ is AionUi's own list
+    if (!q || (!q.lanes && !mentionTeamPage())) { if (mentionMenu) mentionClose(); return; }
+    var same = mentionMenu && mentionMenu.ta === ta && mentionMenu.start === q.start && mentionMenu.lanes === q.lanes;
+    if (!same) { mentionClose(); mentionMenu = { el: null, ta: ta, items: [], active: 0, loading: true, err: 0 }; }
+    var changed = !same || mentionMenu.q !== q.q;
+    mentionMenu.start = q.start; mentionMenu.end = q.end; mentionMenu.lanes = q.lanes; mentionMenu.q = q.q;
+    mentionRender();
+    if (changed) { clearTimeout(mentionTimer); mentionTimer = setTimeout(function () { mentionLoad(); }, 120); }
+  }
+  function mentionAccept(i) {
+    var m = mentionMenu;
+    if (!m || !m.items[i]) return;
+    var it = m.items[i];
+    var v = String(m.ta.value || '');
+    var token = (m.lanes ? '@@@' : '@@') + mentionEscape(it.name);
+    var next = v.slice(0, m.start) + token + ' ' + v.slice(m.end).replace(/^ /, '');
+    mentionPicked = mentionPicked.filter(function (p) { return p.token !== token; });
+    mentionPicked.push({ token: token, id: String(it.id) });
+    var ta = m.ta, pos = m.start + token.length + 1;
+    mentionClose();
+    setComposerValue(ta, next);
+    try { ta.focus(); ta.setSelectionRange(pos, pos); } catch (e) {}
+  }
+  function mentionBox(el) {
+    var box = el && el.closest ? el.closest('[data-testid="sendbox-input"]') : null;
+    if (!box) return null;
+    return /^(TEXTAREA|INPUT)$/.test(box.tagName) ? box : (el.tagName === 'TEXTAREA' ? el : box.querySelector('textarea, input'));
+  }
+  document.addEventListener('input', function (ev) {
+    if (disabled()) return;
+    var ta = mentionBox(ev.target);
+    if (ta) mentionUpdate(ta);
+  }, true);
+  document.addEventListener('keyup', function (ev) {
+    if (disabled() || !/^(ArrowLeft|ArrowRight|Home|End)$/.test(ev.key)) return;
+    var ta = mentionBox(ev.target);
+    if (ta && (mentionMenu || /@@/.test(ta.value || ''))) mentionUpdate(ta);
+  }, true);
+  document.addEventListener('keydown', function (ev) {
+    var m = mentionMenu;
+    if (!m || ev.target !== m.ta) return;
+    var act = null;
+    if (ev.key === 'Escape') act = 'close';
+    else if (m.items.length && ev.key === 'ArrowDown') act = 'down';
+    else if (m.items.length && ev.key === 'ArrowUp') act = 'up';
+    else if (m.items.length && (ev.key === 'Enter' || ev.key === 'Tab') && !ev.shiftKey && !ev.isComposing) act = 'accept';
+    if (!act) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    if (act === 'close') mentionClose();
+    else if (act === 'accept') mentionAccept(m.active);
+    else { m.active = (m.active + (act === 'down' ? 1 : m.items.length - 1)) % m.items.length; mentionRender(); }
+  }, true);
+  document.addEventListener('focusout', function (ev) {
+    if (mentionMenu && ev.target === mentionMenu.ta) setTimeout(function () { if (mentionMenu && document.activeElement !== mentionMenu.ta) mentionClose(); }, 150);
+  }, true);
+  /** The ids of picked references the text still carries. On a solo chat's route only @@@ (its @@ is AionUi's own). */
+  function mentionIdsIn(text, teamRoute) {
+    var ids = [];
+    mentionPicked.forEach(function (p) {
+      if (!teamRoute && p.token.indexOf('@@@') !== 0) return;
+      for (var at = text.indexOf(p.token); at >= 0; at = text.indexOf(p.token, at + 1)) {
+        var before = at > 0 ? text.charAt(at - 1) : '', after = text.charAt(at + p.token.length);
+        if ((!before || MENTION_BOUNDARY.test(before)) && (!after || MENTION_BOUNDARY.test(after))) { if (ids.indexOf(p.id) < 0) ids.push(p.id); break; }
+      }
+    });
+    return ids;
+  }
+  /** A send carrying references picked from AionDX's list: [input, init] with them attached, as a promise; null when it carries none. */
+  function mentionAttach(input, init) {
+    var text = sentText(init);
+    if (text === null) return null;
+    var url = reqUrl(input).replace(/^https?:\/\/[^/]+/, '');
+    var team = /\/api\/teams\//.test(url);
+    var ids = mentionIdsIn(text, team);
+    if (!ids.length) return null;
+    var done = function (body) {
+      mentionPicked = mentionPicked.filter(function (p) { return ids.indexOf(p.id) < 0; });
+      return [input, Object.assign({}, init, { body: body, __dxMentions: true })];
+    };
+    var b = JSON.parse(init.body);
+    if (!team) {
+      var have = Array.isArray(b.sessions) ? b.sessions : [];
+      ids.forEach(function (id) { if (!have.some(function (s) { return s && s.id === id; })) have.push({ id: id }); });
+      b.sessions = have;
+      return Promise.resolve(done(JSON.stringify(b)));
+    }
+    var cur = mentionUrlConv(url);
+    return nativeFetch.call(window, apiUrl('/api/session-messages/block'), {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
+      body: JSON.stringify({ current_conversation_id: cur || null, ids: ids })
+    }).then(function (r) { return r.ok ? r.json() : null; }, function () { return null; }).then(function (j) {
+      var block = j && j.data && typeof j.data.block === 'string' ? j.data.block : '';
+      if (!block) {
+        toast('The chats you named with @@ did not go with this message.', 'AionCore could not build their references; the message went without them.');
+        return done(init.body);
+      }
+      var key = b.content !== undefined ? 'content' : b.input !== undefined ? 'input' : 'text';
+      b[key] = String(b[key] || '') + '\n\n' + block;
+      return done(JSON.stringify(b));
+    });
+  }
+
   function guardFetch() {
     window.fetch = function (input, init) {
       var args = arguments;
       var id;
       try {
         if (!disabled()) {
+          if (mentionPicked.length && init && !init.__dxMentions && typeof init.body === 'string' && callId(ANY_SEND_RE, input, init, ['POST'])) {
+            var attached = mentionAttach(input, init);
+            if (attached) return attached.then(function (a) { return window.fetch(a[0], a[1]); });
+          }
           if ((id = callId(TEAM_SESSION_RE, input, init, ['POST']))) return holdTeamWake(id, args);
           if (pendingAccount && String((init && init.method) || (input && input.method) || 'GET').toUpperCase() === 'POST' &&
               CREATE_RE.test(String(typeof input === 'string' ? input : (input && input.url) || '').replace(/^https?:\/\/[^/]+/, ''))) {

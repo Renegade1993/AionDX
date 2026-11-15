@@ -4019,6 +4019,94 @@ async function pageTarget() {
       await js(`(() => { document.querySelector('#solo .sendbox-stop-button').remove(); window.__aionDx.setLive('conv:harness1', 'idle'); window.__aionDx.stopTimes(3000, 12000); return 0; })()`);
     }
 
+    // ---- @@ and @@@ in every box (R-129, November 15th, 2026) ----
+    {
+      const sc = 'mentions';
+      const STUB = `(() => { const r = window.__stub.routes;
+        r['GET /api/session-messages/mentionable'] = (url) => /[?&]lanes=true/.test(url)
+          ? { success: true, data: { items: [{ id: 'laneB', name: 'Team: Atlas / Mapper', project: 'Atlas', modified_at: 1 }, { id: 'laneC', name: 'Team: Atlas / Builder', modified_at: 1 }], next_cursor: null } }
+          : { success: true, data: { items: [{ id: 'leadX', name: 'Team: Harbor', modified_at: 1 }, { id: 'soloY', name: 'Garden notes', modified_at: 1 }], next_cursor: null } };
+        r['POST /api/session-messages/block'] = (url, body) => ({ success: true, data: { block: '[[AION_SESSIONS]]\\nhint\\nX\\t' + body.ids.join(',') + '\\tworkspace: same\\n[[/AION_SESSIONS]]' } });
+        r['POST /api/teams/team1/agents/slotB/messages'] = { success: true, data: { status: 'accepted' } };
+        window.__calls.length = 0; return 0; })()`;
+      const menu = () => js(`(() => { const m = document.querySelector('[data-testid="aiondx-mention-menu"]'); return m ? { head: m.querySelector('.aiondx-mention-head').textContent, items: [...m.querySelectorAll('[data-testid="aiondx-mention-item"]')].map(e => e.querySelector('.aiondx-mention-name').textContent) } : null; })()`);
+      const listCalls = () => js(`window.__calls.filter(c => c.method === 'GET' && c.path === '/api/session-messages/mentionable').map(c => c.url)`);
+      const boxVal = (sel) => js(`document.querySelector(${JSON.stringify(sel)}).value`);
+      // a solo chat: @@@ opens AionDX's list of every team's lanes
+      await load('theme=light&sends=1');
+      await js(STUB);
+      await typeInto('[data-testid="sendbox-input"]', 'ask @@@map');
+      await sleep(700);
+      let mm = await menu();
+      check(sc, 'in a solo chat, @@@ opens the list of every lane of every team, searched by what follows',
+        mm && mm.head === 'One lane of a team (@@@)' && JSON.stringify(mm.items) === JSON.stringify(['Team: Atlas / Mapper', 'Team: Atlas / Builder']) &&
+        (await listCalls()).some(u => /lanes=true/.test(u) && /q=map/.test(u) && /current_conversation_id=harness1/.test(u)), JSON.stringify([mm, await listCalls()]));
+      await pressEnter();
+      await sleep(300);
+      check(sc, 'Enter picks the first lane: its name goes in the box, the list closes, nothing is sent',
+        (await boxVal('[data-testid="sendbox-input"]')) === 'ask @@@Team:\\ Atlas\\ /\\ Mapper ' && !(await menu()) && (await posts('/api/conversations/harness1/messages')).length === 0,
+        JSON.stringify(await boxVal('[data-testid="sendbox-input"]')));
+      await typeInto('[data-testid="sendbox-input"]', 'for status');
+      await pressEnter();
+      await sleep(500);
+      let sent = await posts('/api/conversations/harness1/messages');
+      check(sc, 'the message goes with that lane as one of its references, for AionCore to build the block',
+        sent.length === 1 && JSON.stringify(sent[0].body.sessions) === JSON.stringify([{ id: 'laneB' }]) && /@@@Team:\\ Atlas/.test(sent[0].body.content), JSON.stringify(sent));
+      await js(`(() => { window.__calls.length = 0; return 0; })()`);
+      await typeInto('[data-testid="sendbox-input"]', '@@pac');
+      await sleep(600);
+      check(sc, 'a solo chat\'s @@ is left to AionUi\'s own list', !(await menu()) && (await listCalls()).length === 0);
+      await js(`(() => { const t = document.querySelector('[data-testid="sendbox-input"]'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, ''); t.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      // a team chat: @@ opens chats and teams, and the block goes in the text of the team's message
+      await load('theme=light&team=1&sends=1');
+      await sleep(1500);
+      await js(STUB);
+      const boxB = '[data-slot-id="slotB"] [data-testid="sendbox-input"]';
+      await typeInto(boxB, 'tell @@land');
+      await sleep(700);
+      mm = await menu();
+      check(sc, 'in a team chat\'s box, @@ opens chats and teams (a team through its lead), for the member\'s own chat',
+        mm && mm.head === 'A chat, or a team through its lead (@@)' && mm.items[0] === 'Team: Harbor' &&
+        (await listCalls()).some(u => !/lanes=true/.test(u) && /q=land/.test(u) && /current_conversation_id=convB/.test(u)), JSON.stringify([mm, await listCalls()]));
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+      await sleep(200);
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 });
+      await sleep(200);
+      await pressEnter();
+      await sleep(300);
+      check(sc, 'the arrows move through the list and Enter picks', (await boxVal(boxB)) === 'tell @@Team:\\ Harbor ', JSON.stringify(await boxVal(boxB)));
+      await typeInto(boxB, 'and @@@dm');
+      await sleep(700);
+      await humanClick('[data-testid="aiondx-mention-menu"] [data-i="1"]');
+      await sleep(300);
+      check(sc, 'and @@@ in a team chat\'s box lists lanes; a click picks one', (await boxVal(boxB)) === 'tell @@Team:\\ Harbor and @@@Team:\\ Atlas\\ /\\ Builder ', JSON.stringify(await boxVal(boxB)));
+      await pressEnter();
+      await sleep(700);
+      const blk = await posts('/api/session-messages/block');
+      sent = await posts('/api/teams/team1/agents/slotB/messages');
+      check(sc, 'on send AionCore builds the block for both, from the member\'s chat', blk.length === 1 && JSON.stringify(blk[0].body) === JSON.stringify({ current_conversation_id: 'convB', ids: ['leadX', 'laneC'] }), JSON.stringify(blk));
+      check(sc, 'and the team message carries it under the text', sent.length === 1 && /^tell @@Team:\\ Harbor and @@@Team:\\ Atlas\\ \/\\ Builder \n\n\[\[AION_SESSIONS\]\]/.test(sent[0].body.content) && /leadX,laneC/.test(sent[0].body.content), JSON.stringify(sent));
+      // AionCore cannot build it: the message still goes, and the user is told
+      await js(`(() => { window.__stub.routes['POST /api/session-messages/block'] = { __status: 500, success: false }; window.__calls.length = 0; document.querySelectorAll('.aiondx-toast').forEach(t => t.remove()); return 0; })()`);
+      await typeInto(boxB, 'ping @@land');
+      await sleep(700);
+      await pressEnter();
+      await sleep(300);
+      await pressEnter();
+      await sleep(700);
+      sent = await posts('/api/teams/team1/agents/slotB/messages');
+      check(sc, 'if AionCore cannot build the block, the message goes without it and the user is told',
+        sent.length === 1 && sent[0].body.content === 'ping @@Team:\\ Harbor ' && (await toasts()).some(t => /^The chats you named with @@ did not go with this message\./.test(t)), JSON.stringify([sent, await toasts()]));
+      await typeInto(boxB, '@@@x');
+      await sleep(600);
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await sleep(200);
+      check(sc, 'Escape closes the list and leaves the text', !(await menu()) && (await boxVal(boxB)) === '@@@x');
+    }
+
     // ---- a message the backend refuses is held, not lost (2026-11-01) ----
     {
       const sc = 'unsent';

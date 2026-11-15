@@ -461,9 +461,10 @@ namespace AionDx
                 new Dictionary<string, object> {
                     { "name", "chat_send" },
                     { "title", "Tell another chat" },
-                    { "description", "Delivers a message to another of the user's chats (its conversation id from @@, aiondx team show or aiondx chat read), through AionCore's " +
-                        "own delivery: into its running turn when it can take one, else queued. Only when the user asked for it or @@-mentioned the chat. " +
-                        "Chats on a team use the team's own messaging." },
+                    { "description", "Delivers a message to any other of the user's chats, from any chat: a solo chat, a team's lead (the team) or one " +
+                        "member's lane, by its conversation id (from @@ or @@@, aiondx team show or aiondx chat read). A solo chat gets it in its running " +
+                        "turn when it can take one, else queued; a team chat gets it through the team's own messaging. It names you as the sender, so the " +
+                        "answer comes back the same way. Only when the user tells you to." },
                     { "inputSchema", new Dictionary<string, object> { { "type", "object" }, { "properties", new Dictionary<string, object> {
                         { "to", Prop("string", "The other chat's conversation id.") }, { "message", Prop("string", "What to tell it.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "openWorldHint", false } } } },
@@ -1788,9 +1789,12 @@ namespace AionDx
             "Usage:\n" +
             "  aiondx send --to CHAT_ID --message TEXT\n" +
             "  aiondx send --to CHAT_ID --message-file FILE      (or --message-stdin)\n" +
-            "Delivers a message to another of the user's chats, as the session-message skill does, through AionCore's own delivery\n" +
-            "(into the running turn when that chat can take one, else queued). Only when the user asked for it or @@-mentioned the chat.\n" +
-            "Chats on a team talk through the team's own messaging.";
+            "Delivers a message to any other of the user's chats, from any chat (solo or team), as the session-message skill does:\n" +
+            "  a solo chat:          into its running turn when it can take one, else queued;\n" +
+            "  a team (its lead):    through the team's own messaging (@@ names a team by its lead's chat);\n" +
+            "  one lane of a team:   through the team's own messaging, to that member (@@@ names a lane).\n" +
+            "The message names you as the sender, so the answer comes back the same way. Ids: from @@ or @@@, aiondx team show, aiondx chat read.\n" +
+            "Only when the user tells you to.";
 
         static string SendText(string to, string message)
         {

@@ -296,6 +296,8 @@
         if (lead.state === 'running') lead.queued_foreground_count = (lead.queued_foreground_count || 0) + 1;
       }
       var hit = routes[method + ' ' + path];
+      // A route can be a function of the full URL and the body (an answer that depends on the query, say).
+      if (typeof hit === 'function') hit = hit(String(url), body);
       return Promise.resolve(new Response(JSON.stringify(hit || { success: false }), {
         status: hit ? (hit.__status || 200) : 404, headers: { 'Content-Type': 'application/json' }
       }));

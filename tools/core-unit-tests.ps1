@@ -6,6 +6,8 @@
 param(
   [string[]]$Crates = @('aiondx-session-message', 'aiondx-conversation', 'aiondx-team'),
   [string]$Filter = '',
+  # Also the crates' integration tests (tests\*.rs), not only the library's own (November 15th: core-0019's delivery tests live there).
+  [switch]$Integration,
   [int]$Minutes = 40
 )
 $ErrorActionPreference = 'Stop'
@@ -27,8 +29,10 @@ $tmp = Join-Path $root '.tmp'
 New-Item -ItemType Directory -Force $tmp | Out-Null
 $log = Join-Path $tmp 'core-unit-tests.log'
 $argList = @('test', '--release', '--target', 'x86_64-pc-windows-msvc')
+# -Crates a,b through cmd /c arrives as one string
+$Crates = @($Crates | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 foreach ($c in $Crates) { $argList += @('-p', $c) }
-$argList += '--lib'
+if (-not $Integration) { $argList += '--lib' }
 if ($Filter) { $argList += @('--', $Filter) }
 $p = Start-Process -FilePath $cargo -ArgumentList $argList -WorkingDirectory $wt -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError ($log + '.err')
 if (-not $p.WaitForExit($Minutes * 60 * 1000)) { Stop-Process -Id $p.Id -Force; 'TIMEOUT' | Add-Content $log }

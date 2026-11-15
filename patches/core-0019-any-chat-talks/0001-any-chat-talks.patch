@@ -1,0 +1,851 @@
+diff --git a/crates/aionui-api-types/src/session_tools.rs b/crates/aionui-api-types/src/session_tools.rs
+index 0f949b07..46dbdfa1 100644
+--- a/crates/aionui-api-types/src/session_tools.rs
++++ b/crates/aionui-api-types/src/session_tools.rs
+@@ -254,6 +254,9 @@ pub struct SessionMentionableQuery {
+     /// Deliberately absent from the `session list` tool descriptor: agents
+     /// address conversations by id already and have no use for it.
+     pub id: Option<String>,
++    /// AionDX core-0019: list the lanes of every team (each member's chat, the lead's included) instead of chats and teams. The `@@@` list.
++    #[serde(default)]
++    pub lanes: Option<bool>,
+ }
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+diff --git a/crates/aionui-app/src/router/state.rs b/crates/aionui-app/src/router/state.rs
+index 4715f326..9e20e567 100644
+--- a/crates/aionui-app/src/router/state.rs
++++ b/crates/aionui-app/src/router/state.rs
+@@ -361,6 +361,12 @@ pub async fn build_module_states(
+             task_manager: services.worker_task_manager.clone(),
+             team: states.team.service.clone(),
+         }));
++    // AionDX core-0019: cross-chat messages into a team's chat go through the team's own messaging. Set once, after the team service exists.
++    services
++        .session_message_service
++        .set_team_delivery(Arc::new(TeamDeliveryAdapter {
++            team: states.team.service.clone(),
++        }));
+     states
+         .conversation
+         .service
+@@ -663,6 +669,29 @@ impl ArchiveTeardownPorts for ArchiveTeardownAdapter {
+     }
+ }
+ 
++/// AionDX core-0019: hands a cross-chat message to a team's own messaging (its lead's chat as the user's team message, a member's chat
++/// as a message to that member), without the session-message crate depending on the team crate.
++struct TeamDeliveryAdapter {
++    team: Arc<TeamSessionService>,
++}
++
++#[async_trait::async_trait]
++impl aionui_session_message::TeamDelivery for TeamDeliveryAdapter {
++    async fn deliver_to_team_chat(
++        &self,
++        user_id: &str,
++        team_id: &str,
++        conversation_id: &str,
++        content: &str,
++    ) -> Result<(), String> {
++        self.team
++            .send_message_to_conversation(user_id, team_id, conversation_id, content)
++            .await
++            .map(|_| ())
++            .map_err(|err| err.to_string())
++    }
++}
++
+ /// Build the default `McpRouterState` from application services.
+ pub fn build_mcp_state(services: &AppServices) -> McpRouterState {
+     let pool = services.database.pool().clone();
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index 4f0e26a1..7b2dc349 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -589,6 +589,7 @@ impl ConversationService {
+             session_mentions::reject_unusable_target("", &row.id, &row.extra)?;
+             targets.push(session_mentions::SessionMentionTargetInfo {
+                 team: session_mentions::is_team_lead(&row.extra),
++                lane: session_mentions::team_id_from_extra_str(&row.extra).is_some() && !session_mentions::is_team_lead(&row.extra),
+                 id: row.id.clone(),
+                 name: row.name.clone(),
+                 workspace: session_mentions::workspace_from_extra(&row.extra),
+diff --git a/crates/aionui-conversation/src/service_test.rs b/crates/aionui-conversation/src/service_test.rs
+index bae3bbd3..43ea9ad3 100644
+--- a/crates/aionui-conversation/src/service_test.rs
++++ b/crates/aionui-conversation/src/service_test.rs
+@@ -10348,23 +10348,31 @@ mod session_mentions_integration {
+         assert!(matches!(err, ConversationError::NotFound { .. }), "{err:?}");
+     }
+ 
++    // AionDX core-0019: a team's chats are references too: the lead's stands for its team, a member's is one lane.
+     #[tokio::test]
+-    async fn a_reference_to_a_team_conversation_is_rejected() {
++    async fn a_reference_to_a_team_conversation_is_accepted_and_marked() {
+         let (svc, _b, repo, _t) = make_service();
+-        insert_conv(&repo, "user_1", "conv_team", "team chat", json!({"teamId": "team_1"})).await;
++        insert_conv(&repo, "user_1", "conv_team", "MapGen", json!({"teamId": "team_1", "role": "teammate"})).await;
++        insert_conv(&repo, "user_1", "conv_lead", "Lead", json!({"teamId": "team_1", "role": "lead"})).await;
+ 
+-        let err = svc
++        let content = svc
+             .resolve_session_mentions(
+                 "user_1",
+                 "hi",
+-                &[SessionRef {
+-                    id: "conv_team".to_owned(),
+-                }],
++                &[
++                    SessionRef {
++                        id: "conv_team".to_owned(),
++                    },
++                    SessionRef {
++                        id: "conv_lead".to_owned(),
++                    },
++                ],
+                 Some("/w/a"),
+             )
+             .await
+-            .expect_err("team conversations are not valid @@ targets");
+-        assert!(matches!(err, ConversationError::Forbidden { .. }), "{err:?}");
++            .expect("team conversations are @@ and @@@ targets");
++        assert!(content.contains("MapGen [lane]\tconv_team\t"), "{content}");
++        assert!(content.contains("Lead [team]\tconv_lead\t"), "{content}");
+     }
+ 
+     #[tokio::test]
+diff --git a/crates/aionui-conversation/src/session_mentions.rs b/crates/aionui-conversation/src/session_mentions.rs
+index 6abb4490..2d2c0deb 100644
+--- a/crates/aionui-conversation/src/session_mentions.rs
++++ b/crates/aionui-conversation/src/session_mentions.rs
+@@ -16,6 +16,8 @@ pub struct SessionMentionTargetInfo {
+     pub name: String,
+     /// AionDX core-0017: the target is a team (its lead's chat): the agent is invited to read the team, not to deliver to it.
+     pub team: bool,
++    /// AionDX core-0019: the target is one lane of a team (a member's chat, named with @@@).
++    pub lane: bool,
+     /// Absolute workspace path, when the conversation row records one.
+     pub workspace: Option<String>,
+ }
+@@ -62,7 +64,7 @@ pub fn workspace_field_value(sender_workspace: Option<&str>, target_workspace: O
+ /// including the `workspace:` warning below — to match the `session-message`
+ /// skill it routes to.
+ /// AionDX core-0017: added when a target is a team. No tab, so the bubble and the chip parser skip it, as they skip the hint above.
+-const TEAM_HINT: &str = "Entries marked [team] are AionDX teams, given to you to read, not to deliver to: their chats are yours to read as you need. Start with the team's layout, `aiondx team show <id>` (the id on its line is the team lead's chat), then the lead's chat, `aiondx chat read <id>`, then any member's chat the layout lists. Send nothing to a team unless the user asks.";
++const TEAM_HINT: &str = "Entries marked [team] are AionDX teams (the id on the line is the team lead's chat); [lane] is one member of a team. Read them as you need: the team's layout first, `aiondx team show <id>`, then the lead's chat, `aiondx chat read <id>`, then any lane. Message one only when the user tells you to, by its id as you would any chat (the session-message skill, or `aiondx send --to <id> --message TEXT`): it reaches that lead or lane through the team's own messaging.";
+ 
+ const SESSIONS_BLOCK_SKILL_HINT: &str = "To deliver to the conversations below, use the session-message skill (address by conversation id); if it is unavailable, run `\"$AIONUI_HELPER_BIN\" session capabilities` for the delivery contract.";
+ 
+@@ -82,7 +84,7 @@ pub fn build_sessions_block(sender_workspace: Option<&str>, targets: &[SessionMe
+     let mut block = String::from(AIONUI_SESSIONS_MARKER);
+     block.push('\n');
+     block.push_str(SESSIONS_BLOCK_SKILL_HINT);
+-    if targets.iter().any(|target| target.team) {
++    if targets.iter().any(|target| target.team || target.lane) {
+         block.push('\n');
+         block.push_str(TEAM_HINT);
+     }
+@@ -92,6 +94,8 @@ pub fn build_sessions_block(sender_workspace: Option<&str>, targets: &[SessionMe
+         // The marker goes on the name, so the id field stays a bare id for the chip parser.
+         if target.team {
+             block.push_str(" [team]");
++        } else if target.lane {
++            block.push_str(" [lane]");
+         }
+         block.push('\t');
+         block.push_str(&target.id);
+@@ -147,12 +151,8 @@ pub fn reject_unusable_target(
+             reason: format!("@@ reference targets the current conversation: {target_id}"),
+         });
+     }
+-    // AionDX core-0017: a team's lead chat stands for the team (read, not delivered to); other members' chats stay refused as targets.
+-    if team_id_from_extra_str(target_extra).is_some() && !is_team_lead(target_extra) {
+-        return Err(ConversationError::Forbidden {
+-            reason: format!("@@ reference targets a team-owned conversation: {target_id}"),
+-        });
+-    }
++    // AionDX core-0019: every team chat is a usable reference: a lead's chat stands for its team (@@), a member's chat is one lane (@@@).
++    let _ = target_extra;
+     Ok(())
+ }
+ 
+diff --git a/crates/aionui-conversation/src/session_mentions_test.rs b/crates/aionui-conversation/src/session_mentions_test.rs
+index f4208e80..e0db202f 100644
+--- a/crates/aionui-conversation/src/session_mentions_test.rs
++++ b/crates/aionui-conversation/src/session_mentions_test.rs
+@@ -28,12 +28,14 @@ fn sessions_block_is_delimited_and_tab_separated_one_target_per_line() {
+         &[
+             SessionMentionTargetInfo {
+                 team: false,
++                lane: false,
+                 id: "conv_1".to_owned(),
+                 name: "重构-鉴权模块".to_owned(),
+                 workspace: Some("/w/a".to_owned()),
+             },
+             SessionMentionTargetInfo {
+                 team: false,
++                lane: false,
+                 id: "conv_2".to_owned(),
+                 name: "文档站改版".to_owned(),
+                 workspace: Some("/w/docs".to_owned()),
+@@ -59,6 +61,7 @@ fn sessions_block_routes_to_the_session_message_skill_on_its_first_line() {
+         Some("/w/a"),
+         &[SessionMentionTargetInfo {
+                 team: false,
++                lane: false,
+             id: "conv_1".to_owned(),
+             name: "x".to_owned(),
+             workspace: Some("/w/a".to_owned()),
+@@ -89,6 +92,7 @@ fn sessions_block_carries_the_capabilities_fallback_but_no_send_message_payload_
+         Some("/w/a"),
+         &[SessionMentionTargetInfo {
+                 team: false,
++                lane: false,
+             id: "conv_1".to_owned(),
+             name: "x".to_owned(),
+             workspace: Some("/w/a".to_owned()),
+@@ -116,23 +120,35 @@ fn a_team_owned_reference_is_rejected_and_a_self_reference_is_rejected() {
+         reject_unusable_target("conv_a", "conv_a", r#"{}"#),
+         Err(ConversationError::BadRequest { .. })
+     ));
+-    assert!(matches!(
+-        reject_unusable_target("conv_a", "conv_b", r#"{"teamId":"team_1"}"#),
+-        Err(ConversationError::Forbidden { .. })
+-    ));
++    // AionDX core-0019: a team chat is a usable reference.
++    assert!(reject_unusable_target("conv_a", "conv_b", r#"{"teamId":"team_1"}"#).is_ok());
+ }
+ 
+-// AionDX core-0017: a team's lead chat is a usable target (the team, to read); a member's chat is still refused.
++// AionDX core-0017 and core-0019: a team's lead chat (the team, @@) and a member's chat (one lane, @@@) are both usable references.
+ #[test]
+-fn a_team_lead_reference_is_accepted_and_a_member_reference_is_still_rejected() {
++fn a_team_lead_reference_and_a_member_reference_are_both_accepted() {
+     assert!(is_team_lead(r#"{"teamId":"team_1","role":"lead"}"#));
+     assert!(!is_team_lead(r#"{"teamId":"team_1","role":"teammate"}"#));
+     assert!(!is_team_lead(r#"{"role":"lead"}"#));
+     assert!(reject_unusable_target("conv_a", "conv_b", r#"{"teamId":"team_1","role":"lead"}"#).is_ok());
+-    assert!(matches!(
+-        reject_unusable_target("conv_a", "conv_b", r#"{"teamId":"team_1","role":"teammate"}"#),
+-        Err(ConversationError::Forbidden { .. })
+-    ));
++    assert!(reject_unusable_target("conv_a", "conv_b", r#"{"teamId":"team_1","role":"teammate"}"#).is_ok());
++}
++
++#[test]
++fn a_lane_target_is_marked_and_the_block_says_how_to_reach_it() {
++    let block = build_sessions_block(
++        None,
++        &[SessionMentionTargetInfo {
++            team: false,
++            lane: true,
++            id: "conv_member".to_owned(),
++            name: "MapGen".to_owned(),
++            workspace: None,
++        }],
++    );
++    assert!(block.contains("MapGen [lane]\tconv_member\t"), "{block}");
++    assert!(block.contains("aiondx send --to <id>"), "{block}");
++    assert!(block.contains("only when the user tells you to"), "{block}");
+ }
+ 
+ #[test]
+@@ -141,6 +157,7 @@ fn a_team_target_is_marked_on_its_name_and_the_block_says_how_to_read_it() {
+         None,
+         &[SessionMentionTargetInfo {
+             team: true,
++            lane: false,
+             id: "conv_lead".to_owned(),
+             name: "Lead".to_owned(),
+             workspace: None,
+@@ -153,6 +170,7 @@ fn a_team_target_is_marked_on_its_name_and_the_block_says_how_to_read_it() {
+         None,
+         &[SessionMentionTargetInfo {
+             team: false,
++            lane: false,
+             id: "conv_1".to_owned(),
+             name: "x".to_owned(),
+             workspace: None,
+diff --git a/crates/aionui-session-message/src/lib.rs b/crates/aionui-session-message/src/lib.rs
+index 06e0a545..286a7ef3 100644
+--- a/crates/aionui-session-message/src/lib.rs
++++ b/crates/aionui-session-message/src/lib.rs
+@@ -19,6 +19,6 @@ pub mod targets;
+ pub use error::SessionMessageError;
+ pub use hook::QueueClearingCancelHook;
+ pub use routes::{session_message_routes, session_message_user_routes};
+-pub use service::{SessionMessageDeps, SessionMessageService};
++pub use service::{SessionMessageDeps, SessionMessageService, TeamDelivery};
+ pub use state::SessionMessageRouterState;
+ pub use targets::MentionableTargets;
+diff --git a/crates/aionui-session-message/src/routes.rs b/crates/aionui-session-message/src/routes.rs
+index 2cee374f..aef5b607 100644
+--- a/crates/aionui-session-message/src/routes.rs
++++ b/crates/aionui-session-message/src/routes.rs
+@@ -45,9 +45,45 @@ pub fn session_message_routes(state: SessionMessageRouterState) -> Router {
+ pub fn session_message_user_routes(state: SessionMessageRouterState) -> Router {
+     Router::new()
+         .route("/api/session-messages/mentionable", get(mentionable))
++        .route("/api/session-messages/block", post(sessions_block))
+         .with_state(state)
+ }
+ 
++/// AionDX core-0019: the body of `POST /api/session-messages/block`.
++#[derive(Debug, serde::Deserialize)]
++struct SessionsBlockRequest {
++    #[serde(default)]
++    current_conversation_id: Option<String>,
++    ids: Vec<String>,
++}
++
++#[derive(Debug, serde::Serialize)]
++struct SessionsBlockResponse {
++    block: String,
++}
++
++/// AionDX core-0019: the `[[AION_SESSIONS]]` block for chats picked with @@ or @@@ in a team chat's box. AionUi's team send routes carry
++/// no references, so AionDX's page asks for the block here and sends it with the message. Built by the same code as a solo chat's
++/// send boundary, so the agent reads the same block either way.
++async fn sessions_block(
++    State(state): State<SessionMessageRouterState>,
++    Extension(user): Extension<CurrentUser>,
++    Json(request): Json<SessionsBlockRequest>,
++) -> Result<Json<ApiResponse<SessionsBlockResponse>>, aionui_common::ApiError> {
++    let current = request.current_conversation_id.clone().unwrap_or_default();
++    state
++        .service
++        .guard_list_access(&user.id, &current)
++        .await
++        .map_err(to_api_error)?;
++    let block = state
++        .service
++        .sessions_block(&user.id, &current, &request.ids)
++        .await
++        .map_err(to_api_error)?;
++    Ok(Json(ApiResponse::ok(SessionsBlockResponse { block })))
++}
++
+ struct RuntimeCaller {
+     user_id: String,
+     conversation_id: String,
+diff --git a/crates/aionui-session-message/src/service.rs b/crates/aionui-session-message/src/service.rs
+index d3be978d..a180b740 100644
+--- a/crates/aionui-session-message/src/service.rs
++++ b/crates/aionui-session-message/src/service.rs
+@@ -94,13 +94,78 @@ pub struct SessionMessageDeps {
+     pub notify: Arc<Notify>,
+ }
+ 
++/// AionDX core-0019: delivers a cross-chat message into a team's chat (its lead's or one member's) through the team's own messaging.
++/// Implemented in aionui-app over the team service, which this crate cannot depend on, and set once after both services exist.
++#[async_trait]
++pub trait TeamDelivery: Send + Sync {
++    async fn deliver_to_team_chat(
++        &self,
++        user_id: &str,
++        team_id: &str,
++        conversation_id: &str,
++        content: &str,
++    ) -> Result<(), String>;
++}
++
+ pub struct SessionMessageService {
+     deps: SessionMessageDeps,
++    /// AionDX core-0019: set by aionui-app; without it a team chat stays refused as a target.
++    team_delivery: std::sync::OnceLock<Arc<dyn TeamDelivery>>,
+ }
+ 
+ impl SessionMessageService {
+     pub fn new(deps: SessionMessageDeps) -> Self {
+-        Self { deps }
++        Self {
++            deps,
++            team_delivery: std::sync::OnceLock::new(),
++        }
++    }
++
++    /// AionDX core-0019: the `[[AION_SESSIONS]]` block for these chat ids, as a solo chat's send boundary appends it (same checks,
++    /// same wording). The sender's workspace comes from `current_conversation_id` when given. No ids: an empty string.
++    pub async fn sessions_block(
++        &self,
++        user_id: &str,
++        current_conversation_id: &str,
++        ids: &[String],
++    ) -> Result<String, SessionMessageError> {
++        let refs: Vec<aionui_api_types::SessionRef> = ids
++            .iter()
++            .map(|id| id.trim())
++            .filter(|id| !id.is_empty() && *id != current_conversation_id)
++            .map(|id| aionui_api_types::SessionRef { id: id.to_owned() })
++            .collect();
++        if refs.is_empty() {
++            return Ok(String::new());
++        }
++        let sender_workspace = if current_conversation_id.is_empty() {
++            None
++        } else {
++            self.deps
++                .conversation_repo
++                .get(user_id, current_conversation_id)
++                .await
++                .ok()
++                .flatten()
++                .and_then(|row| workspace_from_extra(&row.extra))
++        };
++        let with_block = self
++            .deps
++            .conversation_service
++            .resolve_session_mentions(user_id, "", &refs, sender_workspace.as_deref())
++            .await
++            .map_err(|error| match error {
++                ConversationError::NotFound { id } => SessionMessageError::TargetNotFound { id },
++                other => SessionMessageError::SchemaValidation {
++                    reason: other.to_string(),
++                },
++            })?;
++        Ok(with_block.trim_start().to_owned())
++    }
++
++    /// AionDX core-0019: wire delivery into team chats. Set once; a second call is ignored.
++    pub fn set_team_delivery(&self, delivery: Arc<dyn TeamDelivery>) {
++        let _ = self.team_delivery.set(delivery);
+     }
+ 
+     pub fn queue(&self) -> &Arc<DeliveryQueue> {
+@@ -156,21 +221,10 @@ impl SessionMessageService {
+             return Err(SessionMessageError::FeatureDisabled);
+         }
+ 
+-        // 2 — the sender's own row. A teammate's agent holds a
+-        // ConversationHelper token too, so without this check it could use this
+-        // CLI to reach ordinary conversations, bypassing the team mailbox.
++        // 2 — the sender's own row. AionDX core-0019: a team's chat (lead or member) may send too; the user asked for any chat, team or
++        // agent to be able to talk to any other. Messages inside one team still go through the team's own messaging (step 5 routes a
++        // team target there), so nothing bypasses the team mailbox.
+         let sender = self.load_sender(user_id, from_conversation_id).await?;
+-        if team_id_from_extra_str(&sender.extra).is_some() {
+-            warn!(
+-                from_conversation_id,
+-                outcome = "rejected",
+-                error_code = "sender_is_team",
+-                "cross-session delivery refused"
+-            );
+-            return Err(SessionMessageError::SenderIsTeam {
+-                id: from_conversation_id.to_owned(),
+-            });
+-        }
+ 
+         // 3
+         let to = req.to.trim();
+@@ -221,7 +275,8 @@ impl SessionMessageService {
+             // Scoped by user_id, so another user's id lands here: 404, not 403
+             // — refuse without leaking that the id exists.
+             .ok_or_else(|| SessionMessageError::TargetNotFound { id: to.to_owned() })?;
+-        if team_id_from_extra_str(&target.extra).is_some() {
++        let target_team = team_id_from_extra_str(&target.extra);
++        if target_team.is_some() && self.team_delivery.get().is_none() {
+             return Err(SessionMessageError::TargetIsTeam { id: to.to_owned() });
+         }
+ 
+@@ -236,6 +291,26 @@ impl SessionMessageService {
+         );
+         let content = compose_delivery_content(&block, &req.message);
+ 
++        // AionDX core-0019: a team's chat takes the message through the team's own messaging, which queues it while that lane works.
++        if let (Some(team_id), Some(delivery)) = (target_team.as_deref(), self.team_delivery.get()) {
++            return match delivery.deliver_to_team_chat(user_id, team_id, to, &content).await {
++                Ok(()) => {
++                    info!(
++                        from_conversation_id,
++                        to_conversation_id = to,
++                        team_id,
++                        outcome = "delivered",
++                        "cross-session delivery handed to the team"
++                    );
++                    Ok(SessionSendMessageResponse {
++                        status: SessionDeliveryStatus::Delivered,
++                        to: to.to_owned(),
++                    })
++                }
++                Err(reason) => Err(SessionMessageError::TransportUnavailable { reason }),
++            };
++        }
++
+         match self.deliver_now(user_id, to, content.clone()).await {
+             Ok(sent) => {
+                 info!(
+@@ -308,12 +383,8 @@ impl SessionMessageService {
+         if from_conversation_id.is_empty() {
+             return Ok(());
+         }
+-        let sender = self.load_sender(user_id, from_conversation_id).await?;
+-        if team_id_from_extra_str(&sender.extra).is_some() {
+-            return Err(SessionMessageError::SenderIsTeam {
+-                id: from_conversation_id.to_owned(),
+-            });
+-        }
++        // AionDX core-0019: a team's chat may list targets too (the user's @@ in a team chat, a team agent's `session list`).
++        self.load_sender(user_id, from_conversation_id).await?;
+         Ok(())
+     }
+ 
+diff --git a/crates/aionui-session-message/src/targets.rs b/crates/aionui-session-message/src/targets.rs
+index cb6963c2..58999fb0 100644
+--- a/crates/aionui-session-message/src/targets.rs
++++ b/crates/aionui-session-message/src/targets.rs
+@@ -77,6 +77,30 @@ pub fn team_lead_conversation_id(agents_json: &str) -> Option<String> {
+         .map(str::to_owned)
+ }
+ 
++/// AionDX core-0019: each lane of a team's `agents` JSON as (its name, its chat id), in the team's own order; lanes with no chat yet are
++/// skipped. A lane with no name is called by its role.
++pub fn team_lanes(agents_json: &str) -> Vec<(String, String)> {
++    let agents: Vec<serde_json::Value> = serde_json::from_str(agents_json).unwrap_or_default();
++    agents
++        .iter()
++        .filter_map(|agent| {
++            let id = agent
++                .get("conversation_id")
++                .and_then(serde_json::Value::as_str)
++                .map(str::trim)
++                .filter(|id| !id.is_empty())?;
++            let name = agent
++                .get("name")
++                .and_then(serde_json::Value::as_str)
++                .map(str::trim)
++                .filter(|name| !name.is_empty())
++                .or_else(|| agent.get("role").and_then(serde_json::Value::as_str))
++                .unwrap_or("member");
++            Some((name.to_owned(), id.to_owned()))
++        })
++        .collect()
++}
++
+ impl MentionableTargets {
+     pub fn new(conversation_repo: Arc<dyn IConversationRepository>, project_service: Arc<ProjectService>) -> Self {
+         Self {
+@@ -156,6 +180,60 @@ impl MentionableTargets {
+         out
+     }
+ 
++    /// AionDX core-0019: every lane of every team (each member's chat, the lead's included), for `@@@`. The caller's own team is listed
++    /// too (a lane of it is reached through the team's own messaging); the caller's own chat is not. A lane matches the search term by
++    /// its team's name or its own. Failures yield no lanes rather than failing the list.
++    async fn lane_candidates(
++        &self,
++        user_id: &str,
++        current_conversation_id: &str,
++        name_query: Option<&str>,
++        id_scope: Option<&str>,
++        project_scope: Option<&str>,
++    ) -> Vec<TargetCandidate> {
++        let Some(team_repo) = self.team_repo.as_ref() else {
++            return Vec::new();
++        };
++        let teams = match team_repo.list_teams_by_user(user_id).await {
++            Ok(teams) => teams,
++            Err(error) => {
++                warn!(error = %error, "mentionable list: teams could not be read; no lanes");
++                return Vec::new();
++            }
++        };
++        let query = name_query.map(str::to_lowercase);
++        let mut out = Vec::new();
++        for team in teams {
++            if let Some(project) = project_scope {
++                if team.project_id.as_deref() != Some(project) {
++                    continue;
++                }
++            }
++            for (lane, conversation_id) in team_lanes(&team.agents) {
++                if conversation_id == current_conversation_id {
++                    continue;
++                }
++                if let Some(id) = id_scope {
++                    if id != conversation_id {
++                        continue;
++                    }
++                }
++                if let Some(q) = query.as_deref() {
++                    if !team.name.to_lowercase().contains(q) && !lane.to_lowercase().contains(q) {
++                        continue;
++                    }
++                }
++                out.push(TargetCandidate {
++                    id: conversation_id,
++                    name: format!("Team: {} / {}", team.name, lane),
++                    project_id: team.project_id.clone(),
++                    modified_at: team.updated_at,
++                });
++            }
++        }
++        out
++    }
++
+     /// One ranked page of mentionable conversations.
+     ///
+     /// Ranking (design §5.3) happens in the DB query, not here: sorting an
+@@ -220,6 +298,39 @@ impl MentionableTargets {
+             .flatten()
+             .and_then(|row| row.project_id);
+ 
++        // AionDX core-0019: the `@@@` list, every team's lanes, one page at a time from an offset cursor.
++        if query.lanes == Some(true) {
++            let lanes = self
++                .lane_candidates(
++                    user_id,
++                    current_conversation_id,
++                    name_query.as_deref(),
++                    id_scope.as_deref(),
++                    project_scope.as_deref(),
++                )
++                .await;
++            let start = (parse_cursor(query.cursor.as_deref()) as usize).min(lanes.len());
++            let end = (start + limit).min(lanes.len());
++            let next_cursor = (end < lanes.len()).then(|| end.to_string());
++            let page: Vec<TargetCandidate> = lanes[start..end].to_vec();
++            let project_names = self.resolve_project_names(user_id, &page).await;
++            return Ok(SessionMentionableResponse {
++                items: page
++                    .into_iter()
++                    .map(|candidate| SessionMentionTarget {
++                        project: candidate
++                            .project_id
++                            .as_deref()
++                            .and_then(|id| project_names.get(id).cloned()),
++                        id: candidate.id,
++                        name: candidate.name,
++                        modified_at: candidate.modified_at,
++                    })
++                    .collect(),
++                next_cursor,
++            });
++        }
++
+         let scan_limit = limit as u32 + SCAN_SLACK;
+         let mut offset = parse_cursor(query.cursor.as_deref());
+         // AionDX core-0017: teams lead the first page (and answer an id check).
+diff --git a/crates/aionui-session-message/src/targets_test.rs b/crates/aionui-session-message/src/targets_test.rs
+index 565e605b..58225dc4 100644
+--- a/crates/aionui-session-message/src/targets_test.rs
++++ b/crates/aionui-session-message/src/targets_test.rs
+@@ -859,3 +859,18 @@ fn the_team_lead_conversation_is_read_from_the_agents_json() {
+     assert_eq!(team_lead_conversation_id(r#"[{"role":"teammate","conversation_id":"c1"}]"#), None);
+     assert_eq!(team_lead_conversation_id("not json"), None);
+ }
++
++// AionDX core-0019: each lane of a team is read from its agents JSON, the lead's included, named by its own name (else its role).
++#[test]
++fn every_lane_of_a_team_is_read_from_the_agents_json() {
++    let agents = r#"[{"slot_id":"s1","name":"Lead","role":"lead","conversation_id":"c1"},{"slot_id":"s2","name":"MapGen","role":"teammate","conversation_id":"c2"},{"slot_id":"s3","role":"teammate","conversation_id":"c3"},{"slot_id":"s4","name":"Idle","role":"teammate","conversation_id":" "}]"#;
++    assert_eq!(
++        team_lanes(agents),
++        vec![
++            ("Lead".to_owned(), "c1".to_owned()),
++            ("MapGen".to_owned(), "c2".to_owned()),
++            ("teammate".to_owned(), "c3".to_owned()),
++        ]
++    );
++    assert!(team_lanes("not json").is_empty());
++}
+diff --git a/crates/aionui-session-message/tests/delivery_semantics.rs b/crates/aionui-session-message/tests/delivery_semantics.rs
+index 24c252f0..0660cd0c 100644
+--- a/crates/aionui-session-message/tests/delivery_semantics.rs
++++ b/crates/aionui-session-message/tests/delivery_semantics.rs
+@@ -35,19 +35,66 @@ async fn all_four_conditions_at_once_returns_feature_disabled() {
+     assert_eq!(error.code(), SessionToolErrorCode::FeatureDisabled, "{error}");
+ }
+ 
++// AionDX core-0019: a team's chat may send; it goes on to the same checks as any sender.
+ #[tokio::test]
+-async fn a_team_sender_is_rejected_before_the_schema_is_checked() {
++async fn a_team_sender_is_checked_like_any_sender() {
+     let ctx = setup().await;
+     let from = ctx.create_team_conversation("conv_from", "team_1").await;
+ 
+-    // `to: "*"` would be schema_validation_failed if the order were wrong.
+     let error = ctx
+         .service
+         .send(USER, &from.id, &request("*", "hi"))
+         .await
+         .expect_err("must fail");
+ 
+-    assert_eq!(error.code(), SessionToolErrorCode::SenderIsTeam, "{error}");
++    assert_eq!(error.code(), SessionToolErrorCode::SchemaValidationFailed, "{error}");
++}
++
++/// AionDX core-0019: records what the team's own messaging was handed.
++#[derive(Default)]
++struct RecordingTeamDelivery {
++    seen: std::sync::Mutex<Vec<(String, String, String)>>,
++}
++
++#[async_trait::async_trait]
++impl aionui_session_message::service::TeamDelivery for RecordingTeamDelivery {
++    async fn deliver_to_team_chat(
++        &self,
++        _user_id: &str,
++        team_id: &str,
++        conversation_id: &str,
++        content: &str,
++    ) -> Result<(), String> {
++        self.seen
++            .lock()
++            .unwrap()
++            .push((team_id.to_owned(), conversation_id.to_owned(), content.to_owned()));
++        Ok(())
++    }
++}
++
++#[tokio::test]
++async fn a_message_to_a_team_chat_goes_through_the_team_with_the_sender_block() {
++    let ctx = setup().await;
++    let from = ctx.create_team_conversation("conv_from", "team_2").await;
++    ctx.create_conversation("conv_target", "MapGen", "/w/a").await;
++    ctx.mark_conversation_team("conv_target", "team_1").await;
++    let delivery = std::sync::Arc::new(RecordingTeamDelivery::default());
++    ctx.service.set_team_delivery(delivery.clone());
++
++    let response = ctx
++        .service
++        .send(USER, &from.id, &request("conv_target", "status, please"))
++        .await
++        .expect("a team chat takes it through the team");
++
++    assert_eq!(response.status, SessionDeliveryStatus::Delivered);
++    let seen = delivery.seen.lock().unwrap();
++    assert_eq!(seen.len(), 1);
++    assert_eq!(seen[0].0, "team_1");
++    assert_eq!(seen[0].1, "conv_target");
++    assert!(seen[0].2.contains("from: "), "{}", seen[0].2);
++    assert!(seen[0].2.ends_with("status, please"), "{}", seen[0].2);
+ }
+ 
+ #[tokio::test]
+@@ -560,17 +607,16 @@ async fn listing_is_refused_when_the_feature_is_off() {
+     assert_eq!(error.code(), SessionToolErrorCode::FeatureDisabled, "{error}");
+ }
+ 
++// AionDX core-0019: a team's chat may list targets (the user's @@ in a team chat, a team agent's `session list`).
+ #[tokio::test]
+-async fn listing_is_refused_for_a_team_caller() {
++async fn listing_is_allowed_for_a_team_caller() {
+     let ctx = setup().await;
+     let from = ctx.create_team_conversation("conv_from", "team_1").await;
+ 
+-    let error = ctx
+-        .service
++    ctx.service
+         .guard_list_access(USER, &from.id)
+         .await
+-        .expect_err("team callers must not use this surface at all");
+-    assert_eq!(error.code(), SessionToolErrorCode::SenderIsTeam, "{error}");
++        .expect("a team caller may list");
+ }
+ 
+ #[tokio::test]
+diff --git a/crates/aionui-session-message/tests/routes_test.rs b/crates/aionui-session-message/tests/routes_test.rs
+index 2c0b702b..72d0e81a 100644
+--- a/crates/aionui-session-message/tests/routes_test.rs
++++ b/crates/aionui-session-message/tests/routes_test.rs
+@@ -145,9 +145,9 @@ async fn a_token_bound_to_another_conversation_is_rejected() {
+ 
+ // ── Team caller ─────────────────────────────────────────────────────
+ 
++// AionDX core-0019: a team's chat may list targets and send, like any chat.
+ #[tokio::test]
+-async fn a_team_sender_gets_403_on_every_session_subcommand_not_just_send() {
+-    // spec §6.2: the team check must cover the whole `session` surface.
++async fn a_team_sender_may_list_targets_and_send() {
+     let ctx = setup().await;
+     ctx.create_team_conversation("conv_team", "team_1").await;
+     ctx.create_conversation("conv_b", "B", "/w/a").await;
+@@ -162,21 +162,13 @@ async fn a_team_sender_gets_403_on_every_session_subcommand_not_just_send() {
+         ))
+         .await
+         .unwrap();
+-    assert_eq!(send.status(), StatusCode::FORBIDDEN);
+-    assert_eq!(
+-        json_body(send).await["error"]["code"],
+-        serde_json::json!("sender_is_team")
+-    );
++    assert_ne!(send.status(), StatusCode::FORBIDDEN);
+ 
+     let targets = router(&ctx)
+         .oneshot(targets_request(USER, "conv_team", &token))
+         .await
+         .unwrap();
+-    assert_eq!(targets.status(), StatusCode::FORBIDDEN);
+-    assert_eq!(
+-        json_body(targets).await["error"]["code"],
+-        serde_json::json!("sender_is_team")
+-    );
++    assert_eq!(targets.status(), StatusCode::OK);
+ }
+ 
+ // ── Feature toggle ──────────────────────────────────────────────────
+@@ -291,8 +283,9 @@ async fn mentionable_is_refused_when_the_feature_is_disabled() {
+     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+ }
+ 
++// AionDX core-0019: the @@ list answers a team chat's box too.
+ #[tokio::test]
+-async fn mentionable_is_refused_for_a_team_caller() {
++async fn mentionable_answers_a_team_caller() {
+     let ctx = setup().await;
+     ctx.create_team_conversation("conv_team", "team_1").await;
+     ctx.create_conversation("conv_plain", "plain", "/w/a").await;
+@@ -302,7 +295,15 @@ async fn mentionable_is_refused_for_a_team_caller() {
+         .await
+         .unwrap();
+ 
+-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
++    assert_eq!(response.status(), StatusCode::OK);
++    let body = json_body(response).await;
++    let ids: Vec<&str> = body["data"]["items"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|item| item["id"].as_str().unwrap())
++        .collect();
++    assert_eq!(ids, vec!["conv_plain"]);
+ }
+ 
+ /// The picker's `current_conversation_id` is optional, so an absent one must
+diff --git a/crates/aionui-team/src/service.rs b/crates/aionui-team/src/service.rs
+index 4d131ef1..1ccd15e4 100644
+--- a/crates/aionui-team/src/service.rs
++++ b/crates/aionui-team/src/service.rs
+@@ -2565,6 +2565,31 @@ impl TeamSessionService {
+         session.send_message_to_agent(slot_id, &content, files).await
+     }
+ 
++    /// AionDX core-0019: a message from another chat into one of this team's chats (its lead's or a member's), through the team's own
++    /// messaging, so the team's queue, pause and wake rules apply as they do to the user's own messages. The lead's chat takes it as the
++    /// user's team message does; a member's chat as a message to that member.
++    pub async fn send_message_to_conversation(
++        &self,
++        user_id: &str,
++        team_id: &str,
++        conversation_id: &str,
++        content: &str,
++    ) -> Result<TeamRunAckResponse, TeamError> {
++        let row = self.load_owned_team_row(user_id, team_id).await?;
++        let team = Team::from_row(&row)?;
++        let member = team
++            .agents
++            .iter()
++            .find(|agent| agent.conversation_id == conversation_id)
++            .ok_or_else(|| TeamError::AgentNotFound(conversation_id.to_owned()))?;
++        if member.role == TeammateRole::Lead {
++            self.send_message(user_id, team_id, content, None).await
++        } else {
++            let slot_id = member.slot_id.clone();
++            self.send_message_to_agent(user_id, team_id, &slot_id, content, None).await
++        }
++    }
++
+     pub async fn interrupt_agent(
+         &self,
+         user_id: &str,
