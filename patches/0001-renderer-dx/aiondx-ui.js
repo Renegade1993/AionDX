@@ -11910,7 +11910,10 @@
     dxPictures(bodyEl);
     dxDiagrams(bodyEl);
     dxMaths(bodyEl);
+    dxCsvCharts(bodyEl);
     dxMakeEditable(bodyEl, m.querySelector('.dx-fmt'));
+    // words in a chart, a drawing or a diagram: a double-click changes them
+    bodyEl.addEventListener('dblclick', function (ev) { if (ev.target.closest && ev.target.closest('figure.dx-chart, .dx-drawing, .dx-mermaid')) { ev.preventDefault(); dxEditFigureWords(ev.target); } });
     dxShowSuggestions();
     dxFigureButtons(bodyEl);
     dxMarkComments(bodyEl);
@@ -11972,13 +11975,26 @@
       else if ((ev.ctrlKey || ev.metaKey) && k === 'k') { ev.preventDefault(); dxFormat('link'); }
     });
     body.addEventListener('paste', function (ev) {
+      // a picture pasted goes in as a picture (saved beside the doc, row 40)
+      var pf = ev.clipboardData && ev.clipboardData.files && ev.clipboardData.files[0];
+      if (pf && /^image\//.test(pf.type)) { ev.preventDefault(); dxInsertPicture(pf, null); return; }
       // plain text only: nothing from another page's markup lands in the doc
       var t = ev.clipboardData && ev.clipboardData.getData('text/plain');
       if (t == null) return;
       ev.preventDefault();
       document.execCommand('insertText', false, t);
     });
-    body.addEventListener('drop', function (ev) { var t = ev.dataTransfer && ev.dataTransfer.getData('text/plain'); if (t == null || !t) { ev.preventDefault(); } });
+    body.addEventListener('drop', function (ev) {
+      // a picture dropped goes in where it was dropped
+      var df = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+      if (df && /^image\//.test(df.type)) {
+        ev.preventDefault();
+        var at = document.caretRangeFromPoint ? document.caretRangeFromPoint(ev.clientX, ev.clientY) : null;
+        dxInsertPicture(df, at);
+        return;
+      }
+      var t = ev.dataTransfer && ev.dataTransfer.getData('text/plain'); if (t == null || !t) { ev.preventDefault(); }
+    });
     if (bar) {
       bar.addEventListener('mousedown', function (ev) { if (ev.target.closest('.dx-fmt-b')) ev.preventDefault(); });   // keep the caret in the doc
       bar.addEventListener('click', function (ev) { var b = ev.target.closest('.dx-fmt-b'); if (b) dxFormat(b.getAttribute('data-fmt'), b); });
@@ -12612,13 +12628,15 @@
     dxPictures(el);
     dxDiagrams(el);
     dxMaths(el);
-    for (var i = 0; i < 100 && el.querySelector('.dx-mermaid:not([data-drawn])'); i++) await new Promise(function (r) { setTimeout(r, 100); });
+    dxCsvCharts(el);
+    for (var i = 0; i < 100 && el.querySelector('figure.dx-chart--csv'); i++) await new Promise(function (r) { setTimeout(r, 100); });
+    for (var i2 = 0; i2 < 100 && el.querySelector('.dx-mermaid:not([data-drawn])'); i2++) await new Promise(function (r) { setTimeout(r, 100); });
     return el;
   }
   async function dxPicturesForExport(root) {
     var body = root || (dx.main && dx.main.querySelector('.dx-body'));
     if (!body) return [];
-    var blocks = body.querySelectorAll('figure.dx-chart, .dx-chart--bad, .dx-mermaid');
+    var blocks = body.querySelectorAll('figure.dx-chart, .dx-chart--bad:not(.dx-qbad), .dx-mermaid, .dx-drawing');
     var out = [];
     for (var i = 0; i < blocks.length; i++) {
       var svg = blocks[i].querySelector('svg');
@@ -12802,6 +12820,90 @@
     });
     return dxMermaid;
   }
+  /** A picture from the clipboard or a drop: saved beside the doc by the main side, then put in where the caret is (or the drop). */
+  function dxInsertPicture(file, range) {
+    if (!/^image\/(png|jpeg|gif|webp|bmp)$/.test(file.type || '')) { toast('Only a picture (PNG, JPEG, GIF, WebP or BMP) can go in a doc.'); return; }
+    if (file.size > 15 * 1048576) { toast('That picture is over 15 MB.'); return; }
+    var body = dx.main && dx.main.querySelector('.dx-body[contenteditable="true"]');
+    var sel = window.getSelection();
+    var keep = range || (sel && sel.rangeCount && body && body.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null);
+    var fr = new FileReader();
+    fr.onload = async function () {
+      var r = await dxApi('savepicture', { id: dx.doc, data: fr.result });
+      if (!r || !r.ok) { toast('The picture was not added.', r && r.error); return; }
+      if (!body || !body.isConnected) return;
+      body.focus();
+      if (keep) { var s2 = window.getSelection(); s2.removeAllRanges(); s2.addRange(keep); }
+      var alt = String(file.name || 'picture').replace(/\.[a-z0-9]+$/i, '').replace(/[\[\]]/g, '');
+      document.execCommand('insertHTML', false, window.__dxMd.inline('![' + alt + '](' + r.path + ')') + '\u200b');
+      dxPictures(body);
+      dxTyped();
+    };
+    fr.readAsDataURL(file);
+  }
+  /** Charts that read a CSV file in the project: the file read by the main side, then the chart drawn from it (or why not). */
+  function dxCsvCharts(body) {
+    if (!body || !window.__dxCharts) return;
+    body.querySelectorAll('figure.dx-chart--csv').forEach(function (fig) {
+      var src = fig.getAttribute('data-src') || '', file = fig.getAttribute('data-csv') || '';
+      dxApi('read' + 'csv', { src: file }).then(function (r) {
+        if (!fig.isConnected) return;
+        var holder = document.createElement('div');
+        holder.innerHTML = window.__dxCharts.toHtml(src, { csvText: r && r.ok ? r.text : false });
+        var next = holder.firstElementChild;
+        if (!next) return;
+        next.setAttribute('contenteditable', 'false');
+        fig.parentNode.replaceChild(next, fig);
+        dxFigureButtons(body);
+      }, function () {});
+    });
+  }
+  /** A value at a place in a JSON object ("pillars.0.points.1"), read or written. */
+  function dxPathGet(o, p) { return String(p).split('.').reduce(function (a, k) { return a == null ? a : a[k]; }, o); }
+  function dxPathSet(o, p, v) { var ks = String(p).split('.'), last = ks.pop(); var t = ks.reduce(function (a, k) { return a == null ? a : a[k]; }, o); if (t != null) t[last] = v; }
+  /** Words in a chart (its title, its note), a drawing or a diagram, changed where they stand (rows 47 and 49): a double-click. */
+  async function dxEditFigureWords(target) {
+    var fig = target.closest('figure.dx-chart, .dx-drawing, .dx-mermaid');
+    if (!fig || fig.classList.contains('dx-chart--bad')) return;
+    var src = fig.getAttribute('data-src') || '';
+    if (fig.matches('figure.dx-chart')) {
+      var which = target.closest('figcaption') ? 'note' : target.closest('.dx-ch-title') ? 'title' : null;
+      if (!which) return;
+      var o; try { o = JSON.parse(src); } catch (e) { return; }
+      var nv = await dxAskName(target, which === 'title' ? 'The chart\u2019s title' : 'The note under the chart', o[which] || '');
+      if (nv === null || nv === (o[which] || '')) return;
+      o[which] = nv;
+      return dxReplaceAtom(fig, '```chart\n' + JSON.stringify(o) + '\n```');
+    }
+    if (fig.matches('.dx-mermaid')) {
+      var lab = (target.closest('.nodeLabel, .label, text, span') || target).textContent.trim();
+      if (!lab || src.indexOf(lab) < 0) { toast('Those words could not be found in the diagram\u2019s text.', 'Change them with Edit the Markdown in the \u22ef menu.'); return; }
+      var nl = await dxAskName(target, 'New words for \u201c' + lab.slice(0, 40) + '\u201d', lab);
+      if (!nl || nl === lab) return;
+      return dxReplaceAtom(fig, '```mermaid\n' + src.replace(lab, function () { return nl.replace(/[\[\]{}()"|]/g, ''); }) + '\n```');
+    }
+    var fm = /^(```|~~~)(drawing|svg)\n([\s\S]*)\n\1$/.exec(src);
+    if (!fm) return;
+    var t = target.closest('text');
+    if (!t) return;
+    if (fm[2] === 'drawing') {
+      var p = t.getAttribute('data-path');
+      if (!p) return;
+      var d; try { d = JSON.parse(fm[3]); } catch (e) { return; }
+      var cur = String(dxPathGet(d, p) == null ? '' : dxPathGet(d, p));
+      var nd = await dxAskName(target, 'New words', cur);
+      if (nd === null || nd === cur) return;
+      dxPathSet(d, p, nd);
+      return dxReplaceAtom(fig, fm[1] + 'drawing\n' + JSON.stringify(d) + '\n' + fm[1]);
+    }
+    var old = t.textContent;
+    var enc = function (s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+    var hay = fm[3].indexOf('>' + old + '<') >= 0 ? old : fm[3].indexOf('>' + enc(old) + '<') >= 0 ? enc(old) : null;
+    if (hay === null) { toast('Those words could not be found in the drawing\u2019s text.', 'Change them with Edit the Markdown in the \u22ef menu.'); return; }
+    var ns = await dxAskName(target, 'New words', old);
+    if (ns === null || ns === old) return;
+    return dxReplaceAtom(fig, fm[1] + 'svg\n' + fm[3].replace('>' + hay + '<', function () { return '>' + enc(ns) + '<'; }) + '\n' + fm[1]);
+  }
   function dxDiagrams(body) {
     if (!body) return;
     var holders = body.querySelectorAll('.dx-mermaid:not([data-drawn])');
@@ -12977,8 +13079,8 @@
     body.querySelectorAll('.dx-fig-badge').forEach(function (b) { b.remove(); });
     var open = dxTabComments().filter(function (c) { return !c.resolved; });
     open.forEach(function (c) {
-      if (c.on === 'chart' || c.on === 'diagram') {
-        var fig = body.querySelectorAll(c.on === 'chart' ? 'figure.dx-chart' : '.dx-mermaid')[+c.index || 0];
+      if (c.on === 'chart' || c.on === 'diagram' || c.on === 'drawing') {
+        var fig = body.querySelectorAll(c.on === 'chart' ? 'figure.dx-chart' : c.on === 'drawing' ? '.dx-drawing' : '.dx-mermaid')[+c.index || 0];
         if (!fig) return;
         var badge = fig.querySelector(':scope > .dx-fig-badge');
         if (!badge) { badge = document.createElement('button'); badge.type = 'button'; badge.className = 'dx-fig-badge'; badge.setAttribute('data-testid', 'aiondx-dx-figbadge'); badge.setAttribute('contenteditable', 'false'); badge.setAttribute('data-cids', ''); fig.appendChild(badge); }
@@ -12997,19 +13099,20 @@
   /** A Comment button on each chart and diagram: a comment on it (on the point last clicked, when one was). */
   function dxFigureButtons(body) {
     if (!body) return;
-    ['figure.dx-chart', '.dx-mermaid'].forEach(function (sel, k) {
+    ['figure.dx-chart', '.dx-mermaid', '.dx-drawing'].forEach(function (sel, k) {
       body.querySelectorAll(sel).forEach(function (fig, i) {
         if (fig.querySelector(':scope > .dx-fig-comment')) return;
         var b = document.createElement('button');
         b.type = 'button'; b.className = 'dx-fig-comment'; b.textContent = 'Comment'; b.setAttribute('contenteditable', 'false');
         b.setAttribute('data-testid', 'aiondx-dx-figcomment');
-        b.setAttribute('data-on', k ? 'diagram' : 'chart'); b.setAttribute('data-index', String(i));
+        b.setAttribute('data-on', ['chart', 'diagram', 'drawing'][k]); b.setAttribute('data-index', String(i));
         fig.appendChild(b);
       });
     });
   }
   function dxFigureName(fig, on) {
     if (on === 'chart') { var t = fig.querySelector('.dx-ch-title'); return 'the chart' + (t && t.textContent ? ' "' + t.textContent + '"' : ''); }
+    if (on === 'drawing') { var dt = fig.querySelector('.dx-dr-title, title'); return 'the drawing' + (dt && dt.textContent ? ' "' + dt.textContent.slice(0, 40) + '"' : ''); }
     var src = String(fig.getAttribute('data-src') || '').split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
     return 'the diagram' + (src[0] ? ' (' + src[0].slice(0, 40) + ')' : '');
   }
@@ -13377,7 +13480,14 @@
     ':root{--dxc1:#2f6fdb;--dxc2:#e8743b;--dxc3:#19a979;--dxc4:#945ecf;--dxc5:#d64a7b;--dxc6:#13a4b4;--dxc7:#b88a12;--dxc8:#6e7b8b;--dxc-bg:#fff}' +
     '.dx-chart{margin:8pt 0}.dx-chart-svg{width:100%;height:auto}.dx-chart-data,.dx-chart-tablewrap{display:none}.dx-ch-title{font:600 13px Segoe UI,Arial;fill:#111}' +
     '.dx-ch-tick,.dx-ch-legend,.dx-ch-axis{font:11px Segoe UI,Arial;fill:#555}.dx-ch-grid{stroke:#e3e3e3}.dx-ch-zero{stroke:#999}.dx-ch-line{fill:none;stroke-width:2}' +
-    '.dx-ch-area{opacity:.18}.dx-ch-pct{font:600 11px Segoe UI,Arial;fill:#fff}.dx-mermaid svg{max-width:100%;height:auto}';
+    '.dx-ch-area{opacity:.18}.dx-ch-pct{font:600 11px Segoe UI,Arial;fill:#fff}.dx-mermaid svg{max-width:100%;height:auto}' +
+    '.dx-ch-val{font:600 10.5px Segoe UI,Arial;fill:#333}.dx-ch-conn{stroke:#999;stroke-dasharray:2 2}.dx-ch-note line{stroke:#888}.dx-ch-note text{font:11px Segoe UI,Arial;fill:#111}' +
+    '.dx-ch-target line{stroke:#d33;stroke-dasharray:6 4;stroke-width:1.5}.dx-ch-target text{font:600 11px Segoe UI,Arial;fill:#d33}.dx-fig-comment,.dx-fig-badge,.dx-chart-data{display:none}' +
+    '.dx-drawing-svg{width:100%;height:auto}.dx-dr-title{font:600 14px Segoe UI,Arial;fill:#111}.dx-dr-qname,.dx-dr-label{font:600 12px Segoe UI,Arial;fill:#333}.dx-dr-box{stroke:#bbb}' +
+    '.dx-dr-q0{fill:#e6f6ec}.dx-dr-q1{fill:#e6eefc}.dx-dr-q2{fill:#f2f2f2}.dx-dr-q3{fill:#fbeaea}.dx-dr-axis,.dx-dr-stem{stroke:#888;stroke-width:1.5}.dx-dr-small{font:11px Segoe UI,Arial;fill:#666}' +
+    '.dx-dr-dot{fill:#2f6fdb}.dx-dr-item,.dx-dr-ptitle,.dx-dr-roofname{font:600 12px Segoe UI,Arial;fill:#111}.dx-dr-point{font:11px Segoe UI,Arial;fill:#333}.dx-dr-date{font:600 11px Segoe UI,Arial;fill:#2f6fdb}' +
+    '.dx-dr-roof{fill:#e6eefc;stroke:#2f6fdb}.dx-dr-pillar{fill:#f4f4f4;stroke:#bbb}.dx-dr-base{fill:#ececec;stroke:#bbb}' +
+    '.dx-ch-val,.dx-ch-target text,.dx-ch-note text{paint-order:stroke;stroke:#fff;stroke-width:3px;stroke-linejoin:round}';
   (function dxStyle() {
     var st = document.createElement('style');
     st.id = 'aiondx-dx-style';
@@ -13428,6 +13538,23 @@
       '.dx-ch-grid{stroke:var(--color-border-1,rgba(0,0,0,.08))}.dx-ch-zero{stroke:var(--color-text-4,#999)}',
       '.dx-ch-line{fill:none;stroke-width:2;stroke-linejoin:round}.dx-ch-area{opacity:.18}.dx-ch-pct{font:600 11px var(--font-family,inherit);fill:#fff}',
       '.dx-ch-mark{cursor:default}.dx-ch-mark:hover{opacity:.78}',
+      // drawings (row 48): a 2x2, pillars, a timeline, an agent's own SVG; words a double-click changes
+      '.dx-drawing{margin:10px 0 16px;position:relative}.dx-drawing-svg{display:block;width:100%;height:auto;max-height:520px}',
+      '.dx-drawing text{cursor:text}.dx-drawing text:hover{text-decoration:underline;text-decoration-style:dotted}',
+      '.dx-dr-title{font:600 14px var(--font-family,inherit);fill:var(--color-text-1)}.dx-dr-qname{font:600 12.5px var(--font-family,inherit);fill:var(--color-text-2)}',
+      '.dx-dr-box{stroke:var(--color-border-3,rgba(0,0,0,.18));stroke-width:1}.dx-dr-q0{fill:rgba(60,170,90,.10)}.dx-dr-q1{fill:rgba(47,111,219,.10)}.dx-dr-q2{fill:rgba(128,128,128,.08)}.dx-dr-q3{fill:rgba(230,70,70,.08)}',
+      '.dx-dr-axis,.dx-dr-stem{stroke:var(--color-text-3,#888);stroke-width:1.5}.dx-dr-small{font:11px var(--font-family,inherit);fill:var(--color-text-3)}.dx-dr-label{font:600 11.5px var(--font-family,inherit);fill:var(--color-text-2)}',
+      '.dx-dr-dot{fill:var(--dxc1)}.dx-dr-item{font:12px var(--font-family,inherit);fill:var(--color-text-1)}',
+      '.dx-dr-roof{fill:rgba(47,111,219,.14);stroke:var(--dxc1);stroke-width:1.2}.dx-dr-roofname{font:600 13px var(--font-family,inherit);fill:var(--color-text-1)}',
+      '.dx-dr-pillar{fill:var(--color-fill-2,rgba(0,0,0,.05));stroke:var(--color-border-3,rgba(0,0,0,.18))}.dx-dr-base{fill:rgba(128,128,128,.14);stroke:var(--color-border-3,rgba(0,0,0,.18))}',
+      '.dx-dr-ptitle{font:600 12.5px var(--font-family,inherit);fill:var(--color-text-1)}.dx-dr-point{font:11.5px var(--font-family,inherit);fill:var(--color-text-2)}.dx-dr-date{font:600 11px var(--font-family,inherit);fill:var(--dxc1)}',
+      '.dx-chart-wait{padding:14px;font-size:12px;color:var(--color-text-3)}',
+      // words over marks keep a halo of the page's colour, so a label over a bar or a line still reads
+      '.dx-ch-val,.dx-ch-target text,.dx-ch-note text{paint-order:stroke;stroke:var(--dxc-bg);stroke-width:3px;stroke-linejoin:round}',
+      // the extras (DX Docs mirror): values on marks, a waterfall's joins, notes on points, a target line
+      '.dx-ch-val{font:600 10.5px var(--font-family,inherit);fill:var(--color-text-2)}.dx-ch-conn{stroke:var(--color-text-4,#999);stroke-dasharray:2 2}',
+      '.dx-ch-note line{stroke:var(--color-text-3,#888)}.dx-ch-note text{font:11px var(--font-family,inherit);fill:var(--color-text-1)}',
+      '.dx-ch-target line{stroke:var(--color-danger-6,#d33);stroke-dasharray:6 4;stroke-width:1.5}.dx-ch-target text{font:600 11px var(--font-family,inherit);fill:var(--color-danger-6,#d33)}',
       '.dx-chart-data{position:absolute;top:0;right:0;border:1px solid var(--color-border-2,rgba(0,0,0,.12));background:var(--color-bg-1,#fff);color:var(--color-text-2);border-radius:5px;font-size:11px;padding:2px 8px;cursor:pointer;opacity:.75}',
       '.dx-chart-data:hover{opacity:1}.dx-chart-tablewrap{margin-top:6px;overflow:auto}',
       '.dx-chart--bad{padding:8px 10px;border:1px dashed var(--color-danger-6,#d33);border-radius:6px;color:var(--color-text-2);font-size:12px;margin:8px 0}',

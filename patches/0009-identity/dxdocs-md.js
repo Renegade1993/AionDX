@@ -120,7 +120,7 @@
   var qn = 0;
   function blockCard(kind, text, whole) {
     var r = blockSpec(kind, text);
-    if (r.error) return '<div class="dx-atom dx-chart dx-chart--bad" contenteditable="false" data-src="' + esc(whole) + '">This ' + (kind === 'choice' ? 'question' : 'approval') + ' block cannot be shown: ' + esc(r.error) + '.</div>';
+    if (r.error) return '<div class="dx-atom dx-chart dx-chart--bad dx-qbad" contenteditable="false" data-src="' + esc(whole) + '">This ' + (kind === 'choice' ? 'question' : 'approval') + ' block cannot be shown: ' + esc(r.error) + '.</div>';
     var s = r.spec, h = [];
     var when = s.at ? ' · ' + dateText(new Date(s.at).toISOString().slice(0, 10)) : '';
     if (kind === 'choice') {
@@ -207,6 +207,7 @@
           out.push('<div class="dx-atom dx-csv" contenteditable="false" data-src="' + esc(whole) + '">' + (rows.length ? tableHtml(rows.map(function (r) { return r.map(function (c) { return { text: c, bg: '', w: 0, span: 1 }; }); }), [], { plain: true, cls: 'dx-csv-grid' }) : '<div class="dx-csv-empty">Empty CSV</div>') + '</div>');
         }
         else if (lang === 'choice' || lang === 'approve') out.push(blockCard(lang, code.join('\n'), whole));
+        else if ((lang === 'drawing' || lang === 'svg') && CHARTS && CHARTS.drawingHtml) out.push(CHARTS.drawingHtml(lang, code.join('\n'), whole));
         else if (lang === 'markdown' || lang === 'md') out.push('<div class="dx-atom dx-mdblock" contenteditable="false" data-src="' + esc(whole) + '"><div class="dx-mdblock-tag">Markdown</div>' + toHtml(code.join('\n'), true) + '</div>');
         else out.push('<pre><code' + (fm[2] ? ' class="language-' + esc(fm[2]) + '"' : '') + '>' + esc(code.join('\n')) + '</code></pre>');
         i = j + 1; continue;

@@ -115,6 +115,22 @@ function create(o) {
       return { ok: true, url: 'data:' + type + ';base64,' + fs.readFileSync(f).toString('base64') };
     }
     if (op === 'suggestions') return { ok: true, suggestions: D.suggestions(dir, req.id) };
+    // a picture pasted or dropped into a doc: DX Docs\pictures\<doc>-<stamp>.<type>, its path for the doc's Markdown
+    if (op === 'savepicture') {
+      D.read(dir, req.id);
+      const m = /^data:image\/(png|jpeg|gif|webp|bmp);base64,([A-Za-z0-9+/=]+)$/.exec(String(req.data || ''));
+      if (!m) return { ok: false, error: 'Only a picture (PNG, JPEG, GIF, WebP or BMP) can go in a doc.' };
+      const buf = Buffer.from(m[2], 'base64');
+      if (buf.length > 15 * 1048576) return { ok: false, error: 'That picture is over 15 MB.' };
+      const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+      const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+      const name = req.id + '-' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds()) + '-' + Math.random().toString(36).slice(2, 6) + '.' + ext;
+      fs.mkdirSync(path.join(dir, 'pictures'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'pictures', name), buf);
+      return { ok: true, path: 'pictures/' + name };
+    }
+    // a CSV file a chart reads (inside the project only)
+    if (op === 'readcsv') { const t = D.csvLoader(dir)(req.src); return t === false ? { ok: false, error: 'No such CSV file in this project: ' + String(req.src || '') } : { ok: true, text: t }; }
     // the user's own Suggesting mode: their change proposed, not made
     if (op === 'suggest') return Object.assign({ ok: true }, D.suggest(dir, req.id, { find: req.find, replace: req.replace, note: req.note, by: 'you' }));
     if (op === 'decide') return Object.assign({ ok: true }, D.decide(dir, req.id, req.suggestion, req.verdict === 'accept' ? 'accept' : 'reject', 'you'));
@@ -132,7 +148,7 @@ function create(o) {
       const pics = Array.isArray(req.pictures) ? req.pictures.slice(0, 64).map((p) => (p && typeof p.png === 'string' && p.png.length < 20 * 1048576 ? { png: p.png, w: Number(p.w) || 640, h: Number(p.h) || 360 } : null)) : [];
       // one tab: that tab's view; all of a doc with tabs: each tab a part of its own, its title the part's heading
       const md = r.tab ? r.tab.markdown : exportAll(r.markdown);
-      fs.writeFileSync(out, await require('./dxdocs-word.js').toDocx(md, { docsDir: dir, title: r.title + (r.tab ? ': ' + r.tab.title : ''), pictures: pics }));
+      fs.writeFileSync(out, await require('./dxdocs-word.js').toDocx(md, { docsDir: dir, title: r.title + (r.tab ? ': ' + r.tab.title : ''), pictures: pics, loadCsv: D.csvLoader(dir) }));
       if (opts.shell) opts.shell.showItemInFolder(out);
       return { ok: true, path: out };
     }

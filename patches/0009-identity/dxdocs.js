@@ -23,8 +23,22 @@ const MERMAID_KINDS = ['flowchart', 'graph', 'sequenceDiagram', 'classDiagram', 
   'quadrantChart', 'requirementDiagram', 'gitGraph', 'mindmap', 'timeline', 'sankey-beta', 'xychart-beta', 'block-beta', 'packet-beta', 'kanban',
   'architecture-beta', 'radar-beta', 'C4Context', 'C4Container', 'C4Component', 'C4Dynamic', 'C4Deployment', 'zenuml', 'treemap-beta'];
 /** What in a doc's Markdown cannot be drawn: chart blocks that do not read, mermaid blocks of an unknown kind. [] when all is well. */
-function drawProblems(md) {
-  const out = CHARTS ? CHARTS.check(md).map((p) => 'the chart at line ' + p.line + (p.section ? ' (section "' + p.section + '")' : '') + ': ' + p.error) : [];
+/** A CSV file a chart reads: from the DX Docs folder, else the project's folder, never outside the project; its text, or false. */
+function csvLoader(docsDir) {
+  if (!docsDir) return null;
+  return (src) => {
+    const root = path.dirname(docsDir);
+    for (const base of [docsDir, root]) {
+      const f = path.resolve(base, String(src || ''));
+      const rel = path.relative(root, f);
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || !/\.csv$/i.test(f)) continue;
+      try { const st = fs.statSync(f); if (st.isFile() && st.size <= 2 * 1048576) return fs.readFileSync(f, 'utf8'); } catch { /* the next base */ }
+    }
+    return false;
+  };
+}
+function drawProblems(md, docsDir) {
+  const out = CHARTS ? CHARTS.check(md, { loadCsv: csvLoader(docsDir) }).map((p) => 'the ' + (p.kind ? 'drawing' : 'chart') + ' at line ' + p.line + (p.section ? ' (section "' + p.section + '")' : '') + ': ' + p.error) : [];
   const lines = String(md || '').replace(/\r\n/g, '\n').split('\n');
   let section = '';
   for (let i = 0; i < lines.length; i++) {
@@ -423,7 +437,7 @@ function update(docsDir, id, ops, by) {
     done.push(k);
   }
   const text = MD.joinTabs(T);
-  const bad = drawProblems(text);
+  const bad = drawProblems(text, docsDir);
   if (bad.length) throw new Error('Nothing was written: ' + bad.join('; ') + '. ' + CHART_HELP);
   const version = snapshot(docsDir, id);
   writeAtomic(f, text);
@@ -474,7 +488,7 @@ function suggest(docsDir, id, o) {
   const n = countOf(md, find);
   if (!n) throw new Error('The words to change were not found in the doc: "' + find.slice(0, 80) + '". Quote them exactly as they stand (dxdoc_read shows the doc).');
   if (n > 1) throw new Error('Those words occur ' + n + ' times; quote more of them so they occur once.');
-  const bad = drawProblems(md.replace(find, () => replace));
+  const bad = drawProblems(md.replace(find, () => replace), docsDir);
   if (bad.length) throw new Error('Nothing was suggested: ' + bad.join('; ') + '. ' + CHART_HELP);
   const all = readSuggestions(docsDir, id);
   const s = { id: 's' + (all.reduce((m, x) => Math.max(m, Number(String(x.id).slice(1)) || 0), 0) + 1), find, replace, note: String((o && o.note) || '').slice(0, 2000),
@@ -520,7 +534,7 @@ function addComment(docsDir, id, o) {
     quote: String((o && o.quote) || '').slice(0, 2000), section: String((o && o.section) || ''), text, replies: [], resolved: false };
   if (o && o.tab) c.tab = String(o.tab).slice(0, 80);
   // on a chart or a diagram (the nth of its kind in the tab) rather than on words
-  if (o && (o.on === 'chart' || o.on === 'diagram')) { c.on = o.on; c.index = Math.max(0, Math.min(999, +o.index || 0)); }
+  if (o && (o.on === 'chart' || o.on === 'diagram' || o.on === 'drawing')) { c.on = o.on; c.index = Math.max(0, Math.min(999, +o.index || 0)); }
   // talk on a suggestion: a thread of its own, closed by the decision on it
   if (o && o.sg) {
     const sg = readSuggestions(docsDir, id).find((s) => s.id === o.sg);
@@ -546,7 +560,7 @@ function replyComment(docsDir, id, commentId, o) {
   return c;
 }
 
-module.exports = { suggest, suggestions, decide, author, drawProblems, DOCS_FOLDER, resolveRoot, parse, render, pendingOf, list, info, create, read, update, save, history, readVersion, restore,
+module.exports = { csvLoader, suggest, suggestions, decide, author, drawProblems, DOCS_FOLDER, resolveRoot, parse, render, pendingOf, list, info, create, read, update, save, history, readVersion, restore,
   comments, addComment, replyComment, slugOf, ID_RE, PENDING_RE, rename, remove, recycled, undelete, allSections, MD };
 
 // ---------------------------------------------------------------- command line: node dxdocs.js <command> --json '<args>' | --json-file F

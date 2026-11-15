@@ -3782,7 +3782,9 @@ async function pageTarget() {
             if (op === 'comment') { X.cn = (X.cn || 0) + 1; const c = { id: 'c' + (X.cn + 8), by: 'user', quote: a.quote, section: a.section, text: a.text, tab: a.tab, replies: [], resolved: false }; if (a.on) { c.on = a.on; c.index = a.index || 0; } if (a.sg) { c.on = 'suggestion'; c.sg = a.sg; } (X.comments[a.id] = X.comments[a.id] || []).push(c); return ok({ comment: c }); }
             if (op === 'reply') { const c = (X.comments[a.id] || []).find((x) => x.id === a.comment); if (!c) return Promise.resolve({ ok: false, error: 'no comment' }); if (a.text) c.replies.push({ by: 'user', text: a.text, at: Date.now() }); if (a.resolve !== undefined) c.resolved = !!a.resolve; return ok({ comment: c }); }
             if (op === 'docx' || op === 'pdf' || op === 'mdcopy') return ok({ path: 'C:/ws/Docs/' + a.id + (a.tab ? '-' + a.tab : '') + '.' + (op === 'mdcopy' ? 'md' : op) });
-            if (op === 'image') return Promise.resolve({ ok: false, error: 'none' });
+            if (op === 'image') return Promise.resolve(/^pictures\\//.test(a.src) ? { ok: true, url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=' } : { ok: false, error: 'none' });
+            if (op === 'readcsv') return Promise.resolve(a.src === 'data/sales.csv' ? { ok: true, text: 'Month,Sales,Cost\\nJan,10,7\\nFeb,14,8\\nMar,12,9\\nApr,18,10\\n' } : { ok: false, error: 'No such CSV file' });
+            if (op === 'savepicture') { X.pics = (X.pics || 0) + 1; return ok({ path: 'pictures/' + a.id + '-' + X.pics + '.png' }); }
             return Promise.resolve({ ok: false, error: 'stub: ' + op }); },
           onEvent: (cb) => { X.cb = cb; return () => {}; },
         };
@@ -4162,6 +4164,65 @@ async function pageTarget() {
       check(sc, 'Accept all applies every suggestion that can be; their cards go', /moves to April\. Budget stays at twelve\./.test(await sgDoc()) && (await js(`document.querySelector('#tbox [data-testid="aiondx-dx-sgs"]').hidden`)), await sgDoc());
       await humanClick('#tbox [data-testid="aiondx-dx-suggesting"]');
       await sleep(300);
+
+      // ---- charts, drawings, pictures (rows 40, 41, 43 to 45, 47 to 49) ----
+      const VIZ = [
+        '# Charts and drawings', '',
+        '```chart', JSON.stringify({ type: 'waterfall', title: 'Cash bridge', x: ['Start', 'Sales', 'Costs', 'Tax', 'End'], series: [{ name: 'Cash', values: [100, 40, -25, -8, null] }], totals: ['Start', 'End'], labels: true }), '```', '',
+        '```chart', JSON.stringify({ type: 'bar', title: 'Sales against the goal', x: ['Q1', 'Q2', 'Q3', 'Q4'], series: [{ name: 'Sales', values: [3, 5, 4, 6] }], target: { value: 5.5, label: 'Goal' }, notes: [{ x: 'Q2', text: 'Launch' }], labels: ['Q4'], accent: 'Q4', projectedFrom: 'Q4' }), '```', '',
+        '```chart', JSON.stringify({ type: 'combo', title: 'Revenue and margin', x: ['Q1', 'Q2', 'Q3'], series: [{ name: 'Revenue', values: [10, 12, 15] }, { name: 'Margin', values: [8, 9, 11] }], lines: ['Margin'] }), '```', '',
+        '```chart', JSON.stringify({ type: 'range', title: 'Estimates', x: ['A', 'B', 'C'], series: [{ name: 'Days', values: [[2, 5, 9], [4, 6, 7], [1, 3, 8]] }] }), '```', '',
+        '```chart', JSON.stringify({ type: 'funnel', title: 'Sign-ups', x: ['Visits', 'Trials', 'Paid'], series: [{ name: 'People', values: [1000, 300, 60] }] }), '```', '',
+        '```chart', JSON.stringify({ type: 'line', title: 'From the CSV', csv: 'data/sales.csv', projectedFrom: 'Apr' }), '```', '',
+        '```drawing', JSON.stringify({ type: 'quadrant', title: 'Effort and value', x: { low: 'Low effort', high: 'High effort' }, y: { low: 'Low value', high: 'High value' }, quadrants: ['Quick wins', 'Big bets', 'Fill-ins', 'Money pits'], items: [{ label: 'Tabs', x: 0.25, y: 0.85 }, { label: 'Look', x: 0.7, y: 0.75 }] }), '```', '',
+        '```drawing', JSON.stringify({ type: 'pillars', title: 'What DX Docs stands on', roof: 'Docs your agents and you share', pillars: [{ title: 'Writing', points: ['Tabs and sub-tabs', 'Tables you shape'] }, { title: 'Talking', points: ['Comments on words', 'Suggestions'] }, { title: 'Showing', points: ['Charts', 'Drawings'] }], base: 'Files in your projects' }), '```', '',
+        '```drawing', JSON.stringify({ type: 'timeline', title: 'This cycle', events: [{ date: 'Nov 15', title: 'Plan', text: 'Every row' }, { date: 'Nov 15', title: 'Tabs' }, { date: 'Nov 16', title: 'Comments', text: 'Rebuilt' }, { date: 'Nov 17', title: 'Release' }] }), '```', '',
+        '```svg', '<svg viewBox="0 0 200 60" onload="window.__pwned2=1"><script>window.__pwned2=1</script><rect x="5" y="5" width="190" height="50" rx="8" fill="#2f6fdb" onclick="window.__pwned2=1"/><text x="100" y="36" text-anchor="middle" fill="#fff">Own SVG</text></svg>', '```', '',
+        'The end.', ''].join('\n');
+      await js(`(() => { window.__dx.dirs['C:/ws/Docs'].viz = ${JSON.stringify(VIZ)}; window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'viz' }); return 0; })()`);
+      await sleep(2000);
+      const vz = await js(`(() => { const b = document.querySelector('#tbox .dx-body'); return { charts: b.querySelectorAll('figure.dx-chart svg.dx-chart-svg').length, bad: [...b.querySelectorAll('.dx-chart--bad')].map((x) => x.textContent), drawings: b.querySelectorAll('.dx-drawing svg').length,
+        csv: !!b.querySelector('figure.dx-chart--csv'), csvPts: [...b.querySelectorAll('figure.dx-chart')].filter((f) => /From the CSV/.test(f.textContent)).map((f) => f.querySelectorAll('.dx-ch-pt').length)[0], pwned: !!window.__pwned2,
+        unsafe: /onload|onclick|<script/i.test((b.querySelector('.dx-drawing--svg svg') || {}).outerHTML || 'missing') || !!b.querySelector('script') }; })()`);
+      check(sc, 'every chart and drawing is drawn: waterfall, the extras, combo, range, funnel, a chart from a CSV, a 2x2, pillars, a timeline, an SVG of its own',
+        vz.charts === 6 && !vz.bad.length && vz.drawings === 4 && !vz.csv && vz.csvPts === 8, JSON.stringify(vz));
+      check(sc, 'an SVG of the agent\'s own is cleaned: nothing in it runs', !vz.pwned && !vz.unsafe, JSON.stringify(vz));
+      await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await sleep(400);
+      await js(`(() => { const c = document.querySelector('#tbox .dx-comments'); if (c && !c.hidden) document.querySelector('#tbox [data-act="comments"]').click(); return 0; })()`);
+      await sleep(200);
+      for (const [k, q] of [['1', 'figure.dx-chart'], ['2', 'figure.dx-chart:nth-of-type(3)'], ['3', '.dx-drawing']]) {
+        await js(`(() => { const all = document.querySelectorAll('#tbox .dx-body figure.dx-chart, #tbox .dx-body .dx-drawing'); const el = all[${({ 1: 0, 2: 3, 3: 6 })[k]}]; document.querySelector('#tbox .dx-body').scrollTop = el.offsetTop - 60; return 0; })()`);
+        await sleep(300);
+        await shot('dxdocs-viz-light-' + k);
+      }
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); const all = document.querySelectorAll('#tbox .dx-body figure.dx-chart, #tbox .dx-body .dx-drawing'); document.querySelector('#tbox .dx-body').scrollTop = all[7].offsetTop - 60; return 0; })()`);
+      await sleep(300);
+      await shot('dxdocs-viz-dark');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.removeAttribute('arco-theme'); return 0; })()`);
+      await send('Emulation.clearDeviceMetricsOverride', {});
+      await sleep(300);
+      // a chart's title and a drawing's words, changed where they stand (a double-click)
+      const dbl = (sel) => js(`(() => { const t = document.querySelector(${JSON.stringify(sel)}); t.scrollIntoView({ block: 'center' }); t.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); return 0; })()`);
+      await dbl('#tbox .dx-body figure.dx-chart .dx-ch-title');
+      await nameBox('Cash bridge, 2026');
+      await sleep(800);
+      await dbl('#tbox .dx-body .dx-drawing text[data-path="quadrants.1"]');
+      await nameBox('Big swings');
+      await sleep(800);
+      let vmd = await js(`window.__dx.dirs['C:/ws/Docs'].viz`);
+      check(sc, 'a double-click changes a chart\'s title and a drawing\'s words where they stand; both saved in their blocks', /"title":"Cash bridge, 2026"/.test(vmd) && /"Big swings"/.test(vmd) && !/"Big bets"/.test(vmd) &&
+        /Big swings/.test(await js(`document.querySelector('#tbox .dx-body .dx-drawing').textContent`)), vmd.slice(0, 400));
+      // a picture pasted into the doc
+      await js(`(() => { const p = [...document.querySelectorAll('#tbox .dx-body p')].find((x) => /The end\\./.test(x.textContent)); const r = document.createRange(); r.selectNodeContents(p); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); p.closest('.dx-body').focus();
+        const bytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
+        const dt = new DataTransfer(); dt.items.add(new File([bytes], 'whiteboard.png', { type: 'image/png' }));
+        p.closest('.dx-body').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); return 0; })()`);
+      await sleep(2200);
+      vmd = await js(`window.__dx.dirs['C:/ws/Docs'].viz`);
+      const sp = (await calls('savepicture')).pop();
+      check(sc, 'a picture pasted into the doc is saved beside it and goes in as a picture', sp && /^data:image\/png;base64,/.test(sp.data) && /!\[whiteboard\]\(pictures\/viz-1\.png\)/.test(vmd) &&
+        (await js(`!!document.querySelector('#tbox .dx-body img[data-dx-src="pictures/viz-1.png"]')`)), vmd.slice(-200));
       await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
     }
 

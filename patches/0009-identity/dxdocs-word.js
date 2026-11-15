@@ -133,11 +133,20 @@ async function toDocx(markdown, o) {
         continue;
       }
       if (lang === 'math' || lang === 'latex' || lang === 'tex') { kids.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { before: 120, after: 120 }, children: [new D.TextRun({ text: code.join(' '), font: 'Cambria Math', italics: true })] })); continue; }
+      // a drawing: the picture of it the panel drew; without one, its words
+      if (lang === 'drawing' || lang === 'svg') {
+        const dp = pictures.shift();
+        if (dp && dp.png) { const buf = Buffer.from(String(dp.png).replace(/^data:image\/png;base64,/, ''), 'base64'); kids.push(picture(buf, dp.w || 640, dp.h || 420, 'png')); continue; }
+        const words = lang === 'svg' ? code.join(' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : (() => { try { return JSON.stringify(JSON.parse(code.join('\n'))).replace(/[{}\[\]"]/g, ' ').replace(/\s+/g, ' ').trim(); } catch (e) { return ''; } })();
+        kids.push(new D.Paragraph({ children: [new D.TextRun({ text: '(A drawing' + (words ? ': ' + words.slice(0, 400) : '') + ')', italics: true, color: '666666' })] }));
+        continue;
+      }
       if (lang === 'chart' || lang === 'mermaid') {
         const pic = pictures.shift();
         if (pic && pic.png) { const buf = Buffer.from(String(pic.png).replace(/^data:image\/png;base64,/, ''), 'base64'); kids.push(picture(buf, pic.w || 640, pic.h || 360, 'png')); continue; }
         if (lang === 'chart' && CHARTS) {
-          const r = CHARTS.parse(code.join('\n'));
+          let r = CHARTS.parse(code.join('\n'));
+          if (r.pending && opts.loadCsv) r = CHARTS.parse(code.join('\n'), { csvText: opts.loadCsv(r.pending) });
           if (r.spec) {
             const s = r.spec;
             if (s.title) kids.push(new D.Paragraph({ keepNext: true, children: [new D.TextRun({ text: s.title, bold: true })] }));

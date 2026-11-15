@@ -207,6 +207,13 @@ try {
   const ch = D.addComment(td, cq.id, { on: 'chart', index: 0, section: 'the chart', text: 'Too small?', by: 'user' });
   check('an agent comments on words as they read (Markdown marks ignored), a person on a chart', ac.by === 'agent' && ch.on === 'chart' && ch.index === 0 && D.comments(td, cq.id).length === 2);
   check('an agent\'s comment on words that are not in the doc is refused', /were not found in the doc/.test(err(() => D.addComment(td, cq.id, { quote: 'Ship the gamma', text: 'x', by: 'agent' }))));
+  // a chart from a CSV file in the project (row 41): the engine reads it to check it; a file that is not there is refused
+  fs.mkdirSync(path.join(path.dirname(td), 'data'), { recursive: true });
+  fs.writeFileSync(path.join(path.dirname(td), 'data', 'sales.csv'), 'Month,Sales,Cost\nJan,"1,200",700\nFeb,1500,800\n');
+  check('a chart that reads a CSV in the project is accepted', !err(() => D.update(td, cq.id, [{ op: 'append_to_section', heading: 'Plan', body: '```chart\n{"type":"line","csv":"data/sales.csv","use":["Sales"]}\n```' }])));
+  check('one whose CSV is not there is refused, saying where it looked', /the CSV file "data\/none\.csv" was not found in the project/.test(err(() => D.update(td, cq.id, [{ op: 'append_to_section', heading: 'Plan', body: '```chart\n{"type":"line","csv":"data/none.csv"}\n```' }]))));
+  check('and the chart draws from the file: its columns, "use" picking them, numbers with commas read', (() => { const C = require(path.join(__dirname, 'dxcharts.js')); const r = C.parse('{"type":"line","csv":"data/sales.csv","use":["Sales"]}', { csvText: D.csvLoader(td)('data/sales.csv') });
+    return r.spec && JSON.stringify(r.spec.x) === '["Jan","Feb"]' && JSON.stringify(r.spec.series.map((s) => [s.name, s.values])) === '[["Sales",[1200,1500]]]'; })());
   // the user's own suggestion; talk on it; the decision closes the talk
   const us = D.suggest(td, cq.id, { find: 'Ship the **beta** first.', replace: 'Ship the beta in March.', by: 'you' }).suggestion;
   const talk = D.addComment(td, cq.id, { sg: us.id, text: 'Why March?', by: 'agent' });
