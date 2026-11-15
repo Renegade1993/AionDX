@@ -141,6 +141,68 @@ try {
   check('a suggestion whose words changed since is marked stale, and cannot be accepted', D.suggestions(dd, g0.id)[0].stale === true && (() => { try { D.decide(dd, g0.id, s3.id, 'accept', 'you'); return false; } catch (e) { return /no longer in the doc/.test(e.message); } })());
 }
 
+// ---- tabs, rename, delete and restore (DX Docs mirror, November 15th) ----
+{
+  const td = path.join(root, 'tabs', 'DX Docs');
+  fs.mkdirSync(td, { recursive: true });
+  const err = (f) => { try { f(); return ''; } catch (e) { return e.message; } };
+  // a plain doc gets its first tab: what it had becomes "Overview", the new tab follows
+  const p = D.create(td, { title: 'Roadmap', sections: [{ heading: 'Now', body: 'Ship the editor.' }] });
+  let r = D.update(td, p.id, [{ op: 'add_tab', title: 'Decisions', sections: [{ heading: 'Open', intent: 'what is undecided' }] }]);
+  let md = fs.readFileSync(p.path, 'utf8');
+  check('add_tab on a plain doc: its text becomes the first tab, the new tab comes after it, each as an invisible marker line',
+    /^# Roadmap\n\n<!-- dx:tab id="t1" title="Overview" -->\n\n## Now\n\nShip the editor\.\n\n<!-- dx:tab id="t2" title="Decisions" -->\n\n## Open\n\n<!-- aiondx:pending what is undecided -->\n$/.test(md) &&
+    JSON.stringify(r.tabs_added) === '["t2"]', md);
+  check('a section operation on a doc with tabs must name its tab, and the error lists them',
+    /This doc has tabs; say which one with "tab".*"Overview" \(t1\), "Decisions" \(t2\)/.test(err(() => D.update(td, p.id, [{ op: 'replace_section', heading: 'Open', body: 'x' }]))));
+  D.update(td, p.id, [{ op: 'replace_section', tab: 'Decisions', heading: 'Open', body: 'Pricing.' }, { op: 'append_section', tab: 't1', heading: 'Next', body: 'Tabs.' }]);
+  md = fs.readFileSync(p.path, 'utf8');
+  check('"tab" by title or id: each operation lands in its own tab', /## Now\n\nShip the editor\.\n\n## Next\n\nTabs\.\n\n<!-- dx:tab id="t2"/.test(md) && /## Open\n\nPricing\.\n$/.test(md), md);
+  D.update(td, p.id, [{ op: 'add_tab', title: 'Pricing detail', parent: 'Decisions' }, { op: 'add_tab', title: 'Notes', after: 't1' }]);
+  let rd = D.read(td, p.id, { tab: 't3' });
+  check('sub-tabs and placement: a sub-tab under its parent, a tab after another; read lists each tab with its sections',
+    JSON.stringify(rd.tabs.map((t) => [t.id, t.title, t.parent])) === JSON.stringify([['t1', 'Overview', ''], ['t4', 'Notes', ''], ['t2', 'Decisions', ''], ['t3', 'Pricing detail', 't2']]) &&
+    rd.tabs[2].sections[0].heading === 'Open' && rd.tab.id === 't3' && rd.tab.markdown === '# Roadmap\n\n', JSON.stringify(rd.tabs) + JSON.stringify(rd.tab));
+  D.update(td, p.id, [{ op: 'move_tab', tab: 'Decisions', before: 't1' }, { op: 'rename_tab', tab: 't4', to: 'Meeting notes' }]);
+  rd = D.read(td, p.id);
+  check('move_tab takes its sub-tabs with it; rename_tab', JSON.stringify(rd.tabs.map((t) => t.id + ':' + t.title)) === JSON.stringify(['t2:Decisions', 't3:Pricing detail', 't1:Overview', 't4:Meeting notes']), JSON.stringify(rd.tabs));
+  check('moving a tab under itself is refused', /No tab "t3" to move it under/.test(err(() => D.update(td, p.id, [{ op: 'move_tab', tab: 't2', parent: 't3' }]))));
+  D.update(td, p.id, [{ op: 'delete_tab', tab: 'Decisions' }]);
+  rd = D.read(td, p.id);
+  check('delete_tab takes its sub-tabs; the last tab cannot go', JSON.stringify(rd.tabs.map((t) => t.id)) === '["t1","t4"]' &&
+    /a doc keeps at least one/.test(err(() => D.update(td, p.id, [{ op: 'delete_tab', tab: 't1' }, { op: 'delete_tab', tab: 't4' }]))));
+  check('an unknown operation lists the tab operations, so an agent finds them by trying', /add_tab, rename_tab, move_tab, delete_tab/.test(err(() => D.update(td, p.id, [{ op: 'make_tab', title: 'x' }]))));
+  check('a tab body can be written whole, and replace_text works across tabs or within one',
+    !err(() => D.update(td, p.id, [{ op: 'write', tab: 't4', markdown: '## Monday\n\nAll hands.' }, { op: 'replace_text', find: 'All hands', replace: 'Standup' }, { op: 'replace_text', tab: 't1', find: 'Tabs.', replace: 'Tabs, done.' }])) &&
+    /title="Meeting notes" -->\n\n## Monday\n\nStandup\.\n$/.test(fs.readFileSync(p.path, 'utf8')) && /Tabs, done\./.test(fs.readFileSync(p.path, 'utf8')), fs.readFileSync(p.path, 'utf8'));
+  const info = D.list(td).find((d) => d.id === p.id);
+  check('the list counts tabs and sections across them', info.tabs === 2 && info.sections === 3, JSON.stringify(info));
+  // the shared helpers: a tab's view and back
+  const MD = D.MD;
+  const whole = fs.readFileSync(p.path, 'utf8');
+  check('a tab view is the title and that tab; writing a view back changes only that tab (and the title)',
+    MD.tabView(whole, 't4') === '# Roadmap\n\n## Monday\n\nStandup.\n' &&
+    MD.withTabView(whole, 't4', '# Road map\n\n## Monday\n\nStandup at 9.\n') === whole.replace('# Roadmap', '# Road map').replace('Standup.', 'Standup at 9.'), MD.tabView(whole, 't4'));
+  check('a marker inside a code block is text, not a tab', MD.splitTabs('# X\n\n```\n<!-- dx:tab id="z" title="no" -->\n```\n').tabs[0].implicit === true);
+  check('a title with quotes survives the marker', MD.splitTabs(MD.joinTabs({ title: 'T', tabs: [{ id: 'a', title: 'Say "hi" --> now', parent: '', body: '' }] })).tabs[0].title === 'Say "hi" - -> now');
+  // a doc made with tabs
+  const mt = D.create(td, { title: 'Question doc', tabs: [{ title: 'Ask', sections: [{ heading: 'Q1', intent: 'the first question' }] }, { title: 'Detail', parent: 'Ask', lead: 'More.' }] });
+  rd = D.read(td, mt.id);
+  check('create with tabs: each tab its own skeleton, a sub-tab by its parent\'s title', JSON.stringify(rd.tabs.map((t) => [t.id, t.title, t.parent, t.sections.length])) === JSON.stringify([['t1', 'Ask', '', 1], ['t2', 'Detail', 't1', 0]]) && rd.sections[0].pending === 'the first question', JSON.stringify(rd.tabs));
+  // rename, delete, restore
+  D.rename(td, p.id, 'Product roadmap');
+  check('rename changes the title, keeps the file, and the version before', D.read(td, p.id).title === 'Product roadmap' && fs.existsSync(p.path) && D.history(td, p.id)[0].by === 'agent');
+  D.addComment(td, p.id, { quote: 'Standup', text: 'When?', tab: 't4' });
+  const del = D.remove(td, p.id);
+  check('delete moves the doc, its comments and versions to the recycle folder; the list no longer has it',
+    !fs.existsSync(p.path) && !D.list(td).some((d) => d.id === p.id) && fs.existsSync(path.join(td, '.recycle', del.deleted, '.comments', p.id + '.json')) && D.recycled(td)[0].title === 'Product roadmap', JSON.stringify(D.recycled(td)));
+  D.create(td, { title: 'Roadmap' });   // its old id is taken again
+  const back = D.undelete(td, del.deleted);
+  check('restore brings it back with its comments and versions, under a free id when its own is taken',
+    back.id === 'roadmap-2' && D.read(td, back.id).title === 'Product roadmap' && D.comments(td, back.id)[0].tab === 't4' && D.history(td, back.id).length > 3 && !D.recycled(td).length, JSON.stringify(back));
+  check('restore refuses a name that is not one of its own', /Which deleted doc/.test(err(() => D.undelete(td, '../x'))));
+}
+
 } catch (e) {
   check('no exception', false, e.stack);
 } finally {

@@ -58,6 +58,33 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-dxdocs-main-'));
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'x');
     r = await svc.handle({ op: 'image', docsDir: dir, src: 'notes.txt' }, wc);
     check('a file that is not a picture is refused', r.ok === false && /Not a picture/.test(r.error), JSON.stringify(r));
+    // documents and tabs from the panel (DX Docs mirror, November 15th)
+    r = await svc.handle({ op: 'rename', docsDir: dir, id: 'plan', title: 'Launch plan' }, wc);
+    check('rename from the panel', r.ok && D.read(dir, 'plan').title === 'Launch plan' && D.author(dir, 'plan').by === 'you', JSON.stringify(r));
+    r = await svc.handle({ op: 'tabs', docsDir: dir, id: 'plan', ops: [{ op: 'add_tab', title: 'Budget' }, { op: 'replace_section', heading: 'x', body: 'not a tab op' }] }, wc);
+    check('the panel\'s tab changes go through, and only tab operations', r.ok && JSON.stringify(D.read(dir, 'plan').tabs.map((t) => t.title)) === '["Overview","Budget"]', JSON.stringify(r));
+    r = await svc.handle({ op: 'read', docsDir: dir, id: 'plan', tab: 't2' }, wc);
+    check('read one tab: its own view', r.ok && r.tab && r.tab.markdown === '# Launch plan\n\n' && r.tabs.length === 2, JSON.stringify(r.tab));
+    D.update(dir, 'plan', [{ op: 'write', tab: 't2', markdown: '## Costs\n\nLow.' }]);
+    r = await svc.handle({ op: 'docx', docsDir: dir, id: 'plan', tab: 't2', pictures: [] }, wc);
+    check('Word export of one tab: <id>-<tab>.docx', r.ok && fs.existsSync(path.join(dir, 'plan-budget.docx')), JSON.stringify(r));
+    const all = M.exportAll(D.read(dir, 'plan').markdown);
+    check('Word export of every tab: each tab a part under its own heading, its sections one level down', /^# Launch plan\n\n## Overview\n\nMine\.\n\n## Budget\n\n### Costs\n\nLow\.\n/.test(all), all);
+    r = await svc.handle({ op: 'delete', docsDir: dir, id: 'plan' }, wc);
+    const dl = await svc.handle({ op: 'deleted', docsDir: dir }, wc);
+    const ls = await svc.handle({ op: 'list', docsDir: dir }, wc);
+    check('delete to the recycle folder; the list says one is deleted', r.ok && dl.deleted.length === 1 && ls.docs.length === 0 && ls.deleted === 1, JSON.stringify([dl, ls]));
+    r = await svc.handle({ op: 'undelete', docsDir: dir, deleted: dl.deleted[0].deleted }, wc);
+    check('and back', r.ok && r.id === 'plan' && D.read(dir, 'plan').title === 'Launch plan', JSON.stringify(r));
+    // every project's docs
+    const proj = path.join(root, 'Atlas');
+    fs.mkdirSync(proj);
+    fs.writeFileSync(path.join(data, 'aiondx-projects.json'), JSON.stringify({ projects: { atlas: { root: proj, name: 'Atlas' }, empty: { root: path.join(root, 'nothing') } } }));
+    D.create(path.join(proj, 'DX Docs'), { title: 'Atlas notes' });
+    r = await svc.handle({ op: 'alldocs', docsDir: dir }, wc);
+    check('all docs: this chat\'s folder first, then every project with docs, each named', r.ok && r.folders.length === 2 && r.folders[0].docsDir === dir && r.folders[1].name === 'Atlas' && r.folders[1].docs[0].title === 'Atlas notes', JSON.stringify(r).slice(0, 400));
+    r = await svc.handle({ op: 'read', docsDir: path.join(proj, 'DX Docs'), id: 'atlas-notes' }, wc);
+    check('and a doc from another project can then be opened', r.ok && r.title === 'Atlas notes', JSON.stringify(r).slice(0, 200));
     await svc.handle({ op: 'unwatch', docsDir: dir }, wc);
     check('unwatch closes the watcher when nobody watches', svc.watchers.size === 0);
   } catch (e) {

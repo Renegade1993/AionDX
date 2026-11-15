@@ -11502,6 +11502,8 @@
     if (dx.conv !== conv) return;
     if (!w || !w.ok) { dx.main.innerHTML = '<div class="dx-empty"></div>'; dx.main.firstChild.textContent = (w && w.error) || 'No folder for docs.'; return; }
     dx.docsDir = w.docsDir;
+    dx.home = w.docsDir;     // this chat's own folder; All docs can open another project's for a while
+    dx.scope = 'chat';
     dx.where = w;
     window.aiondxDx.call('watch', { docsDir: dx.docsDir });
     await dxList();
@@ -11510,38 +11512,127 @@
     else dxSider();
   }
   function dxWhen(ms) { var d = new Date(ms); return d.toDateString() === new Date().toDateString() ? hhmm(ms) : longDate(ms); }
+  /** Back to this chat's own folder after a doc from All docs (another project's folder). */
+  function dxGoHome() {
+    if (dx.home && dx.docsDir !== dx.home) {
+      if (dx.docsDir) window.aiondxDx.call('unwatch', { docsDir: dx.docsDir });
+      dx.docsDir = dx.home;
+    }
+  }
+  /** A doc's row in a list. */
+  function dxRow(d, open) {
+    var row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'dx-row';
+    row.setAttribute('data-doc', d.id);
+    var t = document.createElement('span'); t.className = 'dx-row-title'; t.textContent = d.title;
+    var meta = document.createElement('span'); meta.className = 'dx-row-meta';
+    meta.textContent = dxWhen(d.modified) + (d.tabs ? ' · ' + d.tabs + ' tabs' : '') + (d.pending ? ' · ' + d.pending + ' to write' : '') +
+      (d.openComments ? ' · ' + d.openComments + ' comment' + (d.openComments > 1 ? 's' : '') : '');
+    row.appendChild(t); row.appendChild(meta);
+    row.addEventListener('click', open);
+    return row;
+  }
   async function dxList() {
+    dxGoHome();
     var r = await dxApi('list');
     dx.docs = r && r.ok ? r.docs : [];
     if (dx.view !== 'list') return;
+    var all = dx.scope === 'all';
     var m = dx.main;
-    m.innerHTML = '<div class="dx-bar"><span class="dx-bar-title">DX Docs</span><button type="button" class="dx-btn" data-act="new">+ New doc</button></div><div class="dx-list" data-testid="aiondx-dx-list"></div>';
+    m.innerHTML = '<div class="dx-bar"><span class="dx-bar-title">DX Docs</span>' +
+      '<span class="dx-scope" role="tablist"><button type="button" class="dx-btn" data-scope="chat" role="tab">This chat</button><button type="button" class="dx-btn" data-scope="all" role="tab" data-testid="aiondx-dx-alldocs">All docs</button></span>' +
+      '<button type="button" class="dx-btn" data-act="new" data-testid="aiondx-dx-new">+ New doc</button></div>' +
+      '<div class="dx-newbox" data-testid="aiondx-dx-newbox" hidden><input type="text" placeholder="Title of the new doc" data-testid="aiondx-dx-newtitle"><button type="button" class="dx-btn dx-btn--primary" data-act="make">Make it</button><button type="button" class="dx-btn" data-act="cancelnew">Cancel</button></div>' +
+      '<div class="dx-list" data-testid="aiondx-dx-list"></div>';
+    m.querySelectorAll('[data-scope]').forEach(function (b) { var on = b.getAttribute('data-scope') === dx.scope; b.classList.toggle('dx-btn--on', on); b.setAttribute('aria-selected', String(on)); });
     var list = m.querySelector('.dx-list');
-    if (!dx.docs.length) {
-      var e = document.createElement('div');
-      e.className = 'dx-empty';
-      e.textContent = 'No docs in this chat yet. Ask the agent for a document, a report or a plan and it appears here as it is written; or press + New doc.';
-      list.appendChild(e);
+    if (!all) {
+      if (!dx.docs.length) {
+        var e = document.createElement('div');
+        e.className = 'dx-empty';
+        e.textContent = 'No docs in this chat yet. Ask the agent for a document, a report or a plan and it appears here as it is written; or press + New doc.';
+        list.appendChild(e);
+      }
+      dx.docs.forEach(function (d) { list.appendChild(dxRow(d, function () { dxOpen(d.id); })); });
+      if (r && r.deleted) {
+        var del = document.createElement('button');
+        del.type = 'button'; del.className = 'dx-btn dx-deleted-link'; del.setAttribute('data-testid', 'aiondx-dx-deleted');
+        del.textContent = 'Recently deleted (' + r.deleted + ')';
+        del.addEventListener('click', dxDeleted);
+        list.appendChild(del);
+      }
+    } else {
+      var a = await dxApi('alldocs', { docsDir: dx.home });
+      if (dx.view !== 'list' || dx.scope !== 'all') return;
+      var folders = a && a.ok ? a.folders : [];
+      if (!folders.length) { var e2 = document.createElement('div'); e2.className = 'dx-empty'; e2.textContent = (a && a.error) || 'No docs in any project yet.'; list.appendChild(e2); }
+      folders.forEach(function (f) {
+        var h = document.createElement('div');
+        h.className = 'dx-group';
+        h.textContent = f.docsDir === dx.home ? 'This chat' : (f.name || f.project || 'A project');
+        list.appendChild(h);
+        f.docs.forEach(function (d) { list.appendChild(dxRow(d, function () { dxOpenIn(f.docsDir, d.id); })); });
+      });
     }
-    dx.docs.forEach(function (d) {
-      var row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'dx-row';
-      row.setAttribute('data-doc', d.id);
-      var t = document.createElement('span'); t.className = 'dx-row-title'; t.textContent = d.title;
-      var meta = document.createElement('span'); meta.className = 'dx-row-meta';
-      meta.textContent = dxWhen(d.modified) + (d.pending ? ' · ' + d.pending + ' to write' : '') + (d.openComments ? ' · ' + d.openComments + ' comment' + (d.openComments > 1 ? 's' : '') : '');
-      row.appendChild(t); row.appendChild(meta);
-      row.addEventListener('click', function () { dxOpen(d.id); });
-      list.appendChild(row);
+    m.querySelector('.dx-scope').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-scope]');
+      if (!b || b.getAttribute('data-scope') === dx.scope) return;
+      dx.scope = b.getAttribute('data-scope');
+      dxList();
     });
     m.querySelector('[data-act="new"]').addEventListener('click', dxNew);
   }
-  async function dxNew() {
-    var title = window.prompt('Title of the new doc');
-    if (!title || !title.trim()) return;
-    var r = await dxApi('create', { title: title.trim() });
-    if (r && r.ok) dxOpen(r.id); else toast('The doc was not made.', r && r.error);
+  /** + New doc: a title box in the panel (this app has no prompt window). */
+  function dxNew() {
+    var box = dx.main.querySelector('.dx-newbox');
+    if (!box) return;
+    box.hidden = false;
+    var input = box.querySelector('input');
+    var make = async function () {
+      var title = input.value.trim();
+      if (!title) { input.focus(); return; }
+      dxGoHome();
+      var r = await dxApi('create', { title: title });
+      if (r && r.ok) { dx.scope = 'chat'; dxOpen(r.id); } else toast('The doc was not made.', r && r.error);
+    };
+    input.onkeydown = function (ev) { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); make(); } else if (ev.key === 'Escape') box.hidden = true; };
+    box.querySelector('[data-act="make"]').onclick = make;
+    box.querySelector('[data-act="cancelnew"]').onclick = function () { box.hidden = true; input.value = ''; };
+    setTimeout(function () { input.focus(); }, 0);
+  }
+  /** Recently deleted: each with Restore. */
+  async function dxDeleted() {
+    var r = await dxApi('deleted');
+    var vs = r && r.ok ? r.deleted : [];
+    dx.view = 'deleted';
+    var m = dx.main;
+    m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back" title="All docs">‹</button><span class="dx-bar-title">Recently deleted</span></div><div class="dx-list" data-testid="aiondx-dx-deletedlist"></div>';
+    m.querySelector('[data-act="back"]').addEventListener('click', function () { dx.view = 'list'; dxList(); });
+    var list = m.querySelector('.dx-list');
+    if (!vs.length) { var e = document.createElement('div'); e.className = 'dx-empty'; e.textContent = 'Nothing deleted.'; list.appendChild(e); }
+    vs.forEach(function (v) {
+      var row = document.createElement('div');
+      row.className = 'dx-row dx-row--deleted';
+      var t = document.createElement('span'); t.className = 'dx-row-title'; t.textContent = v.title;
+      var meta = document.createElement('span'); meta.className = 'dx-row-meta'; meta.textContent = 'Deleted ' + dxWhen(v.at);
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'dx-btn'; b.textContent = 'Restore'; b.setAttribute('data-testid', 'aiondx-dx-restore');
+      b.addEventListener('click', async function () {
+        var x = await dxApi('undelete', { deleted: v.deleted });
+        if (x && x.ok) dxOpen(x.id); else toast('Not restored.', x && x.error);   // the doc opening is the notice
+      });
+      row.appendChild(t); row.appendChild(meta); row.appendChild(b);
+      list.appendChild(row);
+    });
+  }
+  /** A doc from another project's folder (All docs): that folder for as long as the doc is open. */
+  async function dxOpenIn(dir, id) {
+    if (dir !== dx.docsDir) {
+      if (dx.docsDir && dx.docsDir !== dx.home) window.aiondxDx.call('unwatch', { docsDir: dx.docsDir });
+      dx.docsDir = dir;
+      if (dir !== dx.home) window.aiondxDx.call('watch', { docsDir: dir });
+    }
+    return dxOpen(id);
   }
   async function dxOpen(id, keepScroll) {
     var r = await dxApi('read', { id: id });
@@ -11565,26 +11656,191 @@
       return;
     }
     dx.view = 'doc'; dx.doc = id; dx.md = r.markdown; dx.comments = r.comments || []; dx.title = r.title || id; dx.suggestions = r.suggestions || [];
+    dxPickTab();
     if (dx.editing) return dxEditingChanged();
     dxDrawDoc();
     var nb = dx.main.querySelector('.dx-body');
     if (nb && atEnd) nb.scrollTop = nb.scrollHeight;
     else if (nb && ratio !== null) nb.scrollTop = ratio * (nb.scrollHeight - nb.clientHeight);
   }
+  // ---- tabs (DX Docs mirror): the doc's tabs above its text; the open tab is drawn and typed in, the rest of the file kept as it is
+  /** The tab to show: the one last open on this doc, else the first. Sets dx.tabs and dx.tab ('' for a doc with no tabs). */
+  function dxPickTab() {
+    dx.tabs = window.__dxMd.tabList(dx.md);
+    dx.tabFor = dx.tabFor || {};
+    var want = dx.tabFor[dx.docsDir + '|' + dx.doc];
+    dx.tab = dx.tabs.some(function (t) { return t.id === want; }) ? want : dx.tabs[0] ? dx.tabs[0].id : '';
+    if (dx.tab) dx.tabFor[dx.docsDir + '|' + dx.doc] = dx.tab;
+  }
+  function dxTabTitle() { var t = dx.tabs && dx.tabs.filter(function (x) { return x.id === dx.tab; })[0]; return t ? t.title : ''; }
+  /** The Markdown on screen: the open tab's view (the doc's title line and that tab). */
+  function dxViewMd() { return dx.tab ? window.__dxMd.tabView(dx.md, dx.tab) : dx.md; }
+  function dxTabStrip() {
+    var strip = dx.main && dx.main.querySelector('.dx-tabstrip');
+    if (!strip) return;
+    strip.hidden = !dx.tabs.length;
+    strip.innerHTML = '';
+    dx.tabs.forEach(function (t) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'dx-tabbtn' + (t.id === dx.tab ? ' dx-tabbtn--on' : '') + (t.depth ? ' dx-tabbtn--sub' : '');
+      b.setAttribute('data-tabid', t.id);
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(t.id === dx.tab));
+      b.setAttribute('data-testid', 'aiondx-dx-tab');
+      b.style.marginLeft = t.depth ? (t.depth * 10) + 'px' : '';
+      b.title = t.title + ' (double-click to rename)';
+      b.textContent = (t.depth ? '↳ ' : '') + t.title;
+      strip.appendChild(b);
+    });
+    var menu = document.createElement('button');
+    menu.type = 'button'; menu.className = 'dx-tabbtn dx-tabmenu'; menu.textContent = '▾'; menu.title = 'This tab: rename, sub-tab, move, delete';
+    menu.setAttribute('data-testid', 'aiondx-dx-tabmenu');
+    strip.appendChild(menu);
+    var add = document.createElement('button');
+    add.type = 'button'; add.className = 'dx-tabbtn dx-tabadd'; add.textContent = '+'; add.title = 'Add a tab';
+    add.setAttribute('data-testid', 'aiondx-dx-tabadd');
+    strip.appendChild(add);
+  }
+  async function dxSwitchTab(id) {
+    if (id === dx.tab) return;
+    await dxFlush();
+    dx.tab = id;
+    dx.tabFor[dx.docsDir + '|' + dx.doc] = id;
+    dxDrawDoc();
+  }
+  /** Tab changes from the panel (add, rename, move, delete): saved by the main side, then the doc read again. */
+  async function dxTabOps(ops, show) {
+    await dxFlush();
+    var r = await dxApi('tabs', { id: dx.doc, ops: ops });
+    if (!r || !r.ok) { toast('The tab was not changed.', r && r.error); return null; }
+    var x = await dxApi('read', { id: dx.doc });
+    if (!x || !x.ok) return r;
+    dx.md = x.markdown; dx.comments = x.comments || []; dx.suggestions = x.suggestions || []; dx.typed = false;
+    var made = r.tabs_added && r.tabs_added[r.tabs_added.length - 1];
+    if (show || made) dx.tabFor[dx.docsDir + '|' + dx.doc] = show || made;
+    dxPickTab();
+    dxDrawDoc();
+    return r;
+  }
+  /** A small box in the panel for a name (a new tab's, a renamed tab's, the doc's): resolves to the text, or null. */
+  function dxAskName(anchor, label, value) {
+    return new Promise(function (resolve) {
+      var old = document.querySelector('.dx-linkbox'); if (old) old.remove();
+      var box = document.createElement('div');
+      box.className = 'dx-linkbox';
+      box.setAttribute('data-testid', 'aiondx-dx-namebox');
+      box.innerHTML = '<input type="text" data-testid="aiondx-dx-name"><button type="button" class="dx-btn dx-btn--primary"></button>';
+      var input = box.querySelector('input'), btn = box.querySelector('button');
+      input.placeholder = label; input.value = value || ''; btn.textContent = 'OK';
+      var r = anchor.getBoundingClientRect();
+      box.style.top = Math.round(r.bottom + 4) + 'px';
+      box.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 300))) + 'px';
+      document.body.appendChild(box);
+      var done = false;
+      var finish = function (v) { if (done) return; done = true; box.remove(); document.removeEventListener('mousedown', off, true); resolve(v); };
+      var off = function (ev) { if (!box.contains(ev.target)) finish(null); };
+      input.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); finish(input.value.trim() || null); } else if (ev.key === 'Escape') finish(null); });
+      btn.addEventListener('click', function () { finish(input.value.trim() || null); });
+      setTimeout(function () { document.addEventListener('mousedown', off, true); input.focus(); input.select(); }, 0);
+    });
+  }
+  function dxTabMenu(anchor) {
+    var old = document.querySelector('.dx-menu');
+    if (old) { old.remove(); return; }
+    var t = dx.tabs.filter(function (x) { return x.id === dx.tab; })[0];
+    if (!t) return;
+    var sibs = dx.tabs.filter(function (x) { return (x.parent || '') === (t.parent || ''); });
+    var at = sibs.indexOf(t);
+    var m = document.createElement('div');
+    m.className = 'dx-menu';
+    m.setAttribute('data-testid', 'aiondx-dx-tabmenu-list');
+    m.innerHTML = '<button type="button" data-act="rename">Rename tab</button><button type="button" data-act="sub">Add a sub-tab</button>' +
+      (at > 0 ? '<button type="button" data-act="left">Move left</button>' : '') + (at >= 0 && at < sibs.length - 1 ? '<button type="button" data-act="right">Move right</button>' : '') +
+      (t.parent ? '<button type="button" data-act="up">Out of its parent</button>' : '') +
+      (dx.tabs.length > 1 ? '<button type="button" data-act="delete">Delete tab</button>' : '');
+    var rc = anchor.getBoundingClientRect();
+    m.style.top = Math.round(rc.bottom + 4) + 'px';
+    m.style.left = Math.round(Math.max(8, Math.min(rc.left, window.innerWidth - 220))) + 'px';
+    document.body.appendChild(m);
+    var off = function (ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('mousedown', off, true); } };
+    setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
+    m.addEventListener('click', async function (ev) {
+      var b = ev.target.closest('[data-act]');
+      if (!b) return;
+      m.remove();
+      var a = b.getAttribute('data-act');
+      if (a === 'rename') { var n = await dxAskName(anchor, 'Tab name', t.title); if (n && n !== t.title) dxTabOps([{ op: 'rename_tab', tab: t.id, to: n }], t.id); }
+      else if (a === 'sub') { var s = await dxAskName(anchor, 'Name of the sub-tab', ''); if (s) dxTabOps([{ op: 'add_tab', title: s, parent: t.id }]); }
+      else if (a === 'left') dxTabOps([{ op: 'move_tab', tab: t.id, before: sibs[at - 1].id }], t.id);
+      else if (a === 'right') dxTabOps([{ op: 'move_tab', tab: t.id, after: sibs[at + 1].id }], t.id);
+      else if (a === 'up') dxTabOps([{ op: 'move_tab', tab: t.id, after: t.parent }], t.id);
+      else if (a === 'delete') {
+        var kids = dx.tabs.filter(function (x) { return x.parent === t.id; }).length;
+        if (!(await dxConfirm(anchor, 'Delete the tab "' + t.title + '"' + (kids ? ' and its ' + kids + ' sub-tab' + (kids > 1 ? 's' : '') : '') + '? Earlier versions keep it.', 'Delete'))) return;
+        dxTabOps([{ op: 'delete_tab', tab: t.id }]);
+      }
+    });
+  }
+  /** Yes or no, in the panel (no confirm window in this app): resolves true on the button. */
+  function dxConfirm(anchor, text, yes) {
+    return new Promise(function (resolve) {
+      var old = document.querySelector('.dx-linkbox'); if (old) old.remove();
+      var box = document.createElement('div');
+      box.className = 'dx-linkbox dx-confirm';
+      box.setAttribute('data-testid', 'aiondx-dx-confirm');
+      box.innerHTML = '<span class="dx-confirm-text"></span><button type="button" class="dx-btn" data-a="no">Cancel</button><button type="button" class="dx-btn dx-btn--danger" data-a="yes"></button>';
+      box.querySelector('.dx-confirm-text').textContent = text;
+      box.querySelector('[data-a="yes"]').textContent = yes;
+      var r = anchor.getBoundingClientRect();
+      box.style.top = Math.round(r.bottom + 4) + 'px';
+      box.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 360))) + 'px';
+      document.body.appendChild(box);
+      var finish = function (v) { box.remove(); document.removeEventListener('mousedown', off, true); resolve(v); };
+      var off = function (ev) { if (!box.contains(ev.target)) finish(false); };
+      box.addEventListener('click', function (ev) { var b = ev.target.closest('[data-a]'); if (b) finish(b.getAttribute('data-a') === 'yes'); });
+      setTimeout(function () { document.addEventListener('mousedown', off, true); box.querySelector('[data-a="yes"]').focus(); }, 0);
+    });
+  }
+  async function dxRenameDoc(anchor) {
+    var n = await dxAskName(anchor, 'Title of the doc', dx.title);
+    if (!n || n === dx.title) return;
+    await dxFlush();
+    var r = await dxApi('rename', { id: dx.doc, title: n });
+    if (!r || !r.ok) { toast('Not renamed.', r && r.error); return; }
+    dxOpen(dx.doc);
+  }
   function dxDrawDoc() {
     var m = dx.main;
     var oldC = m.querySelector('.dx-comments');
     var commentsOpen = !!(oldC && !oldC.hidden);
     var open = dx.comments.filter(function (c) { return !c.resolved; }).length;
-    m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back" title="All docs">‹</button><span class="dx-bar-title"></span>' +
+    dxPickTab();
+    m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back" title="All docs">‹</button><span class="dx-bar-title" data-act="rename" title="Click to rename" data-testid="aiondx-dx-title"></span>' +
       '<span class="dx-saved" data-testid="aiondx-dx-saved"></span>' +
       '<button type="button" class="dx-btn" data-act="comments" title="Comments">Comments' + (open ? ' (' + open + ')' : '') + '</button>' +
-      '<button type="button" class="dx-btn" data-act="more" title="History, export, Markdown" data-testid="aiondx-dx-more">⋯</button></div>' +
+      '<button type="button" class="dx-btn" data-act="more" title="Tabs, history, export, delete" data-testid="aiondx-dx-more">⋯</button></div>' +
+      '<div class="dx-tabstrip" role="tablist" data-testid="aiondx-dx-tabs" hidden></div>' +
       DX_FMT_BAR + '<div class="dx-note" hidden></div><div class="dx-sgs" data-testid="aiondx-dx-sgs" hidden></div>' +
       '<div class="dx-body" data-testid="aiondx-dx-body"></div><div class="dx-comments" hidden></div>';
     m.querySelector('.dx-bar-title').textContent = dx.title;
+    dxTabStrip();
+    var strip = m.querySelector('.dx-tabstrip');
+    strip.addEventListener('click', function (ev) {
+      var b = ev.target.closest('.dx-tabbtn');
+      if (!b) return;
+      if (b.classList.contains('dx-tabadd')) { dxAskName(b, 'Name of the new tab', '').then(function (n) { if (n) dxTabOps([{ op: 'add_tab', title: n }]); }); return; }
+      if (b.classList.contains('dx-tabmenu')) { dxTabMenu(b); return; }
+      dxSwitchTab(b.getAttribute('data-tabid'));
+    });
+    strip.addEventListener('dblclick', function (ev) {
+      var b = ev.target.closest('[data-tabid]');
+      if (!b) return;
+      var id = b.getAttribute('data-tabid'), t = dx.tabs.filter(function (x) { return x.id === id; })[0];
+      if (t) dxAskName(b, 'Tab name', t.title).then(function (n) { if (n && n !== t.title) dxTabOps([{ op: 'rename_tab', tab: id, to: n }], id); });
+    });
     var bodyEl = m.querySelector('.dx-body');
-    bodyEl.innerHTML = window.__dxMd.toHtml(dx.md);
+    bodyEl.innerHTML = window.__dxMd.toHtml(dxViewMd());
     dxPictures(bodyEl);
     dxDiagrams(bodyEl);
     dxMakeEditable(bodyEl, m.querySelector('.dx-fmt'));
@@ -11596,6 +11852,7 @@
       if (!b) return;
       var a = b.getAttribute('data-act');
       if (a === 'back') { dxFlush().then(function () { dx.view = 'list'; dx.doc = null; dxList(); }); }
+      else if (a === 'rename') dxRenameDoc(b);
       else if (a === 'edit') dxEdit();
       else if (a === 'comments') dxComments(true);
       else if (a === 'more') dxMore(b);
@@ -11661,9 +11918,11 @@
     if (!dx.typed || dx.view !== 'doc' || dx.theirs) return;
     var body = dx.main && dx.main.querySelector('.dx-body[contenteditable="true"]');
     if (!body) return;
-    var md = dxToMarkdown(body);
+    var view = dxToMarkdown(body);
+    // the open tab's text goes back into its place in the doc; the other tabs stay as they are
+    var md = dx.tab ? window.__dxMd.withTabView(dx.md, dx.tab, view) : view;
     dx.typed = false;
-    if (md === dx.md) { dxSavedText('Saved'); return; }
+    if (md === dx.md || (dx.tab && view === dxViewMd())) { dxSavedText('Saved'); return; }
     dx.saving = true;
     dxSavedText('Saving\u2026');
     var r = await dxApi('save', { id: dx.doc, markdown: md, by: 'you' }).catch(function (e) { return { ok: false, error: e && e.message }; });
@@ -11843,8 +12102,21 @@
     return blocks(body).replace(/\n{3,}/g, '\n\n') + '\n';
   }
   /** Pictures of the doc's charts and diagrams as drawn (PNG, twice the size), in the order they stand; null where one is not drawn. */
-  async function dxPicturesForExport() {
-    var body = dx.main && dx.main.querySelector('.dx-body');
+  /** Markdown drawn out of sight (for exporting tabs not on screen): resolves to the drawn element, diagrams done (or 10 s gone). The caller removes it. */
+  async function dxOffscreen(md) {
+    var el = document.createElement('div');
+    el.className = 'dx-body aiondx-dx dx-offscreen';
+    var w = dx.main ? Math.max(480, Math.round(dx.main.getBoundingClientRect().width)) : 720;
+    el.style.cssText = 'position:fixed;left:-20000px;top:0;width:' + w + 'px;visibility:hidden;pointer-events:none';
+    el.innerHTML = window.__dxMd.toHtml(md);
+    document.body.appendChild(el);
+    dxPictures(el);
+    dxDiagrams(el);
+    for (var i = 0; i < 100 && el.querySelector('.dx-mermaid:not([data-drawn])'); i++) await new Promise(function (r) { setTimeout(r, 100); });
+    return el;
+  }
+  async function dxPicturesForExport(root) {
+    var body = root || (dx.main && dx.main.querySelector('.dx-body'));
     if (!body) return [];
     var blocks = body.querySelectorAll('figure.dx-chart, .dx-chart--bad, .dx-mermaid');
     var out = [];
@@ -12010,17 +12282,23 @@
       }, function () {});
     });
   }
-  function dxChanged(id) {
+  async function dxChanged(id) {
     // a doc an agent made or changed: the sidebar opens (if shut) and shows it; the one on screen redraws in place
     var known = dx.docs.some(function (d) { return d.id === id; });
-    if (dx.view === 'doc' && dx.doc === id) { dxOpen(id, true); return; }
-    if (dx.view === 'list' || !known) {
-      if (dxTab() !== 'docs') dxSetTab('docs');
-      dxExpand();
-      dxOpen(id);
+    if (dx.view === 'doc' && dx.doc === id) {
+      var cur = await dxApi('read', { id: id });
+      if (!cur || !cur.ok) { if (dx.view === 'doc' && dx.doc === id) { toast('This doc was deleted or moved.', 'Recently deleted, at the bottom of the list, can bring it back.'); dx.view = 'list'; dx.doc = null; dxList(); } return; }
+      dxOpen(id, true);
       return;
     }
-    dx.docs = dx.docs; // another doc changed while one is open: the list refreshes on the way back
+    if (dx.view !== 'list' && known) return;   // another doc changed while one is open: the list refreshes on the way back
+    // a doc that is gone (deleted, moved) is not opened; the list just shows what is there
+    var r = await dxApi('read', { id: id });
+    if (!r || !r.ok) { if (dx.view === 'list') dxList(); return; }
+    if (dx.view === 'deleted') return;
+    if (dxTab() !== 'docs') dxSetTab('docs');
+    dxExpand();
+    dxOpen(id);
   }
   function dxEdit() {
     dx.editing = true; dx.dirty = false; dx.theirs = null;
@@ -12142,11 +12420,14 @@
   async function dxSendComment(draft, text) {
     text = String(text || '').trim();
     if (!text) return;
-    var r = await dxApi('comment', { id: dx.doc, quote: draft.quote, section: draft.section, text: text });
+    var tabTitle = dxTabTitle();
+    var r = await dxApi('comment', { id: dx.doc, quote: draft.quote, section: draft.section, text: text, tab: dx.tab || '' });
     if (!r || !r.ok) { toast('The comment was not saved.', r && r.error); return; }
     dx.cdraft = null; dx.pendingDoc = null;   // the redraw below reads the doc as it now stands, the agent's change included
-    var msg = '[DX Doc comment] On "' + dx.title + '" (doc ' + dx.doc + (draft.section ? ', section "' + draft.section + '"' : '') + ', comment ' + r.comment.id + '):\n' +
-      '> ' + draft.quote.replace(/\n/g, '\n> ') + '\n\n' + text + '\n\n(Answer with dxdoc_reply, and edit the doc with dxdoc_update when it asks for a change.)';
+    // the answer goes through the aiondx commands every chat has (the dxdoc_* tools reach only chats started with AionDX's tool server)
+    var msg = '[DX Doc comment] On "' + dx.title + '" (doc ' + dx.doc + (tabTitle ? ', tab "' + tabTitle + '" (' + dx.tab + ')' : '') + (draft.section ? ', section "' + draft.section + '"' : '') + ', comment ' + r.comment.id + '):\n' +
+      '> ' + draft.quote.replace(/\n/g, '\n> ') + '\n\n' + text + '\n\n(Answer in the comment’s thread: aiondx doc reply --json \'{"doc":"' + dx.doc + '","comment":"' + r.comment.id + '","text":"..."}\' (or the dxdoc_reply tool). ' +
+      'When it asks for a change, make it with aiondx doc update' + (tabTitle ? ', "tab":"' + dx.tab + '" on each operation' : '') + ' (or dxdoc_update). aiondx doc help lists every operation.)';
     var sent = await postJson(dx.sendPath || '/api/conversations/' + dx.conv + '/messages', { content: msg }).catch(function () { return null; });
     if (!sent || !sent.ok) toast('The comment is saved with the doc, but the agent could not be told.', 'Send it a message to look at the doc’s comments.');
     dxOpen(dx.doc, true).then(function () { dxComments(true); });
@@ -12156,9 +12437,16 @@
     if (old) { old.remove(); return; }
     var m = document.createElement('div');
     m.className = 'dx-menu';
-    m.innerHTML = '<button type="button" data-act="history">Earlier versions</button><button type="button" data-act="mdedit">Edit the Markdown</button>' +
-      '<button type="button" data-act="docx">Export as Word</button><button type="button" data-act="pdf">Export as PDF</button>' +
-      '<button type="button" data-act="copymd">Copy as Markdown</button><button type="button" data-act="reveal">Show the file</button>';
+    var tabbed = !!(dx.tabs && dx.tabs.length);
+    m.setAttribute('data-testid', 'aiondx-dx-morelist');
+    m.innerHTML = '<button type="button" data-act="addtab">Add a tab</button><button type="button" data-act="renamedoc">Rename the doc</button>' +
+      '<button type="button" data-act="history">Earlier versions</button><button type="button" data-act="mdedit">Edit the Markdown</button>' +
+      (tabbed ? '<button type="button" data-act="docx" data-scope="tab">Export this tab as Word</button><button type="button" data-act="docx" data-scope="all">Export all tabs as Word</button>' +
+        '<button type="button" data-act="pdf" data-scope="tab">Export this tab as PDF</button><button type="button" data-act="pdf" data-scope="all">Export all tabs as PDF</button>' +
+        '<button type="button" data-act="mdcopy" data-scope="tab">Save this tab as Markdown</button><button type="button" data-act="mdcopy" data-scope="all">Save all tabs as Markdown</button>'
+        : '<button type="button" data-act="docx">Export as Word</button><button type="button" data-act="pdf">Export as PDF</button><button type="button" data-act="mdcopy">Save as a Markdown file</button>') +
+      '<button type="button" data-act="copymd">Copy as Markdown</button><button type="button" data-act="reveal">Show the file</button>' +
+      '<button type="button" data-act="delete" class="dx-menu-danger" data-testid="aiondx-dx-delete">Delete the doc</button>';
     var rc = anchor.getBoundingClientRect();
     m.style.top = Math.round(rc.bottom + 4) + 'px';
     m.style.right = Math.round(window.innerWidth - rc.right) + 'px';
@@ -12170,21 +12458,44 @@
       if (!b) return;
       m.remove();
       var a = b.getAttribute('data-act');
+      // one tab (the open one) or the whole doc; a doc without tabs is always whole
+      var oneTab = tabbed && b.getAttribute('data-scope') === 'tab';
+      var allTabs = tabbed && b.getAttribute('data-scope') === 'all';
       if (a === 'reveal') dxApi('reveal', { id: dx.doc });
+      else if (a === 'addtab') { var nt = await dxAskName(anchor, 'Name of the new tab', ''); if (nt) dxTabOps([{ op: 'add_tab', title: nt }]); }
+      else if (a === 'renamedoc') dxRenameDoc(anchor);
+      else if (a === 'delete') {
+        if (!(await dxConfirm(anchor, 'Delete "' + dx.title + '"? It goes to Recently deleted, where you can restore it.', 'Delete'))) return;
+        await dxFlush();
+        var rd = await dxApi('delete', { id: dx.doc });
+        if (!rd || !rd.ok) { toast('Not deleted.', rd && rd.error); return; }
+        // no notice: it would sit over the list, whose Recently deleted line is where it can be brought back
+        dx.view = 'list'; dx.doc = null; dxList();
+      }
       else if (a === 'pdf') {
-        var html = '<!doctype html><meta charset="utf-8"><title>' + window.__dxMd.esc(dx.title) + '</title><style>' + DX_PRINT_CSS + '</style>' + ((dx.main.querySelector('.dx-body') || {}).innerHTML || window.__dxMd.toHtml(dx.md));
-        var r = await dxApi('pdf', { id: dx.doc, html: html });
+        await dxFlush();
+        var src = allTabs ? await dxOffscreen(window.__dxMd.exportAll(dx.md)) : null;
+        var inner = src ? src.innerHTML : ((dx.main.querySelector('.dx-body') || {}).innerHTML || window.__dxMd.toHtml(dxViewMd()));
+        if (src) src.remove();
+        var html = '<!doctype html><meta charset="utf-8"><title>' + window.__dxMd.esc(dx.title) + '</title><style>' + DX_PRINT_CSS + '</style>' + inner;
+        var r = await dxApi('pdf', { id: dx.doc, html: html, tab: oneTab ? dx.tab : '' });
         toast(r && r.ok ? 'Saved as PDF beside the doc.' : 'The PDF was not made.', r && (r.path || r.error));
       } else if (a === 'history') dxHistory();
       else if (a === 'mdedit') { await dxFlush(); dxEdit(); }
       else if (a === 'docx') {
         await dxFlush();
-        var pics = await dxPicturesForExport();
-        var rw = await dxApi('docx', { id: dx.doc, pictures: pics });
+        var off = allTabs ? await dxOffscreen(window.__dxMd.exportAll(dx.md)) : null;
+        var pics = await dxPicturesForExport(off);
+        if (off) off.remove();
+        var rw = await dxApi('docx', { id: dx.doc, pictures: pics, tab: oneTab ? dx.tab : '' });
         toast(rw && rw.ok ? 'Saved as a Word document beside the doc.' : 'The Word document was not made.', rw && (rw.path || rw.error));
+      } else if (a === 'mdcopy') {
+        await dxFlush();
+        var rm = await dxApi('mdcopy', { id: dx.doc, tab: oneTab ? dx.tab : '' });
+        toast(rm && rm.ok ? 'Saved as a Markdown file.' : 'The Markdown file was not made.', rm && (rm.path || rm.error));
       } else if (a === 'copymd') {
         await dxFlush();
-        try { await navigator.clipboard.writeText(dx.md); toast('The doc\u2019s Markdown is on the clipboard.'); } catch (er) { toast('Could not copy.', er && er.message); }
+        try { await navigator.clipboard.writeText(tabbed ? dxViewMd() : dx.md); toast(tabbed ? 'This tab\u2019s Markdown is on the clipboard.' : 'The doc\u2019s Markdown is on the clipboard.'); } catch (er) { toast('Could not copy.', er && er.message); }
       }
     });
   }
@@ -12302,6 +12613,23 @@
       '.dx-list{flex:1 1 auto;overflow:auto;padding:6px}',
       '.dx-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;border:0;background:transparent;text-align:left;padding:8px 10px;border-radius:6px;cursor:pointer}',
       '.dx-row:hover{background:var(--color-fill-2,rgba(0,0,0,.05))}',
+      // documents and tabs (DX Docs mirror, November 15th)
+      '.dx-scope{display:inline-flex;gap:2px;margin-right:4px}.dx-btn--on{background:var(--color-fill-2,rgba(0,0,0,.06));color:var(--color-text-1);font-weight:600}',
+      '.dx-newbox{flex:0 0 auto;display:flex;gap:6px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06))}',
+      '.dx-newbox input{flex:1 1 auto;min-width:0;font:inherit;font-size:13px;padding:5px 8px;border-radius:6px;border:1px solid var(--color-border-2,#ccc);background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
+      '.dx-group{margin:10px 10px 2px;font-size:11.5px;font-weight:600;color:var(--color-text-3);text-transform:none}',
+      '.dx-deleted-link{margin:8px 6px;color:var(--color-text-3)}',
+      '.dx-row--deleted{flex-direction:row;align-items:center;gap:10px;cursor:default}.dx-row--deleted .dx-row-meta{flex:1 1 auto}',
+      '.dx-bar-title[data-act="rename"]{cursor:text;border-radius:4px;padding:2px 4px;margin-left:-4px}.dx-bar-title[data-act="rename"]:hover{background:var(--color-fill-2,rgba(0,0,0,.05))}',
+      '.dx-tabstrip{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:4px 10px;border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06))}',
+      '.dx-tabbtn{border:0;background:transparent;color:var(--color-text-3);cursor:pointer;border-radius:6px;padding:4px 10px;font-size:12.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dx-tabbtn:hover{background:var(--color-fill-2,rgba(0,0,0,.05));color:var(--color-text-1)}',
+      '.dx-tabbtn--on{background:var(--color-fill-2,rgba(0,0,0,.07));color:var(--color-text-1);font-weight:600}',
+      '.dx-tabbtn--sub{font-size:12px}.dx-tabmenu,.dx-tabadd{color:var(--color-text-3);padding:4px 8px}',
+      '.dx-tabmark{margin:18px 0 8px;padding:4px 10px;border-radius:6px;background:var(--color-fill-2,rgba(0,0,0,.05));font-size:12px;font-weight:600;color:var(--color-text-2)}',
+      '.dx-btn--danger{background:var(--color-danger-6,#d33);color:#fff}.dx-btn--danger:hover{background:var(--color-danger-5,#e55);color:#fff}',
+      '.dx-menu .dx-menu-danger{color:var(--color-danger-6,#d33)}',
+      '.dx-confirm{align-items:center;max-width:360px;flex-wrap:wrap}.dx-confirm-text{flex:1 1 100%;font-size:12.5px;margin:2px 2px 6px;color:var(--color-text-1)}',
       '.dx-row-title{font-size:13px;font-weight:600;color:var(--color-text-1)}',
       '.dx-row-meta{font-size:11.5px;color:var(--color-text-3)}',
       '.dx-empty{padding:16px;font-size:12.5px;line-height:1.5;color:var(--color-text-3)}',

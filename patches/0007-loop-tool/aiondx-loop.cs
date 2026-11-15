@@ -477,12 +477,13 @@ namespace AionDx
                         { "properties", new Dictionary<string, object> {
                             { "title", Prop("string", "The document's title.") },
                             { "sections", ArrayProp("Its sections, in order: [{heading, intent}] (intent: what the section will hold, shown as Writing: ... until filled).") },
+                            { "tabs", ArrayProp("Optional: a doc with tabs: [{title, sections, parent}] (parent: an earlier tab's title, for a sub-tab).") },
                             { "lead", Prop("string", "Optional text under the title.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
                     { "name", "dxdoc_update" },
                     { "title", "Edit a DX Doc" },
-                    { "description", "Edits a DX Doc by section. Operations, applied in order, all or nothing: {op:\"replace_section\", heading, body} (fills a pending section or replaces one), {op:\"append_to_section\", heading, body}, {op:\"append_section\", heading, body, level}, {op:\"insert_after\", after, heading, body}, {op:\"rename_section\", heading, to}, {op:\"delete_section\", heading}, {op:\"replace_text\", find, replace, all}, {op:\"set_title\", title}, {op:\"set_lead\", body}, {op:\"write\", markdown}. Headings match without case. The version before is kept; the user sees the change at once. A body can hold a ```chart block of JSON ({\"type\":\"bar|stacked|hbar|line|area|pie|scatter\", \"title\", \"unit\", \"columns\":[x label, series names...], \"rows\":[[x, values...]]}, or \"x\" with \"series\":[{\"name\", \"values\"}]) for numbers with a shape, and a ```mermaid block (flowchart, sequenceDiagram, gantt, timeline, quadrantChart, mindmap and the rest of Mermaid 11) for structure; the panel draws both. A block that cannot be drawn is refused with its line and the fix." },
+                    { "description", "Edits a DX Doc by section. Operations, applied in order, all or nothing: {op:\"replace_section\", heading, body} (fills a pending section or replaces one), {op:\"append_to_section\", heading, body}, {op:\"append_section\", heading, body, level}, {op:\"insert_after\", after, heading, body}, {op:\"rename_section\", heading, to}, {op:\"delete_section\", heading}, {op:\"replace_text\", find, replace, all}, {op:\"set_title\", title}, {op:\"set_lead\", body}, {op:\"write\", markdown}. Tabs: {op:\"add_tab\", title, parent, after, sections}, {op:\"rename_tab\", tab, to}, {op:\"move_tab\", tab, before|after|parent}, {op:\"delete_tab\", tab}; on a doc with tabs each section operation names its \"tab\" (an id like t2, or the title). Headings match without case. The version before is kept; the user sees the change at once. A body can hold a ```chart block of JSON ({\"type\":\"bar|stacked|hbar|line|area|pie|scatter\", \"title\", \"unit\", \"columns\":[x label, series names...], \"rows\":[[x, values...]]}, or \"x\" with \"series\":[{\"name\", \"values\"}]) for numbers with a shape, and a ```mermaid block (flowchart, sequenceDiagram, gantt, timeline, quadrantChart, mindmap and the rest of Mermaid 11) for structure; the panel draws both. A block that cannot be drawn is refused with its line and the fix." },
                     { "inputSchema", new Dictionary<string, object> {
                         { "type", "object" },
                         { "properties", new Dictionary<string, object> {
@@ -492,11 +493,12 @@ namespace AionDx
                 new Dictionary<string, object> {
                     { "name", "dxdoc_read" },
                     { "title", "Read a DX Doc" },
-                    { "description", "A DX Doc's Markdown, its sections (with those still pending) and its path." },
+                    { "description", "A DX Doc's Markdown, its sections (with those still pending), its tabs (each with its sections) and its path; with \"tab\", that tab's own Markdown too." },
                     { "inputSchema", new Dictionary<string, object> {
                         { "type", "object" },
                         { "properties", new Dictionary<string, object> {
-                            { "doc", Prop("string", "The doc's id: its file name without .md, as dxdoc_create or dxdoc_list gave it.") } } } } },
+                            { "doc", Prop("string", "The doc's id: its file name without .md, as dxdoc_create or dxdoc_list gave it.") },
+                            { "tab", Prop("string", "Optional: a tab's id (t2) or title, for that tab's own Markdown.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
                     { "name", "dxdoc_list" },
@@ -1571,7 +1573,16 @@ namespace AionDx
             "  (--json-file FILE instead of --json; in PowerShell 5.1 double quotes inside an argument are lost, so use a file there)\n" +
             "A DX Doc is a Markdown file in the DX Docs folder of the chat's project (else its working folder). The user watches it in the chat's\n" +
             "right-hand sidebar, live. Operations: replace_section, append_to_section, append_section, insert_after, rename_section,\n" +
-            "delete_section, replace_text (find, replace, all), set_title, set_lead, write (markdown). Every change keeps the version before it.";
+            "delete_section, replace_text (find, replace, all), set_title, set_lead, write (markdown). Every change keeps the version before it.\n" +
+            "Tabs (a doc can hold several, and sub-tabs under a tab):\n" +
+            "  {\"op\":\"add_tab\",\"title\":\"...\",\"parent\":\"<tab>\",\"after\":\"<tab>\",\"sections\":[{\"heading\":\"...\",\"intent\":\"...\"}]}   (a doc without\n" +
+            "    tabs gets them: what it had becomes the first tab, \"first_tab_title\" names it, else Overview)\n" +
+            "  {\"op\":\"rename_tab\",\"tab\":\"<tab>\",\"to\":\"...\"}  {\"op\":\"move_tab\",\"tab\":\"<tab>\",\"before\"|\"after\":\"<tab>\"}  or \"parent\":\"<tab>\" (\"\" = top)\n" +
+            "  {\"op\":\"delete_tab\",\"tab\":\"<tab>\"}  (takes its sub-tabs; the last tab stays)\n" +
+            "  On a doc with tabs every section operation names its tab: {\"op\":\"replace_section\",\"tab\":\"Decisions\",\"heading\":\"...\",\"body\":\"...\"}\n" +
+            "  (<tab> is a tab's id, like t2, or its title). read lists the tabs with their sections; read with \"tab\" gives that tab's own Markdown.\n" +
+            "  create can make a doc with tabs: {\"title\":\"...\",\"tabs\":[{\"title\":\"Plan\",\"sections\":[...]},{\"title\":\"Detail\",\"parent\":\"Plan\"}]}\n" +
+            "  Comments say which tab they are on (\"tab\").";
 
         /** The engine (dxdocs.js) and something to run it with: AionDX's own runtime (AionDX.exe as Node), else node on PATH. */
         static Tuple<string, string> DxEngine()
@@ -1668,7 +1679,9 @@ namespace AionDx
                 {
                     var r = DxRun("update", a);
                     var pending = r.ContainsKey("pending") ? (r["pending"] as object[] ?? new object[0]) : new object[0];
+                    var added = r.ContainsKey("tabs_added") ? (r["tabs_added"] as object[] ?? new object[0]) : new object[0];
                     return "Updated \"" + Str(r, "id") + "\" (" + string.Join(", ", (r["done"] as object[] ?? new object[0]).Select(x => x.ToString())) + "); the version before is kept." +
+                        (added.Length > 0 ? " New tab" + (added.Length > 1 ? "s" : "") + ": " + string.Join(", ", added.Select(x => x.ToString())) + " (name it with \"tab\" on its section operations)." : "") +
                         (pending.Length > 0 ? " Still to write: " + string.Join(", ", pending.Select(x => "\"" + x + "\"")) + "." : " Every section is written.");
                 }
                 case "dxdoc_read": return Json.Serialize(DxRun("read", a));

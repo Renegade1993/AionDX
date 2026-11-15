@@ -11,6 +11,8 @@ const fs = require('fs');
 const path = require('path');
 const D = require('./dxdocs.js');
 
+const exportAll = (md) => D.MD.exportAll(md);
+
 function create(o) {
   const opts = o || {};
   const allowed = new Set();
@@ -64,16 +66,37 @@ function create(o) {
       allowed.add(path.resolve(r.docsDir));
       return { ok: true, docsDir: path.resolve(r.docsDir), root: r.root, project: r.project };
     }
+    if (op === 'alldocs') {
+      // every project's DX Docs (aiondx-projects.json), each folder opened for this page; the chat's own folder first when given
+      const reg = (() => { try { return JSON.parse(fs.readFileSync(path.join(dataDir() || '', 'aiondx-projects.json'), 'utf8')); } catch { return null; } })();
+      const dirs = [];
+      const add = (d, project, name) => { const r = path.resolve(d); if (!dirs.some((x) => x.docsDir === r)) dirs.push({ docsDir: r, project: project || null, name: name || path.basename(path.dirname(r)) }); };
+      if (req.docsDir && allowed.has(path.resolve(String(req.docsDir)))) add(req.docsDir, null, null);
+      for (const [key, p] of Object.entries((reg && reg.projects) || {})) if (p && p.root && fs.existsSync(p.root)) add(path.join(p.root, D.DOCS_FOLDER), key, p.name || path.basename(p.root));
+      const out = [];
+      for (const d of dirs) {
+        const docs = D.list(d.docsDir);
+        if (!docs.length) continue;
+        allowed.add(d.docsDir);
+        out.push(Object.assign({}, d, { docs }));
+      }
+      return { ok: true, folders: out };
+    }
     const dir = ok(req.docsDir);
-    if (op === 'list') return { ok: true, docs: D.list(dir) };
-    if (op === 'create') return Object.assign({ ok: true }, D.create(dir, { title: req.title, sections: req.sections }));
-    if (op === 'read') return Object.assign({ ok: true }, D.read(dir, req.id), { comments: D.comments(dir, req.id), author: D.author(dir, req.id), suggestions: D.suggestions(dir, req.id) });
+    if (op === 'list') return { ok: true, docs: D.list(dir), deleted: D.recycled(dir).length };
+    if (op === 'create') return Object.assign({ ok: true }, D.create(dir, { title: req.title, sections: req.sections, by: 'you' }));
+    if (op === 'read') return Object.assign({ ok: true }, D.read(dir, req.id, { tab: req.tab }), { comments: D.comments(dir, req.id), author: D.author(dir, req.id), suggestions: D.suggestions(dir, req.id) });
+    if (op === 'rename') return Object.assign({ ok: true }, D.rename(dir, req.id, req.title, 'you'));
+    if (op === 'delete') return Object.assign({ ok: true }, D.remove(dir, req.id, 'you'));
+    if (op === 'deleted') return { ok: true, deleted: D.recycled(dir) };
+    if (op === 'undelete') return Object.assign({ ok: true }, D.undelete(dir, req.deleted));
+    if (op === 'tabs') return Object.assign({ ok: true }, D.update(dir, req.id, (Array.isArray(req.ops) ? req.ops : []).filter((o) => o && /^(add|rename|move|delete)_tab$/.test(o.op)).slice(0, 20), 'you'));
     if (op === 'save') return Object.assign({ ok: true }, D.save(dir, req.id, req.markdown, req.by === 'you' ? 'you' : 'you'));
     if (op === 'history') return { ok: true, versions: D.history(dir, req.id) };
     if (op === 'version') return { ok: true, markdown: D.readVersion(dir, req.id, req.version) };
     if (op === 'restore') return Object.assign({ ok: true }, D.restore(dir, req.id, req.version));
     if (op === 'comments') return { ok: true, comments: D.comments(dir, req.id) };
-    if (op === 'comment') return { ok: true, comment: D.addComment(dir, req.id, { quote: req.quote, text: req.text, section: req.section, by: 'user' }) };
+    if (op === 'comment') return { ok: true, comment: D.addComment(dir, req.id, { quote: req.quote, text: req.text, section: req.section, tab: req.tab, by: 'user' }) };
     if (op === 'reply') return { ok: true, comment: D.replyComment(dir, req.id, req.comment, { text: req.text, resolve: req.resolve, by: 'user' }) };
     if (op === 'image') {
       // a picture a doc shows: relative to the DX Docs folder, or a path or file: URL under the project's root (the folder above it)
@@ -101,17 +124,29 @@ function create(o) {
       return { ok: true };
     }
     if (op === 'docx') {
-      const r = D.read(dir, req.id);   // the id must be a doc in this folder
-      const out = path.join(dir, req.id + '.docx');
+      const r = D.read(dir, req.id, { tab: req.tab });   // the id must be a doc in this folder
+      const tabSlug = r.tab ? '-' + D.slugOf(r.tab.title) : '';
+      const out = path.join(dir, req.id + tabSlug + '.docx');
       const pics = Array.isArray(req.pictures) ? req.pictures.slice(0, 64).map((p) => (p && typeof p.png === 'string' && p.png.length < 20 * 1048576 ? { png: p.png, w: Number(p.w) || 640, h: Number(p.h) || 360 } : null)) : [];
-      fs.writeFileSync(out, await require('./dxdocs-word.js').toDocx(r.markdown, { docsDir: dir, title: r.title, pictures: pics }));
+      // one tab: that tab's view; all of a doc with tabs: each tab a part of its own, its title the part's heading
+      const md = r.tab ? r.tab.markdown : exportAll(r.markdown);
+      fs.writeFileSync(out, await require('./dxdocs-word.js').toDocx(md, { docsDir: dir, title: r.title + (r.tab ? ': ' + r.tab.title : ''), pictures: pics }));
+      if (opts.shell) opts.shell.showItemInFolder(out);
+      return { ok: true, path: out };
+    }
+    if (op === 'mdcopy') {
+      // a Markdown copy to hand to anyone (one tab, or every tab as one document): DX Docs\exports\<id>[-<tab>].md, shown in its folder
+      const r = D.read(dir, req.id, { tab: req.tab });
+      const out = path.join(dir, 'exports', req.id + (r.tab ? '-' + D.slugOf(r.tab.title) : '') + '.md');
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      fs.writeFileSync(out, r.tab ? r.tab.markdown : exportAll(r.markdown));
       if (opts.shell) opts.shell.showItemInFolder(out);
       return { ok: true, path: out };
     }
     if (op === 'pdf') {
       if (!opts.printPdf) return { ok: false, error: 'PDF export is not available here.' };
-      D.read(dir, req.id);   // the id must be a doc in this folder
-      const out = path.join(dir, req.id + '.pdf');
+      const rp = D.read(dir, req.id, { tab: req.tab });   // the id (and tab) must be in this folder
+      const out = path.join(dir, req.id + (rp.tab ? '-' + D.slugOf(rp.tab.title) : '') + '.pdf');
       fs.writeFileSync(out, await opts.printPdf(String(req.html || '')));
       if (opts.shell) opts.shell.showItemInFolder(out);
       return { ok: true, path: out };
@@ -136,4 +171,4 @@ function install(electron) {
   });
 }
 
-module.exports = { install, create };
+module.exports = { install, create, exportAll };

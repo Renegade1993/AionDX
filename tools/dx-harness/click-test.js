@@ -3552,7 +3552,8 @@ async function pageTarget() {
       const told = await js(`window.__calls.filter((c) => c.method === 'POST' && c.path === '/api/conversations/harness1/messages').map((c) => c.body.content)`);
       check(sc, 'Send keeps the comment with the doc: the quote, its section and the text', cm && cm[1].quote === 'Ship it this quarter.' && cm[1].section === 'Goals' && cm[1].text === 'Which quarter?', JSON.stringify(cm));
       check(sc, 'and tells the chat\'s agent: the doc, the section, the quote, the comment and how to answer', told.length === 1 &&
-        /^\[DX Doc comment\] On "Launch plan" \(doc plan, section "Goals", comment c1\):\n> Ship it this quarter\.\n\nWhich quarter\?\n\n\(Answer with dxdoc_reply/.test(told[0]), JSON.stringify(told));
+        // the commands every chat has first (November 15th: a team lead had no dxdoc_* tools, and the notice named only those)
+        /^\[DX Doc comment\] On "Launch plan" \(doc plan, section "Goals", comment c1\):\n> Ship it this quarter\.\n\nWhich quarter\?\n\n\(Answer in the comment’s thread: aiondx doc reply --json '\{"doc":"plan","comment":"c1","text":"\.\.\."\}' \(or the dxdoc_reply tool\)\. When it asks for a change, make it with aiondx doc update \(or dxdoc_update\)\./.test(told[0]), JSON.stringify(told));
       check(sc, 'once it is sent, the agent\'s change shows', /added while you typed/.test(await js(`document.querySelector('#tbox .dx-body').textContent`)));
       check(sc, 'the comment shows in the doc\'s comments', /Which quarter\?/.test(await js(`(document.querySelector('#tbox .dx-comments') || {}).textContent || ''`)) && /Comments \(1\)/.test(await js(`document.querySelector('#tbox [data-act="comments"]').textContent`)));
       // edit the Markdown (now in the menu: the doc itself is typed in)
@@ -3724,6 +3725,167 @@ async function pageTarget() {
       await sleep(1500);
       check(sc, 'leaving the chat takes the panel and its button away and stops watching', !(await js(`!!document.querySelector('[data-testid="aiondx-dx"]') || !!document.querySelector('[data-testid="aiondx-dx-open"]')`)) && (await js('window.__dx.calls')).some((c) => c[0] === 'unwatch'));
       await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.share'); location.hash = '#/conversation/harness1'; return 0; })()`);
+    }
+
+    // ---- DX Docs: documents and tabs (DX Docs mirror, November 15th, 2026) ----
+    {
+      const sc = 'dxtabs';
+      const setup = () => js(`(() => {
+        location.hash = '#/conversation/harness1';
+        for (const id of ['tsider', 'tbox']) { const o = document.getElementById(id); if (o) o.remove(); }
+        const box = document.createElement('div'); box.id = 'tbox'; box.className = 'flex flex-1 relative w-full overflow-hidden';
+        box.style.cssText = 'position:fixed;top:40px;left:100px;width:calc(100% - 100px);bottom:0;display:flex;z-index:1000;background:#fff';
+        box.innerHTML = '<div class="flex flex-col min-w-0" style="flex:1 1 0;min-width:0"><div class="shrink-0"><header class="chat-layout-header" style="display:flex;align-items:center;height:36px"><span>Chat</span><div class="flex items-center gap-12px shrink-0" style="margin-left:auto"></div></header></div><div>messages</div></div>';
+        document.body.appendChild(box);
+        const M = window.__dxMd;
+        const X = window.__dx = { calls: [], dirs: { 'C:/ws/Docs': {}, 'C:/atlas/DX Docs': { 'atlas-notes': '# Atlas notes\\n\\nFrom another project.\\n' } }, deleted: [], comments: {}, cb: null };
+        const docs = (a) => X.dirs[a.docsDir] || (X.dirs[a.docsDir] = {});
+        const meta = (dir, id) => ({ id, title: M.splitTabs(X.dirs[dir][id]).title || id, modified: Date.now(), tabs: M.tabList(X.dirs[dir][id]).length, pending: 0, openComments: 0 });
+        const changed = (a, id) => setTimeout(() => X.cb && X.cb({ kind: 'changed', docsDir: a.docsDir, id }), 30);
+        window.aiondxDx = {
+          call: (op, a) => { X.calls.push([op, JSON.parse(JSON.stringify(a || {}))]); const d = docs(a || {});
+            const ok = (o) => Promise.resolve(Object.assign({ ok: true }, o || {}));
+            if (op === 'where') return ok({ docsDir: 'C:/ws/Docs', root: 'C:/ws', project: null });
+            if (op === 'watch' || op === 'unwatch' || op === 'reveal') return ok();
+            if (op === 'list') return ok({ docs: Object.keys(d).map((id) => meta(a.docsDir, id)), deleted: X.deleted.length });
+            if (op === 'alldocs') return ok({ folders: Object.keys(X.dirs).filter((k) => Object.keys(X.dirs[k]).length).map((k) => ({ docsDir: k, name: k === 'C:/ws/Docs' ? 'ws' : 'Atlas', docs: Object.keys(X.dirs[k]).map((id) => meta(k, id)) })) });
+            if (op === 'create') { const id = a.title.toLowerCase().replace(/[^a-z0-9]+/g, '-'); d[id] = '# ' + a.title + '\\n'; changed(a, id); return ok({ id, title: a.title }); }
+            if (op === 'read') return d[a.id] != null ? ok({ id: a.id, title: M.splitTabs(d[a.id]).title, markdown: d[a.id], comments: X.comments[a.id] || [], suggestions: [] }) : Promise.resolve({ ok: false, error: 'no doc' });
+            if (op === 'save') { d[a.id] = a.markdown; return ok(); }
+            if (op === 'rename') { const T = M.splitTabs(d[a.id]); T.title = a.title; d[a.id] = M.joinTabs(T); return ok(); }
+            if (op === 'tabs') {
+              const T = M.splitTabs(d[a.id]); let made = [];
+              for (const o of a.ops) {
+                if (o.op === 'add_tab') { if (T.tabs[0].implicit) T.tabs = [{ id: 't1', title: 'Overview', parent: '', body: T.tabs[0].body }]; const id = 't' + (T.tabs.length + 1); T.tabs.push({ id, title: o.title, parent: o.parent || '', body: '' }); made.push(id); }
+                if (o.op === 'rename_tab') M.findTab(T, o.tab).title = o.to;
+                if (o.op === 'delete_tab') T.tabs = T.tabs.filter((t) => t.id !== o.tab && t.parent !== o.tab);
+                if (o.op === 'move_tab') { const t = M.findTab(T, o.tab); T.tabs = T.tabs.filter((x) => x !== t); const r = T.tabs.indexOf(M.findTab(T, o.before || o.after)); T.tabs.splice(o.before ? r : r + 1, 0, t); }
+              }
+              d[a.id] = M.joinTabs(T); return ok(made.length ? { tabs_added: made } : {});
+            }
+            if (op === 'delete') { X.deleted.push({ deleted: a.id + '--1', id: a.id, title: M.splitTabs(d[a.id]).title, at: Date.now(), md: d[a.id] }); delete d[a.id]; return ok({ deleted: a.id + '--1' }); }
+            if (op === 'deleted') return ok({ deleted: X.deleted.map((x) => ({ deleted: x.deleted, id: x.id, title: x.title, at: x.at })) });
+            if (op === 'undelete') { const x = X.deleted.find((y) => y.deleted === a.deleted); X.deleted = X.deleted.filter((y) => y !== x); d[x.id] = x.md; return ok({ id: x.id, title: x.title }); }
+            if (op === 'comment') { const c = { id: 'c9', quote: a.quote, text: a.text, tab: a.tab, replies: [], resolved: false }; (X.comments[a.id] = X.comments[a.id] || []).push(c); return ok({ comment: c }); }
+            if (op === 'docx' || op === 'pdf' || op === 'mdcopy') return ok({ path: 'C:/ws/Docs/' + a.id + (a.tab ? '-' + a.tab : '') + '.' + (op === 'mdcopy' ? 'md' : op) });
+            if (op === 'image') return Promise.resolve({ ok: false, error: 'none' });
+            return Promise.resolve({ ok: false, error: 'stub: ' + op }); },
+          onEvent: (cb) => { X.cb = cb; return () => {}; },
+        };
+        window.__calls.length = 0; return 0; })()`);
+      const P = () => js(`(() => { const p = document.querySelector('#tbox [data-testid="aiondx-dx"]'); if (!p) return null;
+        return { bar: (p.querySelector('.dx-bar-title') || {}).textContent || '', tabs: [...p.querySelectorAll('[data-testid="aiondx-dx-tab"]')].map((b) => b.textContent + (b.classList.contains('dx-tabbtn--on') ? '*' : '')),
+          stripHidden: (p.querySelector('.dx-tabstrip') || {}).hidden, body: (p.querySelector('.dx-body') || {}).textContent || '', list: [...p.querySelectorAll('.dx-row-title')].map((e) => e.textContent),
+          groups: [...p.querySelectorAll('.dx-group')].map((e) => e.textContent), deleted: (p.querySelector('[data-testid="aiondx-dx-deleted"]') || {}).textContent || '' }; })()`);
+      const calls = (op) => js(`window.__dx.calls.filter((c) => c[0] === ${JSON.stringify(op)}).map((c) => c[1])`);
+      const docMd = (id) => js(`window.__dx.dirs['C:/ws/Docs'][${JSON.stringify(id)}]`);
+      const nameBox = async (text) => { await sleep(250); await js(`(() => { const i = document.querySelector('[data-testid="aiondx-dx-name"]'); i.value = ''; i.focus(); return 0; })()`); await send('Input.insertText', { text }); await pressEnter(); await sleep(500); };
+      // a new line under the doc's title (where a click in a short doc puts the caret), as a person would before typing
+      const newLine = async () => { await js(`(() => { const b = document.querySelector('#tbox .dx-body'); b.focus(); const r = document.createRange(); r.selectNodeContents(b); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('insertParagraph'); return 0; })()`); await sleep(150); };
+      const more = async (label) => { await humanClick('#tbox [data-testid="aiondx-dx-more"]'); await sleep(250); await js(`(() => { const b = [...document.querySelectorAll('[data-testid="aiondx-dx-morelist"] button')].find((x) => x.textContent === ${JSON.stringify(label)}); b.click(); return 0; })()`); };
+      await load('theme=light');
+      await setup();
+      await sleep(1500);
+      await humanClick('#tbox [data-testid="aiondx-dx-open"]');
+      await sleep(500);
+      // + New doc: a title box in the panel (it used a prompt window the app does not have)
+      await humanClick('#tbox [data-testid="aiondx-dx-new"]');
+      await sleep(250);
+      check(sc, '+ New doc opens a title box in the panel', await js(`!document.querySelector('#tbox [data-testid="aiondx-dx-newbox"]').hidden && document.activeElement === document.querySelector('[data-testid="aiondx-dx-newtitle"]')`));
+      await send('Input.insertText', { text: 'Road map' });
+      await pressEnter();
+      await sleep(700);
+      let p = await P();
+      check(sc, 'Enter makes the doc and opens it', JSON.stringify(await calls('create')) === JSON.stringify([{ docsDir: 'C:/ws/Docs', title: 'Road map' }]) && p.bar === 'Road map' && p.stripHidden === true, JSON.stringify(p));
+      // rename by clicking the title
+      await humanClick('#tbox [data-testid="aiondx-dx-title"]');
+      await nameBox('Product road map');
+      p = await P();
+      check(sc, 'clicking the title renames the doc', (await calls('rename')).length === 1 && p.bar === 'Product road map' && /^# Product road map\n/.test(await docMd('road-map')), JSON.stringify(p));
+      // some text in the doc, then tabs
+      await newLine();
+      await send('Input.insertText', { text: 'The overview text.' });
+      await sleep(1700);
+      await more('Add a tab');
+      await nameBox('Decisions');
+      p = await P();
+      check(sc, 'Add a tab: the doc gets tabs, what it had stays in the first, and the new tab opens', JSON.stringify(p.tabs) === JSON.stringify(['Overview', 'Decisions*']) &&
+        /<!-- dx:tab id="t1" title="Overview" -->\n\nThe overview text\.\n\n<!-- dx:tab id="t2" title="Decisions" -->/.test(await docMd('road-map')) && !/overview text/.test(p.body), JSON.stringify([p, await docMd('road-map')]));
+      await newLine();
+      await send('Input.insertText', { text: 'Price at 20.' });
+      await sleep(1700);
+      let md = await docMd('road-map');
+      check(sc, 'typing in a tab saves into that tab only', /title="Overview" -->\n\nThe overview text\.\n\n<!-- dx:tab id="t2" title="Decisions" -->\n\nPrice at 20\.\n$/.test(md), md);
+      await humanClick('#tbox [data-testid="aiondx-dx-tab"]');
+      await sleep(400);
+      p = await P();
+      check(sc, 'a click on a tab shows it', JSON.stringify(p.tabs) === JSON.stringify(['Overview*', 'Decisions']) && /The overview text\./.test(p.body) && !/Price/.test(p.body), JSON.stringify(p));
+      await humanClick('#tbox [data-testid="aiondx-dx-tabmenu"]');
+      await sleep(250);
+      await js(`(() => { [...document.querySelectorAll('[data-testid="aiondx-dx-tabmenu-list"] button')].find((x) => x.textContent === 'Move right').click(); return 0; })()`);
+      await sleep(600);
+      p = await P();
+      check(sc, 'the tab menu moves a tab', JSON.stringify(p.tabs) === JSON.stringify(['Decisions', 'Overview*']), JSON.stringify(p));
+      await js(`(() => { const b = [...document.querySelectorAll('#tbox [data-testid="aiondx-dx-tab"]')].find((x) => /Decisions/.test(x.textContent)); b.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return 0; })()`);
+      await nameBox('Pricing');
+      p = await P();
+      check(sc, 'a double-click on a tab renames it (and opens it)', JSON.stringify(p.tabs) === JSON.stringify(['Pricing*', 'Overview']) && /title="Pricing"/.test(await docMd('road-map')), JSON.stringify(p));
+      // exports: this tab, all tabs
+      await more('Export all tabs as Word');
+      await sleep(600);
+      await more('Export this tab as Word');
+      await sleep(600);
+      const dc = await calls('docx');
+      check(sc, 'Word export of all tabs, and of the open tab only', dc.length === 2 && dc[0].tab === '' && dc[1].tab === 't2', JSON.stringify(dc));
+      await more('Save this tab as Markdown');
+      await sleep(400);
+      check(sc, 'a tab saved as a Markdown file', JSON.stringify((await calls('mdcopy')).map((c) => c.tab)) === '["t2"]');
+      // a comment knows its tab, and tells the agent how to answer with the commands every chat has
+      await js(`(() => { const b = document.querySelector('#tbox .dx-body p'); const r = document.createRange(); r.selectNodeContents(b); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.dispatchEvent(new Event('selectionchange')); return 0; })()`);
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-dx-comment-btn"]');
+      await sleep(300);
+      await typeInto('[data-testid="aiondx-dx-ctext"]', 'Shorter?');
+      await humanClick('[data-testid="aiondx-dx-csend"]');
+      await sleep(700);
+      const cm = await calls('comment');
+      const told = await posts('/api/conversations/harness1/messages');
+      check(sc, 'a comment carries its tab; the agent is told the tab and to answer with aiondx doc reply (or the dxdoc tools)',
+        cm.length === 1 && cm[0].tab === 't2' && told.length === 1 && /tab "Pricing" \(t2\)/.test(told[0].body.content) && /aiondx doc reply --json/.test(told[0].body.content) && /"tab":"t2"/.test(told[0].body.content), JSON.stringify([cm, told.map((t) => t.body.content)]));
+      // delete to Recently deleted, and back
+      await more('Delete the doc');
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-dx-confirm"] [data-a="yes"]');
+      await sleep(800);
+      p = await P();
+      check(sc, 'Delete asks first, then the doc goes and the list offers Recently deleted', (await calls('delete')).length === 1 && JSON.stringify(p.list) === '[]' && p.deleted === 'Recently deleted (1)', JSON.stringify(p));
+      const atLink = await js(`(() => { const b = document.querySelector('#tbox [data-testid="aiondx-dx-deleted"]'); const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e === b ? 'link' : (e ? e.className + ' / ' + (e.textContent || '').slice(0, 80) : 'none') + ' at ' + JSON.stringify(r); })()`);
+      check(sc, 'nothing covers Recently deleted', atLink === 'link', atLink);
+      await humanClick('#tbox [data-testid="aiondx-dx-deleted"]');
+      await sleep(500);
+      const dv = await js(`(() => { const l = document.querySelector('#tbox [data-testid="aiondx-dx-deletedlist"]'); return l ? l.textContent : (document.querySelector('#tbox .dx-main') || {}).innerHTML; })()`);
+      check(sc, 'Recently deleted lists it, with Restore', /Product road map/.test(dv) && /Restore/.test(dv), dv);
+      await humanClick('#tbox [data-testid="aiondx-dx-restore"]');
+      await sleep(800);
+      p = await P();
+      check(sc, 'Restore brings it back and opens it, its tabs intact', p.bar === 'Product road map' && JSON.stringify(p.tabs) === JSON.stringify(['Pricing*', 'Overview']), JSON.stringify(p));
+      // All docs: every project's folder; a doc from another project opens from its own folder
+      await humanClick('#tbox .dx-back');
+      await sleep(500);
+      await humanClick('#tbox [data-testid="aiondx-dx-alldocs"]');
+      await sleep(700);
+      p = await P();
+      check(sc, 'All docs lists every project\'s docs, grouped, this chat first', JSON.stringify(p.groups) === JSON.stringify(['This chat', 'Atlas']) && JSON.stringify(p.list) === JSON.stringify(['Product road map', 'Atlas notes']), JSON.stringify(p));
+      await js(`(() => { [...document.querySelectorAll('#tbox .dx-row')].find((r) => /Atlas notes/.test(r.textContent)).click(); return 0; })()`);
+      await sleep(700);
+      p = await P();
+      const rr = (await calls('read')).pop();
+      check(sc, 'and a doc from another project opens from its own folder, which is watched while it is open', p.bar === 'Atlas notes' && rr.docsDir === 'C:/atlas/DX Docs' &&
+        (await calls('watch')).some((c) => c.docsDir === 'C:/atlas/DX Docs'), JSON.stringify([p, rr]));
+      await humanClick('#tbox .dx-back');
+      await sleep(600);
+      check(sc, 'back from it: this chat\'s folder again', (await calls('unwatch')).some((c) => c.docsDir === 'C:/atlas/DX Docs') && (await calls('list')).pop().docsDir === 'C:/ws/Docs');
+      await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
     }
 
     // ---- compaction by itself, and the context ring's menu (R-122, 2026-11-13) ----

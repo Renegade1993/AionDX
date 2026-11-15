@@ -16,6 +16,8 @@ const fs = require('fs');
 const path = require('path');
 // charts (R-125): beside this file wherever it goes (patches, out/aiondx, the aiondx tool's bin folder)
 const CHARTS = (() => { try { return require('./dxcharts.js'); } catch { return null; } })();
+// tabs and the Markdown helpers both sides share (DX Docs mirror): beside this file too
+const MD = require('./dxdocs-md.js');
 // the diagram kinds the page's Mermaid (11.x) draws, by a block's first word
 const MERMAID_KINDS = ['flowchart', 'graph', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'stateDiagram-v2', 'erDiagram', 'journey', 'gantt', 'pie',
   'quadrantChart', 'requirementDiagram', 'gitGraph', 'mindmap', 'timeline', 'sankey-beta', 'xychart-beta', 'block-beta', 'packet-beta', 'kanban',
@@ -112,6 +114,90 @@ function render(doc) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n');
 }
 function pendingOf(body) { const m = PENDING_RE.exec(String(body || '').trim()); return m ? m[1] || 'this section' : null; }
+/** A tab's Markdown as a doc of its own (title, lead, sections), and back. */
+function parseTab(T, tab) { return parse('# ' + (T.title || 'Untitled') + '\n\n' + (tab.body || '')); }
+function bodyOf(doc) { return render({ title: 'x', lead: doc.lead, sections: doc.sections }).replace(/^# x\n\n?/, '').replace(/\n+$/, ''); }
+/** Every section of every tab: [{ tab, heading, level, body }]. */
+function allSections(md) {
+  const T = MD.splitTabs(md);
+  const out = [];
+  for (const t of T.tabs) for (const s of parseTab(T, t).sections) out.push(Object.assign({ tab: t.implicit ? '' : t.id }, s));
+  return out;
+}
+function tabNames(T) { return T.tabs.map((t) => '"' + t.title + '" (' + t.id + ')').join(', '); }
+/** The tab an operation is for: its "tab" (id or title); a doc with one tab needs none. */
+function pickTab(T, op) {
+  if (op.tab != null && String(op.tab).trim()) {
+    const t = MD.findTab(T, op.tab);
+    if (!t) throw new Error('No tab "' + op.tab + '". Tabs: ' + (T.tabs[0].implicit ? 'none (this doc has no tabs; leave "tab" out, or add one with add_tab)' : tabNames(T)) + '.');
+    return t;
+  }
+  if (T.tabs.length === 1) return T.tabs[0];
+  throw new Error('This doc has tabs; say which one with "tab" (its id or title): ' + tabNames(T) + '.');
+}
+function newTabId(T) { let n = T.tabs.length + 1; const have = new Set(T.tabs.map((t) => t.id)); while (have.has('t' + n)) n++; return 't' + n; }
+/** A doc with no tabs becomes one with a first tab holding what it had. */
+function makeExplicit(T, firstTitle) {
+  if (T.tabs.length === 1 && T.tabs[0].implicit) T.tabs = [{ id: 't1', title: String(firstTitle || 'Overview').trim() || 'Overview', parent: '', body: T.tabs[0].body }];
+}
+function subtreeIds(T, id) { const ids = [id]; for (let k = 0; k < ids.length; k++) for (const t of T.tabs) if (t.parent === ids[k]) ids.push(t.id); return ids; }
+const TAB_OPS = ['add_tab', 'rename_tab', 'move_tab', 'delete_tab'];
+function tabOp(T, op) {
+  const k = op.op;
+  if (k === 'add_tab') {
+    const title = String(op.title || '').trim();
+    if (!title) throw new Error('add_tab needs a "title".');
+    makeExplicit(T, op.first_tab_title);
+    const parent = op.parent ? MD.findTab(T, op.parent) : null;
+    if (op.parent && !parent) throw new Error('No tab "' + op.parent + '" to put it under. Tabs: ' + tabNames(T) + '.');
+    let body = op.body != null ? String(op.body).trim() : '';
+    if (!body && Array.isArray(op.sections)) body = bodyOf({ lead: '', sections: op.sections.filter((s) => s && String(s.heading || '').trim()).map((s) => ({ heading: String(s.heading).trim(), level: s.level || 2,
+      body: s.body ? String(s.body) : '<!-- aiondx:pending ' + String(s.intent || 'this section').replace(/-->/g, '- ->').trim() + ' -->' })) });
+    const t = { id: newTabId(T), title, parent: parent ? parent.id : '', body };
+    // after: a tab; else at the end of its parent's tabs (or the end of the doc)
+    let at = T.tabs.length;
+    const after = op.after ? MD.findTab(T, op.after) : null;
+    if (op.after && !after) throw new Error('No tab "' + op.after + '" to put it after. Tabs: ' + tabNames(T) + '.');
+    if (after) { const ids = subtreeIds(T, after.id); at = Math.max(...ids.map((id) => T.tabs.findIndex((x) => x.id === id))) + 1; }
+    else if (parent) { const ids = subtreeIds(T, parent.id); at = Math.max(...ids.map((id) => T.tabs.findIndex((x) => x.id === id))) + 1; }
+    T.tabs.splice(at, 0, t);
+    return t.id;
+  }
+  if (T.tabs.length === 1 && T.tabs[0].implicit) throw new Error('This doc has no tabs yet; add one with add_tab.');
+  const t = MD.findTab(T, op.tab);
+  if (!t) throw new Error('No tab "' + (op.tab || '') + '". Tabs: ' + tabNames(T) + '.');
+  if (k === 'rename_tab') { t.title = String(op.to || '').trim() || t.title; return t.id; }
+  if (k === 'delete_tab') {
+    const ids = subtreeIds(T, t.id);
+    if (ids.length >= T.tabs.length) throw new Error('That would delete every tab; a doc keeps at least one.');
+    T.tabs = T.tabs.filter((x) => ids.indexOf(x.id) < 0);
+    return t.id;
+  }
+  if (k === 'move_tab') {
+    // the tab moves with its sub-tabs: before or after another tab (taking that tab's parent), or under a parent (at its end), or to the top level
+    const ids = subtreeIds(T, t.id);
+    const block = T.tabs.filter((x) => ids.indexOf(x.id) >= 0);
+    const rest = T.tabs.filter((x) => ids.indexOf(x.id) < 0);
+    const ref = op.before || op.after;
+    let at;
+    if (ref) {
+      const r = MD.findTab({ tabs: rest }, ref);
+      if (!r) throw new Error('No tab "' + ref + '" to move it ' + (op.before ? 'before' : 'after') + ' (not itself or one of its own sub-tabs). Tabs: ' + tabNames(T) + '.');
+      t.parent = r.parent;
+      if (op.before) at = rest.indexOf(r);
+      else { const rids = subtreeIds({ tabs: rest }, r.id); at = Math.max(...rids.map((id) => rest.findIndex((x) => x.id === id))) + 1; }
+    } else if (op.parent !== undefined) {
+      const p = op.parent ? MD.findTab({ tabs: rest }, op.parent) : null;
+      if (op.parent && !p) throw new Error('No tab "' + op.parent + '" to move it under (not itself or one of its own sub-tabs).');
+      t.parent = p ? p.id : '';
+      if (p) { const pids = subtreeIds({ tabs: rest }, p.id); at = Math.max(...pids.map((id) => rest.findIndex((x) => x.id === id))) + 1; } else at = rest.length;
+    } else throw new Error('move_tab needs "before", "after" or "parent" ("" for the top level).');
+    rest.splice(at, 0, ...block);
+    T.tabs = rest;
+    return t.id;
+  }
+  throw new Error('Unknown tab operation "' + k + '".');
+}
 const norm = (h) => String(h || '').replace(/^#+\s*/, '').trim().toLowerCase();
 function findSection(doc, heading) {
   const n = norm(heading);
@@ -131,10 +217,12 @@ function docPath(docsDir, id) {
 function info(docsDir, id) {
   const f = docPath(docsDir, id);
   const st = fs.statSync(f);
-  const doc = parse(fs.readFileSync(f, 'utf8'));
-  const pending = doc.sections.filter((s) => pendingOf(s.body)).length;
+  const md = fs.readFileSync(f, 'utf8');
+  const T = MD.splitTabs(md);
+  const secs = allSections(md);
+  const pending = secs.filter((s) => pendingOf(s.body)).length;
   const comments = (readJson(path.join(docsDir, '.comments', id + '.json')) || []).filter((c) => !c.resolved).length;
-  return { id, title: doc.title || id, path: f, modified: st.mtimeMs, sections: doc.sections.length, pending, openComments: comments };
+  return { id, title: T.title || id, path: f, modified: st.mtimeMs, sections: secs.length, tabs: T.tabs[0].implicit ? 0 : T.tabs.length, pending, openComments: comments };
 }
 function list(docsDir) {
   if (!fs.existsSync(docsDir)) return [];
@@ -165,34 +253,122 @@ function create(docsDir, o) {
   if (!title) throw new Error('A doc needs a title.');
   let id = (o && o.id && ID_RE.test(o.id)) ? o.id : slugOf(title);
   for (let n = 2; fs.existsSync(path.join(docsDir, id + '.md')); n++) id = slugOf(title).slice(0, 56) + '-' + n;
-  const doc = { title, lead: String((o && o.lead) || ''), sections: [] };
-  for (const s of (o && o.sections) || []) {
-    const heading = String(s.heading || '').trim();
-    if (!heading) continue;
-    const body = s.body ? String(s.body) : '<!-- aiondx:pending ' + String(s.intent || 'this section').replace(/-->/g, '- ->').trim() + ' -->';
-    doc.sections.push({ heading, level: s.level || 2, body });
-  }
-  writeAtomic(docPath(docsDir, id), render(doc));
+  const skeleton = (secs) => {
+    const out = [];
+    for (const s of secs || []) {
+      const heading = String((s && s.heading) || '').trim();
+      if (!heading) continue;
+      const body = s.body ? String(s.body) : '<!-- aiondx:pending ' + String(s.intent || 'this section').replace(/-->/g, '- ->').trim() + ' -->';
+      out.push({ heading, level: s.level || 2, body });
+    }
+    return out;
+  };
+  let text;
+  const tabs = Array.isArray(o && o.tabs) ? o.tabs.filter((t) => t && String(t.title || '').trim()) : [];
+  if (tabs.length) {
+    // a doc made with tabs: each tab its own skeleton; a tab may name an earlier tab as its parent
+    const T = { title, tabs: [] };
+    tabs.forEach((t, k) => {
+      const parent = t.parent ? MD.findTab(T, t.parent) : null;
+      T.tabs.push({ id: 't' + (k + 1), title: String(t.title).trim(), parent: parent ? parent.id : '', body: bodyOf({ lead: String(t.lead || ''), sections: skeleton(t.sections) }) });
+    });
+    if (o.lead || (o.sections && o.sections.length)) T.tabs[0].body = bodyOf({ lead: String(o.lead || ''), sections: skeleton(o.sections) }) + (T.tabs[0].body ? '\n\n' + T.tabs[0].body : '');
+    text = MD.joinTabs(T);
+  } else text = render({ title, lead: String((o && o.lead) || ''), sections: skeleton(o && o.sections) });
+  writeAtomic(docPath(docsDir, id), text);
   wroteBy(docsDir, id, (o && o.by) || 'agent');
   return { id, path: docPath(docsDir, id), title };
 }
-function read(docsDir, id) {
+/** A new title for the doc (its file name, the id, stays). */
+function rename(docsDir, id, title, by) { return update(docsDir, id, [{ op: 'set_title', title }], by || 'you'); }
+/** Delete: the doc, its comments, suggestions and versions go to DX Docs\.recycle\<id>-<stamp>\ (restorable; the last 50 deletions kept). */
+function remove(docsDir, id, by) {
+  const f = docPath(docsDir, id);
+  if (!fs.existsSync(f)) throw new Error('No doc "' + id + '" in ' + docsDir + '.');
+  const title = MD.splitTabs(fs.readFileSync(f, 'utf8')).title || id;
+  const name = id + '--' + stamp(new Date());
+  const bin = path.join(docsDir, '.recycle', name);
+  fs.mkdirSync(bin, { recursive: true });
+  fs.renameSync(f, path.join(bin, id + '.md'));
+  for (const [sub, file] of [['.comments', id + '.json'], ['.suggestions', id + '.json'], ['.history', id]]) {
+    const from = path.join(docsDir, sub, file);
+    if (fs.existsSync(from)) { fs.mkdirSync(path.join(bin, sub), { recursive: true }); fs.renameSync(from, path.join(bin, sub, file)); }
+  }
+  writeAtomic(path.join(bin, 'deleted.json'), JSON.stringify({ id, title, at: Date.now(), by: String(by || 'you').slice(0, 80) }, null, 1));
+  const all = fs.readdirSync(path.join(docsDir, '.recycle')).sort();
+  for (const old of all.slice(0, Math.max(0, all.length - HISTORY_KEEP))) { try { fs.rmSync(path.join(docsDir, '.recycle', old), { recursive: true, force: true }); } catch { /* next time */ } }
+  return { id, deleted: name };
+}
+/** The deleted docs, newest first: [{ deleted, id, title, at, by }]. */
+function recycled(docsDir) {
+  const dir = path.join(docsDir, '.recycle');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).map((name) => { const m = readJson(path.join(dir, name, 'deleted.json')); return m ? Object.assign({ deleted: name }, m) : null; })
+    .filter(Boolean).sort((a, b) => b.at - a.at);
+}
+/** A deleted doc back, under its own id (or id-2 and so on when that is taken). */
+function undelete(docsDir, name) {
+  if (!/^[a-z0-9][a-z0-9-]{0,79}--[0-9-]+$/.test(String(name || ''))) throw new Error('Which deleted doc?');
+  const bin = path.join(docsDir, '.recycle', name);
+  const m = readJson(path.join(bin, 'deleted.json'));
+  if (!m) throw new Error('That deleted doc is not in the recycle folder.');
+  let id = m.id;
+  for (let n = 2; fs.existsSync(path.join(docsDir, id + '.md')); n++) id = m.id.slice(0, 74) + '-' + n;
+  fs.renameSync(path.join(bin, m.id + '.md'), path.join(docsDir, id + '.md'));
+  for (const [sub, file, to] of [['.comments', m.id + '.json', id + '.json'], ['.suggestions', m.id + '.json', id + '.json'], ['.history', m.id, id]]) {
+    const from = path.join(bin, sub, file);
+    if (fs.existsSync(from)) { fs.mkdirSync(path.join(docsDir, sub), { recursive: true }); fs.renameSync(from, path.join(docsDir, sub, to)); }
+  }
+  fs.rmSync(bin, { recursive: true, force: true });
+  return { id, title: m.title };
+}
+/** The doc: its Markdown and sections; with tabs, each tab with its sections. o.tab: that tab's own Markdown too (its view). */
+function read(docsDir, id, o) {
   const f = docPath(docsDir, id);
   if (!fs.existsSync(f)) throw new Error('No doc "' + id + '" in ' + docsDir + '.');
   const markdown = fs.readFileSync(f, 'utf8');
-  const doc = parse(markdown);
-  return { id, path: f, title: doc.title, markdown, sections: doc.sections.map((s) => ({ heading: s.heading, level: s.level, pending: pendingOf(s.body), chars: s.body.length })) };
+  const T = MD.splitTabs(markdown);
+  const secs = (t) => parseTab(T, t).sections.map((s) => ({ heading: s.heading, level: s.level, pending: pendingOf(s.body), chars: s.body.length }));
+  const out = { id, path: f, title: T.title, markdown, sections: allSections(markdown).map((s) => Object.assign({ heading: s.heading, level: s.level, pending: pendingOf(s.body), chars: s.body.length }, s.tab ? { tab: s.tab } : {})) };
+  if (!T.tabs[0].implicit) out.tabs = T.tabs.map((t) => ({ id: t.id, title: t.title, parent: t.parent || '', sections: secs(t) }));
+  if (o && o.tab != null && String(o.tab).trim()) {
+    const t = MD.findTab(T, o.tab);
+    if (!t) throw new Error('No tab "' + o.tab + '". Tabs: ' + (T.tabs[0].implicit ? 'none' : tabNames(T)) + '.');
+    out.tab = { id: t.id, title: t.title, parent: t.parent || '', markdown: MD.tabView(markdown, t.id) };
+  }
+  return out;
 }
-/** Apply operations in order, all or nothing; the version before is kept in the history. */
-function update(docsDir, id, ops) {
+/** Apply operations in order, all or nothing; the version before is kept in the history. With tabs, each section operation names its tab. */
+function update(docsDir, id, ops, by) {
   const f = docPath(docsDir, id);
   if (!fs.existsSync(f)) throw new Error('No doc "' + id + '" in ' + docsDir + '.');
   if (!Array.isArray(ops) || !ops.length) throw new Error('Give one or more operations.');
-  const doc = parse(fs.readFileSync(f, 'utf8'));
-  let body = null;
+  let T = MD.splitTabs(fs.readFileSync(f, 'utf8'));
   const done = [];
+  const tabsMade = [];
   for (const op of ops) {
     const k = op && op.op;
+    if (TAB_OPS.indexOf(k) >= 0) { const tid = tabOp(T, op); if (k === 'add_tab') tabsMade.push(tid); done.push(k); continue; }
+    if (k === 'set_title') { T.title = String(op.title || '').trim() || T.title; done.push(k); continue; }
+    if (k === 'write' && !(op.tab != null && String(op.tab).trim())) { T = MD.splitTabs(String(op.markdown || '').replace(/\r\n/g, '\n')); done.push(k); continue; }
+    if (k === 'replace_text' && !(op.tab != null && String(op.tab).trim())) {
+      const find = String(op.find || '');
+      if (!find) throw new Error('replace_text needs the text to find.');
+      const text = MD.joinTabs(T);
+      const count = text.split(find).length - 1;
+      if (!count) throw new Error('The text to replace was not found: "' + find.slice(0, 80) + '".');
+      if (count > 1 && !op.all) throw new Error('The text to replace occurs ' + count + ' times; give more of it, or "all": true.');
+      T = MD.splitTabs(op.all ? text.split(find).join(String(op.replace || '')) : text.replace(find, () => String(op.replace || '')));
+      done.push(k);
+      continue;
+    }
+    if (['replace_section', 'append_section', 'insert_after', 'append_to_section', 'rename_section', 'delete_section', 'replace_text', 'set_lead', 'write'].indexOf(k) < 0) {
+      throw new Error('Unknown operation "' + k + '". Use replace_section, append_to_section, append_section, insert_after, rename_section, delete_section, replace_text, set_title, set_lead or write; ' +
+        'for tabs add_tab, rename_tab, move_tab, delete_tab, and "tab" (an id or title) on any section operation.');
+    }
+    const tab = pickTab(T, op);
+    const doc = parseTab(T, tab);
+    let body = null;
     if (k === 'replace_section') {
       const i = findSection(doc, op.heading);
       doc.sections[i].body = String(op.body || '').trim();
@@ -213,33 +389,38 @@ function update(docsDir, id, ops) {
       const i = findSection(doc, op.heading);
       doc.sections.splice(i, subtreeEnd(doc, i) - i);
     } else if (k === 'replace_text') {
+      // within one tab ("tab" given)
       const find = String(op.find || '');
       if (!find) throw new Error('replace_text needs the text to find.');
-      const text = render(doc);
+      const text = bodyOf(doc);
       const count = text.split(find).length - 1;
-      if (!count) throw new Error('The text to replace was not found: "' + find.slice(0, 80) + '".');
-      if (count > 1 && !op.all) throw new Error('The text to replace occurs ' + count + ' times; give more of it, or "all": true.');
-      const next = op.all ? text.split(find).join(String(op.replace || '')) : text.replace(find, () => String(op.replace || ''));
-      const re = parse(next);
-      doc.title = re.title; doc.lead = re.lead; doc.sections = re.sections;
-    } else if (k === 'set_title') {
-      doc.title = String(op.title || '').trim() || doc.title;
+      if (!count) throw new Error('The text to replace was not found in tab "' + tab.title + '": "' + find.slice(0, 80) + '".');
+      if (count > 1 && !op.all) throw new Error('The text to replace occurs ' + count + ' times in that tab; give more of it, or "all": true.');
+      body = op.all ? text.split(find).join(String(op.replace || '')) : text.replace(find, () => String(op.replace || ''));
     } else if (k === 'set_lead') {
       doc.lead = String(op.body || '').trim();
     } else if (k === 'write') {
-      body = String(op.markdown || '');
+      // one tab's whole Markdown ("tab" given); a title line at its top is the doc's title
+      const v = MD.splitTabs(String(op.markdown || '').replace(/\r\n/g, '\n'));
+      if (v.title) T.title = v.title;
+      body = v.tabs.map((x) => x.body).filter(Boolean).join('\n\n');
     } else {
-      throw new Error('Unknown operation "' + k + '". Use replace_section, append_to_section, append_section, insert_after, rename_section, delete_section, replace_text, set_title, set_lead or write.');
+      throw new Error('Unknown operation "' + k + '". Use replace_section, append_to_section, append_section, insert_after, rename_section, delete_section, replace_text, set_title, set_lead or write; ' +
+        'for tabs add_tab, rename_tab, move_tab, delete_tab, and "tab" on any section operation.');
     }
+    tab.body = body !== null ? body.trim() : bodyOf(doc);
     done.push(k);
   }
-  const text = body !== null ? body.replace(/\r\n/g, '\n') : render(doc);
+  const text = MD.joinTabs(T);
   const bad = drawProblems(text);
   if (bad.length) throw new Error('Nothing was written: ' + bad.join('; ') + '. ' + CHART_HELP);
   const version = snapshot(docsDir, id);
   writeAtomic(f, text);
-  wroteBy(docsDir, id, 'agent');
-  return { id, path: f, done, previous: version, pending: parse(fs.readFileSync(f, 'utf8')).sections.filter((s) => pendingOf(s.body)).map((s) => s.heading) };
+  wroteBy(docsDir, id, by || 'agent');
+  const secs = allSections(fs.readFileSync(f, 'utf8'));
+  const out = { id, path: f, done, previous: version, pending: secs.filter((s) => pendingOf(s.body)).map((s) => s.heading) };
+  if (tabsMade.length) out.tabs_added = tabsMade;
+  return out;
 }
 /** The user's own edit from the sidebar: the whole Markdown, the version before kept. */
 function save(docsDir, id, markdown, by) {
@@ -322,6 +503,7 @@ function addComment(docsDir, id, o) {
   const all = comments(docsDir, id);
   const c = { id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: Date.now(), by: String((o && o.by) || 'user'),
     quote: String((o && o.quote) || '').slice(0, 2000), section: String((o && o.section) || ''), text, replies: [], resolved: false };
+  if (o && o.tab) c.tab = String(o.tab).slice(0, 80);
   all.push(c);
   writeAtomic(commentsFile(docsDir, id), JSON.stringify(all, null, 2));
   return c;
@@ -338,7 +520,7 @@ function replyComment(docsDir, id, commentId, o) {
 }
 
 module.exports = { suggest, suggestions, decide, author, drawProblems, DOCS_FOLDER, resolveRoot, parse, render, pendingOf, list, info, create, read, update, save, history, readVersion, restore,
-  comments, addComment, replyComment, slugOf, ID_RE, PENDING_RE };
+  comments, addComment, replyComment, slugOf, ID_RE, PENDING_RE, rename, remove, recycled, undelete, allSections, MD };
 
 // ---------------------------------------------------------------- command line: node dxdocs.js <command> --json '<args>' | --json-file F
 // Every command needs where the docs are: --docs-dir DIR, or --data-dir DIR --conv ID [--team ID] --workspace DIR. Prints one JSON answer.
@@ -361,7 +543,7 @@ if (require.main === module) {
     const r = cmd === 'where' ? { docsDir, root: where && where.root, project: where && where.project }
       : cmd === 'list' ? { docs: list(docsDir) }
       : cmd === 'create' ? create(docsDir, args)
-      : cmd === 'read' ? read(docsDir, args.doc)
+      : cmd === 'read' ? read(docsDir, args.doc, { tab: args.tab })
       : cmd === 'update' ? update(docsDir, args.doc, args.ops)
       : cmd === 'comments' ? { comments: comments(docsDir, args.doc) }
       : cmd === 'reply' ? replyComment(docsDir, args.doc, args.comment, { text: args.text, resolve: args.resolve, by: args.by || 'agent' })
