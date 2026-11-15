@@ -36,6 +36,16 @@ function check(name, ok, detail) { if (ok) { pass++; console.log('PASS  ' + name
     const zip2 = await JSZip.loadAsync(buf2);
     const xml2 = await zip2.file('word/document.xml').async('string');
     check('with the panel\'s pictures, the chart and the diagram are pictures (three in all with the map), not their table or text', (xml2.match(/<pic:pic /g) || []).length === 3 && !/flowchart LR/.test(xml2) && !/2026 \(\$k\)/.test(xml2), (xml2.match(/<pic:pic /g) || []).length);
+    // writing and tables (DX Docs mirror, November 15th)
+    const md3 = '# Rich\n\n## Text\n\nAn ++underlined++ word, a ==marked== one, and $x^2$ inline.\n\n$$\\frac{a}{b}$$\n\n5. five\n6. six\n\n' +
+      '| Name {.bg-blue w=200} | Cost | Note |\n| :--- | ---: | --- |\n| wide | << | {.bg-green} |\n\n```csv\nA,B\n1,"2, two"\n```\n\n```markdown\n### Inner heading\n\nInner text.\n```\n';
+    const xml3 = await (await JSZip.loadAsync(await W.toDocx(md3, { docsDir: dd, pictures: [] }))).file('word/document.xml').async('string');
+    const text3 = xml3.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    check('underline and highlight', /<w:u w:val="single"\/>[\s\S]*?underlined/.test(xml3) && /<w:highlight w:val="yellow"\/>[\s\S]*?marked/.test(xml3), xml3.slice(0, 200));
+    check('formulas as their TeX in Cambria Math, inline and as a block', /Cambria Math[\s\S]*?x\^2/.test(xml3) && /Cambria Math[\s\S]*?\\frac\{a\}\{b\}/.test(xml3));
+    check('a numbered list that starts at 5 keeps its numbers', /5\.[\s\S]*?five/.test(text3) && /6\.[\s\S]*?six/.test(text3));
+    check('table: a merged cell spans, colours fill, the width and alignment kept', /<w:gridSpan w:val="2"\/>/.test(xml3) && /w:fill="D8E6FA"/.test(xml3) && /w:fill="D9F0DF"/.test(xml3) && /<w:jc w:val="right"\/>/.test(xml3), (xml3.match(/<w:tc>[\s\S]*?<\/w:tc>/g) || []).slice(0, 4).join('\n').slice(0, 600));
+    check('a CSV block is a table; a Markdown block is its own text', /2, two/.test(text3) && /Inner heading/.test(text3) && /Inner text/.test(text3) && !/```/.test(text3), text3);
     fs.rmSync(ws, { recursive: true, force: true });
   } catch (e) { check('no exception', false, e.stack); }
   console.log('\n' + pass + '/' + (pass + fail) + ' passed');

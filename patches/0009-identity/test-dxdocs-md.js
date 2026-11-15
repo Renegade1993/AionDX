@@ -6,9 +6,9 @@ const M = require(path.join(__dirname, 'dxdocs-md.js'));
 let pass = 0, fail = 0;
 const check = (name, got, want) => { const ok = got === want; if (ok) pass++; else fail++; console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (ok ? '' : '\n   got:  ' + JSON.stringify(got) + '\n   want: ' + JSON.stringify(want))); };
 const H = M.toHtml;
-check('a title and a section heading carry their section', H('# Plan\n\n## Goals'), '<h1 data-section="Plan">Plan</h1>\n<h2 data-section="Goals">Goals</h2>');
+check('a title and a section heading carry their section', H('# Plan\n\n## Goals'), '<h1 id="plan" data-section="Plan">Plan</h1>\n<h2 id="goals" data-section="Goals">Goals</h2>');
 check('a pending section becomes "Writing: ..." under its section', H('## Goals\n\n<!-- aiondx:pending the three outcomes -->'),
-  '<h2 data-section="Goals">Goals</h2>\n<div class="dx-pending" data-section="Goals" data-intent="the three outcomes"><span class="dx-pending-dot"></span>Writing: the three outcomes</div>');
+  '<h2 id="goals" data-section="Goals">Goals</h2>\n<div class="dx-pending" data-section="Goals" data-intent="the three outcomes"><span class="dx-pending-dot"></span>Writing: the three outcomes</div>');
 check('a paragraph with bold, italic, code, strikethrough', H('A **b** *i* `c<d>` ~~x~~'), '<p>A <strong>b</strong> <em>i</em> <code>c&lt;d&gt;</code> <del>x</del></p>');
 check('lines of one paragraph keep their breaks', H('one\ntwo'), '<p>one<br>two</p>');
 check('raw HTML is shown as text, never run', H('<script>alert(1)</script> <img src=x onerror=y>'), '<p>&lt;script&gt;alert(1)&lt;/script&gt; &lt;img src=x onerror=y&gt;</p>');
@@ -24,8 +24,22 @@ check('a bad chart block says why', /dx-chart--bad/.test(H('```chart\n{nope}\n``
 check('a mermaid block becomes a holder with its text, escaped', H('```mermaid\nflowchart LR\n  A["<b>x</b>"]-->B\n```'),
   '<div class="dx-mermaid" data-src="flowchart LR\n  A[&quot;&lt;b&gt;x&lt;/b&gt;&quot;]--&gt;B"><pre><code class="language-mermaid">flowchart LR\n  A[&quot;&lt;b&gt;x&lt;/b&gt;&quot;]--&gt;B</code></pre></div>');
 check('a code block keeps its text escaped, and headings inside it are not headings', H('```js\n## not\n<b>\n```'), '<pre><code class="language-js">## not\n&lt;b&gt;</code></pre>');
-check('a table with alignment', H('| A | B |\n|:--|--:|\n| 1 | **2** |'),
-  '<table><thead><tr><th style="text-align:">A</th><th style="text-align:right">B</th></tr></thead><tbody><tr><td style="text-align:">1</td><td style="text-align:right"><strong>2</strong></td></tr></tbody></table>'.replace(/ style="text-align:"/g, ''));
+check('a table with alignment (:-- left, --: right, :-: centre, -- none)', H('| A | B | C |\n|:--|--:|--|\n| 1 | **2** | 3 |'),
+  '<table><thead><tr><th style="text-align:left">A</th><th style="text-align:right">B</th><th>C</th></tr></thead><tbody><tr><td style="text-align:left">1</td><td style="text-align:right"><strong>2</strong></td><td>3</td></tr></tbody></table>');
+// writing and tables (DX Docs mirror, November 15th)
+check('a heading carries an anchor for links to it', H('### Open questions?'), '<h3 id="open-questions" data-section="Open questions?">Open questions?</h3>');
+check('++underline++ and ==highlight==', H('a ++b c++ and ==d== e'), '<p>a <u>b c</u> and <mark>d</mark> e</p>');
+check('a numbered list starts at its first number', H('5. five\n6. six'), '<ol start="5"><li>five</li><li>six</li></ol>');
+check('an inline formula is an atom with its TeX; money is not a formula', H('so $x^2 < y$ but $5 and $10'),
+  '<p>so <span class="dx-atom dx-math" contenteditable="false" data-src="$x^2 &lt; y$" data-tex="x^2 &lt; y">x^2 &lt; y</span> but $5 and $10</p>');
+check('a formula block, $$ or ```math', /<div class="dx-atom dx-math dx-math--block"[^>]*data-src="\$\$\\frac\{a\}\{b\}\$\$" data-tex="\\frac\{a\}\{b\}"/.test(H('$$\\frac{a}{b}$$')) &&
+  /data-src="```math\n\\sum x\n```" data-tex="\\sum x"/.test(H('```math\n\\sum x\n```')), true);
+check('a CSV block is a grid, its text kept as the source', H('```csv\nName,"Cost, est"\nA,"say ""hi"""\n```'),
+  '<div class="dx-atom dx-csv" contenteditable="false" data-src="```csv\nName,&quot;Cost, est&quot;\nA,&quot;say &quot;&quot;hi&quot;&quot;&quot;\n```"><table class="dx-csv-grid"><thead><tr><th>Name</th><th>Cost, est</th></tr></thead><tbody><tr><td>A</td><td>say &quot;hi&quot;</td></tr></tbody></table></div>');
+check('a Markdown block is drawn, its text kept as the source', /^<div class="dx-atom dx-mdblock" contenteditable="false" data-src="```markdown\n# T\n```"><div class="dx-mdblock-tag">Markdown<\/div><h1 id="t" data-section="T">T<\/h1><\/div>$/.test(H('```markdown\n# T\n```')), true);
+check('table cells: colours, a column width, a merged cell', H('| A {.bg-blue w=160} | B | C |\n| --- | --- | --- |\n| wide | << | c {.bg-green} |'),
+  '<table><thead><tr><th class="dx-bg-blue" data-w="160" style="width:160px">A</th><th>B</th><th>C</th></tr></thead><tbody><tr><td colspan="2">wide</td><td class="dx-bg-green">c</td></tr></tbody></table>');
+check('an unknown colour is ignored; a cell pipe stays in its cell', H('| a {.bg-pink} | b \\| c |\n| --- | --- |'), '<table><thead><tr><th>a</th><th>b | c</th></tr></thead><tbody></tbody></table>');
 check('a quote', H('> said\n> twice'), '<blockquote><p>said<br>twice</p></blockquote>');
 check('a rule', H('a\n\n---\n\nb'), '<p>a</p>\n<hr>\n<p>b</p>');
 check('a paragraph ends where a list starts', H('Intro\n- one'), '<p>Intro</p>\n<ul><li>one</li></ul>');

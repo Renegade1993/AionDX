@@ -32,14 +32,18 @@ function imageSize(buf) {
 /** Inline Markdown (what dxdocs-md draws) to runs: bold, italic, strike, code, links. */
 function runs(D, text, base) {
   const out = [];
-  const re = /(\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*([^*\s][^*]*)\*|(^|[^\w])_([^_\s][^_]*)_(?![\w]))/g;
+  const re = /(\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*([^*\s][^*]*)\*|(^|[^\w])_([^_\s][^_]*)_(?![\w])|\+\+([^+\s](?:[^+]*[^+\s])?)\+\+|==([^=\s](?:[^=]*[^=\s])?)==|(^|[^\\$\w])\$([^\s$](?:[^$\n]*[^\s$\\])?)\$(?![\d$]))/g;
   let last = 0, m;
   const plain = (t) => { if (t) out.push(new D.TextRun(Object.assign({ text: t }, base))); };
   while ((m = re.exec(text))) {
     let start = m.index;
     if (m[10] !== undefined) { plain(text.slice(last, start) + m[9]); out.push(new D.TextRun(Object.assign({ text: m[10], italics: true }, base))); last = re.lastIndex; continue; }
+    // a formula: its TeX in Cambria Math (Word's own formula font), so it reads; the panel draws it with KaTeX
+    if (m[14] !== undefined) { plain(text.slice(last, start) + m[13]); out.push(new D.TextRun(Object.assign({ text: m[14], font: 'Cambria Math', italics: true }, base))); last = re.lastIndex; continue; }
     plain(text.slice(last, start));
-    if (m[2] !== undefined || m[3] !== undefined) out.push(new D.TextRun(Object.assign({ text: m[2] || m[3], bold: true }, base)));
+    if (m[11] !== undefined) out.push(new D.TextRun(Object.assign({ text: m[11], underline: {} }, base)));
+    else if (m[12] !== undefined) out.push(new D.TextRun(Object.assign({ text: m[12], highlight: 'yellow' }, base)));
+    else if (m[2] !== undefined || m[3] !== undefined) out.push(new D.TextRun(Object.assign({ text: m[2] || m[3], bold: true }, base)));
     else if (m[4] !== undefined) out.push(new D.TextRun(Object.assign({ text: m[4], strike: true }, base)));
     else if (m[5] !== undefined) out.push(new D.TextRun(Object.assign({ text: m[5], font: 'Consolas' }, base)));
     else if (m[6] !== undefined) {
@@ -64,16 +68,31 @@ async function toDocx(markdown, o) {
     const maxW = 600, scale = w > maxW ? maxW / w : 1;
     return new D.Paragraph({ keepLines: true, spacing: { before: 120, after: 120 }, children: [new D.ImageRun({ type: type || 'png', data: buf, transformation: { width: Math.round(w * scale), height: Math.round(h * scale) } })] });
   };
-  const tableOf = (rows, header) => new D.Table({
+  // a table: rows of cells, each a string or { text, bg, w, span } (dxdocs-md's model); aligns per column
+  const FILL = { gray: 'E6E6E6', red: 'F8D7D7', orange: 'FCE3CC', yellow: 'FFF2B8', green: 'D9F0DF', blue: 'D8E6FA', purple: 'E9DDF7' };
+  const AL = { left: D.AlignmentType.LEFT, center: D.AlignmentType.CENTER, right: D.AlignmentType.RIGHT };
+  const tableOf = (rows, header, aligns) => new D.Table({
     width: { size: 100, type: D.WidthType.PERCENTAGE },
-    rows: rows.map((r, ri) => new D.TableRow({
-      cantSplit: true, tableHeader: header && ri === 0,
-      children: r.map((c) => new D.TableCell({
-        shading: header && ri === 0 ? { type: D.ShadingType.CLEAR, color: 'auto', fill: 'EDEDED' } : undefined,
-        children: [new D.Paragraph({ keepNext: ri < rows.length - 1, children: runs(D, String(c), header && ri === 0 ? { bold: true } : {}) })],
-      })),
-    })),
+    rows: rows.map((r, ri) => {
+      let col = 0;
+      return new D.TableRow({
+        cantSplit: true, tableHeader: header && ri === 0,
+        children: r.map((c0) => {
+          const c = typeof c0 === 'object' && c0 ? c0 : { text: String(c0), bg: '', w: 0, span: 1 };
+          const al = aligns && aligns[col] && AL[aligns[col]];
+          col += c.span || 1;
+          const fill = c.bg && FILL[c.bg] ? FILL[c.bg] : header && ri === 0 ? 'EDEDED' : null;
+          return new D.TableCell({
+            columnSpan: c.span > 1 ? c.span : undefined,
+            width: c.w ? { size: c.w * 15, type: D.WidthType.DXA } : undefined,
+            shading: fill ? { type: D.ShadingType.CLEAR, color: 'auto', fill } : undefined,
+            children: [new D.Paragraph({ alignment: al || undefined, keepNext: ri < rows.length - 1, children: runs(D, String(c.text), header && ri === 0 ? { bold: true } : {}) })],
+          });
+        }),
+      });
+    }),
   });
+  const MDL = (() => { try { return require('./dxdocs-md.js'); } catch (e) { return null; } })();
   while (i < lines.length) {
     const l = lines[i];
     if (!l.trim()) { i++; continue; }
@@ -83,6 +102,14 @@ async function toDocx(markdown, o) {
       while (j < lines.length && lines[j].indexOf(fm[1]) !== 0) code.push(lines[j++]);
       i = j + 1;
       const lang = fm[2].toLowerCase();
+      // a Markdown block: its own Markdown, in the flow
+      if ((lang === 'markdown' || lang === 'md') && code.length) { lines.splice(i, 0, ...code, ''); continue; }
+      if (lang === 'csv' && MDL) {
+        const rows = MDL.csvRows(code.join('\n'));
+        if (rows.length) { const w = Math.max(...rows.map((r) => r.length)); kids.push(tableOf(rows.map((r) => { while (r.length < w) r.push(''); return r; }), true)); kids.push(new D.Paragraph({ children: [] })); }
+        continue;
+      }
+      if (lang === 'math' || lang === 'latex' || lang === 'tex') { kids.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { before: 120, after: 120 }, children: [new D.TextRun({ text: code.join(' '), font: 'Cambria Math', italics: true })] })); continue; }
       if (lang === 'chart' || lang === 'mermaid') {
         const pic = pictures.shift();
         if (pic && pic.png) { const buf = Buffer.from(String(pic.png).replace(/^data:image\/png;base64,/, ''), 'base64'); kids.push(picture(buf, pic.w || 640, pic.h || 360, 'png')); continue; }
@@ -102,6 +129,17 @@ async function toDocx(markdown, o) {
       for (const c of (code.length ? code : [''])) kids.push(new D.Paragraph({ shading: { type: D.ShadingType.CLEAR, color: 'auto', fill: 'F4F4F4' }, spacing: { before: 0, after: 0 }, children: [new D.TextRun({ text: c || ' ', font: 'Consolas', size: 19 })] }));
       continue;
     }
+    // a formula block ($$ ... $$)
+    if (/^\s*\$\$/.test(l)) {
+      const tex = [l.replace(/^\s*\$\$/, '')];
+      let k = i;
+      if (!/\$\$\s*$/.test(tex[0]) || tex[0].trim() === '') { k = i + 1; while (k < lines.length && !/\$\$\s*$/.test(lines[k])) tex.push(lines[k++]); if (k < lines.length) tex.push(lines[k]); }
+      const t = tex.join(' ').replace(/\$\$\s*$/, '').trim();
+      kids.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { before: 120, after: 120 }, children: [new D.TextRun({ text: t, font: 'Cambria Math', italics: true })] }));
+      i = k + 1; continue;
+    }
+    // a tab's marker (a whole doc exported as it is): not text
+    if (/^<!--\s*dx:tab\s/.test(l.trim())) { i++; continue; }
     const pm = /^<!--\s*aiondx:pending\s*([\s\S]*?)\s*-->\s*$/.exec(l.trim());
     if (pm) { kids.push(new D.Paragraph({ children: [new D.TextRun({ text: '(Not written yet: ' + (pm[1] || 'this section') + ')', italics: true, color: '888888' })] })); i++; continue; }
     const hm = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l);
@@ -123,15 +161,27 @@ async function toDocx(markdown, o) {
     }
     if (/^\|.*\|\s*$/.test(l) && i + 1 < lines.length && /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
       const cells = (row) => row.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+      const aligns = cells(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? 'center' : /^:-+$/.test(c) ? 'left' : /-+:$/.test(c) ? 'right' : ''));
       const rows = [cells(l)]; i += 2;
       while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
-      const w = Math.max(...rows.map((r) => r.length));
-      kids.push(tableOf(rows.map((r) => { while (r.length < w) r.push(''); return r; }), true));
+      // colours, widths and merged cells as the panel draws them (dxdocs-md's model)
+      const model = MDL ? MDL.tableModel(rows) : rows;
+      kids.push(tableOf(model, true, aligns));
       kids.push(new D.Paragraph({ children: [] }));
       continue;
     }
     if (/^\s*([-*+]|\d+[.)])\s+/.test(l)) {
       numbered++;
+      // a numbered list that starts past 1 keeps its own numbers (Word's list numbering restarts at 1 per list)
+      const first = /^\s*(\d+)[.)]\s+/.exec(l);
+      if (first && +first[1] > 1) {
+        while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
+          const m = /^(\s*)(\d+[.)])\s+(.*)$/.exec(lines[i++]);
+          const level = Math.min(4, Math.floor(m[1].replace(/\t/g, '    ').length / 2));
+          kids.push(new D.Paragraph({ indent: { left: 720 + level * 360, hanging: 360 }, children: [new D.TextRun({ text: m[2] + '\t' })].concat(runs(D, m[3])) }));
+        }
+        continue;
+      }
       while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
         const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i++]);
         const level = Math.min(4, Math.floor(m[1].replace(/\t/g, '    ').length / 2));
@@ -146,7 +196,7 @@ async function toDocx(markdown, o) {
     }
     // a paragraph; a picture alone on its line is embedded when it is a file in the project
     const para = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|~~~|>\s?|\s*([-*+]|\d+[.)])\s+|\|)/.test(lines[i]) && !/^<!--\s*aiondx:pending/.test(lines[i].trim())) para.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|~~~|>\s?|\s*([-*+]|\d+[.)])\s+|\||\s*\$\$)/.test(lines[i]) && !/^<!--\s*(aiondx:pending|dx:tab\s)/.test(lines[i].trim())) para.push(lines[i++]);
     if (!para.length) { i++; continue; }
     const img = para.length === 1 && /^!\[([^\]]*)\]\(([^)\s]+)\)\s*$/.exec(para[0].trim());
     if (img && opts.docsDir && !/^[a-z][a-z0-9+.-]*:/i.test(img[2])) {

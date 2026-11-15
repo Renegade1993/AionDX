@@ -912,6 +912,17 @@ notes.push('out/renderer/aiondx-dxcharts.js');
   if (fs.existsSync(mm)) { fs.copyFileSync(mm, path.join(ext, 'out', 'renderer', 'aiondx-mermaid.min.js')); notes.push('out/renderer/aiondx-mermaid.min.js'); }
   else notes.push('no node_modules/mermaid/dist/mermaid.min.js: DX Docs diagrams show as their text');
 }
+// formulas (DX Docs mirror): the app's own KaTeX, its script, its styles and its woff2 fonts, loaded by the page when a doc has a formula
+{
+  const kd = path.join(ext, 'node_modules', 'katex', 'dist');
+  const out = path.join(ext, 'out', 'renderer', 'aiondx-katex');
+  if (fs.existsSync(path.join(kd, 'katex.min.js'))) {
+    fs.mkdirSync(path.join(out, 'fonts'), { recursive: true });
+    for (const f of ['katex.min.js', 'katex.min.css']) fs.copyFileSync(path.join(kd, f), path.join(out, f));
+    for (const f of fs.readdirSync(path.join(kd, 'fonts')).filter((x) => x.endsWith('.woff2'))) fs.copyFileSync(path.join(kd, 'fonts', f), path.join(out, 'fonts', f));
+    notes.push('out/renderer/aiondx-katex/ (KaTeX ' + (JSON.parse(fs.readFileSync(path.join(kd, '..', 'package.json'), 'utf8')).version || '?') + ')');
+  } else notes.push('no node_modules/katex/dist: DX Docs formulas show as their text');
+}
 {
   const idx = path.join(ext, 'out', 'renderer', 'index.html');
   let h = fs.readFileSync(idx, 'utf8');

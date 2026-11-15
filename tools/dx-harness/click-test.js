@@ -3518,7 +3518,7 @@ async function pageTarget() {
       await sleep(600);
       p = await panel();
       check(sc, 'when the agent creates a doc it opens by itself, drawn: the title and a "Writing: ..." block per section', p.bar === 'Launch plan' &&
-        /<h1 data-section="Launch plan">Launch plan<\/h1>/.test(p.body) && (p.body.match(/class="dx-pending"/g) || []).length === 2 && /Writing: the three outcomes/.test(p.body), JSON.stringify(p));
+        /<h1 id="launch-plan" data-section="Launch plan">Launch plan<\/h1>/.test(p.body) && (p.body.match(/class="dx-pending"/g) || []).length === 2 && /Writing: the three outcomes/.test(p.body), JSON.stringify(p));
       await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\n1. Ship\\n2. Sell\\n\\n## Risks\\n\\n<!-- aiondx:pending what could stop it -->\\n'); 0`);
       await sleep(600);
       p = await panel();
@@ -3587,7 +3587,7 @@ async function pageTarget() {
       const caretAtEnd = (sel) => js(`(() => { const p = document.querySelector('${sel}'); const b = document.querySelector('#tbox .dx-body'); b.focus(); const r = document.createRange(); r.selectNodeContents(p); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 0; })()`);
       const saves = async () => (await js('window.__dx.calls')).filter((c) => c[0] === 'save');
       const ed = await js(`(() => { const b = document.querySelector('#tbox .dx-body'); const f = document.querySelector('#tbox [data-testid="aiondx-dx-fmt"]'); return { editable: b && b.getAttribute('contenteditable'), fmt: f ? [...f.querySelectorAll('.dx-fmt-b')].map((x) => x.getAttribute('data-fmt')).join(',') : null, md: window.__aionDx.dxMarkdown() }; })()`);
-      check(sc, 'the doc itself is editable, with a formatting bar, and reads back as the same Markdown', ed.editable === 'true' && /^p,h1,h2,h3,bold,italic,strike,code,link,ul,ol,task,quote,pre,hr,table,row,col,undo,redo$/.test(ed.fmt) &&
+      check(sc, 'the doc itself is editable, with a formatting bar, and reads back as the same Markdown', ed.editable === 'true' && /^p,h1,h2,h3,h4,bold,italic,underline,strike,highlight,code,link,math,ul,ol,olstart,task,quote,pre,lang,hr,table,tablemenu,undo,redo$/.test(ed.fmt) &&
         ed.md === '# Launch plan\n\n## Goals\n\nShip it this quarter.\n\n## Risks\n\n- Legal review\n- [ ] Book the room\n', JSON.stringify(ed));
       let n0 = (await saves()).length;
       await caretAtEnd('#tbox .dx-body p');
@@ -3607,7 +3607,10 @@ async function pageTarget() {
       await sleep(200);
       await js(`(() => { const c = document.querySelector('#tbox .dx-body table td'); const r = document.createRange(); r.selectNodeContents(c); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 0; })()`);
       await send('Input.insertText', { text: 'Ana' });
-      await humanClick('#tbox .dx-fmt-b[data-fmt="row"]');
+      // a row added from the table menu (it replaced the +Row button, November 15th)
+      await humanClick('#tbox .dx-fmt-b[data-fmt="tablemenu"]');
+      await sleep(250);
+      await js(`(() => { document.querySelector('[data-testid="aiondx-dx-tablemenu"] [data-t="row-below"]').click(); return 0; })()`);
       await sleep(1800);
       sv1 = (await saves()).pop();
       check(sc, 'the bar makes bold words and a table you type in, a row added; all saved as Markdown', sv1 && /Ship the \*\*beta\*\* first\./.test(sv1[1].markdown) &&
@@ -3885,6 +3888,60 @@ async function pageTarget() {
       await humanClick('#tbox .dx-back');
       await sleep(600);
       check(sc, 'back from it: this chat\'s folder again', (await calls('unwatch')).some((c) => c.docsDir === 'C:/atlas/DX Docs') && (await calls('list')).pop().docsDir === 'C:/ws/Docs');
+
+      // ---- writing and tables (rows 11 to 19, 21 to 24) ----
+      const RICH = '# Rich\\n\\nAn ++underlined++ word, a ==marked== one, and $x^2$ inline; [to the end](#the-end).\\n\\n$$\\\\frac{a}{b}$$\\n\\n' +
+        '5. five\\n6. six\\n\\n- [x] done task\\n- [ ] open task\\n\\n| Name {.bg-blue w=200} | Cost | Note |\\n| :--- | ---: | --- |\\n| wide | << | n1 {.bg-green} |\\n| a | b | c |\\n\\n' +
+        '\`\`\`csv\\nA,B\\n1,\\"2, two\\"\\n\`\`\`\\n\\n\`\`\`markdown\\n### Inner\\n\\nInner text.\\n\`\`\`\\n\\n' + 'Filler.\\n\\n'.repeat(30) + '## The end\\n\\nLast words.\\n';
+      await js(`(() => { window.__dx.dirs['C:/ws/Docs'].rich = '${RICH}'; window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'rich' }); return 0; })()`);
+      await sleep(2500);
+      const rich = await js(`(() => { const b = document.querySelector('#tbox .dx-body'); const td = [...b.querySelectorAll('td')]; const done = b.querySelector('li.dx-task input:checked').closest('li');
+        return { katex: b.querySelectorAll('.dx-math .katex').length, u: !!b.querySelector('u'), mark: !!b.querySelector('mark'), olStart: (b.querySelector('ol') || {}).getAttribute && b.querySelector('ol').getAttribute('start'),
+          merged: td[0].getAttribute('colspan'), green: td[1].className, w: b.querySelector('th').style.width, right: b.querySelectorAll('th')[1].style.textAlign,
+          csv: (b.querySelector('.dx-csv td:last-child') || {}).textContent, md: (b.querySelector('.dx-mdblock h3') || {}).textContent, doneStruck: getComputedStyle(done).textDecorationLine, doneDim: getComputedStyle(done).opacity }; })()`);
+      check(sc, 'drawn: formulas with KaTeX, underline, highlight, a list from 5, a merged and coloured cell, a column\'s width and alignment, a CSV grid, a Markdown block, a done task struck and dimmed',
+        rich.katex === 2 && rich.u && rich.mark && rich.olStart === '5' && rich.merged === '2' && rich.green === 'dx-bg-green' && rich.w === '200px' && rich.right === 'right' &&
+        rich.csv === '2, two' && rich.md === 'Inner' && rich.doneStruck === 'line-through' && +rich.doneDim < 0.7, JSON.stringify(rich));
+      // typing anywhere saves the doc back as it was written, every new piece intact
+      await js(`(() => { const p = [...document.querySelectorAll('#tbox .dx-body p')].find((x) => /Last words/.test(x.textContent)); const r = document.createRange(); r.selectNodeContents(p); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); p.closest('.dx-body').focus(); return 0; })()`);
+      await send('Input.insertText', { text: ' More.' });
+      await sleep(1800);
+      md = await js(`window.__dx.dirs['C:/ws/Docs'].rich`);
+      check(sc, 'saved back as written: ++u++, ==mark==, $x^2$, $$...$$, 5., the table with its colours, width, alignment and merge, the CSV and Markdown blocks',
+        md.includes('An ++underlined++ word, a ==marked== one, and $x^2$ inline; [to the end](#the-end).') && md.includes('$$\\frac{a}{b}$$') && md.includes('5. five\n6. six') &&
+        md.includes('| Name {.bg-blue w=200} | Cost | Note |\n| :--- | ---: | --- |\n| wide | << | n1 {.bg-green} |') && md.includes('```csv\nA,B\n1,"2, two"\n```') && md.includes('```markdown\n### Inner\n\nInner text.\n```') && md.includes('Last words. More.'), md);
+      // a link to a heading jumps there
+      const before = await js(`(() => { const b = document.querySelector('#tbox .dx-body'); b.scrollTop = 0; return b.scrollTop; })()`);
+      await js(`(() => { document.querySelector('#tbox .dx-body a[href="#the-end"]').click(); return 0; })()`);
+      await sleep(900);
+      const jumped = await js(`(() => { const h = document.querySelector('#tbox .dx-body h2#the-end'); const b = document.querySelector('#tbox .dx-body'); return { st: b.scrollTop, sh: b.scrollHeight, ch: b.clientHeight, h: !!h, top: h ? Math.round(h.getBoundingClientRect().top - b.getBoundingClientRect().top) : null, ov: getComputedStyle(b).overflowY }; })()`);
+      check(sc, 'a link to a heading scrolls to it', jumped.h && jumped.st > before + 400 && jumped.top >= 0 && jumped.top < jumped.ch, JSON.stringify([before, jumped]));
+      // the table menu: a column added, a row moved, a colour, a merge
+      const inCell = (r, c) => js(`(() => { const t = document.querySelector('#tbox .dx-body table:not(.dx-csv-grid)'); const cell = t.rows[${r}].cells[${c}]; const rg = document.createRange(); rg.selectNodeContents(cell); rg.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(rg); return 0; })()`);
+      const tmenu = async (act) => { await humanClick('#tbox .dx-fmt-b[data-fmt="tablemenu"]'); await sleep(250); await js(`(() => { document.querySelector('[data-testid="aiondx-dx-tablemenu"] [data-t="${act}"]').click(); return 0; })()`); await sleep(200); };
+      await inCell(2, 2);
+      await tmenu('row-up');
+      await inCell(1, 2);
+      await tmenu('bg-yellow');
+      await inCell(1, 1);
+      await tmenu('col-right');
+      await inCell(1, 0);
+      await tmenu('merge');
+      await sleep(1700);
+      md = await js(`window.__dx.dirs['C:/ws/Docs'].rich`);
+      check(sc, 'the table menu: a row moved up, a cell coloured, a column added, two cells merged, all saved as Markdown',
+        /\| Name \{\.bg-blue w=200\} \| Cost \| Column \| Note \|\n\| :--- \| ---: \| --- \| --- \|\n\| a b \| << \|  \| c \{\.bg-yellow\} \|\n\| wide \| << \|  \| n1 \{\.bg-green\} \|/.test(md), JSON.stringify(md.slice(md.indexOf('| Name'), md.indexOf('| Name') + 260)));
+      // H4, underline and a formula from the bar
+      await newLine();
+      await send('Input.insertText', { text: 'Small head' });
+      await humanClick('#tbox .dx-fmt-b[data-fmt="h4"]');
+      await sleep(200);
+      await newLine();
+      await humanClick('#tbox .dx-fmt-b[data-fmt="math"]');
+      await nameBox('\\sqrt{2}');
+      await sleep(1700);
+      md = await js(`window.__dx.dirs['C:/ws/Docs'].rich`);
+      check(sc, 'Heading 4 and a formula from the bar, drawn and saved', /\n#### Small head\n/.test(md) && /\$\\sqrt\{2\}\$/.test(md) && (await js(`document.querySelectorAll('#tbox .dx-body .dx-math .katex').length`)) === 3, md.slice(-200));
       await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
     }
 

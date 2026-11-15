@@ -16,9 +16,19 @@
     if (/^[a-z][a-z0-9+.-]*:/i.test(t)) return null;   // javascript:, data: and the rest
     return t;
   }
+  /** A heading's anchor (links to it: [text](#anchor)). */
+  function slug(t) { return String(t || '').toLowerCase().replace(/<[^>]*>/g, '').replace(/[^\wÀ-￿]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'section'; }
+  // inline formulas: $...$ with no space just inside either $, the closing $ not followed by a digit (so "$5 and $10" stays money)
+  var MATH_INLINE_RE = /(^|[^\\$\w])\$([^\s$](?:[^$\n]*[^\s$\\])?)\$(?![\d$])/g;
+  function mathAtom(tex, block) {
+    var src = block ? '$$' + tex + '$$' : '$' + tex + '$';
+    return (block ? '<div' : '<span') + ' class="dx-atom dx-math' + (block ? ' dx-math--block' : '') + '" contenteditable="false" data-src="' + esc(src) + '" data-tex="' + esc(tex) + '">' + esc(tex) + (block ? '</div>' : '</span>');
+  }
   function inline(src) {
     var codes = [];
     var s = String(src).replace(/`([^`]+)`/g, function (m, c) { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+    var maths = [];
+    s = s.replace(MATH_INLINE_RE, function (m, pre, tex) { maths.push(tex); return pre + '\u0001' + (maths.length - 1) + '\u0001'; });
     s = esc(s);
     s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)/g, function (m, alt, url, title) {
       var u = safeUrl(url.replace(/&amp;/g, '&'));
@@ -32,13 +42,74 @@
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
     s = s.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>').replace(/(^|[^\w_])_([^_\s][^_]*)_(?![\w])/g, '$1<em>$2</em>');
     s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+    s = s.replace(/\+\+([^+\s](?:[^+]*[^+\s])?)\+\+/g, '<u>$1</u>');            // ++underline++
+    s = s.replace(/==([^=\s](?:[^=]*[^=\s])?)==/g, '<mark>$1</mark>');            // ==highlight==
+    s = s.replace(/\u0001(\d+)\u0001/g, function (m, i) { return mathAtom(maths[+i], false); });
     s = s.replace(/\u0000(\d+)\u0000/g, function (m, i) { return '<code>' + esc(codes[+i]) + '</code>'; });
     return s;
+  }
+  // ---- tables: a cell may end with attributes, {.bg-green w=160} (colour, and on a header cell the column's width); a cell that is
+  // exactly << joins the cell on its left (a merged cell). Colours: the seven Claude Docs offers.
+  var CELL_COLOURS = ['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple'];
+  var CELL_ATTR_RE = /\s*\{((?:\s*(?:\.bg-[a-z]+|w=\d{1,4}))+)\s*\}\s*$/;
+  function cellAttrs(text) {
+    var m = CELL_ATTR_RE.exec(text), o = { text: text, bg: '', w: 0 };
+    if (!m) return o;
+    o.text = text.slice(0, m.index);
+    m[1].trim().split(/\s+/).forEach(function (a) {
+      var b = /^\.bg-([a-z]+)$/.exec(a); if (b && CELL_COLOURS.indexOf(b[1]) >= 0) o.bg = b[1];
+      var w = /^w=(\d+)$/.exec(a); if (w) o.w = Math.max(40, Math.min(900, +w[1]));
+    });
+    return o;
+  }
+  /** Rows of cells as written, to [[{ text, bg, w, span }]] with merged cells folded into the cell on their left. */
+  function tableModel(rows) {
+    return rows.map(function (r) {
+      var out = [];
+      r.forEach(function (c) {
+        if (c === '<<' && out.length) { out[out.length - 1].span++; return; }
+        var a = cellAttrs(c);
+        out.push({ text: a.text, bg: a.bg, w: a.w, span: 1 });
+      });
+      return out;
+    });
+  }
+  function splitRow(row) { return row.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map(function (c) { return c.trim().replace(/\\\|/g, '|'); }); }
+  /** A CSV block's rows (quotes and doubled quotes as in a spreadsheet's CSV). */
+  function csvRows(text) {
+    var rows = [], row = [], cell = '', q = false, s = String(text || '');
+    for (var k = 0; k < s.length; k++) {
+      var ch = s[k];
+      if (q) { if (ch === '"' && s[k + 1] === '"') { cell += '"'; k++; } else if (ch === '"') q = false; else cell += ch; continue; }
+      if (ch === '"' && cell === '') { q = true; continue; }
+      if (ch === ',') { row.push(cell); cell = ''; continue; }
+      if (ch === '\n' || ch === '\r') { if (ch === '\r' && s[k + 1] === '\n') k++; row.push(cell); rows.push(row); row = []; cell = ''; continue; }
+      cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows.filter(function (r) { return r.some(function (c) { return c.trim(); }); });
+  }
+  function tableHtml(model, aligns, opts) {
+    var t = ['<table' + (opts && opts.cls ? ' class="' + opts.cls + '"' : '') + '><thead><tr>'];
+    var cellHtml = function (c, k, tag) {
+      var st = [];
+      if (aligns[k]) st.push('text-align:' + aligns[k]);
+      if (tag === 'th' && c.w) st.push('width:' + c.w + 'px');
+      return '<' + tag + (c.span > 1 ? ' colspan="' + c.span + '"' : '') + (c.bg ? ' class="dx-bg-' + c.bg + '"' : '') + (tag === 'th' && c.w ? ' data-w="' + c.w + '"' : '') +
+        (st.length ? ' style="' + st.join(';') + '"' : '') + '>' + (opts && opts.plain ? esc(c.text) : inline(c.text)) + '</' + tag + '>';
+    };
+    var col = 0;
+    (model[0] || []).forEach(function (c) { t.push(cellHtml(c, col, 'th')); col += c.span; });
+    t.push('</tr></thead><tbody>');
+    model.slice(1).forEach(function (r) { t.push('<tr>'); col = 0; r.forEach(function (c) { t.push(cellHtml(c, col, 'td')); col += c.span; }); t.push('</tr>'); });
+    t.push('</tbody></table>');
+    return t.join('');
   }
   function renderList(lines, start) {
     // lines: [{indent, ordered, text, task}] from start while indent >= base
     var base = lines[start].indent, ordered = lines[start].ordered;
-    var out = [ordered ? '<ol>' : '<ul>'], i = start;
+    // a numbered list starts where its first number says (5. starts at 5)
+    var out = [ordered ? (lines[start].num > 1 ? '<ol start="' + lines[start].num + '">' : '<ol>') : '<ul>'], i = start;
     while (i < lines.length && lines[i].indent >= base) {
       if (lines[i].indent > base) { var sub = renderList(lines, i); out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, sub.html + '</li>'); i = sub.next; continue; }
       var it = lines[i], body = inline(it.text);
@@ -52,7 +123,7 @@
   function toHtml(md, nested) {
     var lines = String(md || '').replace(/\r\n/g, '\n').split('\n');
     var out = [], i = 0, section = '';
-    var isBlockStart = function (l) { return /^(#{1,6}\s|```|~~~|>\s?|\s*([-*+]|\d+[.)])\s+|\s*(-{3,}|\*{3,}|_{3,})\s*$|\|)/.test(l) || PENDING_RE.test(l.trim()) || TAB_RE.test(l); };
+    var isBlockStart = function (l) { return /^(#{1,6}\s|```|~~~|>\s?|\s*([-*+]|\d+[.)])\s+|\s*(-{3,}|\*{3,}|_{3,})\s*$|\||\s*\$\$)/.test(l) || PENDING_RE.test(l.trim()) || TAB_RE.test(l); };
     while (i < lines.length) {
       var l = lines[i];
       if (!l.trim()) { i++; continue; }
@@ -61,17 +132,33 @@
         var code = [], j = i + 1;
         while (j < lines.length && !new RegExp('^' + fm[1]).test(lines[j])) code.push(lines[j++]);
         var lang = fm[2].toLowerCase();
+        var whole = fm[1] + fm[2] + '\n' + code.join('\n') + '\n' + fm[1];
         if (lang === 'chart' && CHARTS) out.push(CHARTS.toHtml(code.join('\n')));
         else if (lang === 'mermaid') out.push('<div class="dx-mermaid" data-src="' + esc(code.join('\n')) + '"><pre><code class="language-mermaid">' + esc(code.join('\n')) + '</code></pre></div>');
+        else if (lang === 'math' || lang === 'latex' || lang === 'tex') out.push(mathAtom(code.join('\n'), true).replace('data-src="' + esc('$$' + code.join('\n') + '$$') + '"', 'data-src="' + esc(whole) + '"'));
+        else if (lang === 'csv') {
+          // a CSV block drawn as a grid (its first row the header); the text stays the source
+          var rows = csvRows(code.join('\n'));
+          out.push('<div class="dx-atom dx-csv" contenteditable="false" data-src="' + esc(whole) + '">' + (rows.length ? tableHtml(rows.map(function (r) { return r.map(function (c) { return { text: c, bg: '', w: 0, span: 1 }; }); }), [], { plain: true, cls: 'dx-csv-grid' }) : '<div class="dx-csv-empty">Empty CSV</div>') + '</div>');
+        }
+        else if (lang === 'markdown' || lang === 'md') out.push('<div class="dx-atom dx-mdblock" contenteditable="false" data-src="' + esc(whole) + '"><div class="dx-mdblock-tag">Markdown</div>' + toHtml(code.join('\n'), true) + '</div>');
         else out.push('<pre><code' + (fm[2] ? ' class="language-' + esc(fm[2]) + '"' : '') + '>' + esc(code.join('\n')) + '</code></pre>');
         i = j + 1; continue;
+      }
+      // a formula block: $$ ... $$ (on one line or several)
+      if (/^\s*\$\$/.test(l)) {
+        var one = /^\s*\$\$([\s\S]+?)\$\$\s*$/.exec(l);
+        if (one) { out.push(mathAtom(one[1].trim(), true)); i++; continue; }
+        var tex = [l.replace(/^\s*\$\$/, '')], k2 = i + 1;
+        while (k2 < lines.length && !/\$\$\s*$/.test(lines[k2])) tex.push(lines[k2++]);
+        if (k2 < lines.length) { tex.push(lines[k2].replace(/\$\$\s*$/, '')); out.push(mathAtom(tex.join('\n').trim(), true)); i = k2 + 1; continue; }
       }
       var tm0 = TAB_RE.exec(l);
       if (tm0) { var ta0 = tabAttrs(tm0[1]); out.push('<div class="dx-tabmark" data-tab="' + esc(ta0.id || '') + '">' + esc(ta0.title || 'Tab') + '</div>'); i++; continue; }
       var pm = PENDING_RE.exec(l.trim());
       if (pm) { out.push('<div class="dx-pending" data-section="' + esc(section) + '" data-intent="' + esc(pm[1] || '') + '"><span class="dx-pending-dot"></span>Writing: ' + esc(pm[1] || 'this section') + '</div>'); i++; continue; }
       var hm = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l);
-      if (hm) { section = hm[2]; out.push('<h' + hm[1].length + ' data-section="' + esc(hm[2]) + '">' + inline(hm[2]) + '</h' + hm[1].length + '>'); i++; continue; }
+      if (hm) { section = hm[2]; out.push('<h' + hm[1].length + ' id="' + esc(slug(hm[2])) + '" data-section="' + esc(hm[2]) + '">' + inline(hm[2]) + '</h' + hm[1].length + '>'); i++; continue; }
       if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
       if (/^>\s?/.test(l)) {
         var q = [];
@@ -79,19 +166,12 @@
         out.push('<blockquote>' + toHtml(q.join('\n'), true) + '</blockquote>'); continue;
       }
       if (/^\|.*\|\s*$/.test(l) && i + 1 < lines.length && /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
-        var cells = function (row) { return row.trim().replace(/^\||\|$/g, '').split('|').map(function (c) { return c.trim(); }); };
-        var head = cells(l), aligns = cells(lines[i + 1]).map(function (c) { return /^:-+:$/.test(c) ? 'center' : /-+:$/.test(c) ? 'right' : ''; });
-        var t = ['<table><thead><tr>'];
-        head.forEach(function (c, k) { t.push('<th' + (aligns[k] ? ' style="text-align:' + aligns[k] + '"' : '') + '>' + inline(c) + '</th>'); });
-        t.push('</tr></thead><tbody>');
+        var aligns = splitRow(lines[i + 1]).map(function (c) { return /^:-+:$/.test(c) ? 'center' : /^:-+$/.test(c) ? 'left' : /-+:$/.test(c) ? 'right' : ''; });
+        var trows = [splitRow(l)];
         i += 2;
-        while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) {
-          t.push('<tr>');
-          cells(lines[i]).forEach(function (c, k) { t.push('<td' + (aligns[k] ? ' style="text-align:' + aligns[k] + '"' : '') + '>' + inline(c) + '</td>'); });
-          t.push('</tr>'); i++;
-        }
-        t.push('</tbody></table>');
-        out.push(t.join('')); continue;
+        while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) trows.push(splitRow(lines[i++]));
+        out.push(tableHtml(tableModel(trows), aligns));
+        continue;
       }
       if (/^\s*([-*+]|\d+[.)])\s+/.test(l)) {
         var items = [];
@@ -99,7 +179,7 @@
           var m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
           if (!m) { items[items.length - 1].text += ' ' + lines[i].trim(); i++; continue; }
           var tm = /^\[([ xX])\]\s+(.*)$/.exec(m[3]);
-          items.push({ indent: m[1].replace(/\t/g, '    ').length, ordered: /\d/.test(m[2]), text: tm ? tm[2] : m[3], task: tm ? tm[1] !== ' ' : null, line: nested ? null : i });
+          items.push({ indent: m[1].replace(/\t/g, '    ').length, ordered: /\d/.test(m[2]), num: /\d/.test(m[2]) ? parseInt(m[2], 10) : 0, text: tm ? tm[2] : m[3], task: tm ? tm[1] !== ' ' : null, line: nested ? null : i });
           i++;
         }
         var pos = 0;
@@ -214,7 +294,8 @@
     });
     return parts.join('\n');
   }
-  var api = { toHtml: toHtml, inline: inline, esc: esc, exportAll: exportAll, splitTabs: splitTabs, joinTabs: joinTabs, findTab: findTab, tabView: tabView, withTabView: withTabView, tabList: tabList, TAB_RE: TAB_RE };
+  var api = { slug: slug, csvRows: csvRows, cellAttrs: cellAttrs, tableModel: tableModel, splitRow: splitRow, CELL_COLOURS: CELL_COLOURS, MATH_INLINE_RE: MATH_INLINE_RE,
+    toHtml: toHtml, inline: inline, esc: esc, exportAll: exportAll, splitTabs: splitTabs, joinTabs: joinTabs, findTab: findTab, tabView: tabView, withTabView: withTabView, tabList: tabList, TAB_RE: TAB_RE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.__dxMd = api;
 })(typeof window !== 'undefined' ? window : this);
