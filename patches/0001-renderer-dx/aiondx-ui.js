@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-13.1';
+  var BUILD = '2026-11-14.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -927,7 +927,7 @@
       s.wakeSelf = rec.wakeSelf === true;
     }
     var ca = Number(rec.compactAt) || 0;
-    if (ca > (s.compactAt || 0)) s.compactAt = ca;
+    if (ca > (s.compactAt || 0)) { s.compactAt = ca; s.compactUntil = 0; }
     if (rec.by === 'agent') {
       s.agentMark = {
         at: at, who: String(rec.who || 'An agent').slice(0, 80), target: String(rec['for'] || ''),
@@ -2096,13 +2096,51 @@
     if (c && Date.now() - c.at < 10 * 60000) return c.cmd;
     var g = await getJson('/api/conversations/' + convId + '/slash-commands');
     if (g.err) return null;
-    var names = (Array.isArray(g.data) ? g.data : []).map(function (x) { return x && (x.command || x.name); });
+    // An agent just started may not have listed its commands yet: an empty list is not read as "no compact command"
+    if (!Array.isArray(g.data) || !g.data.length) return null;
+    var names = g.data.map(function (x) { return x && (x.command || x.name); });
     var cmd = '';
     for (var i = 0; i < COMPACT_CMDS.length; i++) if (names.indexOf(COMPACT_CMDS[i]) >= 0) { cmd = COMPACT_CMDS[i]; break; }
     slashCache[convId] = { at: Date.now(), cmd: cmd };
     return cmd;
   }
   function compactPending(s) { return (s.compactAt || 0) > (s.compactSentAt || 0); }
+
+  /** A compaction asked by itself (compactUntil set) is for one cache window. It is dropped when a newer call refreshed that cache
+   *  (the next window gets its own request), or when the window ran out before it could go: sent later it would compact a chat the
+   *  user had just come back to (November 14th, 2026: a request made 5 hours before went out 4 minutes after the user's next
+   *  message). A request from the ring's menu, the Loop or an agent has no window and waits for the agent as before. */
+  function dropStaleCompact(t, s, convId) {
+    var until = Number(s.compactUntil) || 0;
+    if (!until || !compactPending(s)) return false;
+    var rec = convId ? cacheRecord(convId) : null;
+    var now = Date.now();
+    var refreshed = !!rec && Number(rec.at) > (Number(s.compactFor) || 0);
+    if (!refreshed && now <= until) return false;
+    var note = refreshed
+      ? 'Not sent: a newer reply at ' + hhmm(Number(rec.at)) + ' refreshed the cache. AionDX asks again before that cache runs out.'
+      : 'Not sent: the cache ran out at ' + hhmm(until) + ' before the agent could take /compact.';
+    s.compactSentAt = s.compactAt;
+    s.compactUntil = 0;
+    s.compactNote = note;
+    s.why = note;
+    s.whyAt = now;
+    save(t, s); publishStatus(t); render();
+    diagnose('auto-compact-dropped', String(convId || '').slice(0, 8), { refreshed: refreshed, until: until });
+    if (!refreshed) notify(t, 'Compaction by itself missed {who}’s cache.', note);
+    return true;
+  }
+
+  var ensuredAt = {};   // conversation id -> when AionDX last asked AionCore to start its agent for a compaction
+  /** Start a solo chat's stopped agent (AionCore answers 404 "No active agent" for its commands until it runs). At most once a minute. */
+  async function ensureForCompact(convId) {
+    if (Date.now() - (ensuredAt[convId] || 0) < 60000) return;
+    ensuredAt[convId] = Date.now();
+    try {
+      await nativeFetch.call(window, apiUrl('/api/conversations/' + convId + '/runtime/ensure'), {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: '{}' });
+    } catch (e) {}
+  }
 
   /** Send a requested compaction, now that the agent has stopped. `send` posts the text the way a
    *  nudge goes to this kind of chat; a team member's recognized command reaches it bare
@@ -2111,10 +2149,20 @@
     if (compacting[t.key]) return;
     compacting[t.key] = true;
     try {
+      if (dropStaleCompact(t, state(t), convId)) return;
       var cmd = await compactCommand(convId);
-      if (cmd === null) return;
+      if (cmd === null) {
+        // its agent is not running (stopped after idling, or the app restarted): start it and send on the next check
+        if (t.kind === 'conv') {
+          await ensureForCompact(convId);
+          var w = state(t);
+          if (compactPending(w)) why(t, w, 'Starting the agent to send its compaction.');
+        }
+        return;
+      }
       var s = state(t);
       if (!compactPending(s)) return;
+      if (dropStaleCompact(t, s, convId)) return;
       if (!cmd) {
         s.compactSentAt = s.compactAt;
         s.compactNote = 'Not sent: this agent offers no compact command.';
@@ -8941,6 +8989,7 @@
   function requestCompact(t) {
     var s = state(t);
     s.compactAt = Date.now();
+    s.compactUntil = 0;
     save(t, s);
     try { publishStatus(t); } catch (e) {}
   }
@@ -10893,6 +10942,8 @@
         if (!u || !(Number(u.size) > 0) || Number(u.used) / Number(u.size) < 0.5) { autoAsked[convId] = Number(rec.at); continue; }
         autoAsked[convId] = Number(rec.at);
         s.compactAt = Date.now();
+        s.compactUntil = long;           // for this cache window only (dropStaleCompact)
+        s.compactFor = Number(rec.at);
         s.compactNote = 'Compacting by itself: ' + Math.round(Number(u.used) / Number(u.size) * 100) + '% full, cache runs out at ' + hhmm(long) + '.';
         save(t, s);
         diagnose('auto-compact', convId.slice(0, 8), { pct: Math.round(Number(u.used) / Number(u.size) * 100), until: long });
@@ -10955,6 +11006,7 @@
         var t = { kind: 'conv', key: 'conv:' + convId, convId: convId };
         var s = state(t);
         s.compactAt = Date.now();
+        s.compactUntil = 0;
         s.compactNote = 'Compaction asked from the context ring at ' + hhmm(Date.now()) + '; it goes when the agent stops.';
         save(t, s); publishStatus(t); render();
         toast('Compaction requested.', 'It goes as soon as the agent stops.');

@@ -3749,6 +3749,62 @@ async function pageTarget() {
       await js('window.__aionDx.autoCompactNow()');
       await sleep(300);
       check(sc, 'not asked again for the same reply', (await js(`JSON.parse(localStorage.getItem('aionui.dx.harness1') || '{}').compactAt`)) === st.compactAt);
+      // November 14th, 2026: the chat's agent had stopped, AionCore answered 404 "No active agent" for its commands, the request was never sent,
+      // and it went out 5 hours late, 4 minutes after the user's next message
+      await load('theme=light');
+      {
+        const t0 = Date.now();
+        await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 150000, size: 200000 } };
+          window.__stub.routes['GET /api/conversations/harness1/slash-commands'] = { __status: 404, success: false, msg: 'No active agent for this conversation' }; window.__calls.length = 0; return 0; })()`);
+        await putStore('aiondx.cache.conv.harness1', { v: 1, at: t0 - 56 * 60000, until: t0 + 4 * 60000, longUntil: t0 + 4 * 60000, ttl: '1h' });
+        await js('window.__aionDx.tickNow()');
+        await sleep(400);
+        await js('window.__aionDx.autoCompactNow()');
+        await sleep(400);
+        await js('window.__aionDx.tickNow()');
+        await sleep(500);
+        const ens = await posts('/api/conversations/harness1/runtime/ensure');
+        check(sc, 'its agent stopped (AionCore: no active agent): AionDX starts it so the compaction can go, and sends nothing yet',
+          ens.length === 1 && (await posts('/api/conversations/harness1/messages')).length === 0, JSON.stringify(ens));
+        await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/slash-commands'] = { success: true, data: [{ command: 'compact' }] }; window.__calls.length = 0; return 0; })()`);
+        await js('window.__aionDx.tickNow()');
+        await sleep(500);
+        const sent2 = await posts('/api/conversations/harness1/messages');
+        check(sc, 'and sends its /compact on the next check, once the agent runs', sent2.length === 1 && sent2[0].body.content === '/compact', JSON.stringify(sent2));
+      }
+      // a request for one cache window is dropped when a newer reply refreshed the cache before it could go
+      await load('theme=light');
+      {
+        const t0 = Date.now();
+        await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 150000, size: 200000 } };
+          window.__stub.routes['GET /api/conversations/harness1/slash-commands'] = { __status: 404, success: false }; window.__calls.length = 0; return 0; })()`);
+        await putStore('aiondx.cache.conv.harness1', { v: 1, at: t0 - 56 * 60000, until: t0 + 4 * 60000, longUntil: t0 + 4 * 60000, ttl: '1h' });
+        await js('window.__aionDx.tickNow()');
+        await sleep(400);
+        await js('window.__aionDx.autoCompactNow()');
+        await sleep(400);
+        await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/slash-commands'] = { success: true, data: [{ command: 'compact' }] }; window.__calls.length = 0; return 0; })()`);
+        await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 5000, until: Date.now() + 3595000, longUntil: Date.now() + 3595000, ttl: '1h' });
+        await js('window.__aionDx.tickNow()');
+        await sleep(500);
+        const st2 = await js(`JSON.parse(localStorage.getItem('aionui.dx.harness1') || '{}')`);
+        check(sc, 'the user wrote and the agent replied before it went: the old request is dropped, nothing sent, saying why',
+          (await posts('/api/conversations/harness1/messages')).length === 0 && /^Not sent: a newer reply at \d\d:\d\d refreshed the cache\./.test(st2.compactNote || '') && !(st2.compactAt > (st2.compactSentAt || 0)), JSON.stringify(st2));
+      }
+      // a request whose cache ran out before the agent could take it is dropped with a notice, never sent late
+      await load('theme=light');
+      {
+        const t0 = Date.now();
+        await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/slash-commands'] = { success: true, data: [{ command: 'compact' }] }; window.__calls.length = 0; return 0; })()`);
+        await js(`(() => { localStorage.setItem('aionui.dx.harness1', JSON.stringify({ msg: 'x', queue: [], on: false, compactAt: ${t0} - 300 * 60000, compactSentAt: 1, compactUntil: ${t0} - 295 * 60000, compactFor: ${t0} - 356 * 60000 })); return 0; })()`);
+        await putStore('aiondx.cache.conv.harness1', { v: 1, at: t0 - 356 * 60000, until: t0 - 296 * 60000, longUntil: t0 - 296 * 60000, ttl: '1h' });
+        await js('window.__aionDx.tickNow()');
+        await sleep(600);
+        const st3 = await js(`JSON.parse(localStorage.getItem('aionui.dx.harness1') || '{}')`);
+        check(sc, 'its cache ran out before it could go: dropped, never sent late, and the user is told',
+          (await posts('/api/conversations/harness1/messages')).length === 0 && /^Not sent: the cache ran out at \d\d:\d\d/.test(st3.compactNote || '') &&
+          (await toasts()).some((t) => /^Compaction by itself missed/.test(t)), JSON.stringify(st3) + ' ' + JSON.stringify(await toasts()));
+      }
       // not due yet, under half, Loop on, option off: nothing
       await load('theme=light');
       await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 150000, size: 200000 } }; return 0; })()`);
