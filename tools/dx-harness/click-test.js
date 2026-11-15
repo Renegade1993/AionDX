@@ -3587,7 +3587,7 @@ async function pageTarget() {
       const caretAtEnd = (sel) => js(`(() => { const p = document.querySelector('${sel}'); const b = document.querySelector('#tbox .dx-body'); b.focus(); const r = document.createRange(); r.selectNodeContents(p); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 0; })()`);
       const saves = async () => (await js('window.__dx.calls')).filter((c) => c[0] === 'save');
       const ed = await js(`(() => { const b = document.querySelector('#tbox .dx-body'); const f = document.querySelector('#tbox [data-testid="aiondx-dx-fmt"]'); return { editable: b && b.getAttribute('contenteditable'), fmt: f ? [...f.querySelectorAll('.dx-fmt-b')].map((x) => x.getAttribute('data-fmt')).join(',') : null, md: window.__aionDx.dxMarkdown() }; })()`);
-      check(sc, 'the doc itself is editable, with a formatting bar, and reads back as the same Markdown', ed.editable === 'true' && /^p,h1,h2,h3,h4,bold,italic,underline,strike,highlight,code,link,math,ul,ol,olstart,task,quote,pre,lang,hr,table,tablemenu,undo,redo$/.test(ed.fmt) &&
+      check(sc, 'the doc itself is editable, with a formatting bar, and reads back as the same Markdown', ed.editable === 'true' && /^p,h1,h2,h3,h4,bold,italic,underline,strike,highlight,code,link,math,ul,ol,olstart,task,quote,pre,lang,hr,table,tablemenu,insert,undo,redo$/.test(ed.fmt) &&
         ed.md === '# Launch plan\n\n## Goals\n\nShip it this quarter.\n\n## Risks\n\n- Legal review\n- [ ] Book the room\n', JSON.stringify(ed));
       let n0 = (await saves()).length;
       await caretAtEnd('#tbox .dx-body p');
@@ -3942,6 +3942,62 @@ async function pageTarget() {
       await sleep(1700);
       md = await js(`window.__dx.dirs['C:/ws/Docs'].rich`);
       check(sc, 'Heading 4 and a formula from the bar, drawn and saved', /\n#### Small head\n/.test(md) && /\$\\sqrt\{2\}\$/.test(md) && (await js(`document.querySelectorAll('#tbox .dx-body .dx-math .katex').length`)) === 3, md.slice(-200));
+
+      // ---- chips, callouts, questions, approvals, mentions (rows 9, 25 to 27, the question and planning tools) ----
+      const CH = '# Plan doc\\n\\n<!-- dx:tab id=\\"t1\\" title=\\"Main\\" -->\\n\\nDue [[date:2026-11-20]], status [[pick:Not started|Not started|In progress|Done]], see [[tab:t2|Other]].\\n\\n> [!WARNING] Mind the budget\\n\\n' +
+        '\`\`\`choice\\n{\\"question\\":\\"Ship when?\\",\\"options\\":[\\"Q1\\",\\"Q2\\"]}\\n\`\`\`\\n\\n\`\`\`approve\\n{\\"label\\":\\"Approve the plan\\"}\\n\`\`\`\\n\\nEnd.\\n\\n<!-- dx:tab id=\\"t2\\" title=\\"Other\\" -->\\n\\nOther text.\\n';
+      await js(`(() => { window.__dx.dirs['C:/ws/Docs'].chips = '${CH}'; window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'chips' }); return 0; })()`);
+      await sleep(1500);
+      const cd = await js(`(() => { const b = document.querySelector('#tbox .dx-body'); return { date: (b.querySelector('.dx-chip--date') || {}).textContent, pick: (b.querySelector('.dx-chip--pick') || {}).textContent, tab: (b.querySelector('.dx-chip--tab') || {}).textContent,
+        callout: (b.querySelector('.dx-callout-tag') || {}).textContent, opts: b.querySelectorAll('.dx-choice input[type=radio]').length, approve: !!b.querySelector('.dx-approve [data-approve="yes"]') }; })()`);
+      check(sc, 'drawn: a date chip, a status chip, a link to a tab, a callout, a question with its options, an Approve button',
+        cd.date === 'Nov 20, 2026' && cd.pick === 'Not started\u25be' && cd.tab === 'Other' && cd.callout === 'Warning' && cd.opts === 2 && cd.approve, JSON.stringify(cd));
+      const saved = () => js(`window.__dx.dirs['C:/ws/Docs'].chips`);
+      const sentNow = async () => (await posts('/api/conversations/harness1/messages')).map((x) => x.body.content);
+      await js(`(() => { window.__calls.length = 0; return 0; })()`);
+      // a date picked
+      await humanClick('#tbox .dx-body .dx-chip--date');
+      await sleep(300);
+      await js(`(() => { const i = document.querySelector('[data-testid="aiondx-dx-date"]'); i.value = '2026-12-01'; return 0; })()`);
+      await humanClick('[data-testid="aiondx-dx-datebox"] button');
+      await sleep(900);
+      check(sc, 'a date chip opens a date box; the new date is saved', /\[\[date:2026-12-01\]\]/.test(await saved()) && (await js(`document.querySelector('#tbox .dx-body .dx-chip--date').textContent`)) === 'Dec 1, 2026');
+      // a status picked
+      await humanClick('#tbox .dx-body .dx-chip--pick');
+      await sleep(300);
+      await js(`(() => { [...document.querySelectorAll('[data-testid="aiondx-dx-pickmenu"] button')].find((b) => b.textContent === 'Done').click(); return 0; })()`);
+      await sleep(900);
+      check(sc, 'a status chip opens its options; the one picked is saved with the list', /\[\[pick:Done\|Not started\|In progress\|Done\]\]/.test(await saved()), await saved());
+      // the question answered, the plan approved: saved, and the agent told
+      await humanClick('#tbox .dx-body .dx-choice input[data-opt="Q2"]');
+      await sleep(1000);
+      let s1 = await saved();
+      check(sc, 'a pick in a question is saved in its block and sent to the agent', /"answer":\["Q2"\],"by":"you"/.test(s1) && (await sentNow()).some((m) => /^\[DX Doc answer\] In "Plan doc" \(doc chips, tab "Main" \(t1\)\), to "Ship when\?" the user answered: Q2\./.test(m)), JSON.stringify([s1.slice(0, 600), await sentNow()]));
+      await js(`(() => { document.querySelector('#tbox .dx-body .dx-approve').scrollIntoView({ block: 'center' }); return 0; })()`);
+      await sleep(200);
+      await humanClick('#tbox .dx-body .dx-approve [data-approve="yes"]');
+      await sleep(1000);
+      s1 = await saved();
+      check(sc, 'Approve is saved in its block and the agent told to go ahead', /"status":"approved"/.test(s1) && /Approved by you/.test(await js(`document.querySelector('#tbox .dx-body .dx-approve').textContent`)) &&
+        (await sentNow()).some((m) => /^\[DX Doc approval\] In "Plan doc".*"Approve the plan": the user approved it\. Go ahead\./.test(m)), JSON.stringify([await sentNow(), s1.slice(s1.indexOf('approve') - 5, s1.indexOf('approve') + 140), await js(`(document.querySelector('#tbox .dx-body .dx-approve') || {}).outerHTML`)]));
+      // Insert: a note, a mention of the agent (which tells it)
+      const insert = async (label) => { await humanClick('#tbox .dx-fmt-b[data-fmt="insert"]'); await sleep(250); await js(`(() => { [...document.querySelectorAll('[data-testid="aiondx-dx-insertmenu"] button')].find((b) => b.textContent === ${JSON.stringify(label)}).click(); return 0; })()`); await sleep(300); };
+      await js(`(() => { const p = [...document.querySelectorAll('#tbox .dx-body p')].find((x) => /End\\./.test(x.textContent)); const r = document.createRange(); r.selectNodeContents(p); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); p.closest('.dx-body').focus(); return 0; })()`);
+      await insert('A mention (@)');
+      await js(`(() => { [...document.querySelectorAll('[data-testid="aiondx-dx-choose"] button')].find((b) => /The agent/.test(b.textContent)).click(); return 0; })()`);
+      await sleep(1900);
+      s1 = await saved();
+      check(sc, 'a mention of the agent is saved and tells it', /End\.\s*\[\[@agent\]\]/.test(s1) && (await sentNow()).some((m) => /^\[DX Doc mention\] You were mentioned in "Plan doc"/.test(m)), JSON.stringify([s1.slice(s1.indexOf('End.') - 5, s1.indexOf('End.') + 40), await sentNow()]));
+      await newLine();
+      await insert('A note');
+      await sleep(1900);
+      check(sc, 'Insert puts a callout in the doc, saved as > [!NOTE]', /> \[!NOTE\]\n> Note:/.test(await saved()), (await saved()).slice(-300));
+      // a link to a tab opens it
+      await js(`(() => { document.querySelector('#tbox .dx-body .dx-chip--tab').scrollIntoView({ block: 'center' }); return 0; })()`);
+      await sleep(200);
+      await humanClick('#tbox .dx-body .dx-chip--tab');
+      await sleep(600);
+      check(sc, 'a link to a tab opens that tab', JSON.stringify((await P()).tabs) === JSON.stringify(['Main', 'Other*']) && /Other text\./.test((await P()).body), JSON.stringify(await P()));
       await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
     }
 

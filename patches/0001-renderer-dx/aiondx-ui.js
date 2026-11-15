@@ -11471,6 +11471,11 @@
         // a link to a heading in this doc ([text](#anchor)) scrolls there
         var jump = ev.target.closest && ev.target.closest('.dx-body a[href^="#"]');
         if (jump) { ev.preventDefault(); dxJump(jump.getAttribute('href')); return; }
+        // a chip (a date, a status, a link to a tab or doc) and an approval's buttons
+        var chip = ev.target.closest && ev.target.closest('.dx-body .dx-chip');
+        if (chip && dx.view === 'doc') { ev.preventDefault(); dxChipClick(chip); return; }
+        var ap = ev.target.closest && ev.target.closest('.dx-body .dx-approve [data-approve]');
+        if (ap && dx.view === 'doc') { ev.preventDefault(); dxApprove(ap.closest('.dx-approve'), ap.getAttribute('data-approve'), ap); return; }
         var b = ev.target.closest && ev.target.closest('[data-act="chart-data"]');
         if (!b) return;
         var w = b.parentNode.querySelector('.dx-chart-tablewrap');
@@ -11478,7 +11483,12 @@
         w.hidden = !w.hidden;
         b.textContent = w.hidden ? 'Data' : 'Hide data';
       });
-      dx.main.addEventListener('change', function (ev) { var t = ev.target; if (t && t.classList && t.classList.contains('dx-tick')) dxTick(t); });
+      dx.main.addEventListener('change', function (ev) {
+        var t = ev.target;
+        if (t && t.classList && t.classList.contains('dx-tick')) dxTick(t);
+        var card = t && t.closest && t.closest('.dx-body .dx-choice');
+        if (card && dx.view === 'doc') dxAnswer(card);
+      });
       document.addEventListener('selectionchange', dxSelection);
     }
   }
@@ -11868,7 +11878,7 @@
     ['bold', 'B', 'Bold (Ctrl+B)'], ['italic', 'I', 'Italic (Ctrl+I)'], ['underline', 'U', 'Underline (Ctrl+U)'], ['strike', 'S', 'Strikethrough'], ['highlight', 'Mark', 'Highlight'],
     ['code', '</>', 'Code'], ['link', 'Link', 'Link to a page or a heading (Ctrl+K)'], ['math', '\u2211', 'Formula (LaTeX)'], ['|'],
     ['ul', '\u2022 List', 'Bulleted list'], ['ol', '1. List', 'Numbered list'], ['olstart', '#\u2192', 'Start this numbered list at\u2026'], ['task', '\u2610 Task', 'Task list'], ['quote', '\u201c Quote', 'Quote'],
-    ['pre', '{ }', 'Code block'], ['lang', 'Lang', 'The code block\u2019s language'], ['hr', '\u2015', 'Divider'], ['table', 'Table', 'Insert a table'], ['tablemenu', 'Table \u25be', 'Rows, columns, colours, alignment, widths, merging'], ['|'],
+    ['pre', '{ }', 'Code block'], ['lang', 'Lang', 'The code block\u2019s language'], ['hr', '\u2015', 'Divider'], ['table', 'Table', 'Insert a table'], ['tablemenu', 'Table \u25be', 'Rows, columns, colours, alignment, widths, merging'], ['insert', 'Insert \u25be', 'A date, a status, a mention, a link to a tab or doc, a question, an Approve button, a callout'], ['|'],
     ['undo', '\u21b6', 'Undo (Ctrl+Z)'], ['redo', '\u21b7', 'Redo (Ctrl+Y)']
   ];
   var DX_FMT_BAR = '<div class="dx-fmt" data-testid="aiondx-dx-fmt" role="toolbar" aria-label="Formatting">' + DX_FMT.map(function (f) {
@@ -11929,12 +11939,14 @@
     dx.typed = false;
     if (md === dx.md || (dx.tab && view === dxViewMd())) { dxSavedText('Saved'); return; }
     dx.saving = true;
+    var before = dx.md;
     dxSavedText('Saving\u2026');
     var r = await dxApi('save', { id: dx.doc, markdown: md, by: 'you' }).catch(function (e) { return { ok: false, error: e && e.message }; });
     dx.saving = false;
     if (!r || !r.ok) { dx.typed = true; dxSavedText('Not saved', true); toast('Your change was not saved.', r && r.error); return; }
     dx.md = md;
     dxSavedText('Saved');
+    try { dxNewMentions(before, md); } catch (e) {}   // a new @mention of an agent tells that agent
   }
   /** The agent changed the doc while you were typing: your text stays on screen, saving waits, and you choose. */
   function dxTheirsWhileTyping() {
@@ -12022,6 +12034,7 @@
       return;
     }
     else if (f === 'tablemenu') { dxTableMenu(anchor || body); return; }
+    else if (f === 'insert') { dxInsertMenu(anchor || body); return; }
     else if (f === 'code') { var t = String(sel || ''); ex('insertHTML', '<code>' + window.__dxMd.esc(t || 'code') + '</code>\u200b'); }
     else if (f === 'ul') ex('insertUnorderedList');
     else if (f === 'ol') ex('insertOrderedList');
@@ -12180,6 +12193,198 @@
     h.scrollIntoView({ block: 'start', behavior: 'smooth' });
     return true;
   }
+  // ---- chips, questions, approvals, callouts (DX Docs mirror, step 4): the user's picks are saved in the doc at once and the agent is told
+  /** Tell this chat's agent (a team's lead on a team page), or a named team member, something about the doc. Resolves true when it went. */
+  async function dxTell(text, to) {
+    var path = dx.sendPath || '/api/conversations/' + dx.conv + '/messages';
+    if (to && to.path) path = to.path;
+    var r = await postJson(path, { content: text }).catch(function () { return null; });
+    return !!(r && r.ok);
+  }
+  function dxWhere() { var tt = dxTabTitle(); return '"' + dx.title + '" (doc ' + dx.doc + (tt ? ', tab "' + tt + '" (' + dx.tab + ')' : '') + ')'; }
+  /** Replace a drawn atom with the same block written anew (its source changed), and save now. */
+  async function dxReplaceAtom(el, src) {
+    var holder = document.createElement('div');
+    holder.innerHTML = el.tagName === 'SPAN' ? '<p>' + window.__dxMd.inline(src) + '</p>' : window.__dxMd.toHtml(src);
+    var next = el.tagName === 'SPAN' ? holder.querySelector('p').firstElementChild : holder.firstElementChild;
+    if (!next) return;
+    el.parentNode.replaceChild(next, el);
+    dxMaths(next.parentNode);
+    dx.typed = true;
+    await dxFlush();
+  }
+  /** The team members a mention can name, on a team page: [{ name, path }] (the lead through the team's route, members through theirs). */
+  function dxMentionables() {
+    var out = [{ name: 'you', label: 'You' }, { name: 'agent', label: 'The agent (this chat’s)' }];
+    var r = route();
+    var tc = r && r.kind === 'team' ? teamCache[r.id] : null;
+    if (tc && tc.ok) Object.keys(tc.names || {}).forEach(function (slot) {
+      var nm = tc.names[slot];
+      if (!nm) return;
+      out.push({ name: nm, label: nm + (isLeadRole(tc.roles[slot]) ? ' (lead)' : ''), path: isLeadRole(tc.roles[slot]) ? '/api/teams/' + r.id + '/messages' : '/api/teams/' + r.id + '/agents/' + slot + '/messages' });
+    });
+    return out;
+  }
+  /** After a save: each new mention of an agent tells that agent, with the paragraph it is in. */
+  function dxNewMentions(before, after) {
+    var count = function (md) { var o = {}; String(md || '').replace(/\[\[@([^\]\n|]{1,80})\]\]/g, function (m, n) { n = n.trim(); o[n] = (o[n] || 0) + 1; return m; }); return o; };
+    var a = count(before), b = count(after);
+    var who = dxMentionables();
+    Object.keys(b).forEach(function (n) {
+      if (n === 'you' || (b[n] || 0) <= (a[n] || 0)) return;
+      var line = String(after).split('\n').filter(function (l) { return l.indexOf('[[@' + n) >= 0; }).pop() || '';
+      var target = who.filter(function (w) { return w.name.toLowerCase() === n.toLowerCase(); })[0];
+      var msg = '[DX Doc mention] You were mentioned in ' + dxWhere() + ':\n> ' + line.trim() + '\n\n(Read it with aiondx doc read; answer in the doc, or here.)';
+      dxTell(msg, target && target.path ? { path: target.path } : null).then(function (ok) { if (!ok) toast('The mention is saved, but @' + n + ' could not be told.'); });
+    });
+  }
+  function dxDateBox(chip) {
+    var old = document.querySelector('.dx-linkbox'); if (old) old.remove();
+    var box = document.createElement('div');
+    box.className = 'dx-linkbox';
+    box.setAttribute('data-testid', 'aiondx-dx-datebox');
+    box.innerHTML = '<input type="date" data-testid="aiondx-dx-date"><button type="button" class="dx-btn dx-btn--primary">OK</button>';
+    var input = box.querySelector('input');
+    input.value = chip.getAttribute('data-value') || '';
+    var r = chip.getBoundingClientRect();
+    box.style.top = Math.round(r.bottom + 4) + 'px'; box.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 260))) + 'px';
+    document.body.appendChild(box);
+    var off = function (ev) { if (!box.contains(ev.target)) { box.remove(); document.removeEventListener('mousedown', off, true); } };
+    var go = function () { var v = input.value; box.remove(); document.removeEventListener('mousedown', off, true); if (/^\d{4}-\d{2}-\d{2}$/.test(v)) dxReplaceAtom(chip, '[[date:' + v + ']]'); };
+    input.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); go(); } else if (ev.key === 'Escape') { box.remove(); } });
+    box.querySelector('button').addEventListener('click', go);
+    setTimeout(function () { document.addEventListener('mousedown', off, true); input.focus(); }, 0);
+  }
+  function dxPickMenu(chip) {
+    var old = document.querySelector('.dx-menu'); if (old) old.remove();
+    var opts = String(chip.getAttribute('data-options') || '').split('|').filter(Boolean);
+    var m = document.createElement('div');
+    m.className = 'dx-menu';
+    m.setAttribute('data-testid', 'aiondx-dx-pickmenu');
+    opts.forEach(function (o) { var b = document.createElement('button'); b.type = 'button'; b.textContent = o; b.setAttribute('data-v', o); if (o === chip.getAttribute('data-value')) b.className = 'dx-menu-on'; m.appendChild(b); });
+    var ed = document.createElement('button'); ed.type = 'button'; ed.textContent = 'Edit the options…'; ed.setAttribute('data-edit', '1'); m.appendChild(ed);
+    var r = chip.getBoundingClientRect();
+    m.style.top = Math.round(r.bottom + 4) + 'px'; m.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 220))) + 'px';
+    document.body.appendChild(m);
+    var off = function (ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('mousedown', off, true); } };
+    setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
+    m.addEventListener('click', async function (ev) {
+      var b = ev.target.closest('button');
+      if (!b) return;
+      m.remove(); document.removeEventListener('mousedown', off, true);
+      if (b.getAttribute('data-edit')) {
+        var v = await dxAskName(chip, 'Options, separated by commas', opts.join(', '));
+        if (!v) return;
+        var list = v.split(',').map(function (x) { return x.trim().replace(/[|\]]/g, ''); }).filter(Boolean);
+        if (!list.length) return;
+        var cur = list.indexOf(chip.getAttribute('data-value')) >= 0 ? chip.getAttribute('data-value') : list[0];
+        dxReplaceAtom(chip, '[[pick:' + cur + '|' + list.join('|') + ']]');
+      } else dxReplaceAtom(chip, '[[pick:' + b.getAttribute('data-v') + '|' + opts.join('|') + ']]');
+    });
+  }
+  function dxChipClick(chip) {
+    var k = chip.getAttribute('data-kind');
+    if (k === 'date') dxDateBox(chip);
+    else if (k === 'pick') dxPickMenu(chip);
+    else if (k === 'tab') { var id = chip.getAttribute('data-target'), t = dx.tabs.filter(function (x) { return x.id === id || x.title.toLowerCase() === String(id).toLowerCase(); })[0]; if (t) dxSwitchTab(t.id); else toast('That tab is not in this doc any more.'); }
+    else if (k === 'doc') { var d = chip.getAttribute('data-target'); dxFlush().then(function () { dxOpen(d); }); }
+  }
+  /** A pick in a question block: saved in the doc and sent to the agent. */
+  async function dxAnswer(card) {
+    var src = card.getAttribute('data-src') || '';
+    var m = /^(```|~~~)choice\n([\s\S]*)\n\1$/.exec(src);
+    if (!m) return;
+    var r = window.__dxMd.blockSpec('choice', m[2]);
+    if (!r.spec) return;
+    var picked = Array.prototype.slice.call(card.querySelectorAll('input[data-opt]')).filter(function (x) { return x.checked; }).map(function (x) { return x.getAttribute('data-opt'); });
+    var s = JSON.parse(m[2]);
+    s.answer = picked; s.by = 'you'; s.at = Date.now();
+    await dxReplaceAtom(card, m[1] + 'choice\n' + JSON.stringify(s) + '\n' + m[1]);
+    if (picked.length) dxTell('[DX Doc answer] In ' + dxWhere() + ', to "' + r.spec.question + '" the user answered: ' + picked.join(', ') + '.\n\n(The answer is saved in the doc’s question block.)');
+  }
+  /** Approve, or ask for changes: saved in the doc and sent to the agent. */
+  async function dxApprove(card, verdict, anchor) {
+    var src = card.getAttribute('data-src') || '';
+    var m = /^(```|~~~)approve\n([\s\S]*)\n\1$/.exec(src);
+    if (!m) return;
+    var s = JSON.parse(m[2]);
+    var note = '';
+    if (verdict === 'changes') { note = await dxAskName(anchor, 'What should change?', ''); if (!note) return; }
+    s.status = verdict === 'yes' ? 'approved' : 'changes'; s.note = note; s.by = 'you'; s.at = Date.now();
+    await dxReplaceAtom(card, m[1] + 'approve\n' + JSON.stringify(s) + '\n' + m[1]);
+    dxTell('[DX Doc approval] In ' + dxWhere() + ', "' + (s.label || 'the plan') + '": ' + (verdict === 'yes' ? 'the user approved it. Go ahead.' : 'the user asked for changes: ' + note));
+  }
+  /** Insert ▾ on the bar: chips, a question, an Approve button, callouts. */
+  function dxInsertMenu(anchor) {
+    var old = document.querySelector('.dx-menu'); if (old) old.remove();
+    var body = dx.main.querySelector('.dx-body[contenteditable="true"]');
+    var sel = window.getSelection();
+    var saved = sel && sel.rangeCount && body.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
+    var m = document.createElement('div');
+    m.className = 'dx-menu';
+    m.setAttribute('data-testid', 'aiondx-dx-insertmenu');
+    m.innerHTML = '<button type="button" data-i="date">A date</button><button type="button" data-i="pick">A status (a dropdown)</button><button type="button" data-i="mention">A mention (@)</button>' +
+      '<button type="button" data-i="link">A link to a tab or doc</button><div class="dx-menu-head">Blocks</div><button type="button" data-i="choice">A question</button><button type="button" data-i="approve">An Approve button</button>' +
+      '<button type="button" data-i="NOTE">A note</button><button type="button" data-i="TIP">A tip</button><button type="button" data-i="WARNING">A warning</button><button type="button" data-i="DECISION">A decision</button>';
+    var rc = anchor.getBoundingClientRect();
+    m.style.top = Math.round(rc.bottom + 4) + 'px'; m.style.left = Math.round(Math.max(8, Math.min(rc.left, window.innerWidth - 240))) + 'px';
+    document.body.appendChild(m);
+    var off = function (ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('mousedown', off, true); } };
+    setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
+    m.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+    var put = function (html) { body.focus(); if (saved) { var s2 = window.getSelection(); s2.removeAllRanges(); s2.addRange(saved); } try { document.execCommand('insertHTML', false, html); } catch (e) {} dxMaths(body); dxTyped(); };
+    var putMd = function (md, isInline) { put(isInline ? window.__dxMd.inline(md) + '​' : window.__dxMd.toHtml(md) + '<p><br></p>'); };
+    m.addEventListener('click', async function (ev) {
+      var b = ev.target.closest('[data-i]');
+      if (!b) return;
+      m.remove(); document.removeEventListener('mousedown', off, true);
+      var k = b.getAttribute('data-i');
+      if (k === 'date') putMd('[[date:' + new Date().toISOString().slice(0, 10) + ']]', true);
+      else if (k === 'pick') {
+        // a dropdown in a table takes the options its column already uses
+        var cell = saved && (saved.startContainer.nodeType === 1 ? saved.startContainer : saved.startContainer.parentNode).closest('td,th');
+        var opts = null;
+        if (cell) { var tr = cell.parentNode, idx = Array.prototype.indexOf.call(tr.children, cell); cell.closest('table').querySelectorAll('tr').forEach(function (row) { var c = row.children[idx]; var ch = c && c.querySelector('.dx-chip--pick'); if (ch && !opts) opts = ch.getAttribute('data-options'); }); }
+        if (!opts) { var v = await dxAskKeepingCaret(anchor, 'Options, separated by commas', 'Not started, In progress, Done'); if (!v) return; opts = v.split(',').map(function (x) { return x.trim().replace(/[|\]]/g, ''); }).filter(Boolean).join('|'); }
+        putMd('[[pick:' + opts.split('|')[0] + '|' + opts + ']]', true);
+      } else if (k === 'mention') {
+        var who = dxMentionables();
+        var pickedName = await dxChooseFrom(anchor, who.map(function (w) { return { v: w.name, label: w.label }; }));
+        if (pickedName) putMd('[[@' + pickedName + ']]', true);
+      } else if (k === 'link') {
+        var targets = (dx.tabs || []).filter(function (t) { return t.id !== dx.tab; }).map(function (t) { return { v: 'tab:' + t.id + '|' + t.title, label: 'Tab: ' + t.title }; })
+          .concat(dx.docs.filter(function (d) { return d.id !== dx.doc; }).map(function (d) { return { v: 'doc:' + d.id + '|' + d.title, label: 'Doc: ' + d.title }; }));
+        if (!targets.length) { toast('No other tab or doc to link to yet.'); return; }
+        var tg = await dxChooseFrom(anchor, targets);
+        if (tg) putMd('[[' + tg + ']]', true);
+      } else if (k === 'choice') {
+        var q = await dxAskKeepingCaret(anchor, 'The question', '');
+        if (!q) return;
+        var o = await dxAskKeepingCaret(anchor, 'Its options, separated by commas', 'Yes, No');
+        if (!o) return;
+        putMd('```choice\n' + JSON.stringify({ question: q, options: o.split(',').map(function (x) { return x.trim(); }).filter(Boolean), multi: false }) + '\n```', false);
+      } else if (k === 'approve') putMd('```approve\n' + JSON.stringify({ label: 'Approve this plan', status: 'open' }) + '\n```', false);
+      else putMd('> [!' + k + ']\n> ' + window.__dxMd.CALLOUTS[k] + ': ', false);
+    });
+  }
+  /** A short list to pick one from (mentions, links): resolves to the picked value, or null. */
+  function dxChooseFrom(anchor, items) {
+    return new Promise(function (resolve) {
+      var old = document.querySelector('.dx-menu'); if (old) old.remove();
+      var m = document.createElement('div');
+      m.className = 'dx-menu';
+      m.setAttribute('data-testid', 'aiondx-dx-choose');
+      items.forEach(function (it) { var b = document.createElement('button'); b.type = 'button'; b.textContent = it.label; b.setAttribute('data-v', it.v); m.appendChild(b); });
+      var rc = anchor.getBoundingClientRect();
+      m.style.top = Math.round(rc.bottom + 4) + 'px'; m.style.left = Math.round(Math.max(8, Math.min(rc.left, window.innerWidth - 240))) + 'px';
+      document.body.appendChild(m);
+      var done = function (v) { m.remove(); document.removeEventListener('mousedown', off, true); resolve(v); };
+      var off = function (ev) { if (!m.contains(ev.target)) done(null); };
+      setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
+      m.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+      m.addEventListener('click', function (ev) { var b = ev.target.closest('[data-v]'); if (b) done(b.getAttribute('data-v')); });
+    });
+  }
   /** Ctrl+K or Link: a small box for the address (no window prompt in this app). */
   function dxLinkBox(sel) {
     var range = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
@@ -12304,7 +12509,13 @@
         else if (cl.contains('dx-mermaid')) out.push('```mermaid\n' + (n.getAttribute('data-src') || '') + '\n```');
         else if (cl.contains('dx-chart')) out.push('```chart\n' + (n.getAttribute('data-src') || '') + '\n```');
         else if (t === 'UL' || t === 'OL') { var l = list(n, 0); if (l.length) out.push(l.join('\n')); }
-        else if (t === 'BLOCKQUOTE') { var q = blocks(n); if (q.trim()) out.push(q.split('\n').map(function (x) { return x ? '> ' + x : '>'; }).join('\n')); }
+        else if (t === 'BLOCKQUOTE') {
+          var q = blocks(n);
+          var co = n.getAttribute('data-callout');   // a callout: > [!NOTE] first
+          if (co) q = '[!' + co + ']' + (q.trim() ? '\n' + q : '');
+          if (q.trim()) out.push(q.split('\n').map(function (x) { return x ? '> ' + x : '>'; }).join('\n'));
+        }
+        else if (cl.contains('dx-callout-tag')) { /* a callout's label: drawn, not written */ }
         else if (t === 'PRE') { var code = n.querySelector('code'); var lang = code && /language-([\w+-]+)/.exec(code.className || ''); out.push('```' + (lang ? lang[1] : '') + '\n' + clean(n.textContent).replace(/\n$/, '') + '\n```'); }
         else if (t === 'HR') out.push('---');
         else if (t === 'TABLE') { var tb = table(n); if (tb) out.push(tb); }
@@ -12864,6 +13075,20 @@
       '.dx-menu-row{display:flex;flex-wrap:wrap}.dx-menu-row button{flex:1 1 auto;width:auto !important}',
       '.dx-swatches{display:flex;gap:4px;padding:4px 12px 6px}.dx-swatch{width:20px !important;height:20px;padding:0 !important;border-radius:4px;border:1px solid var(--color-border-2,rgba(0,0,0,.15)) !important}',
       '.dx-tablemenu{max-height:70vh;overflow:auto;width:250px}',
+      // chips, callouts, questions, approvals (DX Docs mirror, step 4)
+      '.dx-chip{display:inline-flex;align-items:center;gap:3px;padding:0 7px;margin:0 1px;border-radius:10px;font-size:.92em;line-height:1.6;background:var(--color-fill-2,rgba(0,0,0,.06));color:var(--color-text-1);cursor:pointer;white-space:nowrap;vertical-align:baseline}',
+      '.dx-chip:hover{background:var(--color-fill-3,rgba(0,0,0,.1))}.dx-chip--mention{color:rgb(var(--primary-6,22,93,255));cursor:default}',
+      '.dx-chip--tab,.dx-chip--doc{text-decoration:underline;text-decoration-color:rgba(128,128,128,.5)}.dx-chip-caret{font-size:.8em;opacity:.6}',
+      '.dx-chip--pick.dx-pick-done{background:rgba(60,170,90,.2)}.dx-chip--pick.dx-pick-in-progress{background:rgba(60,120,230,.18)}.dx-chip--pick.dx-pick-blocked{background:rgba(230,70,70,.18)}',
+      '.dx-menu .dx-menu-on{font-weight:600;background:var(--color-fill-2,rgba(0,0,0,.06))}',
+      '.dx-callout{border-left:4px solid var(--dx-co,#888);background:var(--dx-co-bg,rgba(128,128,128,.08));border-radius:0 8px 8px 0;padding:6px 12px;margin:10px 0}',
+      '.dx-callout-tag{font-size:11.5px;font-weight:700;letter-spacing:.02em;color:var(--dx-co,#888);margin-bottom:2px;user-select:none}',
+      '.dx-callout--note{--dx-co:#2f6fdb;--dx-co-bg:rgba(47,111,219,.08)}.dx-callout--tip{--dx-co:#19a979;--dx-co-bg:rgba(25,169,121,.08)}',
+      '.dx-callout--warning,.dx-callout--caution{--dx-co:#d97706;--dx-co-bg:rgba(217,119,6,.09)}.dx-callout--decision{--dx-co:#945ecf;--dx-co-bg:rgba(148,94,207,.09)}.dx-callout--important{--dx-co:#d64a7b;--dx-co-bg:rgba(214,74,123,.08)}',
+      '.dx-choice,.dx-approve{margin:10px 0;padding:10px 12px;border:1px solid var(--color-border-2,rgba(0,0,0,.12));border-radius:10px;background:var(--color-bg-2,var(--color-fill-1));cursor:default}',
+      '.dx-choice-q{font-weight:600;margin-bottom:6px}.dx-choice-opt{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer}.dx-choice-opt input{cursor:pointer}',
+      '.dx-choice-state,.dx-approve-state{font-size:12px;color:var(--color-text-3);margin-top:6px}.dx-choice--answered{border-color:rgba(60,170,90,.5)}',
+      '.dx-approve-label{font-weight:600}.dx-approve-row{display:flex;gap:6px;margin-top:8px}.dx-approve--approved{border-color:rgba(60,170,90,.6);background:rgba(60,170,90,.07)}.dx-approve--changes{border-color:rgba(217,119,6,.6)}',
       '.dx-menu .dx-menu-danger{color:var(--color-danger-6,#d33)}',
       '.dx-confirm{align-items:center;max-width:360px;flex-wrap:wrap}.dx-confirm-text{flex:1 1 100%;font-size:12.5px;margin:2px 2px 6px;color:var(--color-text-1)}',
       '.dx-row-title{font-size:13px;font-weight:600;color:var(--color-text-1)}',

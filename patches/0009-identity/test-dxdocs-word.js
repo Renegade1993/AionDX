@@ -46,6 +46,12 @@ function check(name, ok, detail) { if (ok) { pass++; console.log('PASS  ' + name
     check('a numbered list that starts at 5 keeps its numbers', /5\.[\s\S]*?five/.test(text3) && /6\.[\s\S]*?six/.test(text3));
     check('table: a merged cell spans, colours fill, the width and alignment kept', /<w:gridSpan w:val="2"\/>/.test(xml3) && /w:fill="D8E6FA"/.test(xml3) && /w:fill="D9F0DF"/.test(xml3) && /<w:jc w:val="right"\/>/.test(xml3), (xml3.match(/<w:tc>[\s\S]*?<\/w:tc>/g) || []).slice(0, 4).join('\n').slice(0, 600));
     check('a CSV block is a table; a Markdown block is its own text', /2, two/.test(text3) && /Inner heading/.test(text3) && /Inner text/.test(text3) && !/```/.test(text3), text3);
+    // chips, callouts, questions, approvals (step 4)
+    const md4 = '# Q\n\nDue [[date:2026-11-20]], status [[pick:Done|Not started|Done]], ask [[@agent]], see [[tab:t2|Decisions]].\n\n> [!WARNING] Mind the budget\n> It is tight.\n\n' +
+      '```choice\n{"question":"Ship when?","options":["Q1","Q2"],"answer":["Q2"]}\n```\n\n```approve\n{"label":"Approve the plan","status":"approved","by":"you"}\n```\n';
+    const text4 = (await (await JSZip.loadAsync(await W.toDocx(md4, { docsDir: dd, pictures: [] }))).file('word/document.xml').async('string')).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    check('chips as their words: the date, the status, @the agent, the tab\'s name', /Due Nov 20, 2026 , status \[Done\] , ask @the agent , see Decisions \./.test(text4.replace(/\s*,/g, ' ,').replace(/\s*\./g, ' .')) || (/Nov 20, 2026/.test(text4) && /\[Done\]/.test(text4) && /@the agent/.test(text4) && /Decisions/.test(text4) && !/\[\[/.test(text4)), text4);
+    check('a callout with its label; a question with its answer ticked; an approval with its state', /Warning Mind the budget It is tight/.test(text4) && /Ship when\? ☐ Q1 ☒ Q2 Answered: Q2/.test(text4) && /Approve the plan Approved by you/.test(text4), text4);
     fs.rmSync(ws, { recursive: true, force: true });
   } catch (e) { check('no exception', false, e.stack); }
   console.log('\n' + pass + '/' + (pass + fail) + ' passed');

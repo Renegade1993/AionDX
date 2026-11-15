@@ -30,6 +30,17 @@ function drawProblems(md) {
   for (let i = 0; i < lines.length; i++) {
     const h = /^#{1,6}\s+(.*?)\s*#*\s*$/.exec(lines[i]);
     if (h) { section = h[1]; continue; }
+    const qb = /^(```|~~~)\s*(choice|approve)\s*$/.exec(lines[i]);
+    if (qb) {
+      let j = i + 1;
+      const body = [];
+      while (j < lines.length && lines[j].indexOf(qb[1]) !== 0) body.push(lines[j++]);
+      const r = j >= lines.length ? { error: 'it has no closing ' + qb[1] } : MD.blockSpec(qb[2], body.join('\n'));
+      if (r.error) out.push('the ' + (qb[2] === 'choice' ? 'question' : 'approval') + ' block at line ' + (i + 1) + (section ? ' (section "' + section + '")' : '') + ': ' + r.error +
+        (qb[2] === 'choice' ? ' (a choice block is {"question":"...","options":["A","B"],"multi":false})' : ' (an approve block is {"label":"Approve the plan"})'));
+      i = j;
+      continue;
+    }
     const f = /^(```|~~~)\s*mermaid\s*$/.exec(lines[i]);
     if (!f) continue;
     let j = i + 1, first = '';

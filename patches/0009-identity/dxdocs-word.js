@@ -13,6 +13,15 @@ function lib() {
 }
 let CHARTS = null;
 try { CHARTS = require('./dxcharts.js'); } catch (e) { CHARTS = null; }
+const MDX = (() => { try { return require('./dxdocs-md.js'); } catch (e) { return null; } })();
+/** Chips as the words they show: a date, a status, @name, a tab's or a doc's name. */
+function chipText(text) {
+  if (!MDX) return text;
+  return String(text).replace(MDX.CHIP_RE, (m, kind, body, who) => {
+    const c = MDX.chipOf(kind, body, who);
+    return c.kind === 'date' ? MDX.dateText(c.value) : c.kind === 'pick' ? '[' + c.value + ']' : c.kind === 'mention' ? '@' + (c.value === 'agent' ? 'the agent' : c.value) : c.label;
+  });
+}
 
 /** Width and height of a PNG, JPEG or GIF, read from its header; null when not known. */
 function imageSize(buf) {
@@ -30,7 +39,8 @@ function imageSize(buf) {
   return null;
 }
 /** Inline Markdown (what dxdocs-md draws) to runs: bold, italic, strike, code, links. */
-function runs(D, text, base) {
+function runs(D, text0, base) {
+  const text = chipText(text0);
   const out = [];
   const re = /(\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*([^*\s][^*]*)\*|(^|[^\w])_([^_\s][^_]*)_(?![\w])|\+\+([^+\s](?:[^+]*[^+\s])?)\+\+|==([^=\s](?:[^=]*[^=\s])?)==|(^|[^\\$\w])\$([^\s$](?:[^$\n]*[^\s$\\])?)\$(?![\d$]))/g;
   let last = 0, m;
@@ -109,6 +119,19 @@ async function toDocx(markdown, o) {
         if (rows.length) { const w = Math.max(...rows.map((r) => r.length)); kids.push(tableOf(rows.map((r) => { while (r.length < w) r.push(''); return r; }), true)); kids.push(new D.Paragraph({ children: [] })); }
         continue;
       }
+      // a question and an approval: their words, with the answer or the state
+      if ((lang === 'choice' || lang === 'approve') && MDX) {
+        const r = MDX.blockSpec(lang, code.join('\n'));
+        if (r.spec && lang === 'choice') {
+          kids.push(new D.Paragraph({ keepNext: true, spacing: { before: 120 }, children: runs(D, r.spec.question, { bold: true }) }));
+          r.spec.options.forEach((o) => kids.push(new D.Paragraph({ indent: { left: 360 }, keepNext: true, children: [new D.TextRun({ text: (r.spec.answer.indexOf(o) >= 0 ? '☒ ' : '☐ ') })].concat(runs(D, o)) })));
+          kids.push(new D.Paragraph({ spacing: { after: 120 }, children: [new D.TextRun({ text: r.spec.answer.length ? 'Answered: ' + r.spec.answer.join(', ') : 'Not answered yet', italics: true, color: '666666', size: 18 })] }));
+        } else if (r.spec) {
+          kids.push(new D.Paragraph({ keepNext: true, spacing: { before: 120 }, children: runs(D, r.spec.label, { bold: true }) }));
+          kids.push(new D.Paragraph({ spacing: { after: 120 }, children: [new D.TextRun({ text: r.spec.status === 'approved' ? 'Approved' + (r.spec.by ? ' by ' + r.spec.by : '') : r.spec.status === 'changes' ? 'Changes asked' + (r.spec.note ? ': ' + r.spec.note : '') : 'Waiting for approval', italics: true, color: '666666' })] }));
+        }
+        continue;
+      }
       if (lang === 'math' || lang === 'latex' || lang === 'tex') { kids.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { before: 120, after: 120 }, children: [new D.TextRun({ text: code.join(' '), font: 'Cambria Math', italics: true })] })); continue; }
       if (lang === 'chart' || lang === 'mermaid') {
         const pic = pictures.shift();
@@ -153,6 +176,19 @@ async function toDocx(markdown, o) {
     }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { kids.push(new D.Paragraph({ border: { bottom: { color: 'BBBBBB', space: 1, style: D.BorderStyle.SINGLE, size: 6 } }, children: [] })); i++; continue; }
     if (/^>\s?/.test(l)) {
+      // a callout (> [!NOTE] and the rest): its label, then its lines, shaded
+      const co = MDX && MDX.CALLOUT_RE.exec(l.replace(/^>\s?/, ''));
+      if (co) {
+        const kind = co[1].toUpperCase();
+        const fill = { NOTE: 'E8F0FC', TIP: 'E6F6F0', WARNING: 'FDF0E1', CAUTION: 'FDF0E1', DECISION: 'F1EAFA', IMPORTANT: 'FBE9F0' }[kind] || 'F2F2F2';
+        const shade = { type: D.ShadingType.CLEAR, color: 'auto', fill };
+        kids.push(new D.Paragraph({ shading: shade, keepNext: true, spacing: { before: 120, after: 0 }, children: [new D.TextRun({ text: MDX.CALLOUTS[kind], bold: true, size: 18 })] }));
+        const rest = co[2] ? [co[2]] : [];
+        i++;
+        while (i < lines.length && /^>\s?/.test(lines[i])) rest.push(lines[i++].replace(/^>\s?/, ''));
+        rest.forEach((t, k) => kids.push(new D.Paragraph({ shading: shade, keepNext: k < rest.length - 1, spacing: { before: 0, after: k === rest.length - 1 ? 120 : 0 }, children: runs(D, t) })));
+        continue;
+      }
       while (i < lines.length && /^>\s?/.test(lines[i])) {
         const t = lines[i++].replace(/^>\s?/, '');
         kids.push(new D.Paragraph({ indent: { left: 567 }, border: { left: { color: 'BBBBBB', space: 8, style: D.BorderStyle.SINGLE, size: 12 } }, children: runs(D, t, { italics: true, color: '444444' }) }));

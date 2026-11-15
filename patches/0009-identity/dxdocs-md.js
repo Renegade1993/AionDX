@@ -24,9 +24,31 @@
     var src = block ? '$$' + tex + '$$' : '$' + tex + '$';
     return (block ? '<div' : '<span') + ' class="dx-atom dx-math' + (block ? ' dx-math--block' : '') + '" contenteditable="false" data-src="' + esc(src) + '" data-tex="' + esc(tex) + '">' + esc(tex) + (block ? '</div>' : '</span>');
   }
+  // ---- chips (DX Docs mirror): [[date:2026-11-20]]  [[pick:In progress|Not started|In progress|Done]] (the value, then the options)
+  //      [[@you]] [[@agent]] [[@Name]] (a mention)  [[tab:t2|Decisions]]  [[doc:launch-plan|Launch plan]] (links to a tab, to another doc)
+  var CHIP_RE = /\[\[(date|pick|tab|doc):([^\]\n]{1,400})\]\]|\[\[@([^\]\n|]{1,80})\]\]/g;
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function dateText(v) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || '').trim()); return m && +m[2] >= 1 && +m[2] <= 12 ? MONTHS[+m[2] - 1] + ' ' + (+m[3]) + ', ' + m[1] : String(v || ''); }
+  /** A chip's parts: { kind, value, options, target, label }. */
+  function chipOf(kind, body, who) {
+    if (who != null) return { kind: 'mention', value: who.trim() };
+    var parts = String(body).split('|').map(function (x) { return x.trim(); });
+    if (kind === 'date') return { kind: 'date', value: parts[0] };
+    if (kind === 'pick') { var opts = parts.slice(1).filter(Boolean); if (opts.indexOf(parts[0]) < 0 && parts[0]) opts.unshift(parts[0]); return { kind: 'pick', value: parts[0], options: opts }; }
+    return { kind: kind, target: parts[0], label: parts[1] || parts[0] };
+  }
+  function chipHtml(c, src) {
+    var label = c.kind === 'date' ? dateText(c.value) : c.kind === 'pick' ? (c.value || 'Choose') : c.kind === 'mention' ? '@' + (c.value === 'agent' ? 'the agent' : c.value) : c.label;
+    var cls = 'dx-atom dx-chip dx-chip--' + c.kind + (c.kind === 'pick' ? ' dx-pick-' + slug(c.value) : '');
+    return '<span class="' + cls + '" contenteditable="false" data-src="' + esc(src) + '" data-kind="' + c.kind + '"' +
+      (c.value != null ? ' data-value="' + esc(c.value) + '"' : '') + (c.options ? ' data-options="' + esc(c.options.join('|')) + '"' : '') + (c.target != null ? ' data-target="' + esc(c.target) + '"' : '') +
+      '>' + esc(label) + (c.kind === 'pick' ? '<span class="dx-chip-caret">▾</span>' : '') + '</span>';
+  }
   function inline(src) {
     var codes = [];
     var s = String(src).replace(/`([^`]+)`/g, function (m, c) { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+    var chips = [];
+    s = s.replace(CHIP_RE, function (m, kind, body, who) { chips.push(chipHtml(chipOf(kind, body, who), m)); return '\u0002' + (chips.length - 1) + '\u0002'; });
     var maths = [];
     s = s.replace(MATH_INLINE_RE, function (m, pre, tex) { maths.push(tex); return pre + '\u0001' + (maths.length - 1) + '\u0001'; });
     s = esc(s);
@@ -45,6 +67,7 @@
     s = s.replace(/\+\+([^+\s](?:[^+]*[^+\s])?)\+\+/g, '<u>$1</u>');            // ++underline++
     s = s.replace(/==([^=\s](?:[^=]*[^=\s])?)==/g, '<mark>$1</mark>');            // ==highlight==
     s = s.replace(/\u0001(\d+)\u0001/g, function (m, i) { return mathAtom(maths[+i], false); });
+    s = s.replace(/\u0002(\d+)\u0002/g, function (m, i) { return chips[+i]; });
     s = s.replace(/\u0000(\d+)\u0000/g, function (m, i) { return '<code>' + esc(codes[+i]) + '</code>'; });
     return s;
   }
@@ -73,6 +96,48 @@
       });
       return out;
     });
+  }
+  var CALLOUTS = { NOTE: 'Note', TIP: 'Tip', WARNING: 'Warning', DECISION: 'Decision', IMPORTANT: 'Important', CAUTION: 'Caution' };
+  var CALLOUT_RE = /^\[!(note|tip|warning|decision|important|caution)\]\s*(.*)$/i;
+  // ---- question and approval blocks (DX Docs mirror: the tools for question docs and plans). JSON in a fenced block:
+  //   ```choice  {"question":"...","options":["A","B"],"multi":false,"answer":[]}      the user picks; the answer is saved and sent to the agent
+  //   ```approve {"label":"Approve the plan","status":"open"|"approved"|"changes","note":"","by":"","at":0}
+  /** A question or approval block read: { spec } or { error } (the line an agent needs to fix it). */
+  function blockSpec(kind, text) {
+    var s;
+    try { s = JSON.parse(String(text || '').trim() || '{}'); } catch (e) { return { error: 'its JSON does not read (' + String(e.message).slice(0, 80) + ')' }; }
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return { error: 'it is not a JSON object' };
+    if (kind === 'choice') {
+      if (!String(s.question || '').trim()) return { error: 'it needs "question"' };
+      if (!Array.isArray(s.options) || s.options.length < 2 || s.options.some(function (o) { return typeof o !== 'string' || !o.trim(); })) return { error: 'it needs "options": two or more strings' };
+      var ans = Array.isArray(s.answer) ? s.answer : s.answer ? [s.answer] : [];
+      return { spec: { question: String(s.question), options: s.options.map(String), multi: !!s.multi, answer: ans.filter(function (a) { return s.options.indexOf(a) >= 0; }), by: s.by ? String(s.by) : '', at: +s.at || 0, note: s.note ? String(s.note) : '' } };
+    }
+    var st = s.status || 'open';
+    if (['open', 'approved', 'changes'].indexOf(st) < 0) return { error: '"status" is open, approved or changes' };
+    return { spec: { label: String(s.label || 'Approve this plan'), status: st, note: s.note ? String(s.note) : '', by: s.by ? String(s.by) : '', at: +s.at || 0 } };
+  }
+  var qn = 0;
+  function blockCard(kind, text, whole) {
+    var r = blockSpec(kind, text);
+    if (r.error) return '<div class="dx-atom dx-chart dx-chart--bad" contenteditable="false" data-src="' + esc(whole) + '">This ' + (kind === 'choice' ? 'question' : 'approval') + ' block cannot be shown: ' + esc(r.error) + '.</div>';
+    var s = r.spec, h = [];
+    var when = s.at ? ' · ' + dateText(new Date(s.at).toISOString().slice(0, 10)) : '';
+    if (kind === 'choice') {
+      var name = 'dxq' + (++qn);
+      h.push('<div class="dx-atom dx-choice' + (s.answer.length ? ' dx-choice--answered' : '') + '" contenteditable="false" data-kind="choice" data-src="' + esc(whole) + '">');
+      h.push('<div class="dx-choice-q">' + inline(s.question) + '</div>');
+      s.options.forEach(function (o) {
+        h.push('<label class="dx-choice-opt"><input type="' + (s.multi ? 'checkbox' : 'radio') + '" name="' + name + '" data-opt="' + esc(o) + '"' + (s.answer.indexOf(o) >= 0 ? ' checked' : '') + '> <span>' + inline(o) + '</span></label>');
+      });
+      h.push('<div class="dx-choice-state">' + (s.answer.length ? 'Answered' + (s.by ? ' by ' + esc(s.by) : '') + when + ': ' + esc(s.answer.join(', ')) : s.multi ? 'Tick any that apply.' : 'Pick one.') + '</div></div>');
+    } else {
+      h.push('<div class="dx-atom dx-approve dx-approve--' + s.status + '" contenteditable="false" data-kind="approve" data-src="' + esc(whole) + '">');
+      h.push('<div class="dx-approve-label">' + inline(s.label) + '</div>');
+      h.push('<div class="dx-approve-state">' + (s.status === 'approved' ? 'Approved' + (s.by ? ' by ' + esc(s.by) : '') + when : s.status === 'changes' ? 'Changes asked' + (s.by ? ' by ' + esc(s.by) : '') + when + (s.note ? ': ' + esc(s.note) : '') : 'Waiting for approval') + '</div>');
+      h.push('<div class="dx-approve-row"><button type="button" class="dx-btn dx-btn--primary" data-approve="yes">' + (s.status === 'approved' ? 'Approved' : 'Approve') + '</button><button type="button" class="dx-btn" data-approve="changes">Ask for changes</button></div></div>');
+    }
+    return h.join('');
   }
   function splitRow(row) { return row.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map(function (c) { return c.trim().replace(/\\\|/g, '|'); }); }
   /** A CSV block's rows (quotes and doubled quotes as in a spreadsheet's CSV). */
@@ -141,6 +206,7 @@
           var rows = csvRows(code.join('\n'));
           out.push('<div class="dx-atom dx-csv" contenteditable="false" data-src="' + esc(whole) + '">' + (rows.length ? tableHtml(rows.map(function (r) { return r.map(function (c) { return { text: c, bg: '', w: 0, span: 1 }; }); }), [], { plain: true, cls: 'dx-csv-grid' }) : '<div class="dx-csv-empty">Empty CSV</div>') + '</div>');
         }
+        else if (lang === 'choice' || lang === 'approve') out.push(blockCard(lang, code.join('\n'), whole));
         else if (lang === 'markdown' || lang === 'md') out.push('<div class="dx-atom dx-mdblock" contenteditable="false" data-src="' + esc(whole) + '"><div class="dx-mdblock-tag">Markdown</div>' + toHtml(code.join('\n'), true) + '</div>');
         else out.push('<pre><code' + (fm[2] ? ' class="language-' + esc(fm[2]) + '"' : '') + '>' + esc(code.join('\n')) + '</code></pre>');
         i = j + 1; continue;
@@ -163,6 +229,14 @@
       if (/^>\s?/.test(l)) {
         var q = [];
         while (i < lines.length && /^>\s?/.test(lines[i])) q.push(lines[i++].replace(/^>\s?/, ''));
+        // a callout: > [!NOTE] (also TIP, WARNING, DECISION, IMPORTANT, CAUTION), the way GitHub writes them
+        var cm = q.length && CALLOUT_RE.exec(q[0]);
+        if (cm) {
+          var kind = cm[1].toUpperCase();
+          var rest = (cm[2] ? [cm[2]] : []).concat(q.slice(1));
+          out.push('<blockquote class="dx-callout dx-callout--' + kind.toLowerCase() + '" data-callout="' + kind + '"><div class="dx-callout-tag" contenteditable="false">' + CALLOUTS[kind] + '</div>' + toHtml(rest.join('\n'), true) + '</blockquote>');
+          continue;
+        }
         out.push('<blockquote>' + toHtml(q.join('\n'), true) + '</blockquote>'); continue;
       }
       if (/^\|.*\|\s*$/.test(l) && i + 1 < lines.length && /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
@@ -294,7 +368,7 @@
     });
     return parts.join('\n');
   }
-  var api = { slug: slug, csvRows: csvRows, cellAttrs: cellAttrs, tableModel: tableModel, splitRow: splitRow, CELL_COLOURS: CELL_COLOURS, MATH_INLINE_RE: MATH_INLINE_RE,
+  var api = { blockSpec: blockSpec, chipOf: chipOf, dateText: dateText, CHIP_RE: CHIP_RE, CALLOUT_RE: CALLOUT_RE, CALLOUTS: CALLOUTS, slug: slug, csvRows: csvRows, cellAttrs: cellAttrs, tableModel: tableModel, splitRow: splitRow, CELL_COLOURS: CELL_COLOURS, MATH_INLINE_RE: MATH_INLINE_RE,
     toHtml: toHtml, inline: inline, esc: esc, exportAll: exportAll, splitTabs: splitTabs, joinTabs: joinTabs, findTab: findTab, tabView: tabView, withTabView: withTabView, tabList: tabList, TAB_RE: TAB_RE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.__dxMd = api;

@@ -39,6 +39,20 @@ check('a CSV block is a grid, its text kept as the source', H('```csv\nName,"Cos
 check('a Markdown block is drawn, its text kept as the source', /^<div class="dx-atom dx-mdblock" contenteditable="false" data-src="```markdown\n# T\n```"><div class="dx-mdblock-tag">Markdown<\/div><h1 id="t" data-section="T">T<\/h1><\/div>$/.test(H('```markdown\n# T\n```')), true);
 check('table cells: colours, a column width, a merged cell', H('| A {.bg-blue w=160} | B | C |\n| --- | --- | --- |\n| wide | << | c {.bg-green} |'),
   '<table><thead><tr><th class="dx-bg-blue" data-w="160" style="width:160px">A</th><th>B</th><th>C</th></tr></thead><tbody><tr><td colspan="2">wide</td><td class="dx-bg-green">c</td></tr></tbody></table>');
+// chips, callouts, question and approval blocks (DX Docs mirror, step 4)
+check('chips: a date, a dropdown with its options, a mention, links to a tab and a doc; each keeps its source',
+  H('Due [[date:2026-11-20]], [[pick:In progress|Not started|In progress|Done]], [[@agent]], see [[tab:t2|Decisions]] and [[doc:launch-plan|Launch plan]].'),
+  '<p>Due <span class="dx-atom dx-chip dx-chip--date" contenteditable="false" data-src="[[date:2026-11-20]]" data-kind="date" data-value="2026-11-20">Nov 20, 2026</span>, ' +
+  '<span class="dx-atom dx-chip dx-chip--pick dx-pick-in-progress" contenteditable="false" data-src="[[pick:In progress|Not started|In progress|Done]]" data-kind="pick" data-value="In progress" data-options="Not started|In progress|Done">In progress<span class="dx-chip-caret">▾</span></span>, ' +
+  '<span class="dx-atom dx-chip dx-chip--mention" contenteditable="false" data-src="[[@agent]]" data-kind="mention" data-value="agent">@the agent</span>, see ' +
+  '<span class="dx-atom dx-chip dx-chip--tab" contenteditable="false" data-src="[[tab:t2|Decisions]]" data-kind="tab" data-target="t2">Decisions</span> and ' +
+  '<span class="dx-atom dx-chip dx-chip--doc" contenteditable="false" data-src="[[doc:launch-plan|Launch plan]]" data-kind="doc" data-target="launch-plan">Launch plan</span>.</p>');
+check('a callout', H('> [!WARNING] Mind the budget\n> It is tight.'), '<blockquote class="dx-callout dx-callout--warning" data-callout="WARNING"><div class="dx-callout-tag" contenteditable="false">Warning</div><p>Mind the budget<br>It is tight.</p></blockquote>');
+const ch = H('```choice\n{"question":"Ship when?","options":["Q1","Q2"],"answer":["Q2"],"by":"you"}\n```');
+check('a question block: its options, the answer ticked, its source kept', /^<div class="dx-atom dx-choice dx-choice--answered" contenteditable="false" data-kind="choice" data-src="```choice\n\{&quot;question/.test(ch) &&
+  /type="radio" name="dxq\d+" data-opt="Q2" checked/.test(ch) && /Answered by you: Q2/.test(ch), true);
+check('an approval block, waiting', /dx-approve--open[\s\S]*Approve the plan[\s\S]*Waiting for approval[\s\S]*data-approve="yes"/.test(H('```approve\n{"label":"Approve the plan"}\n```')), true);
+check('a block that does not read says why', /This question block cannot be shown: it needs &quot;options&quot;: two or more strings/.test(H('```choice\n{"question":"x","options":["only"]}\n```')), true);
 check('an unknown colour is ignored; a cell pipe stays in its cell', H('| a {.bg-pink} | b \\| c |\n| --- | --- |'), '<table><thead><tr><th>a</th><th>b | c</th></tr></thead><tbody></tbody></table>');
 check('a quote', H('> said\n> twice'), '<blockquote><p>said<br>twice</p></blockquote>');
 check('a rule', H('a\n\n---\n\nb'), '<p>a</p>\n<hr>\n<p>b</p>');
