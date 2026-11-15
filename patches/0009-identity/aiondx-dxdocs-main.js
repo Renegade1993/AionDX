@@ -96,7 +96,7 @@ function create(o) {
     if (op === 'version') return { ok: true, markdown: D.readVersion(dir, req.id, req.version) };
     if (op === 'restore') return Object.assign({ ok: true }, D.restore(dir, req.id, req.version));
     if (op === 'comments') return { ok: true, comments: D.comments(dir, req.id) };
-    if (op === 'comment') return { ok: true, comment: D.addComment(dir, req.id, { quote: req.quote, text: req.text, section: req.section, tab: req.tab, on: req.on, index: req.index, by: 'user' }) };
+    if (op === 'comment') return { ok: true, comment: D.addComment(dir, req.id, { quote: req.quote, text: req.text, section: req.section, tab: req.tab, on: req.on, index: req.index, sg: req.sg, by: 'user' }) };
     if (op === 'reply') return { ok: true, comment: D.replyComment(dir, req.id, req.comment, { text: req.text, resolve: req.resolve, by: 'user' }) };
     if (op === 'image') {
       // a picture a doc shows: relative to the DX Docs folder, or a path or file: URL under the project's root (the folder above it)
@@ -115,6 +115,8 @@ function create(o) {
       return { ok: true, url: 'data:' + type + ';base64,' + fs.readFileSync(f).toString('base64') };
     }
     if (op === 'suggestions') return { ok: true, suggestions: D.suggestions(dir, req.id) };
+    // the user's own Suggesting mode: their change proposed, not made
+    if (op === 'suggest') return Object.assign({ ok: true }, D.suggest(dir, req.id, { find: req.find, replace: req.replace, note: req.note, by: 'you' }));
     if (op === 'decide') return Object.assign({ ok: true }, D.decide(dir, req.id, req.suggestion, req.verdict === 'accept' ? 'accept' : 'reject', 'you'));
     if (op === 'watch') { watch(dir, sender); return { ok: true }; }
     if (op === 'unwatch') { unwatch(dir, sender); return { ok: true }; }

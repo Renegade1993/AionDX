@@ -207,6 +207,12 @@ try {
   const ch = D.addComment(td, cq.id, { on: 'chart', index: 0, section: 'the chart', text: 'Too small?', by: 'user' });
   check('an agent comments on words as they read (Markdown marks ignored), a person on a chart', ac.by === 'agent' && ch.on === 'chart' && ch.index === 0 && D.comments(td, cq.id).length === 2);
   check('an agent\'s comment on words that are not in the doc is refused', /were not found in the doc/.test(err(() => D.addComment(td, cq.id, { quote: 'Ship the gamma', text: 'x', by: 'agent' }))));
+  // the user's own suggestion; talk on it; the decision closes the talk
+  const us = D.suggest(td, cq.id, { find: 'Ship the **beta** first.', replace: 'Ship the beta in March.', by: 'you' }).suggestion;
+  const talk = D.addComment(td, cq.id, { sg: us.id, text: 'Why March?', by: 'agent' });
+  check('talk on a suggestion is a thread of its own', talk.on === 'suggestion' && talk.sg === us.id && /No suggestion "s99"/.test(err(() => D.addComment(td, cq.id, { sg: 's99', text: 'x' }))));
+  D.decide(td, cq.id, us.id, 'accept', 'the agent');
+  check('accepting it applies it and closes its talk', /Ship the beta in March\./.test(fs.readFileSync(path.join(td, cq.id + '.md'), 'utf8')) && D.comments(td, cq.id).find((c) => c.id === talk.id).resolved === true);
   check('a question block that does not read is refused, with the line and the shape it needs',
     /the question block at line \d+ \(section "Plan"\): it needs "options": two or more strings \(a choice block is/.test(err(() => D.update(td, cq.id, [{ op: 'append_to_section', heading: 'Plan', body: '```choice\n{"question":"When?","options":["now"]}\n```' }]))));
 }

@@ -3747,7 +3747,7 @@ async function pageTarget() {
         box.innerHTML = '<div class="flex flex-col min-w-0" style="flex:1 1 0;min-width:0"><div class="shrink-0"><header class="chat-layout-header" style="display:flex;align-items:center;height:36px"><span>Chat</span><div class="flex items-center gap-12px shrink-0" style="margin-left:auto"></div></header></div><div>messages</div></div>';
         document.body.appendChild(box);
         const M = window.__dxMd;
-        const X = window.__dx = { calls: [], dirs: { 'C:/ws/Docs': {}, 'C:/atlas/DX Docs': { 'atlas-notes': '# Atlas notes\\n\\nFrom another project.\\n' } }, deleted: [], comments: {}, cb: null };
+        const X = window.__dx = { sgs: {}, calls: [], dirs: { 'C:/ws/Docs': {}, 'C:/atlas/DX Docs': { 'atlas-notes': '# Atlas notes\\n\\nFrom another project.\\n' } }, deleted: [], comments: {}, cb: null };
         const docs = (a) => X.dirs[a.docsDir] || (X.dirs[a.docsDir] = {});
         const meta = (dir, id) => ({ id, title: M.splitTabs(X.dirs[dir][id]).title || id, modified: Date.now(), tabs: M.tabList(X.dirs[dir][id]).length, pending: 0, openComments: 0 });
         const changed = (a, id) => setTimeout(() => X.cb && X.cb({ kind: 'changed', docsDir: a.docsDir, id }), 30);
@@ -3760,7 +3760,10 @@ async function pageTarget() {
             if (op === 'alldocs') return ok({ folders: Object.keys(X.dirs).filter((k) => Object.keys(X.dirs[k]).length).map((k) => ({ docsDir: k, name: k === 'C:/ws/Docs' ? 'ws' : 'Atlas', docs: Object.keys(X.dirs[k]).map((id) => meta(k, id)) })) });
             if (op === 'create') { const id = a.title.toLowerCase().replace(/[^a-z0-9]+/g, '-'); d[id] = '# ' + a.title + '\\n'; changed(a, id); return ok({ id, title: a.title }); }
             // a copy, as the app's IPC gives (the page must notice a change by its content, not by holding the same object)
-            if (op === 'read') return d[a.id] != null ? ok({ id: a.id, title: M.splitTabs(d[a.id]).title, markdown: d[a.id], comments: JSON.parse(JSON.stringify(X.comments[a.id] || [])), suggestions: [] }) : Promise.resolve({ ok: false, error: 'no doc' });
+            const sgs = (id) => (X.sgs[id] || []).filter((s) => s.status === 'open').map((s) => Object.assign({}, s, { stale: d[id].split(s.find).length - 1 !== 1 }));
+            if (op === 'read') return d[a.id] != null ? ok({ id: a.id, title: M.splitTabs(d[a.id]).title, markdown: d[a.id], comments: JSON.parse(JSON.stringify(X.comments[a.id] || [])), suggestions: sgs(a.id) }) : Promise.resolve({ ok: false, error: 'no doc' });
+            if (op === 'suggest') { if (d[a.id].split(a.find).length - 1 !== 1) return Promise.resolve({ ok: false, error: 'not once' }); const s = { id: 's' + ((X.sgs[a.id] = X.sgs[a.id] || []).length + 1), find: a.find, replace: a.replace, by: 'you', status: 'open' }; X.sgs[a.id].push(s); return ok({ suggestion: s }); }
+            if (op === 'decide') { const s = (X.sgs[a.id] || []).find((x) => x.id === a.suggestion); if (!s) return Promise.resolve({ ok: false, error: 'no' }); s.status = a.verdict === 'accept' ? 'accepted' : 'rejected'; if (a.verdict === 'accept') d[a.id] = d[a.id].replace(s.find, s.replace); (X.comments[a.id] || []).forEach((c) => { if (c.sg === s.id) c.resolved = true; }); return ok(); }
             if (op === 'save') { d[a.id] = a.markdown; return ok(); }
             if (op === 'rename') { const T = M.splitTabs(d[a.id]); T.title = a.title; d[a.id] = M.joinTabs(T); return ok(); }
             if (op === 'tabs') {
@@ -3776,7 +3779,7 @@ async function pageTarget() {
             if (op === 'delete') { X.deleted.push({ deleted: a.id + '--1', id: a.id, title: M.splitTabs(d[a.id]).title, at: Date.now(), md: d[a.id] }); delete d[a.id]; return ok({ deleted: a.id + '--1' }); }
             if (op === 'deleted') return ok({ deleted: X.deleted.map((x) => ({ deleted: x.deleted, id: x.id, title: x.title, at: x.at })) });
             if (op === 'undelete') { const x = X.deleted.find((y) => y.deleted === a.deleted); X.deleted = X.deleted.filter((y) => y !== x); d[x.id] = x.md; return ok({ id: x.id, title: x.title }); }
-            if (op === 'comment') { X.cn = (X.cn || 0) + 1; const c = { id: 'c' + (X.cn + 8), by: 'user', quote: a.quote, section: a.section, text: a.text, tab: a.tab, replies: [], resolved: false }; if (a.on) { c.on = a.on; c.index = a.index || 0; } (X.comments[a.id] = X.comments[a.id] || []).push(c); return ok({ comment: c }); }
+            if (op === 'comment') { X.cn = (X.cn || 0) + 1; const c = { id: 'c' + (X.cn + 8), by: 'user', quote: a.quote, section: a.section, text: a.text, tab: a.tab, replies: [], resolved: false }; if (a.on) { c.on = a.on; c.index = a.index || 0; } if (a.sg) { c.on = 'suggestion'; c.sg = a.sg; } (X.comments[a.id] = X.comments[a.id] || []).push(c); return ok({ comment: c }); }
             if (op === 'reply') { const c = (X.comments[a.id] || []).find((x) => x.id === a.comment); if (!c) return Promise.resolve({ ok: false, error: 'no comment' }); if (a.text) c.replies.push({ by: 'user', text: a.text, at: Date.now() }); if (a.resolve !== undefined) c.resolved = !!a.resolve; return ok({ comment: c }); }
             if (op === 'docx' || op === 'pdf' || op === 'mdcopy') return ok({ path: 'C:/ws/Docs/' + a.id + (a.tab ? '-' + a.tab : '') + '.' + (op === 'mdcopy' ? 'md' : op) });
             if (op === 'image') return Promise.resolve({ ok: false, error: 'none' });
@@ -4119,6 +4122,46 @@ async function pageTarget() {
       await sleep(900);
       check(sc, 'an agent\'s comment shows at once: a highlight, and in the list as the agent\'s', (await js(`!!document.querySelector('#tbox .dx-cmark[data-cid="a1"]')`)) && /Agent: Should the end say when\?/.test((await geo()).text), (await geo()).text.slice(-200));
       await js(`(() => { localStorage.removeItem('aionui.dx.dx.cpane'); return 0; })()`);
+
+      // ---- your Suggesting mode, talk on a suggestion, accept all (rows 35 to 37) ----
+      await js(`(() => { const X = window.__dx; X.dirs['C:/ws/Docs'].sg = '# Proposal\\n\\nThe launch moves to March. Budget stays at ten.\\n'; X.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'sg' }); return 0; })()`);
+      await sleep(1200);
+      await humanClick('#tbox [data-testid="aiondx-dx-suggesting"]');
+      await sleep(500);
+      check(sc, 'Suggesting is off until you switch it on; then it shows as on', (await js(`document.querySelector('#tbox [data-testid="aiondx-dx-suggesting"]').getAttribute('aria-pressed')`)) === 'true');
+      const sgDoc = () => js(`window.__dx.dirs['C:/ws/Docs'].sg`);
+      const replaceWord = (word, by) => js(`(() => { const b = document.querySelector('#tbox .dx-body'); const w = document.createTreeWalker(b, NodeFilter.SHOW_TEXT); let t; while ((t = w.nextNode()) && t.nodeValue.indexOf('${word}') < 0); const i = t.nodeValue.indexOf('${word}'); const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + ${word.length}); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.focus(); document.execCommand('insertText', false, '${by}'); return 0; })()`);
+      await replaceWord('March', 'April');
+      await sleep(3300);
+      let sgc = await calls('suggest');
+      let toldS = (await posts('/api/conversations/harness1/messages')).map((x) => x.body.content).filter((m) => /^\[DX Doc suggestion\]/.test(m));
+      check(sc, 'an edit in Suggesting mode becomes a suggestion on the doc\'s own words; the doc is unchanged; the agent is told',
+        sgc.length === 1 && /March/.test(sgc[0].find) && /April/.test(sgc[0].replace) && !/March/.test(sgc[0].replace) && /moves to March\./.test(await sgDoc()) && toldS.length === 1 && /"verdict":"accept"/.test(toldS[0]), JSON.stringify([sgc, toldS]));
+      check(sc, 'and the doc shows it as a suggestion: the old words struck, the new ones beside them, a card saying You suggest',
+        (await js(`(document.querySelector('#tbox .dx-body .dx-sg-del') || {}).textContent`)) === sgc[0].find.trim() && /You suggest/.test(await js(`document.querySelector('#tbox [data-testid="aiondx-dx-sgs"]').textContent`)), await js(`document.querySelector('#tbox .dx-body').innerHTML`));
+      await replaceWord('ten', 'twelve');
+      await sleep(3300);
+      await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await sleep(400);
+      await shot('dxdocs-suggest-light');
+      await send('Emulation.clearDeviceMetricsOverride', {});
+      await sleep(300);
+      check(sc, 'a second one', (await calls('suggest')).length === 2 && /2 suggestions/.test(await js(`document.querySelector('#tbox [data-testid="aiondx-dx-sgs"]').textContent`)));
+      // talk on the first
+      await js(`(() => { document.querySelector('#tbox [data-testid="aiondx-dx-sg"] [data-testid="aiondx-dx-sg-talk"]').click(); return 0; })()`);
+      await sleep(300);
+      await typeInto('[data-testid="aiondx-dx-ctext"]', 'April suits sales.');
+      await humanClick('[data-testid="aiondx-dx-csend"]');
+      await sleep(900);
+      const tc = (await calls('comment')).pop();
+      check(sc, 'Talk on a suggestion: a thread of its own, not in the Comments list; the card counts it', tc.sg === 's1' && /Talk \(1\)/.test(await js(`document.querySelector('#tbox [data-testid="aiondx-dx-sg"][data-sg="s1"] [data-testid="aiondx-dx-sg-talk"]').textContent`)) &&
+        !(await js(`!!document.querySelector('#tbox .dx-cmark[data-cid]') && [...document.querySelectorAll('#tbox .dx-cmark')].some((m) => /April suits/.test(m.title))`)), JSON.stringify(tc));
+      // accept all
+      await humanClick('#tbox [data-testid="aiondx-dx-sg-acceptall"]');
+      await sleep(900);
+      check(sc, 'Accept all applies every suggestion that can be; their cards go', /moves to April\. Budget stays at twelve\./.test(await sgDoc()) && (await js(`document.querySelector('#tbox [data-testid="aiondx-dx-sgs"]').hidden`)), await sgDoc());
+      await humanClick('#tbox [data-testid="aiondx-dx-suggesting"]');
+      await sleep(300);
       await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
     }
 

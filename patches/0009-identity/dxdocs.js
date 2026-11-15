@@ -504,6 +504,9 @@ function decide(docsDir, id, sid, verdict, by) {
   s.status = verdict === 'accept' ? 'accepted' : verdict === 'reject' ? 'rejected' : 'withdrawn';
   s.decidedAt = Date.now(); s.decidedBy = verdict === 'withdraw' ? s.by : (by || 'you');
   writeSuggestions(docsDir, id, all);
+  // the decision closes the talk on it
+  const cs = comments(docsDir, id);
+  if (cs.some((c) => c.sg === sid && !c.resolved)) { cs.forEach((c) => { if (c.sg === sid) c.resolved = true; }); writeAtomic(commentsFile(docsDir, id), JSON.stringify(cs, null, 2)); }
   return { suggestion: s, saved };
 }
 function commentsFile(docsDir, id) { docPath(docsDir, id); return path.join(docsDir, '.comments', id + '.json'); }
@@ -518,6 +521,12 @@ function addComment(docsDir, id, o) {
   if (o && o.tab) c.tab = String(o.tab).slice(0, 80);
   // on a chart or a diagram (the nth of its kind in the tab) rather than on words
   if (o && (o.on === 'chart' || o.on === 'diagram')) { c.on = o.on; c.index = Math.max(0, Math.min(999, +o.index || 0)); }
+  // talk on a suggestion: a thread of its own, closed by the decision on it
+  if (o && o.sg) {
+    const sg = readSuggestions(docsDir, id).find((s) => s.id === o.sg);
+    if (!sg) throw new Error('No suggestion "' + o.sg + '" on that doc.');
+    c.on = 'suggestion'; c.sg = sg.id;
+  }
   const plain = (t) => String(t).replace(/[*_~`=+]/g, '').replace(/\s+/g, '');
   if (o && o.quote && !c.on && o.by === 'agent' && !plain(md(docsDir, id)).includes(plain(o.quote).slice(0, 400))) {
     throw new Error('The words to comment on were not found in the doc: "' + String(o.quote).slice(0, 80) + '". Quote them as they stand (aiondx doc read shows the doc).');
@@ -566,13 +575,15 @@ if (require.main === module) {
       : cmd === 'comments' ? { comments: comments(docsDir, args.doc) }
       : cmd === 'reply' ? replyComment(docsDir, args.doc, args.comment, { text: args.text, resolve: args.resolve, by: args.by || 'agent' })
       // an agent's own comment or question, on words ("quote") or a whole tab (no quote); the user answers in its thread
-      : cmd === 'comment' ? { comment: addComment(docsDir, args.doc, { quote: args.quote, text: args.text, tab: args.tab, section: args.section, on: args.on, index: args.index, by: 'agent' }) }
+      : cmd === 'comment' ? { comment: addComment(docsDir, args.doc, { quote: args.quote, text: args.text, tab: args.tab, section: args.section, on: args.on, index: args.index, sg: args.suggestion, by: 'agent' }) }
       : cmd === 'history' ? { versions: history(docsDir, args.doc) }
       : cmd === 'suggest' ? suggest(docsDir, args.doc, { find: args.find, replace: args.replace, note: args.note, by: args.by || 'agent' })
       : cmd === 'suggestions' ? { suggestions: suggestions(docsDir, args.doc) }
       : cmd === 'withdraw' ? decide(docsDir, args.doc, args.suggestion, 'withdraw', 'agent')
+      // the agent answers the user's own suggestion: accept or reject it (its own it withdraws)
+      : cmd === 'decide' ? (() => { const s = readSuggestions(docsDir, args.doc).find((x) => x.id === args.suggestion); if (s && s.by === 'agent') throw new Error('That suggestion is yours: withdraw it, or leave it to the user.'); return decide(docsDir, args.doc, args.suggestion, args.verdict === 'accept' ? 'accept' : 'reject', 'the agent'); })()
       : null;
-    if (!r) done({ ok: false, error: 'Commands: where, list, create, read, update, comments, comment, reply, history, suggest, suggestions, withdraw.' }, 2);
+    if (!r) done({ ok: false, error: 'Commands: where, list, create, read, update, comments, comment, reply, history, suggest, suggestions, withdraw, decide.' }, 2);
     done(Object.assign({ ok: true, docsDir }, r));
   } catch (e) {
     done({ ok: false, error: e.message }, 1);

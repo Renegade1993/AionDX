@@ -11704,6 +11704,7 @@
       if (commentsChanged) {
         dxMarkComments(dx.main.querySelector('.dx-body'));
         if (dx.cpaneOpen) dxComments(true);
+        dxShowSuggestions();   // a suggestion's talk count
         if (dx.ccard && dx.ccard.id && !dxDrafting(id)) dxCard(dx.ccard.id, dx.main.querySelector('.dx-cmark[data-cid="' + dx.ccard.id + '"]'));
       }
       if (JSON.stringify(r.suggestions || []) !== JSON.stringify(dx.suggestions || [])) { dx.suggestions = r.suggestions || []; dxShowSuggestions(); }
@@ -11882,6 +11883,7 @@
     dxPickTab();
     m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back" title="All docs">‹</button><span class="dx-bar-title" data-act="rename" title="Click to rename" data-testid="aiondx-dx-title"></span>' +
       '<span class="dx-saved" data-testid="aiondx-dx-saved"></span>' +
+      '<button type="button" class="dx-btn dx-suggest-toggle" data-act="suggesting" data-testid="aiondx-dx-suggesting" title="Suggesting: your edits are proposed, not made, until accepted" aria-pressed="' + dxSuggesting() + '">Suggesting</button>' +
       '<button type="button" class="dx-btn" data-act="comments" title="Comments">Comments' + (open ? ' (' + open + ')' : '') + '</button>' +
       '<button type="button" class="dx-btn" data-act="more" title="Tabs, history, export, delete" data-testid="aiondx-dx-more">⋯</button></div>' +
       '<div class="dx-tabstrip" role="tablist" data-testid="aiondx-dx-tabs" hidden></div>' +
@@ -11912,6 +11914,7 @@
     dxShowSuggestions();
     dxFigureButtons(bodyEl);
     dxMarkComments(bodyEl);
+    if (dxSuggesting()) dx.baseView = dxToMarkdown(bodyEl);   // what your edits are measured against
     // an open card follows its words as the doc scrolls
     bodyEl.addEventListener('scroll', function () {
       var cd = dx.main.querySelector('.dx-ccard');
@@ -11934,6 +11937,7 @@
       else if (a === 'rename') dxRenameDoc(b);
       else if (a === 'edit') dxEdit();
       else if (a === 'comments') dxComments(!dx.cpaneOpen);
+      else if (a === 'suggesting') { dxFlush().then(function () { dx.suggestMode = dx.suggestMode || {}; var key = dx.docsDir + '|' + dx.doc; dx.suggestMode[key] = !dx.suggestMode[key]; dxDrawDoc(); }); }
       else if (a === 'more') dxMore(b);
     });
   }
@@ -11992,7 +11996,7 @@
     dx.typed = true;
     dxSavedText('Unsaved');
     clearTimeout(dxSaveTimer);
-    if (!dx.theirs) dxSaveTimer = setTimeout(dxFlush, 1200);
+    if (!dx.theirs) dxSaveTimer = setTimeout(dxFlush, dxSuggesting() ? 2500 : 1200);
   }
   /** Saves what was typed (now): the doc's Markdown from the page, a version kept. Resolves when done. */
   async function dxFlush() {
@@ -12001,6 +12005,8 @@
     var body = dx.main && dx.main.querySelector('.dx-body[contenteditable="true"]');
     if (!body) return;
     var view = dxToMarkdown(body);
+    // Suggesting mode: the change becomes a suggestion; the doc stays as it was
+    if (dxSuggesting()) { dx.typed = false; return dxPropose(view); }
     // the open tab's text goes back into its place in the doc; the other tabs stay as they are
     var md = dx.tab ? window.__dxMd.withTabView(dx.md, dx.tab, view) : view;
     dx.typed = false;
@@ -12673,10 +12679,20 @@
     box.hidden = !open.length;
     box.innerHTML = '';
     if (!open.length) return;
-    var head = document.createElement('div'); head.className = 'dx-sgs-head'; head.textContent = open.length === 1 ? '1 suggestion' : open.length + ' suggestions'; box.appendChild(head);
+    var head = document.createElement('div'); head.className = 'dx-sgs-head';
+    var ht = document.createElement('span'); ht.textContent = open.length === 1 ? '1 suggestion' : open.length + ' suggestions'; head.appendChild(ht);
+    // accept or reject every one that can be applied, in one go (beyond Claude Docs' one card at a time)
+    var live = open.filter(function (s) { return !s.stale; });
+    if (live.length > 1) {
+      var all = document.createElement('span'); all.className = 'dx-sgs-all';
+      all.innerHTML = '<button type="button" class="dx-btn" data-all="reject" data-testid="aiondx-dx-sg-rejectall">Reject all</button><button type="button" class="dx-btn dx-btn--primary" data-all="accept" data-testid="aiondx-dx-sg-acceptall">Accept all</button>';
+      all.addEventListener('click', function (ev) { var b = ev.target.closest('[data-all]'); if (b) dxDecideAll(live.map(function (s) { return s.id; }), b.getAttribute('data-all')); });
+      head.appendChild(all);
+    }
+    box.appendChild(head);
     open.forEach(function (s) {
       var card = document.createElement('div'); card.className = 'dx-sg-card'; card.setAttribute('data-sg', s.id); card.setAttribute('data-testid', 'aiondx-dx-sg');
-      var who = document.createElement('div'); who.className = 'dx-sg-who'; who.textContent = (s.by === 'agent' ? 'The agent' : s.by) + ' suggests' + (s.stale ? ' (its words have changed since; it cannot be applied)' : '');
+      var who = document.createElement('div'); who.className = 'dx-sg-who'; who.textContent = (s.by === 'agent' ? 'The agent suggests' : s.by === 'you' ? 'You suggest' : s.by + ' suggests') + (s.stale ? ' (its words have changed since; it cannot be applied)' : '');
       var what = document.createElement('div'); what.className = 'dx-sg-what';
       var d = document.createElement('del'); d.textContent = s.find.length > 140 ? s.find.slice(0, 139) + '\u2026' : s.find;
       var a = document.createElement('ins'); a.textContent = s.replace ? (s.replace.length > 140 ? s.replace.slice(0, 139) + '\u2026' : s.replace) : '(delete)';
@@ -12684,17 +12700,73 @@
       card.appendChild(who); card.appendChild(what);
       if (s.note) { var nt = document.createElement('div'); nt.className = 'dx-sg-note'; nt.textContent = s.note; card.appendChild(nt); }
       var row = document.createElement('div'); row.className = 'dx-crow';
-      row.innerHTML = '<button type="button" class="dx-btn" data-sgact="reject">Reject</button><button type="button" class="dx-btn dx-btn--primary" data-sgact="accept"' + (s.stale ? ' disabled' : '') + '>Accept</button>';
+      // talk on it: a thread of its own (the decision closes it)
+      var talk = (dx.comments || []).filter(function (c) { return c.sg === s.id; });
+      var tn = talk.reduce(function (n, c) { return n + 1 + (c.replies || []).length; }, 0);
+      row.innerHTML = '<button type="button" class="dx-btn dx-sg-talk" data-sgact="talk" data-testid="aiondx-dx-sg-talk">' + (tn ? 'Talk (' + tn + ')' : 'Talk') + '</button>' +
+        '<button type="button" class="dx-btn" data-sgact="reject">' + (s.by === 'you' ? 'Withdraw' : 'Reject') + '</button><button type="button" class="dx-btn dx-btn--primary" data-sgact="accept"' + (s.stale ? ' disabled' : '') + '>Accept</button>';
       card.appendChild(row);
       card.addEventListener('mouseenter', function () { body.querySelectorAll('[data-sg="' + s.id + '"]').forEach(function (x) { x.classList.add('dx-sg-on'); }); });
       card.addEventListener('mouseleave', function () { body.querySelectorAll('.dx-sg-on').forEach(function (x) { x.classList.remove('dx-sg-on'); }); });
       card.addEventListener('click', function (ev) {
         var b = ev.target.closest('[data-sgact]');
         if (!b) { var mk = body.querySelector('.dx-sg-del[data-sg="' + s.id + '"]'); if (mk) mk.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+        if (b.getAttribute('data-sgact') === 'talk') {
+          dx.cstack = null;
+          var anchorEl = body.querySelector('.dx-sg-del[data-sg="' + s.id + '"]') || card;
+          if (talk.length) dxCard(talk[0].id, anchorEl); else dxCard(null, anchorEl, { quote: '', on: 'suggestion', sg: s.id, label: 'the suggestion “' + s.find.slice(0, 40) + '” → “' + s.replace.slice(0, 40) + '”' });
+          return;
+        }
         dxDecide(s.id, b.getAttribute('data-sgact'));
       });
       box.appendChild(card);
     });
+  }
+  /** Accept or reject several suggestions, one after another (each keeps its version); then the doc again. */
+  async function dxDecideAll(ids, verdict) {
+    await dxFlush();
+    var bad = 0;
+    for (var i = 0; i < ids.length; i++) { var r = await dxApi('decide', { id: dx.doc, suggestion: ids[i], verdict: verdict }); if (!r || !r.ok) bad++; }
+    if (bad) toast(bad + ' of ' + ids.length + ' could not be ' + (verdict === 'accept' ? 'applied' : 'rejected') + '.', 'Their words had changed since.');
+    var x = await dxApi('read', { id: dx.doc });
+    if (x && x.ok) { dx.md = x.markdown; dx.comments = x.comments || []; dx.suggestions = x.suggestions || []; dx.typed = false; dxDrawDoc(); }
+  }
+  // ---- your Suggesting mode (off until you switch it on in a doc): your edits are proposed as suggestions, the doc unchanged until accepted
+  function dxSuggesting() { return !!(dx.suggestMode && dx.suggestMode[dx.docsDir + '|' + dx.doc]); }
+  /** The change between what the doc showed and what you typed, as one suggestion on the doc's own words (found once in it). */
+  async function dxPropose(view) {
+    var base = dx.baseView || '';
+    if (view === base) { dxSavedText(''); return; }
+    var p = 0, a = base.length, b = view.length;
+    while (p < a && p < b && base[p] === view[p]) p++;
+    var s = 0;
+    while (s < a - p && s < b - p && base[a - 1 - s] === view[b - 1 - s]) s++;
+    var ws = function (ch) { return /\s/.test(ch); };
+    while (p > 0 && !ws(base[p - 1])) p--;                       // whole words
+    while (s > 0 && !ws(base[a - s])) s--;
+    var count = function (t) { return t ? String(dx.md).split(t).length - 1 : 0; };
+    var find = base.slice(p, a - s), repl = view.slice(p, b - s);
+    // an insertion, or words found more than once: take in the next word on each side until the words stand once in the doc
+    for (var k = 0; k < 12 && (!find.trim() || count(find) !== 1); k++) {
+      if (p > 0) { p--; while (p > 0 && !ws(base[p - 1])) p--; }
+      if (s > 0) { s--; while (s > 0 && !ws(base[a - s])) s--; }
+      find = base.slice(p, a - s); repl = view.slice(p, b - s);
+      if (p === 0 && s === 0) break;
+    }
+    if (count(find) !== 1) {
+      toast('That change cannot be proposed as a suggestion.', 'Its words do not stand once in the doc as written; switch Suggesting off to make it, or change fewer words.');
+      dx.typed = false; dxDrawDoc(); return;
+    }
+    dxSavedText('Suggesting…');
+    var r = await dxApi('suggest', { id: dx.doc, find: find, replace: repl });
+    if (!r || !r.ok) { toast('The suggestion was not made.', r && r.error); dx.typed = false; dxDrawDoc(); return; }
+    dxTell('[DX Doc suggestion] In ' + dxWhere() + ', the user suggests changing:\n> ' + find.trim().replace(/\n/g, '\n> ') + '\nto:\n> ' + (repl.trim() || '(nothing: delete it)').replace(/\n/g, '\n> ') +
+      '\n\n(Accept or reject it: aiondx doc decide --json \'{"doc":"' + dx.doc + '","suggestion":"' + r.suggestion.id + '","verdict":"accept"}\'; talk on it: aiondx doc comment --json \'{"doc":"' + dx.doc + '","suggestion":"' + r.suggestion.id + '","text":"..."}\'.)');
+    var x = await dxApi('read', { id: dx.doc });
+    if (x && x.ok) { dx.md = x.markdown; dx.comments = x.comments || []; dx.suggestions = x.suggestions || []; }
+    dx.typed = false;
+    dxDrawDoc();
+    dxSavedText('Suggested');
   }
   async function dxDecide(sid, verdict) {
     await dxFlush();
@@ -12864,7 +12936,7 @@
   var DX_CPANE_KEY = KEY_PREFIX + 'dx.cpane';   // the list's share of the panel's height, 0.18 to 0.75
   function dxCPaneShare() { var v = NaN; try { v = parseFloat(localStorage.getItem(DX_CPANE_KEY)); } catch (e) {} return v >= 0.18 && v <= 0.75 ? v : 0.36; }
   /** This tab's comments (comments from before tabs show on every tab). */
-  function dxTabComments() { return (dx.comments || []).filter(function (c) { return !c.tab || c.tab === (dx.tab || ''); }); }
+  function dxTabComments() { return (dx.comments || []).filter(function (c) { return c.on !== 'suggestion' && (!c.tab || c.tab === (dx.tab || '')); }); }
   function dxCommentById(id) { return (dx.comments || []).filter(function (c) { return c.id === id; })[0] || null; }
   function dxWhoSaid(by) { return by === 'user' || by === 'you' ? 'You' : 'Agent'; }
   /** Where a comment's words stand in the drawn doc: { from: [node, offset], to: [node, offset] } over text nodes, whitespace ignored; null when gone. */
@@ -12919,7 +12991,7 @@
       if (f) dxWrapWords(f, c.id);
     });
     var cb = dx.main && dx.main.querySelector('.dx-bar [data-act="comments"]');
-    var n = (dx.comments || []).filter(function (c) { return !c.resolved; }).length;
+    var n = (dx.comments || []).filter(function (c) { return !c.resolved && c.on !== 'suggestion'; }).length;
     if (cb) cb.textContent = 'Comments' + (n ? ' (' + n + ')' : '');
   }
   /** A Comment button on each chart and diagram: a comment on it (on the point last clicked, when one was). */
@@ -13032,7 +13104,7 @@
     ta.placeholder = draft ? 'Your comment; the agent is told' : 'Reply; the agent is told';
     var keep = draft ? dx.cdraft : dx.creply;
     if (keep && (draft ? keep.quote === draft.quote : keep.id === id)) ta.value = keep.text || '';
-    if (draft) dx.cdraft = { doc: dx.doc, quote: draft.quote, section: draft.section, on: draft.on, index: draft.index, label: draft.label, text: ta.value };
+    if (draft) dx.cdraft = { doc: dx.doc, quote: draft.quote, section: draft.section, on: draft.on, index: draft.index, label: draft.label, sg: draft.sg, text: ta.value };
     else dx.creply = ta.value ? { doc: dx.doc, id: id, text: ta.value } : null;
     ta.addEventListener('input', function () {
       if (draft) { if (dx.cdraft) dx.cdraft.text = ta.value; }
@@ -13154,14 +13226,14 @@
     var x = await dxApi('read', { id: dx.doc });
     if (!x || !x.ok) return;
     if (x.markdown !== dx.md && !dx.typed && !dxDrafting(dx.doc)) { dx.md = x.markdown; dx.comments = x.comments || []; dx.suggestions = x.suggestions || []; dxDrawDoc(); }
-    else { dx.comments = x.comments || []; dxMarkComments(dx.main.querySelector('.dx-body')); if (dx.cpaneOpen) dxComments(true); }
+    else { dx.comments = x.comments || []; dx.suggestions = x.suggestions || dx.suggestions; dxMarkComments(dx.main.querySelector('.dx-body')); dxShowSuggestions(); if (dx.cpaneOpen) dxComments(true); }
     if (cardId) dxGoToComment(cardId);
   }
   async function dxSendComment(draft, text) {
     text = String(text || '').trim();
     if (!text) return;
     var tabTitle = dxTabTitle();
-    var r = await dxApi('comment', { id: dx.doc, quote: draft.quote || '', section: draft.label || draft.section || '', text: text, tab: dx.tab || '', on: draft.on || '', index: draft.index });
+    var r = await dxApi('comment', { id: dx.doc, quote: draft.quote || '', section: draft.label || draft.section || '', text: text, tab: dx.tab || '', on: draft.on === 'suggestion' ? '' : draft.on || '', index: draft.index, sg: draft.sg || '' });
     if (!r || !r.ok) { toast('The comment was not saved.', r && r.error); return; }
     dx.cdraft = null;
     dxCloseCard();
@@ -13340,7 +13412,9 @@
       '.dx-sg-ins{color:var(--color-success-6,#1a7f37);text-decoration:underline;background:rgba(40,160,80,.10);margin-left:2px}',
       '.dx-sg-on{outline:2px solid rgba(var(--primary-6),.45);border-radius:2px}',
       '.dx-sgs{flex:0 0 auto;max-height:40%;overflow:auto;padding:6px 10px;border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06));background:var(--color-bg-2,var(--color-fill-1))}',
-      '.dx-sgs-head{font-size:11.5px;font-weight:600;color:var(--color-text-2);margin:2px 2px 6px}',
+      '.dx-sgs-head{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--color-text-2);margin:2px 2px 6px}.dx-sgs-head>span:first-child{margin-right:auto}.dx-sgs-all{display:inline-flex;gap:4px}',
+      '.dx-suggest-toggle[aria-pressed="true"]{background:rgba(60,170,90,.18);color:var(--color-success-6,#1a7f37);font-weight:600}',
+      '.dx-sg-talk{margin-right:auto}',
       '.dx-sg-card{border:1px solid var(--color-border-2,rgba(0,0,0,.1));border-radius:8px;padding:8px 10px;margin-bottom:6px;background:var(--color-bg-1,#fff);cursor:pointer;font-size:12.5px}',
       '.dx-sg-who{font-size:11.5px;color:var(--color-text-3);margin-bottom:3px}.dx-sg-what del{color:var(--color-danger-6,#c33)}.dx-sg-what ins{color:var(--color-success-6,#1a7f37)}',
       '.dx-sg-note{margin-top:4px;color:var(--color-text-2)}',
