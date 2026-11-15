@@ -24,10 +24,10 @@ index ec788e1c..aeefe89a 100644
  aionui-db.workspace = true
 diff --git a/crates/aionui-auth/src/human_only.rs b/crates/aionui-auth/src/human_only.rs
 new file mode 100644
-index 00000000..9e578a51
+index 00000000..decfb5bf
 --- /dev/null
 +++ b/crates/aionui-auth/src/human_only.rs
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,275 @@
 +//! AionDX core-0019: routes only a human may call (docs/sage/CONTRACT.md §7, SG-0).
 +//!
 +//! Every agent subprocess holds a conversation runtime token that authenticates as the full user, so an agent could
@@ -47,6 +47,11 @@ index 00000000..9e578a51
 +/// The keys of a conversation's `extra` that hold its permission mode: what the Claude stream proxy and the agents
 +/// read as "bypass permissions" (core `session_agent.rs` `current_mode_id`, the `session_mode` runtime context).
 +const MODE_KEYS: &[&str] = &["session_mode", "current_mode_id"];
++
++/// Client-settings keys an agent may neither read nor write (D-4, Nathan 2026-11-15). `aiondx.voice.config` holds the
++/// ElevenLabs API key the voice feature uses (patch 0011 `aiondx-voice.js`; the renderer reads it through the session).
++/// An agent that could read it would have the key; one that could write it could swap in its own and receive the audio.
++pub const PROTECTED_CLIENT_KEYS: &[&str] = &["aiondx.voice.config"];
 +
 +/// Settings fields only a human may change.
 +const HUMAN_ONLY_SETTINGS: &[&str] = &["cross_session_message_enabled"];
@@ -82,6 +87,13 @@ index 00000000..9e578a51
 +                .any(|k| b.contains_key(*k))
 +                .then_some("changing cross-session messaging")
 +        }
++        (&Method::PUT, ["api", "settings", "client"]) => {
++            let b = body.and_then(Value::as_object)?;
++            PROTECTED_CLIENT_KEYS
++                .iter()
++                .any(|k| b.contains_key(*k))
++                .then_some("changing the voice settings")
++        }
 +        // the user's credentials
 +        (&Method::POST, ["api", "auth", "change-password"]) => Some("changing the password"),
 +        (
@@ -110,8 +122,28 @@ index 00000000..9e578a51
 +    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
 +    matches!(
 +        (method, segs.as_slice()),
-+        (&Method::PATCH, ["api", "conversations", _]) | (&Method::PATCH, ["api", "settings"])
++        (&Method::PATCH, ["api", "conversations", _])
++            | (&Method::PATCH, ["api", "settings"])
++            | (&Method::PUT, ["api", "settings", "client"])
 +    )
++}
++
++/// A read whose response must lose the protected client keys before an agent sees it.
++pub fn filters_response(method: &Method, path: &str) -> bool {
++    method == Method::GET && path.split('?').next().unwrap_or_default().trim_end_matches('/') == "/api/settings/client"
++}
++
++/// Removes the protected keys from a `GET /api/settings/client` body (`{"success":…, "data": {key: value}}`).
++/// Returns whether anything was removed.
++pub fn strip_protected_client_keys(body: &mut Value) -> bool {
++    let Some(data) = body.get_mut("data").and_then(Value::as_object_mut) else {
++        return false;
++    };
++    let mut removed = false;
++    for key in PROTECTED_CLIENT_KEYS {
++        removed |= data.remove(*key).is_some();
++    }
++    removed
 +}
 +
 +#[cfg(test)]
@@ -196,6 +228,21 @@ index 00000000..9e578a51
 +            "/api/settings/client",
 +            Some(json!({ "theme.activeId": "x" }))
 +        ));
++        // except the voice config (D-4)
++        assert!(needs_body(&Method::PUT, "/api/settings/client"));
++        assert!(refused(
++            Method::PUT,
++            "/api/settings/client",
++            Some(json!({ "theme.activeId": "x", "aiondx.voice.config": { "apiKey": "attacker" } }))
++        ));
++        assert!(
++            refused(
++                Method::PUT,
++                "/api/settings/client",
++                Some(json!({ "aiondx.voice.config": null }))
++            ),
++            "nor clear it"
++        );
 +    }
 +
 +    #[test]
@@ -238,6 +285,23 @@ index 00000000..9e578a51
 +            assert!(!refused(m.clone(), p, None), "{m} {p}");
 +        }
 +    }
++
++    #[test]
++    fn the_voice_config_is_stripped_from_client_settings_reads() {
++        assert!(filters_response(&Method::GET, "/api/settings/client"));
++        assert!(filters_response(
++            &Method::GET,
++            "/api/settings/client?keys=aiondx.voice.config,theme.activeId"
++        ));
++        assert!(!filters_response(&Method::GET, "/api/settings"));
++        assert!(!filters_response(&Method::PUT, "/api/settings/client"));
++        let mut body = json!({ "success": true, "data": {
++            "aiondx.voice.config": { "apiKey": "sk-secret", "voiceId": "v" }, "theme.activeId": "dark" } });
++        assert!(strip_protected_client_keys(&mut body));
++        assert_eq!(body, json!({ "success": true, "data": { "theme.activeId": "dark" } }));
++        let mut none = json!({ "success": true, "data": { "theme.activeId": "dark" } });
++        assert!(!strip_protected_client_keys(&mut none));
++    }
 +}
 diff --git a/crates/aionui-auth/src/lib.rs b/crates/aionui-auth/src/lib.rs
 index bb30e230..7501828a 100644
@@ -252,10 +316,10 @@ index bb30e230..7501828a 100644
  pub mod middleware;
  mod password;
 diff --git a/crates/aionui-auth/src/middleware.rs b/crates/aionui-auth/src/middleware.rs
-index f6c09a09..80b1ca83 100644
+index f6c09a09..074a8fd7 100644
 --- a/crates/aionui-auth/src/middleware.rs
 +++ b/crates/aionui-auth/src/middleware.rs
-@@ -226,13 +226,42 @@ async fn runtime_token_channel(state: &AuthState, mut request: Request, next: Ne
+@@ -226,11 +226,63 @@ async fn runtime_token_channel(state: &AuthState, mut request: Request, next: Ne
          user_type: user.user_type,
          status: user.status,
      });
@@ -266,11 +330,35 @@ index f6c09a09..80b1ca83 100644
 +        conversation_id: conversation_id.clone(),
 +    });
  
+-    Ok(next.run(request).await)
 +    // AionDX core-0019: routes only a human may call refuse every agent runtime token.
 +    let request = refuse_human_only(request, &conversation_id).await?;
-     Ok(next.run(request).await)
- }
- 
++    let filter = crate::human_only::filters_response(request.method(), request.uri().path());
++    let response = next.run(request).await;
++    if !filter {
++        return Ok(response);
++    }
++    strip_protected_keys(response).await
++}
++
++/// AionDX core-0019 (D-4): an agent's read of the client settings never includes the protected keys (the voice
++/// config, which holds the ElevenLabs API key). The rest of the response is passed on as it was.
++async fn strip_protected_keys(response: Response) -> Result<Response, ApiError> {
++    let (mut parts, body) = response.into_parts();
++    let bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
++        .await
++        .map_err(|_| ApiError::Internal("Settings response too large".into()))?;
++    let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
++        return Ok(Response::from_parts(parts, axum::body::Body::from(bytes)));
++    };
++    if !crate::human_only::strip_protected_client_keys(&mut json) {
++        return Ok(Response::from_parts(parts, axum::body::Body::from(bytes)));
++    }
++    let out = serde_json::to_vec(&json).map_err(|_| ApiError::Internal("Settings response".into()))?;
++    parts.headers.remove(axum::http::header::CONTENT_LENGTH);
++    Ok(Response::from_parts(parts, axum::body::Body::from(out)))
++}
++
 +/// AionDX core-0019: `403 HUMAN_ONLY_ROUTE` for a runtime-token call to a human-only route (`human_only.rs`). The body
 +/// is read only for the two routes whose refusal depends on it, and is put back unchanged.
 +async fn refuse_human_only(request: Request, conversation_id: &str) -> Result<Request, ApiError> {
@@ -296,16 +384,14 @@ index f6c09a09..80b1ca83 100644
 +        ));
 +    }
 +    Ok(request)
-+}
-+
+ }
+ 
  /// Local-mode authentication middleware that skips JWT verification.
- ///
- /// Injects a fixed `CurrentUser` with id and username `system_default_user`.
 diff --git a/crates/aionui-auth/tests/middleware_tests.rs b/crates/aionui-auth/tests/middleware_tests.rs
-index d5d5c21b..10a62810 100644
+index d5d5c21b..0b3475bc 100644
 --- a/crates/aionui-auth/tests/middleware_tests.rs
 +++ b/crates/aionui-auth/tests/middleware_tests.rs
-@@ -983,3 +983,112 @@ async fn runtime_token_header_with_a_cookie_authenticates_as_the_token() {
+@@ -983,3 +983,227 @@ async fn runtime_token_header_with_a_cookie_authenticates_as_the_token() {
      let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
      assert_eq!(&body[..], br#"RuntimeToken { conversation_id: "conv-1" }"#);
  }
@@ -417,6 +503,121 @@ index d5d5c21b..10a62810 100644
 +            "{method} {path}: the body arrives as sent"
 +        );
 +    }
++}
++
++// ── AionDX core-0019 (D-4): agents can neither read nor write the voice config (the ElevenLabs key) ──
++
++fn client_settings_app(jwt_service: Arc<JwtService>, user_repo: Arc<dyn IUserRepository>) -> Router {
++    let state = AuthState {
++        jwt_service,
++        user_repo,
++        identity_mode: AuthIdentityMode::UserSession,
++        runtime_token_verifier: conv1_verifier(),
++    };
++    // the real handler's shape: {"success": true, "data": {key: value}}, all keys or the ?keys= ones
++    let read = |axum::extract::RawQuery(q): axum::extract::RawQuery| async move {
++        let all = serde_json::json!({
++            "aiondx.voice.config": { "apiKey": "sk-eleven-secret", "voiceId": "v1" },
++            "theme.activeId": "dark"
++        });
++        let data = match q.as_deref().and_then(|q| q.strip_prefix("keys=")) {
++            Some(keys) => serde_json::Value::Object(
++                all.as_object()
++                    .unwrap()
++                    .iter()
++                    .filter(|(k, _)| keys.split(',').any(|w| w == k.as_str()))
++                    .map(|(k, v)| (k.clone(), v.clone()))
++                    .collect(),
++            ),
++            None => all,
++        };
++        axum::Json(serde_json::json!({ "success": true, "data": data }))
++    };
++    Router::new()
++        .route(
++            "/api/settings/client",
++            get(read).put(|body: String| async move { body }),
++        )
++        .route_layer(middleware::from_fn_with_state(state, auth_middleware))
++}
++
++#[tokio::test]
++async fn an_agent_never_sees_or_sets_the_voice_config_but_the_user_does() {
++    let jwt_service = Arc::new(JwtService::new("middleware_test_secret".into()));
++    let token = jwt_service.sign("system_default_user", "system_default_user").unwrap();
++    let db = init_database_memory().await.unwrap();
++    let repo = Arc::new(SqliteUserRepository::new(db.pool().clone())) as Arc<dyn IUserRepository>;
++    let app = client_settings_app(jwt_service, repo);
++
++    // the config CLI's read-all: everything except the voice config
++    let resp = app
++        .clone()
++        .oneshot(agent_call("GET", "/api/settings/client", ""))
++        .await
++        .unwrap();
++    assert_eq!(resp.status(), StatusCode::OK);
++    let json = json_body(resp).await;
++    assert_eq!(json["data"]["theme.activeId"], "dark");
++    assert!(json["data"].get("aiondx.voice.config").is_none(), "{json}");
++    assert!(!json.to_string().contains("sk-eleven-secret"));
++
++    // a direct read of the key: absent
++    let resp = app
++        .clone()
++        .oneshot(agent_call("GET", "/api/settings/client?keys=aiondx.voice.config", ""))
++        .await
++        .unwrap();
++    let json = json_body(resp).await;
++    assert_eq!(json["data"], serde_json::json!({}), "{json}");
++
++    // a write of the key: refused; other keys: fine
++    let resp = app
++        .clone()
++        .oneshot(agent_call(
++            "PUT",
++            "/api/settings/client",
++            r#"{"aiondx.voice.config":{"apiKey":"attacker"}}"#,
++        ))
++        .await
++        .unwrap();
++    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
++    assert_eq!(json_body(resp).await["code"], "HUMAN_ONLY_ROUTE");
++    let resp = app
++        .clone()
++        .oneshot(agent_call(
++            "PUT",
++            "/api/settings/client",
++            r#"{"theme.activeId":"light"}"#,
++        ))
++        .await
++        .unwrap();
++    assert_eq!(resp.status(), StatusCode::OK);
++
++    // the user's session (the voice UI): reads and writes it
++    let resp = app
++        .clone()
++        .oneshot(
++            Request::get("/api/settings/client?keys=aiondx.voice.config")
++                .header(header::AUTHORIZATION, format!("Bearer {token}"))
++                .body(Body::empty())
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(
++        json_body(resp).await["data"]["aiondx.voice.config"]["apiKey"],
++        "sk-eleven-secret"
++    );
++    let resp = app
++        .oneshot(
++            Request::put("/api/settings/client")
++                .header(header::AUTHORIZATION, format!("Bearer {token}"))
++                .body(Body::from(r#"{"aiondx.voice.config":{"apiKey":"new"}}"#))
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(resp.status(), StatusCode::OK);
 +}
 diff --git a/crates/aionui-runtime/src/agent_env.rs b/crates/aionui-runtime/src/agent_env.rs
 index 57c186e4..4f16be0b 100644

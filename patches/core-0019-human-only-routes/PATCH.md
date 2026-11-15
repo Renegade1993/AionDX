@@ -25,6 +25,24 @@ JWT secrets).
   Session and Local callers never reach this check. The mobile bridge calls services directly, so it's unaffected.
 - `aionui-runtime/src/agent_env.rs`: `AIONCORE_BOOTSTRAP_SECRET` is removed from agent environments.
 
+## D-4: the voice config (Nathan, 2026-11-15)
+
+`aiondx.voice.config` holds the ElevenLabs API key the voice feature uses (patch 0011 `aiondx-voice.js`). The renderer
+reads it through its session. The name stored in client settings is exactly `aiondx.voice.config`: the brand-names pass
+only rewrites `aionui`, so the name is the same in the built core.
+
+For a runtime-token caller:
+- **Reads:** `GET /api/settings/client` (read-all, or `?keys=`) has the key removed from `data` before the response
+  leaves AionCore. The config CLI's read-all still works; it just doesn't include the key. No other route returns client
+  settings (`ClientPrefService` is read only by this handler; aionui-shell's speech-to-text uses prefs server-side and
+  never returns them).
+- **Writes:** a `PUT /api/settings/client` that sets or clears the key gets `403 HUMAN_ONLY_ROUTE`. An agent could
+  otherwise swap in its own key and receive the audio. Other keys are written as before.
+- Session and Local are unchanged.
+
+Code: `human_only.rs` `PROTECTED_CLIENT_KEYS`, `filters_response`, `strip_protected_client_keys` and the PUT rule;
+`middleware.rs` `strip_protected_keys`.
+
 ## Tests
 
 - `human_only.rs` unit tests (5):
@@ -40,28 +58,25 @@ JWT secrets).
   - `agent_tools_keep_their_routes_and_bodies_pass_through_intact`: the config CLI's rename, a non-mode `extra`, a
     language setting and a provider create all pass, with bodies byte-identical.
 - `agent_env.rs` `the_bootstrap_secret_never_reaches_an_agent`.
-- Results: aionui-auth 285, all green, including the K1/channel tests (`auth_channel_*`, `runtime_token_*`).
+- D-4:
+  - the unit test `the_voice_config_is_stripped_from_client_settings_reads`, plus the PUT rule in the settings test;
+  - the middleware test `an_agent_never_sees_or_sets_the_voice_config_but_the_user_does`: an agent's read-all and its
+    direct `?keys=` read both lack the key, and the secret appears nowhere in the body; its write is 403 while other
+    keys are written; the session reads and writes the key.
+- Results: aionui-auth 287, all green, including the K1/channel tests (`auth_channel_*`, `runtime_token_*`).
 - Built and tested with `CARGO_BUILD_JOBS=6` and `--test-threads=4` (the lead's rule after a full-parallel build froze
   the PC). `tools/build-aioncore.ps1` gained `-Jobs` (default 6).
 
-## RESUME (2026-11-13)
+## State (2026-11-15, ready for a PR)
 
-**Trees:**
-- Dev core tree: `AionDX-impl\work-p0`, branch `p0-dev`. `a535ea44` is the baseline core-0001..0018 (origin/main
-  30810c6); HEAD has the gate, the env scrub, the escaping, and tests.
-- Exports, by pathspec, since the two patches touch disjoint files:
+- Dev core tree: `AionDX-impl\work-p0`, branch `p0-dev`. Base `a535ea44` (core-0001..0018, origin/main 30810c6), HEAD
+  `9f3dde47`.
+- Exports:
   - core-0019 = `git diff a535ea44 HEAD -- Cargo.lock crates/aionui-auth crates/aionui-runtime`;
   - core-0020 = `git diff a535ea44 HEAD -- crates/aionui-team`.
   The whole series applied to v0.2.2 reproduces HEAD (0 diff lines).
-- AionDX branch: `p0-human-routes` in `..\AionDX-p0`.
-- Cargo target: `%LOCALAPPDATA%\aiondx-build\p0-target`.
-
-**Next:**
-1. The wider suites against the known baseline (CARGO_BUILD_JOBS=6, --test-threads=4).
-2. Release build: `tools\build-aioncore.ps1 -Patched -Jobs 6` from `AionDX-p0`. It needs `AionDX-p0\upstream-aioncore`, a
-   no-checkout local clone with `core.longpaths`, as in AionDX-release.
-3. Optional D-4, a SEPARATE commit: deny runtime-token reads of `aiondx.voice.config`.
-4. CONTRACT §7: mark Phase 0 done. Then report.
+- QA's live check of the core without D-4 passed (d9c7b7e7 on a 0.27.11 copy).
+- Nathan (2026-11-15): providers / MCP / skills / cron / assistants stay open to agents for now; D-4 yes; open a PR.
 
 ## Caller audit
 
@@ -83,7 +98,7 @@ The renderer and the main process use a session, so they're unaffected.
 | `POST /api/teams/{id}/session-mode` | a team's permission mode | none | **gated** |
 | `PATCH /api/conversations/{id}` | rename, pin, model, `extra` | the config CLI (rename) | **open; refused only when `extra` sets `session_mode` / `current_mode_id`** (0002's stream proxy reads these as the YOLO authority) |
 | `PATCH /api/settings` | language, notifications, `cross_session_message_enabled` | the config CLI (`config settings patch`) | **open; refused only for `cross_session_message_enabled`** |
-| `PUT /api/settings/client` | the client key-value store | the config CLI, 0002, 0007, 0009 | open (D-4: maybe deny `aiondx.voice.config` reads, separately) |
+| `GET`/`PUT /api/settings/client` | the client key-value store | the config CLI, 0002, 0007, 0009 | open, except `aiondx.voice.config`: stripped from agent reads, agent writes 403 (D-4) |
 | `POST /api/auth/change-password`, `/api/webui/{change-password,change-username,reset-password,generate-qr-token}` | credentials | none | **gated** |
 | `/api/auth/internal/*` | user admin | none (bootstrap-secret auth) | **the secret is scrubbed from agent env** |
 | `POST /api/channel/pairings/{approve,reject}`, `/channel/users/revoke`, `/channel/plugins/{enable,disable}` | letting outside users in | none | **gated** |
@@ -91,7 +106,7 @@ The renderer and the main process use a session, so they're unaffected.
 | `/api/mobile/admin/*` | bridge pairing, devices | — | already Session/Local only (core-0016) |
 | team lifecycle | — | — | already lead-only for runtime tokens (core-0015) |
 
-**FLAG for Nathan (left open, because a shipped agent feature uses them):**
+**Left open by Nathan's decision of 2026-11-15** (a shipped agent feature uses them):
 - `POST/PUT/DELETE /api/providers` (API keys) and `GET /api/providers` (reads them?);
 - `/api/mcp/servers*` (an MCP row is a command line that gets executed);
 - `/api/skills/import`, `/api/hub/*`, `/api/cron/jobs`, `/api/assistants*`.
