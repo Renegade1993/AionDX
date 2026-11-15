@@ -3539,7 +3539,7 @@ async function pageTarget() {
       await js(`window.__dxAgent('plan', window.__dx.docs.plan + '\\n## Later\\n\\nadded while you typed\\n'); 0`);
       await sleep(700);
       const keep = await js(`(() => { const t = document.querySelector('[data-testid="aiondx-dx-ctext"]'); return { text: t ? t.value : null, focus: document.activeElement === t, note: (document.querySelector('#tbox .dx-note') || {}).textContent || '', body: document.querySelector('#tbox .dx-body').textContent }; })()`);
-      check(sc, 'an agent\'s change while you write a comment: your words stay, the change waits and a note says so', keep.text === 'Which' && keep.focus && /It shows when you send or cancel your comment/.test(keep.note) && !/added while you typed/.test(keep.body), JSON.stringify(keep));
+      check(sc, 'an agent\'s change while you write a comment: your words stay, the change waits and a note says so', keep.text === 'Which' && keep.focus && /It shows when you send or cancel\./.test(keep.note) && !/added while you typed/.test(keep.body), JSON.stringify(keep));
       await send('Input.insertText', { text: ' quarter?' });
       await sleep(150);
       const h0 = await js(`Math.round(document.querySelector('[data-testid="aiondx-dx-ctext"]').getBoundingClientRect().height)`);
@@ -3555,7 +3555,13 @@ async function pageTarget() {
         // the commands every chat has first (November 15th: a team lead had no dxdoc_* tools, and the notice named only those)
         /^\[DX Doc comment\] On "Launch plan" \(doc plan, section "Goals", comment c1\):\n> Ship it this quarter\.\n\nWhich quarter\?\n\n\(Answer in the comment’s thread: aiondx doc reply --json '\{"doc":"plan","comment":"c1","text":"\.\.\."\}' \(or the dxdoc_reply tool\)\. When it asks for a change, make it with aiondx doc update \(or dxdoc_update\)\./.test(told[0]), JSON.stringify(told));
       check(sc, 'once it is sent, the agent\'s change shows', /added while you typed/.test(await js(`document.querySelector('#tbox .dx-body').textContent`)));
-      check(sc, 'the comment shows in the doc\'s comments', /Which quarter\?/.test(await js(`(document.querySelector('#tbox .dx-comments') || {}).textContent || ''`)) && /Comments \(1\)/.test(await js(`document.querySelector('#tbox [data-act="comments"]').textContent`)));
+      // the comment is a highlight on its words (November 15th: no pane growing under the doc); the list opens from Comments
+      check(sc, 'the commented words are highlighted in the doc, and Comments counts it', (await js(`[...document.querySelectorAll('#tbox .dx-body .dx-cmark')].map((m) => m.textContent).join('')`)) === 'Ship it this quarter.' && /Comments \(1\)/.test(await js(`document.querySelector('#tbox [data-act="comments"]').textContent`)) && (await js(`document.querySelector('#tbox .dx-comments').hidden`)));
+      await humanClick('#tbox [data-act="comments"]');
+      await sleep(300);
+      check(sc, 'Comments opens the list with the thread in it', /Which quarter\?/.test(await js(`(document.querySelector('#tbox .dx-comments') || {}).textContent || ''`)));
+      await humanClick('#tbox [data-act="comments"]');
+      await sleep(200);
       // edit the Markdown (now in the menu: the doc itself is typed in)
       await humanClick('#tbox [data-act="more"]');
       await sleep(200);
@@ -3599,7 +3605,7 @@ async function pageTarget() {
       check(sc, 'after a pause it saves by itself: your words, the rest as it was, marked as yours', (await saves()).length === n0 + 1 && sv1[1].markdown === '# Launch plan\n\n## Goals\n\nShip it this quarter. Ship the beta first.\n\n## Risks\n\n- Legal review\n- [ ] Book the room\n' && sv1[1].by === 'you' &&
         (await js(`document.querySelector('#tbox [data-testid="aiondx-dx-saved"]').textContent`)) === 'Saved', JSON.stringify(sv1 && sv1[1]));
       // bold on selected words, a heading, a table with a row added
-      await js(`(() => { const p = document.querySelector('#tbox .dx-body p'); const t = p.firstChild; const i = t.nodeValue.indexOf('beta'); const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 4); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 0; })()`);
+      await js(`(() => { const p = document.querySelector('#tbox .dx-body p'); const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); let t; while ((t = w.nextNode()) && t.nodeValue.indexOf('beta') < 0); const i = t.nodeValue.indexOf('beta'); const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 4); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 0; })()`);
       await humanClick('#tbox .dx-fmt-b[data-fmt="bold"]');
       await caretAtEnd('#tbox .dx-body p');
       await js(`(() => { document.execCommand('insertParagraph'); return 0; })()`);
@@ -3753,7 +3759,8 @@ async function pageTarget() {
             if (op === 'list') return ok({ docs: Object.keys(d).map((id) => meta(a.docsDir, id)), deleted: X.deleted.length });
             if (op === 'alldocs') return ok({ folders: Object.keys(X.dirs).filter((k) => Object.keys(X.dirs[k]).length).map((k) => ({ docsDir: k, name: k === 'C:/ws/Docs' ? 'ws' : 'Atlas', docs: Object.keys(X.dirs[k]).map((id) => meta(k, id)) })) });
             if (op === 'create') { const id = a.title.toLowerCase().replace(/[^a-z0-9]+/g, '-'); d[id] = '# ' + a.title + '\\n'; changed(a, id); return ok({ id, title: a.title }); }
-            if (op === 'read') return d[a.id] != null ? ok({ id: a.id, title: M.splitTabs(d[a.id]).title, markdown: d[a.id], comments: X.comments[a.id] || [], suggestions: [] }) : Promise.resolve({ ok: false, error: 'no doc' });
+            // a copy, as the app's IPC gives (the page must notice a change by its content, not by holding the same object)
+            if (op === 'read') return d[a.id] != null ? ok({ id: a.id, title: M.splitTabs(d[a.id]).title, markdown: d[a.id], comments: JSON.parse(JSON.stringify(X.comments[a.id] || [])), suggestions: [] }) : Promise.resolve({ ok: false, error: 'no doc' });
             if (op === 'save') { d[a.id] = a.markdown; return ok(); }
             if (op === 'rename') { const T = M.splitTabs(d[a.id]); T.title = a.title; d[a.id] = M.joinTabs(T); return ok(); }
             if (op === 'tabs') {
@@ -3769,7 +3776,8 @@ async function pageTarget() {
             if (op === 'delete') { X.deleted.push({ deleted: a.id + '--1', id: a.id, title: M.splitTabs(d[a.id]).title, at: Date.now(), md: d[a.id] }); delete d[a.id]; return ok({ deleted: a.id + '--1' }); }
             if (op === 'deleted') return ok({ deleted: X.deleted.map((x) => ({ deleted: x.deleted, id: x.id, title: x.title, at: x.at })) });
             if (op === 'undelete') { const x = X.deleted.find((y) => y.deleted === a.deleted); X.deleted = X.deleted.filter((y) => y !== x); d[x.id] = x.md; return ok({ id: x.id, title: x.title }); }
-            if (op === 'comment') { const c = { id: 'c9', quote: a.quote, text: a.text, tab: a.tab, replies: [], resolved: false }; (X.comments[a.id] = X.comments[a.id] || []).push(c); return ok({ comment: c }); }
+            if (op === 'comment') { X.cn = (X.cn || 0) + 1; const c = { id: 'c' + (X.cn + 8), by: 'user', quote: a.quote, section: a.section, text: a.text, tab: a.tab, replies: [], resolved: false }; if (a.on) { c.on = a.on; c.index = a.index || 0; } (X.comments[a.id] = X.comments[a.id] || []).push(c); return ok({ comment: c }); }
+            if (op === 'reply') { const c = (X.comments[a.id] || []).find((x) => x.id === a.comment); if (!c) return Promise.resolve({ ok: false, error: 'no comment' }); if (a.text) c.replies.push({ by: 'user', text: a.text, at: Date.now() }); if (a.resolve !== undefined) c.resolved = !!a.resolve; return ok({ comment: c }); }
             if (op === 'docx' || op === 'pdf' || op === 'mdcopy') return ok({ path: 'C:/ws/Docs/' + a.id + (a.tab ? '-' + a.tab : '') + '.' + (op === 'mdcopy' ? 'md' : op) });
             if (op === 'image') return Promise.resolve({ ok: false, error: 'none' });
             return Promise.resolve({ ok: false, error: 'stub: ' + op }); },
@@ -3800,6 +3808,10 @@ async function pageTarget() {
       await sleep(700);
       let p = await P();
       check(sc, 'Enter makes the doc and opens it', JSON.stringify(await calls('create')) === JSON.stringify([{ docsDir: 'C:/ws/Docs', title: 'Road map' }]) && p.bar === 'Road map' && p.stripHidden === true, JSON.stringify(p));
+      check(sc, 'every button on the formatting bar shows its label (the Code button\'s "</>" was blank)',
+        (await js(`[...document.querySelectorAll('#tbox .dx-fmt-b')].filter((b) => !b.textContent.trim()).map((b) => b.getAttribute('data-fmt')).join(',')`)) === '' && (await js(`document.querySelector('#tbox .dx-fmt-b[data-fmt="code"]').textContent`)) === '</>');
+      check(sc, 'a doc without tabs shows no tab row, and the new-doc box is gone once used (hidden means not drawn)',
+        (await js(`getComputedStyle(document.querySelector('#tbox .dx-tabstrip')).display`)) === 'none', await js(`getComputedStyle(document.querySelector('#tbox .dx-tabstrip')).display`));
       // rename by clicking the title
       await humanClick('#tbox [data-testid="aiondx-dx-title"]');
       await nameBox('Product road map');
@@ -3998,6 +4010,115 @@ async function pageTarget() {
       await humanClick('#tbox .dx-body .dx-chip--tab');
       await sleep(600);
       check(sc, 'a link to a tab opens that tab', JSON.stringify((await P()).tabs) === JSON.stringify(['Main', 'Other*']) && /Other text\./.test((await P()).body), JSON.stringify(await P()));
+
+      // ---- comments, the Claude Docs way (rows 28 to 33; November 15th: "THE COMMENTS BOX JUST CONTINUOUSLY GROWS") ----
+      const long = Array.from({ length: 30 }, (_, k) => 'Line ' + (k + 1) + ' of a long comment.').join('\\n');
+      const CM = '# Review\\n\\nThe launch moves to March. Budget stays at ten.\\n\\nPricing is open.\\n\\n\`\`\`chart\\n{\\"type\\":\\"bar\\",\\"title\\":\\"Sales\\",\\"x\\":[\\"Q1\\",\\"Q2\\"],\\"series\\":[{\\"name\\":\\"2026\\",\\"values\\":[3,5]}]}\\n\`\`\`\\n\\n' + 'Filler line.\\n\\n'.repeat(25) + 'The end.\\n';
+      await js(`(() => { const X = window.__dx; X.comments.review = [
+          { id: 'k1', by: 'user', quote: 'The launch moves to March.', text: '${long}', replies: [1, 2, 3, 4].map((n) => ({ by: n % 2 ? 'agent' : 'user', text: 'Reply ' + n })), resolved: false },
+          { id: 'k2', by: 'user', quote: 'Budget stays at ten.', text: 'Ten what?', replies: [], resolved: true } ]
+          .concat(Array.from({ length: 12 }, (_, k) => ({ id: 'm' + k, by: 'user', quote: 'Pricing is open.', text: 'Open point ' + k, replies: [], resolved: false })));
+        X.dirs['C:/ws/Docs'].review = '${CM}'; X.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'review' }); return 0; })()`);
+      await sleep(1500);
+      const marks = await js(`[...new Set([...document.querySelectorAll('#tbox .dx-body .dx-cmark')].map((m) => m.textContent + '|' + m.getAttribute('data-cid')))].join(' ; ')`);
+      check(sc, 'open threads are highlights on their words; a resolved one is not', /The launch moves to March\.\|k1/.test(marks) && !/Budget/.test(marks) && /Pricing is open\.\|m0/.test(marks), marks);
+      await humanClick('#tbox [data-act="comments"]');
+      await sleep(400);
+      const geo = () => js(`(() => { const m = document.querySelector('#tbox .dx-main').getBoundingClientRect(), p = document.querySelector('#tbox .dx-comments'), l = p.querySelector('.dx-clist'), b = document.querySelector('#tbox .dx-body').getBoundingClientRect(), pr = p.getBoundingClientRect();
+        return { main: Math.round(m.height), pane: Math.round(pr.height), bodyH: Math.round(b.height), overlap: Math.round(b.bottom - pr.top), scrolls: l.scrollHeight > l.clientHeight + 10, bar: getComputedStyle(l).overflowY,
+          items: l.querySelectorAll('[data-testid="aiondx-dx-citem"]').length, text: l.textContent }; })()`);
+      let g = await geo();
+      check(sc, 'the list keeps its own height (about a third of the panel), the doc above it, never under it; many threads scroll with a scroll bar',
+        g.pane < g.main * 0.45 && g.pane >= 120 && g.bodyH >= 120 && g.overlap <= 1 && g.scrolls && g.bar === 'scroll' && g.items === 13, JSON.stringify(g));
+      check(sc, 'each thread in the list is short: its quote, three lines at most, its reply count and the latest', /4 replies · You: Reply 4/.test(g.text) && !/Line 10 of/.test(await js(`(() => { const t = document.querySelector('#tbox .dx-citem[data-cid="k1"] .dx-cbody'); return t.getBoundingClientRect().height > 70 ? t.textContent : ''; })()`)));
+      // drag its top edge: the size changes and is kept
+      const grip = await js(`(() => { const r = document.querySelector('#tbox [data-testid="aiondx-dx-cgrip"]').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: grip.x, y: grip.y, button: 'left', clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: grip.x, y: grip.y - 120, button: 'left' });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: grip.x, y: grip.y - 120, button: 'left', clickCount: 1 });
+      await sleep(300);
+      const g2 = await geo();
+      check(sc, 'dragging its top edge makes the list taller, and the size is kept', g2.pane > g.pane + 80 && g2.overlap <= 1 && +(await js(`localStorage.getItem('aionui.dx.dx.cpane')`)) > 0.4, JSON.stringify([g.pane, g2.pane]));
+      await humanClick('#tbox [data-testid="aiondx-dx-cresolved"]');
+      await sleep(300);
+      g = await geo();
+      check(sc, 'Resolved shows only the resolved threads', g.items === 1 && /Ten what\?/.test(g.text), JSON.stringify(g));
+      await humanClick('#tbox .dx-cfilter [data-f="open"]');
+      await sleep(300);
+      // a click on a thread in the list: the doc scrolls to its words and its card opens beside them
+      await humanClick('#tbox .dx-citem[data-cid="k1"]');
+      await sleep(600);
+      const card = () => js(`(() => { const c = document.querySelector('#tbox [data-testid="aiondx-dx-ccard"]'); if (!c) return null; const r = c.getBoundingClientRect(), m = document.querySelector('#tbox .dx-main').getBoundingClientRect();
+        return { cid: c.getAttribute('data-cid'), inside: r.left >= m.left && r.right <= m.right + 1 && r.top >= m.top && r.bottom <= m.bottom + 1, more: [...c.querySelectorAll('.dx-cmore')].map((b) => b.textContent), msgs: c.querySelectorAll('.dx-cmsg').length,
+          firstH: Math.round(c.querySelector('.dx-cbody').getBoundingClientRect().height), text: c.textContent }; })()`);
+      let cc = await card();
+      check(sc, 'its card opens inside the panel: the comment folded behind Show more, older replies behind Show 2 earlier replies',
+        cc && cc.cid === 'k1' && cc.inside && cc.more.includes('Show more') && cc.more.includes('Show 2 earlier replies') && cc.msgs === 3 && cc.firstH < 300, JSON.stringify(cc));
+      await js(`(() => { [...document.querySelectorAll('#tbox [data-testid="aiondx-dx-ccard"] .dx-cmore')].find((b) => b.textContent === 'Show 2 earlier replies').click(); return 0; })()`);
+      await sleep(200);
+      check(sc, 'Show 2 earlier replies shows them', (await card()).msgs === 5);
+      // pictures to look at: the list and an open card, light and dark, in a window the size of a real one
+      await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await sleep(400);
+      await js(`(() => { const m = document.querySelector('#tbox .dx-cmark[data-cid="k1"]'); m.scrollIntoView({ block: 'center' }); m.click(); return 0; })()`);
+      await sleep(300);
+      await shot('dxdocs-comments-light');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); return 0; })()`);
+      await sleep(300);
+      await shot('dxdocs-comments-dark');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.removeAttribute('arco-theme'); return 0; })()`);
+      await send('Emulation.clearDeviceMetricsOverride', {});
+      await sleep(400);
+      await js(`(() => { document.querySelector('#tbox .dx-cmark[data-cid="k1"]').click(); return 0; })()`);
+      await sleep(300);
+      await typeInto('#tbox [data-testid="aiondx-dx-creply"]', 'Fine, March it is.');
+      await humanClick('#tbox [data-testid="aiondx-dx-creplysend"]');
+      await sleep(800);
+      const toldR = (await posts('/api/conversations/harness1/messages')).map((x) => x.body.content).filter((m) => /^\[DX Doc reply\]/.test(m));
+      check(sc, 'a reply from the card is saved in the thread and sent to the agent', (await js(`window.__dx.comments.review.find((c) => c.id === 'k1').replies.pop().text`)) === 'Fine, March it is.' &&
+        toldR.length === 1 && /comment k1\), the user replied:\n\nFine, March it is\./.test(toldR[0]), JSON.stringify(toldR));
+      // Resolve from the card: the highlight goes, the count drops
+      await humanClick('#tbox [data-testid="aiondx-dx-cresolve"]');
+      await sleep(800);
+      check(sc, 'Resolve from the card: the thread closes, its highlight goes, the count drops', !(await js(`!!document.querySelector('#tbox .dx-cmark[data-cid="k1"]')`)) && !(await card()) &&
+        /Comments \(12\)/.test(await js(`document.querySelector('#tbox [data-act="comments"]').textContent`)), await js(`document.querySelector('#tbox [data-act="comments"]').textContent`));
+      // a click on a highlight in the text opens its card
+      await js(`(() => { const m = document.querySelector('#tbox .dx-cmark[data-cid="m0"]'); m.scrollIntoView({ block: 'center' }); return 0; })()`);
+      await sleep(200);
+      await humanClick('#tbox .dx-cmark[data-cid="m0"]');
+      await sleep(400);
+      check(sc, 'a click on highlighted words opens their thread\'s card (the oldest, when several are on the same words, with "1 of 12")', ((await card()) || {}).cid === 'm0' &&
+        (await js(`(document.querySelector('#tbox [data-testid="aiondx-dx-cnav"]') || {}).textContent`)) === '‹1 of 12›', JSON.stringify(await card()));
+      await js(`(() => { document.querySelector('#tbox [data-testid="aiondx-dx-cnav"] [data-step="1"]').click(); return 0; })()`);
+      await sleep(200);
+      check(sc, 'and › steps to the next thread on those words', ((await card()) || {}).cid === 'm1');
+      await js(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return 0; })()`);
+      await sleep(150);
+      check(sc, 'Escape closes the card', !(await card()));
+      // a note on the whole doc
+      await humanClick('#tbox [data-testid="aiondx-dx-cnote"]');
+      await sleep(300);
+      await typeInto('[data-testid="aiondx-dx-ctext"]', 'Overall: tighten it.');
+      await humanClick('[data-testid="aiondx-dx-csend"]');
+      await sleep(900);
+      g = await geo();
+      check(sc, '+ Note: a note on the whole doc, listed at the top under its own heading', /^Whole docOverall: tighten it\.On the text/.test(g.text.replace(/\s+/g, ' ').replace(/ (?=[A-Z])/g, '')) || (/Whole doc/.test(g.text) && g.text.indexOf('Whole doc') < g.text.indexOf('On the text') && /Overall: tighten it\./.test(g.text)), g.text.slice(0, 200));
+      // a comment on a chart
+      await js(`(() => { document.querySelector('#tbox .dx-body figure.dx-chart').scrollIntoView({ block: 'center' }); return 0; })()`);
+      await sleep(200);
+      await js(`(() => { document.querySelector('#tbox .dx-body figure.dx-chart .dx-fig-comment').click(); return 0; })()`);
+      await sleep(300);
+      await typeInto('[data-testid="aiondx-dx-ctext"]', 'Add Q3.');
+      await humanClick('[data-testid="aiondx-dx-csend"]');
+      await sleep(900);
+      const cc2 = (await calls('comment')).pop();
+      check(sc, 'Comment on a chart: kept on that chart, which then carries a badge', cc2.on === 'chart' && cc2.index === 0 && /the chart "Sales"/.test(cc2.section) &&
+        (await js(`(document.querySelector('#tbox figure.dx-chart .dx-fig-badge') || {}).textContent`)) === '1 comment', JSON.stringify(cc2));
+      // the agent comments too (row 33): it shows at once, marked as the agent's
+      await js(`(() => { window.__dx.comments.review.push({ id: 'a1', by: 'agent', quote: 'The end.', text: 'Should the end say when?', replies: [], resolved: false }); window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'review' }); return 0; })()`);
+      await sleep(900);
+      check(sc, 'an agent\'s comment shows at once: a highlight, and in the list as the agent\'s', (await js(`!!document.querySelector('#tbox .dx-cmark[data-cid="a1"]')`)) && /Agent: Should the end say when\?/.test((await geo()).text), (await geo()).text.slice(-200));
+      await js(`(() => { localStorage.removeItem('aionui.dx.dx.cpane'); return 0; })()`);
       await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
     }
 

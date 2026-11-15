@@ -201,6 +201,14 @@ try {
   check('restore brings it back with its comments and versions, under a free id when its own is taken',
     back.id === 'roadmap-2' && D.read(td, back.id).title === 'Product roadmap' && D.comments(td, back.id)[0].tab === 't4' && D.history(td, back.id).length > 3 && !D.recycled(td).length, JSON.stringify(back));
   check('restore refuses a name that is not one of its own', /Which deleted doc/.test(err(() => D.undelete(td, '../x'))));
+  // comments from the agent's side (row 33), on a chart (row 32); a broken question block is refused with its line
+  const cq = D.create(td, { title: 'Ask doc', sections: [{ heading: 'Plan', body: 'Ship the **beta** first.\n\n```chart\n{"type":"bar","x":["a"],"series":[{"name":"s","values":[1]}]}\n```' }] });
+  const ac = D.addComment(td, cq.id, { quote: 'Ship the beta first', text: 'Which beta?', by: 'agent' });
+  const ch = D.addComment(td, cq.id, { on: 'chart', index: 0, section: 'the chart', text: 'Too small?', by: 'user' });
+  check('an agent comments on words as they read (Markdown marks ignored), a person on a chart', ac.by === 'agent' && ch.on === 'chart' && ch.index === 0 && D.comments(td, cq.id).length === 2);
+  check('an agent\'s comment on words that are not in the doc is refused', /were not found in the doc/.test(err(() => D.addComment(td, cq.id, { quote: 'Ship the gamma', text: 'x', by: 'agent' }))));
+  check('a question block that does not read is refused, with the line and the shape it needs',
+    /the question block at line \d+ \(section "Plan"\): it needs "options": two or more strings \(a choice block is/.test(err(() => D.update(td, cq.id, [{ op: 'append_to_section', heading: 'Plan', body: '```choice\n{"question":"When?","options":["now"]}\n```' }]))));
 }
 
 } catch (e) {

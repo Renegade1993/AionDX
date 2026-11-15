@@ -507,6 +507,7 @@ function decide(docsDir, id, sid, verdict, by) {
   return { suggestion: s, saved };
 }
 function commentsFile(docsDir, id) { docPath(docsDir, id); return path.join(docsDir, '.comments', id + '.json'); }
+function md(docsDir, id) { try { return fs.readFileSync(docPath(docsDir, id), 'utf8'); } catch { return ''; } }
 function comments(docsDir, id) { return readJson(commentsFile(docsDir, id)) || []; }
 function addComment(docsDir, id, o) {
   const text = String((o && o.text) || '').trim();
@@ -515,6 +516,12 @@ function addComment(docsDir, id, o) {
   const c = { id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: Date.now(), by: String((o && o.by) || 'user'),
     quote: String((o && o.quote) || '').slice(0, 2000), section: String((o && o.section) || ''), text, replies: [], resolved: false };
   if (o && o.tab) c.tab = String(o.tab).slice(0, 80);
+  // on a chart or a diagram (the nth of its kind in the tab) rather than on words
+  if (o && (o.on === 'chart' || o.on === 'diagram')) { c.on = o.on; c.index = Math.max(0, Math.min(999, +o.index || 0)); }
+  const plain = (t) => String(t).replace(/[*_~`=+]/g, '').replace(/\s+/g, '');
+  if (o && o.quote && !c.on && o.by === 'agent' && !plain(md(docsDir, id)).includes(plain(o.quote).slice(0, 400))) {
+    throw new Error('The words to comment on were not found in the doc: "' + String(o.quote).slice(0, 80) + '". Quote them as they stand (aiondx doc read shows the doc).');
+  }
   all.push(c);
   writeAtomic(commentsFile(docsDir, id), JSON.stringify(all, null, 2));
   return c;
@@ -558,12 +565,14 @@ if (require.main === module) {
       : cmd === 'update' ? update(docsDir, args.doc, args.ops)
       : cmd === 'comments' ? { comments: comments(docsDir, args.doc) }
       : cmd === 'reply' ? replyComment(docsDir, args.doc, args.comment, { text: args.text, resolve: args.resolve, by: args.by || 'agent' })
+      // an agent's own comment or question, on words ("quote") or a whole tab (no quote); the user answers in its thread
+      : cmd === 'comment' ? { comment: addComment(docsDir, args.doc, { quote: args.quote, text: args.text, tab: args.tab, section: args.section, on: args.on, index: args.index, by: 'agent' }) }
       : cmd === 'history' ? { versions: history(docsDir, args.doc) }
       : cmd === 'suggest' ? suggest(docsDir, args.doc, { find: args.find, replace: args.replace, note: args.note, by: args.by || 'agent' })
       : cmd === 'suggestions' ? { suggestions: suggestions(docsDir, args.doc) }
       : cmd === 'withdraw' ? decide(docsDir, args.doc, args.suggestion, 'withdraw', 'agent')
       : null;
-    if (!r) done({ ok: false, error: 'Commands: where, list, create, read, update, comments, reply, history, suggest, suggestions, withdraw.' }, 2);
+    if (!r) done({ ok: false, error: 'Commands: where, list, create, read, update, comments, comment, reply, history, suggest, suggestions, withdraw.' }, 2);
     done(Object.assign({ ok: true, docsDir }, r));
   } catch (e) {
     done({ ok: false, error: e.message }, 1);

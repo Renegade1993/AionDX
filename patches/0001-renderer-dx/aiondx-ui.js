@@ -11471,6 +11471,30 @@
         // a link to a heading in this doc ([text](#anchor)) scrolls there
         var jump = ev.target.closest && ev.target.closest('.dx-body a[href^="#"]');
         if (jump) { ev.preventDefault(); dxJump(jump.getAttribute('href')); return; }
+        // comments: a highlight opens its thread; a chart's badge its first thread; Comment on a chart or diagram starts one there
+        var cm = ev.target.closest && ev.target.closest('.dx-body .dx-cmark');
+        if (cm && dx.view === 'doc' && window.getSelection().isCollapsed) {
+          // several threads on the same words: the oldest first, the card steps through them
+          var here = [];
+          for (var hn = cm; hn && hn.classList && hn.classList.contains('dx-cmark'); hn = hn.parentNode) here.unshift(hn.getAttribute('data-cid'));
+          dx.cstack = here.length > 1 ? here : null;
+          dxCard(here[0], cm);
+          return;
+        }
+        var fb = ev.target.closest && ev.target.closest('.dx-body .dx-fig-badge');
+        if (fb && dx.view === 'doc') { ev.preventDefault(); dxCard(fb.getAttribute('data-cids').split(' ')[0], fb); return; }
+        var fc = ev.target.closest && ev.target.closest('.dx-body .dx-fig-comment');
+        if (fc && dx.view === 'doc') {
+          ev.preventDefault();
+          var fig = fc.parentNode, on = fc.getAttribute('data-on');
+          var point = dx.lastMark && dx.lastMark.fig === fig && Date.now() - dx.lastMark.at < 60000 ? dx.lastMark.text : '';
+          var label = dxFigureName(fig, on) + (point ? ', at ' + point : '');
+          dxCard(null, fc, { quote: '', section: label, on: on, index: +fc.getAttribute('data-index') || 0, label: label });
+          return;
+        }
+        // a point of a chart (its numbers) or a box of a diagram, clicked: a comment from its figure is on that point
+        var mk = ev.target.closest && ev.target.closest('.dx-body figure.dx-chart .dx-ch-mark, .dx-body .dx-mermaid g.node');
+        if (mk) { var tt = mk.querySelector('title'); dx.lastMark = { fig: mk.closest('figure.dx-chart, .dx-mermaid'), text: ((tt && tt.textContent) || mk.textContent || '').trim().slice(0, 120), at: Date.now() }; }
         // a chip (a date, a status, a link to a tab or doc) and an approval's buttons
         var chip = ev.target.closest && ev.target.closest('.dx-body .dx-chip');
         if (chip && dx.view === 'doc') { ev.preventDefault(); dxChipClick(chip); return; }
@@ -11483,6 +11507,26 @@
         w.hidden = !w.hidden;
         b.textContent = w.hidden ? 'Data' : 'Hide data';
       });
+      // a comment's card: a press outside it closes it (a draft with words in it stays), Escape too
+      dx.main.addEventListener('mousedown', function (ev) {
+        var card = dx.main.querySelector('.dx-ccard');
+        if (!card || card.contains(ev.target) || (ev.target.closest && ev.target.closest('.dx-cmark, .dx-fig-badge, .dx-fig-comment, .dx-citem'))) return;
+        if (dx.ccard && dx.ccard.draft && dx.cdraft && String(dx.cdraft.text || '').trim()) return;
+        if (dx.ccard && !dx.ccard.draft && dx.creply && String(dx.creply.text || '').trim()) return;
+        var wasDraft = dx.ccard && dx.ccard.draft;
+        dxCloseCard();
+        if (wasDraft) { dx.cdraft = null; dxAfterDraft(); }
+      }, true);
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Escape' || !dx.main) return;
+        var card = dx.main.querySelector('.dx-ccard');
+        if (!card) return;
+        var ta = card.querySelector('.dx-ctext');
+        if (ta && ta.value.trim()) return;   // words written stay; Cancel or Close drops them
+        var wasDraft = dx.ccard && dx.ccard.draft;
+        dxCloseCard();
+        if (wasDraft) { dx.cdraft = null; dxAfterDraft(); }
+      }, true);
       dx.main.addEventListener('change', function (ev) {
         var t = ev.target;
         if (t && t.classList && t.classList.contains('dx-tick')) dxTick(t);
@@ -11654,18 +11698,25 @@
     var ratio = keepScroll && body && body.scrollHeight > body.clientHeight ? body.scrollTop / (body.scrollHeight - body.clientHeight) : null;
     var atEnd = keepScroll && body ? body.scrollTop + body.clientHeight >= body.scrollHeight - 30 : false;
     if (keepScroll && dx.view === 'doc' && dx.doc === id && r.markdown === dx.md && dx.main.querySelector('.dx-body[contenteditable="true"]')) {   // our own save coming back, or comments only
+      // comments only (an agent's reply, say): the marks, the list and an open thread's card follow; the text is not redrawn
+      var commentsChanged = JSON.stringify(r.comments || []) !== JSON.stringify(dx.comments || []);
       dx.comments = r.comments || [];
-      var cb = dx.main.querySelector('.dx-bar [data-act="comments"]'), oc = dx.comments.filter(function (x) { return !x.resolved; }).length;
-      if (cb) cb.textContent = 'Comments' + (oc ? ' (' + oc + ')' : '');
+      if (commentsChanged) {
+        dxMarkComments(dx.main.querySelector('.dx-body'));
+        if (dx.cpaneOpen) dxComments(true);
+        if (dx.ccard && dx.ccard.id && !dxDrafting(id)) dxCard(dx.ccard.id, dx.main.querySelector('.dx-cmark[data-cid="' + dx.ccard.id + '"]'));
+      }
       if (JSON.stringify(r.suggestions || []) !== JSON.stringify(dx.suggestions || [])) { dx.suggestions = r.suggestions || []; dxShowSuggestions(); }
       return;
     }
     if (keepScroll && dx.view === 'doc' && dx.doc === id && (dx.typed || dx.saving)) { dx.theirs = r; return dxTheirsWhileTyping(); }
-    if (keepScroll && dx.view === 'doc' && dx.doc === id && dx.cdraft && dx.cdraft.doc === id) {
-      // a comment is being written: nothing redraws under it; the agent's change shows when it is sent or cancelled
+    if (keepScroll && dx.view === 'doc' && dx.doc === id && dxDrafting(id)) {
+      // a comment or a reply is being written: nothing redraws under it; the agent's change shows when it is sent or cancelled
       dx.pendingDoc = r;
       var nn = dx.main.querySelector('.dx-note');
-      if (nn) { nn.hidden = false; nn.textContent = 'The agent changed this doc. It shows when you send or cancel your comment.'; }
+      if (nn) { nn.hidden = false; nn.textContent = 'The agent changed this doc. It shows when you send or cancel.'; }
+      var cn = dx.main.querySelector('.dx-ccard .dx-cnote');
+      if (cn) { cn.hidden = false; cn.textContent = 'The agent changed this doc. It shows when you send or cancel.'; }
       return;
     }
     dx.view = 'doc'; dx.doc = id; dx.md = r.markdown; dx.comments = r.comments || []; dx.title = r.title || id; dx.suggestions = r.suggestions || [];
@@ -11859,8 +11910,22 @@
     dxMaths(bodyEl);
     dxMakeEditable(bodyEl, m.querySelector('.dx-fmt'));
     dxShowSuggestions();
-    if (dx.cdraft && dx.cdraft.doc === dx.doc) dxComments(true, { quote: dx.cdraft.quote, section: dx.cdraft.section });
-    else if (commentsOpen) dxComments(true);
+    dxFigureButtons(bodyEl);
+    dxMarkComments(bodyEl);
+    // an open card follows its words as the doc scrolls
+    bodyEl.addEventListener('scroll', function () {
+      var cd = dx.main.querySelector('.dx-ccard');
+      if (cd && cd._anchor && (!cd._anchor.nodeType || cd._anchor.isConnected)) dxPlaceCard(cd, cd._anchor);
+    }, { passive: true });
+    if (commentsOpen || dx.cpaneOpen) dxComments(true);
+    // a comment being written, or a thread's card, comes back where it was
+    if (dx.cdraft && dx.cdraft.doc === dx.doc) {
+      var dm = dx.cdraft.quote ? dxFindWords(bodyEl, dx.cdraft.quote) : null;
+      var anc = null;
+      if (dm) { anc = document.createRange(); anc.setStart(dm.from[0], dm.from[1]); anc.setEnd(dm.to[0], dm.to[1] + 1); }
+      dxCard(null, anc || bodyEl, dx.cdraft);
+    } else if (dx.ccard && dx.ccard.id && dxCommentById(dx.ccard.id)) dxCard(dx.ccard.id, bodyEl.querySelector('.dx-cmark[data-cid="' + dx.ccard.id + '"]') || bodyEl);
+    else dx.ccard = null;
     m.querySelector('.dx-bar').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-act]');
       if (!b) return;
@@ -11868,7 +11933,7 @@
       if (a === 'back') { dxFlush().then(function () { dx.view = 'list'; dx.doc = null; dxList(); }); }
       else if (a === 'rename') dxRenameDoc(b);
       else if (a === 'edit') dxEdit();
-      else if (a === 'comments') dxComments(true);
+      else if (a === 'comments') dxComments(!dx.cpaneOpen);
       else if (a === 'more') dxMore(b);
     });
   }
@@ -11882,7 +11947,9 @@
     ['undo', '\u21b6', 'Undo (Ctrl+Z)'], ['redo', '\u21b7', 'Redo (Ctrl+Y)']
   ];
   var DX_FMT_BAR = '<div class="dx-fmt" data-testid="aiondx-dx-fmt" role="toolbar" aria-label="Formatting">' + DX_FMT.map(function (f) {
-    return f[0] === '|' ? '<span class="dx-fmt-sep"></span>' : '<button type="button" class="dx-fmt-b" data-fmt="' + f[0] + '" title="' + f[2] + '" tabindex="-1">' + f[1] + '</button>';
+    // labels are text: "</>" written as markup was read as a tag and the Code button showed blank
+    var escT = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+    return f[0] === '|' ? '<span class="dx-fmt-sep"></span>' : '<button type="button" class="dx-fmt-b" data-fmt="' + f[0] + '" title="' + escT(f[2]) + '" tabindex="-1">' + escT(f[1]) + '</button>';
   }).join('') + '</div>';
   /** The doc body becomes the editor. Drawn blocks (charts, diagrams, pending sections) stay whole and keep their source. */
   function dxMakeEditable(body, bar) {
@@ -12789,75 +12856,347 @@
     dxCommentBtn.style.left = Math.round(Math.min(rr.left, window.innerWidth - 110)) + 'px';
     dxCommentBtn.hidden = false;
   }
-  function dxCommentBox(quote, section) {
-    if (dxCommentBtn) dxCommentBtn.hidden = true;
-    dxComments(true, { quote: quote, section: section });
+  // ---- comments, the Claude Docs way (DX Docs mirror, November 15th; the user: "THE COMMENTS BOX JUST CONTINUOUSLY GROWS"). An open thread
+  // is a highlight on its words (charts and diagrams carry a badge); a click opens its card beside them: the thread, long text folded
+  // behind Show more, older replies behind Show N earlier replies, a reply box, Resolve. A new comment is written in a card at its words.
+  // The Comments list is a pane of its own height (drag its top edge; kept), scrolled on its own: open threads, resolved ones a click
+  // away, notes on the whole tab at the top. Every comment and reply goes to the agent; resolving does not.
+  var DX_CPANE_KEY = KEY_PREFIX + 'dx.cpane';   // the list's share of the panel's height, 0.18 to 0.75
+  function dxCPaneShare() { var v = NaN; try { v = parseFloat(localStorage.getItem(DX_CPANE_KEY)); } catch (e) {} return v >= 0.18 && v <= 0.75 ? v : 0.36; }
+  /** This tab's comments (comments from before tabs show on every tab). */
+  function dxTabComments() { return (dx.comments || []).filter(function (c) { return !c.tab || c.tab === (dx.tab || ''); }); }
+  function dxCommentById(id) { return (dx.comments || []).filter(function (c) { return c.id === id; })[0] || null; }
+  function dxWhoSaid(by) { return by === 'user' || by === 'you' ? 'You' : 'Agent'; }
+  /** Where a comment's words stand in the drawn doc: { from: [node, offset], to: [node, offset] } over text nodes, whitespace ignored; null when gone. */
+  function dxFindWords(body, quote) {
+    var want = String(quote || '').replace(/\s+/g, '');
+    if (want.length < 2) return null;
+    var walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, { acceptNode: function (n) {
+      var p = n.parentNode;
+      return p && p.closest && p.closest('[contenteditable="false"], .dx-sg-ins, .dx-ccard') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
+    var map = [], s = '', tn;
+    while ((tn = walker.nextNode())) { var v = tn.nodeValue; for (var i = 0; i < v.length; i++) if (!/\s|​/.test(v[i])) { map.push([tn, i]); s += v[i]; } }
+    var at = s.indexOf(want);
+    return at < 0 ? null : { from: map[at], to: map[at + want.length - 1] };
   }
-  function dxComments(show, draft) {
-    var box = dx.main.querySelector('.dx-comments');
-    if (!box) return;
-    box.hidden = !show;
-    if (!show) return;
-    box.innerHTML = '<div class="dx-comments-head"><span>Comments</span><button type="button" class="dx-btn" data-act="hide">✕</button></div><div class="dx-clist"></div>';
-    box.querySelector('[data-act="hide"]').addEventListener('click', function () { box.hidden = true; });
-    var list = box.querySelector('.dx-clist');
-    if (draft) {
-      var f = document.createElement('div');
-      f.className = 'dx-cdraft';
-      f.innerHTML = '<div class="dx-cquote"></div><textarea class="dx-ctext" placeholder="Your comment; the agent is told" data-testid="aiondx-dx-ctext"></textarea>' +
-        '<div class="dx-crow"><button type="button" class="dx-btn" data-act="cancel">Cancel</button><button type="button" class="dx-btn dx-btn--primary" data-act="send" data-testid="aiondx-dx-csend">Send</button></div>';
-      f.querySelector('.dx-cquote').textContent = '“' + draft.quote + '”';
-      var ta = f.querySelector('.dx-ctext');
-      if (dx.cdraft && dx.cdraft.doc === dx.doc && dx.cdraft.quote === draft.quote) ta.value = dx.cdraft.text || '';
-      dx.cdraft = { doc: dx.doc, quote: draft.quote, section: draft.section, text: ta.value };
-      var grow = function () {
-        var cap = Math.max(120, Math.round((dx.main ? dx.main.getBoundingClientRect().height : 600) / 2));
-        ta.style.height = 'auto';
-        ta.style.height = Math.min(cap, ta.scrollHeight + 2) + 'px';
-        ta.style.overflowY = ta.scrollHeight + 2 > cap ? 'auto' : 'hidden';
-      };
-      ta.addEventListener('input', function () { if (dx.cdraft) dx.cdraft.text = ta.value; grow(); });
-      setTimeout(grow, 0);
-      ta.addEventListener('keydown', function (ev) { ev.stopPropagation(); });
-      f.querySelector('[data-act="cancel"]').addEventListener('click', function () { f.remove(); dx.cdraft = null; dxAfterDraft(); });
-      f.querySelector('[data-act="send"]').addEventListener('click', function () { dxSendComment(draft, f.querySelector('.dx-ctext').value); });
-      list.appendChild(f);
-      setTimeout(function () { var t2 = f.querySelector('.dx-ctext'); t2.focus(); t2.setSelectionRange(t2.value.length, t2.value.length); }, 0);
-    }
-    if (!dx.comments.length && !draft) { var e = document.createElement('div'); e.className = 'dx-empty'; e.textContent = 'No comments. Select text in the doc and press Comment.'; list.appendChild(e); }
-    dx.comments.slice().reverse().forEach(function (c) {
-      var it = document.createElement('div');
-      it.className = 'dx-citem' + (c.resolved ? ' dx-citem--done' : '');
-      var q = document.createElement('div'); q.className = 'dx-cquote'; q.textContent = c.quote ? '“' + c.quote + '”' : (c.section || '');
-      var t = document.createElement('div'); t.className = 'dx-ctext-shown'; t.textContent = c.text;
-      it.appendChild(q); it.appendChild(t);
-      (c.replies || []).forEach(function (rp) { var x = document.createElement('div'); x.className = 'dx-creply'; x.textContent = (rp.by === 'user' ? 'You: ' : 'Agent: ') + rp.text; it.appendChild(x); });
-      if (c.resolved) { var d = document.createElement('div'); d.className = 'dx-cstate'; d.textContent = 'Resolved'; it.appendChild(d); }
-      list.appendChild(it);
+  /** Wrap words found by dxFindWords in highlight spans, one per text node they cross. */
+  function dxWrapWords(found, cid) {
+    var nodes = [], n = found.from[0];
+    var walker = document.createTreeWalker(n.parentNode.closest('.dx-body') || document.body, NodeFilter.SHOW_TEXT, null);
+    walker.currentNode = n;
+    for (; n; n = walker.nextNode()) { nodes.push(n); if (n === found.to[0]) break; }
+    nodes.forEach(function (tn) {
+      var a = tn === found.from[0] ? found.from[1] : 0, b = tn === found.to[0] ? found.to[1] + 1 : tn.nodeValue.length;
+      if (b <= a) return;
+      var mid = a > 0 ? tn.splitText(a) : tn;
+      if (b - a < mid.nodeValue.length) mid.splitText(b - a);
+      var span = document.createElement('span');
+      span.className = 'dx-cmark';
+      span.setAttribute('data-cid', cid);
+      span.setAttribute('data-testid', 'aiondx-dx-cmark');
+      mid.parentNode.insertBefore(span, mid);
+      span.appendChild(mid);
     });
   }
+  /** Highlights for this tab's open threads; a badge on a chart or diagram with comments; the Comments button's count. */
+  function dxMarkComments(body) {
+    if (!body) return;
+    body.querySelectorAll('.dx-cmark').forEach(function (m) { var p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); p.normalize(); });
+    body.querySelectorAll('.dx-fig-badge').forEach(function (b) { b.remove(); });
+    var open = dxTabComments().filter(function (c) { return !c.resolved; });
+    open.forEach(function (c) {
+      if (c.on === 'chart' || c.on === 'diagram') {
+        var fig = body.querySelectorAll(c.on === 'chart' ? 'figure.dx-chart' : '.dx-mermaid')[+c.index || 0];
+        if (!fig) return;
+        var badge = fig.querySelector(':scope > .dx-fig-badge');
+        if (!badge) { badge = document.createElement('button'); badge.type = 'button'; badge.className = 'dx-fig-badge'; badge.setAttribute('data-testid', 'aiondx-dx-figbadge'); badge.setAttribute('contenteditable', 'false'); badge.setAttribute('data-cids', ''); fig.appendChild(badge); }
+        var ids = badge.getAttribute('data-cids').split(' ').filter(Boolean).concat(c.id);
+        badge.setAttribute('data-cids', ids.join(' '));
+        badge.textContent = ids.length === 1 ? '1 comment' : ids.length + ' comments';
+        return;
+      }
+      var f = c.quote ? dxFindWords(body, c.quote) : null;
+      if (f) dxWrapWords(f, c.id);
+    });
+    var cb = dx.main && dx.main.querySelector('.dx-bar [data-act="comments"]');
+    var n = (dx.comments || []).filter(function (c) { return !c.resolved; }).length;
+    if (cb) cb.textContent = 'Comments' + (n ? ' (' + n + ')' : '');
+  }
+  /** A Comment button on each chart and diagram: a comment on it (on the point last clicked, when one was). */
+  function dxFigureButtons(body) {
+    if (!body) return;
+    ['figure.dx-chart', '.dx-mermaid'].forEach(function (sel, k) {
+      body.querySelectorAll(sel).forEach(function (fig, i) {
+        if (fig.querySelector(':scope > .dx-fig-comment')) return;
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'dx-fig-comment'; b.textContent = 'Comment'; b.setAttribute('contenteditable', 'false');
+        b.setAttribute('data-testid', 'aiondx-dx-figcomment');
+        b.setAttribute('data-on', k ? 'diagram' : 'chart'); b.setAttribute('data-index', String(i));
+        fig.appendChild(b);
+      });
+    });
+  }
+  function dxFigureName(fig, on) {
+    if (on === 'chart') { var t = fig.querySelector('.dx-ch-title'); return 'the chart' + (t && t.textContent ? ' "' + t.textContent + '"' : ''); }
+    var src = String(fig.getAttribute('data-src') || '').split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
+    return 'the diagram' + (src[0] ? ' (' + src[0].slice(0, 40) + ')' : '');
+  }
+  // the card: one at a time, inside the panel, beside what it is about
+  function dxCloseCard() { var c = dx.main && dx.main.querySelector('.dx-ccard'); if (c) c.remove(); dx.ccard = null; }
+  /** Opening a thread any other way than from its words forgets the stack of threads on them. */
+  /** The card inside the doc's own area (never over the bars above it or the list below it): under its words, else above them. */
+  function dxPlaceCard(card, anchor) {
+    var mr = dx.main.getBoundingClientRect();
+    var body = dx.main.querySelector('.dx-body');
+    var br = body ? body.getBoundingClientRect() : mr;
+    var w = Math.min(360, Math.max(240, br.width - 24));
+    card.style.width = w + 'px';
+    var room = Math.max(160, br.height - 16);
+    card.style.maxHeight = Math.round(Math.min(room, Math.max(220, br.height * 0.75))) + 'px';
+    var ar = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { left: br.left + 12, bottom: br.top + 40, top: br.top + 40 };
+    var h = card.offsetHeight || 200;
+    var lo = br.top - mr.top + 8, hi = br.bottom - mr.top - h - 8;
+    var top = ar.bottom - mr.top + 6;
+    if (top > hi) top = ar.top - mr.top - h - 6;
+    card.style.top = Math.round(Math.max(lo, Math.min(top, Math.max(lo, hi)))) + 'px';
+    card.style.left = Math.round(Math.max(br.left - mr.left + 12, Math.min(ar.left - mr.left, br.right - mr.left - w - 12))) + 'px';
+  }
+  /** A text box that grows with its lines up to eight, then scrolls. */
+  function dxGrowBox(ta) {
+    var grow = function () { ta.style.height = 'auto'; var cap = 8 * 18 + 14; ta.style.height = Math.min(cap, ta.scrollHeight + 2) + 'px'; ta.style.overflowY = ta.scrollHeight + 2 > cap ? 'auto' : 'hidden'; };
+    ta.addEventListener('input', grow);
+    setTimeout(grow, 0);
+    ta.addEventListener('keydown', function (ev) { ev.stopPropagation(); });
+  }
+  /** One message in a card: who, and the words, folded behind Show more when long. */
+  function dxCardMsg(by, text, lines) {
+    var d = document.createElement('div');
+    d.className = 'dx-cmsg';
+    var who = document.createElement('div'); who.className = 'dx-cwho'; who.textContent = dxWhoSaid(by);
+    var t = document.createElement('div'); t.className = 'dx-cbody'; t.textContent = text; t.style.webkitLineClamp = String(lines); t.setAttribute('data-lines', String(lines));
+    d.appendChild(who); d.appendChild(t);
+    setTimeout(function () {
+      if (t.scrollHeight <= t.clientHeight + 2) return;
+      var more = document.createElement('button'); more.type = 'button'; more.className = 'dx-cmore'; more.textContent = 'Show more';
+      more.addEventListener('click', function (ev) { ev.stopPropagation(); var open = t.classList.toggle('dx-cbody--open'); more.textContent = open ? 'Show less' : 'Show more'; });
+      d.appendChild(more);
+    }, 0);
+    return d;
+  }
+  /** The card of a thread (id), or of a new comment (draft: { quote, section, on, index }). */
+  function dxCard(id, anchor, draft) {
+    dxCloseCard();
+    if (dxCommentBtn) dxCommentBtn.hidden = true;
+    var c = id ? dxCommentById(id) : null;
+    if (id && !c) return;
+    var card = document.createElement('div');
+    card.className = 'dx-ccard' + (draft ? ' dx-ccard--draft' : '') + (c && c.resolved ? ' dx-ccard--done' : '');
+    card.setAttribute('data-testid', draft ? 'aiondx-dx-cdraft' : 'aiondx-dx-ccard');
+    if (c) card.setAttribute('data-cid', c.id);
+    var head = document.createElement('div'); head.className = 'dx-ccard-head';
+    var q = document.createElement('div'); q.className = 'dx-cquote';
+    var quote = draft ? draft.quote : c.quote;
+    var on = draft ? draft.on : c.on;
+    q.textContent = quote ? '“' + quote + '”' : on ? 'On ' + (draft ? draft.label : (c.section || on)) : 'A note on the whole ' + (dx.tab ? 'tab' : 'doc');
+    var x = document.createElement('button'); x.type = 'button'; x.className = 'dx-btn dx-ccard-x'; x.textContent = '✕'; x.title = 'Close';
+    head.appendChild(q);
+    // several threads on these words: which one this is, and the way to the others
+    var stack = c && dx.cstack && dx.cstack.indexOf(c.id) >= 0 ? dx.cstack : null;
+    if (stack) {
+      var k = stack.indexOf(c.id);
+      var nav = document.createElement('span'); nav.className = 'dx-cnav'; nav.setAttribute('data-testid', 'aiondx-dx-cnav');
+      nav.innerHTML = '<button type="button" class="dx-btn" data-step="-1" title="The thread before">‹</button><span>' + (k + 1) + ' of ' + stack.length + '</span><button type="button" class="dx-btn" data-step="1" title="The next thread">›</button>';
+      nav.addEventListener('click', function (ev) { var b = ev.target.closest('[data-step]'); if (!b) return; ev.stopPropagation(); dxCard(stack[(k + +b.getAttribute('data-step') + stack.length) % stack.length], anchor); });
+      head.appendChild(nav);
+    }
+    head.appendChild(x);
+    card.appendChild(head);
+    var note = document.createElement('div'); note.className = 'dx-cnote'; note.hidden = true; card.appendChild(note);
+    var thread = document.createElement('div'); thread.className = 'dx-cthread'; card.appendChild(thread);
+    if (c) {
+      thread.appendChild(dxCardMsg(c.by, c.text, 8));
+      var reps = c.replies || [];
+      var shown = reps.length > 2 ? reps.slice(-2) : reps;
+      if (reps.length > 2) {
+        var older = document.createElement('button'); older.type = 'button'; older.className = 'dx-cmore dx-colder';
+        older.textContent = 'Show ' + (reps.length - 2) + ' earlier ' + (reps.length - 2 === 1 ? 'reply' : 'replies');
+        older.addEventListener('click', function () { var box = document.createElement('div'); reps.slice(0, -2).forEach(function (r) { box.appendChild(dxCardMsg(r.by, r.text, 4)); }); older.replaceWith(box); });
+        thread.appendChild(older);
+      }
+      shown.forEach(function (r) { thread.appendChild(dxCardMsg(r.by, r.text, 4)); });
+      if (c.resolved) { var st = document.createElement('div'); st.className = 'dx-cstate'; st.textContent = 'Resolved'; thread.appendChild(st); }
+    }
+    var ta = document.createElement('textarea');
+    ta.className = 'dx-ctext';
+    ta.setAttribute('data-testid', draft ? 'aiondx-dx-ctext' : 'aiondx-dx-creply');
+    ta.placeholder = draft ? 'Your comment; the agent is told' : 'Reply; the agent is told';
+    var keep = draft ? dx.cdraft : dx.creply;
+    if (keep && (draft ? keep.quote === draft.quote : keep.id === id)) ta.value = keep.text || '';
+    if (draft) dx.cdraft = { doc: dx.doc, quote: draft.quote, section: draft.section, on: draft.on, index: draft.index, label: draft.label, text: ta.value };
+    else dx.creply = ta.value ? { doc: dx.doc, id: id, text: ta.value } : null;
+    ta.addEventListener('input', function () {
+      if (draft) { if (dx.cdraft) dx.cdraft.text = ta.value; }
+      else dx.creply = ta.value ? { doc: dx.doc, id: id, text: ta.value } : null;
+    });
+    dxGrowBox(ta);
+    card.appendChild(ta);
+    var row = document.createElement('div'); row.className = 'dx-crow';
+    if (draft) row.innerHTML = '<button type="button" class="dx-btn" data-act="cancel">Cancel</button><button type="button" class="dx-btn dx-btn--primary" data-act="send" data-testid="aiondx-dx-csend">Comment</button>';
+    else row.innerHTML = '<button type="button" class="dx-btn" data-act="resolve" data-testid="aiondx-dx-cresolve">' + (c.resolved ? 'Reopen' : 'Resolve') + '</button><button type="button" class="dx-btn dx-btn--primary" data-act="reply" data-testid="aiondx-dx-creplysend">Reply</button>';
+    card.appendChild(row);
+    card.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+    card.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-act]');
+      if (ev.target === x) { dxCloseCard(); if (draft) { dx.cdraft = null; dxAfterDraft(); } return; }
+      if (!b) return;
+      var a = b.getAttribute('data-act');
+      if (a === 'cancel') { dxCloseCard(); dx.cdraft = null; dxAfterDraft(); }
+      else if (a === 'send') dxSendComment(dx.cdraft || draft, ta.value);
+      else if (a === 'reply') dxSendReply(c, ta.value, false);
+      else if (a === 'resolve') dxSendReply(c, '', !c.resolved);
+    });
+    dx.main.appendChild(card);
+    dx.ccard = { id: id || null, draft: !!draft };
+    card._anchor = anchor;
+    dxPlaceCard(card, anchor);
+    if (dx.pendingDoc) { note.hidden = false; note.textContent = 'The agent changed this doc. It shows when you send or cancel.'; }
+    setTimeout(function () { if (draft || ta.value) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }, 0);
+  }
+  /** The thread's place in the doc: its highlight (or its chart's badge) scrolled to and flashed, then its card. */
+  function dxGoToComment(id) {
+    dx.cstack = null;
+    var body = dx.main.querySelector('.dx-body');
+    var c = dxCommentById(id);
+    if (!c || !body) return;
+    if (c.tab && c.tab !== dx.tab && dx.tabs.some(function (t) { return t.id === c.tab; })) { dxSwitchTab(c.tab).then(function () { dxGoToComment(id); }); return; }
+    var mark = body.querySelector('.dx-cmark[data-cid="' + id + '"]') || body.querySelector('.dx-fig-badge[data-cids~="' + id + '"]');
+    if (mark) {
+      mark.scrollIntoView({ block: 'center' });
+      body.querySelectorAll('.dx-cmark[data-cid="' + id + '"]').forEach(function (m) { m.classList.add('dx-cmark--flash'); setTimeout(function () { m.classList.remove('dx-cmark--flash'); }, 1200); });
+    }
+    dxCard(id, mark || body);
+  }
+  function dxCommentBox(quote, section) {
+    if (dxCommentBtn) dxCommentBtn.hidden = true;
+    var sel = window.getSelection();
+    var anchor = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+    dxCard(null, anchor, { quote: quote, section: section });
+  }
+  /** The Comments list: a pane at the panel's foot with its own height and scroll bar. show false closes it. */
+  function dxComments(show) {
+    var box = dx.main.querySelector('.dx-comments');
+    if (!box) return;
+    dx.cpaneOpen = !!show;
+    box.hidden = !show;
+    if (!show) return;
+    var mh = dx.main.getBoundingClientRect().height;
+    box.style.height = Math.round(Math.max(120, Math.min(mh - 160, mh * dxCPaneShare()))) + 'px';
+    var all = dxTabComments();
+    var open = all.filter(function (c) { return !c.resolved; }), done = all.filter(function (c) { return c.resolved; });
+    if (dx.cfilter !== 'resolved') dx.cfilter = 'open';
+    box.innerHTML = '<div class="dx-cgrip" data-testid="aiondx-dx-cgrip" title="Drag to resize"></div>' +
+      '<div class="dx-comments-head"><span class="dx-comments-title">Comments</span><span class="dx-cfilter" role="tablist">' +
+      '<button type="button" class="dx-btn" data-f="open" role="tab">Open ' + open.length + '</button><button type="button" class="dx-btn" data-f="resolved" role="tab" data-testid="aiondx-dx-cresolved">Resolved ' + done.length + '</button></span>' +
+      '<button type="button" class="dx-btn" data-act="note" title="A note on the whole ' + (dx.tab ? 'tab' : 'doc') + '" data-testid="aiondx-dx-cnote">+ Note</button>' +
+      '<button type="button" class="dx-btn" data-act="hide" title="Close the list">✕</button></div><div class="dx-clist" data-testid="aiondx-dx-clist"></div>';
+    box.querySelectorAll('[data-f]').forEach(function (b) { b.classList.toggle('dx-btn--on', b.getAttribute('data-f') === dx.cfilter); });
+    var list = box.querySelector('.dx-clist');
+    var items = dx.cfilter === 'resolved' ? done : open;
+    var notes = items.filter(function (c) { return !c.quote && !c.on; }), threads = items.filter(function (c) { return c.quote || c.on; });
+    if (!items.length) { var e = document.createElement('div'); e.className = 'dx-empty'; e.textContent = dx.cfilter === 'resolved' ? 'No resolved comments.' : 'No open comments. Select words in the doc and press Comment, or add a note.'; list.appendChild(e); }
+    var item = function (c) {
+      var it = document.createElement('div');
+      it.className = 'dx-citem' + (c.resolved ? ' dx-citem--done' : '');
+      it.setAttribute('data-cid', c.id);
+      it.setAttribute('data-testid', 'aiondx-dx-citem');
+      if (c.quote || c.on) { var q = document.createElement('div'); q.className = 'dx-cquote dx-cquote--one'; q.textContent = c.quote ? '“' + c.quote + '”' : 'On ' + (c.section || c.on); it.appendChild(q); }
+      var t = document.createElement('div'); t.className = 'dx-cbody dx-cbody--3'; t.textContent = (c.by === 'agent' ? 'Agent: ' : '') + c.text; it.appendChild(t);
+      var reps = c.replies || [];
+      if (reps.length) { var r = document.createElement('div'); r.className = 'dx-clast'; r.textContent = reps.length + (reps.length === 1 ? ' reply' : ' replies') + ' · ' + dxWhoSaid(reps[reps.length - 1].by) + ': ' + reps[reps.length - 1].text; it.appendChild(r); }
+      return it;
+    };
+    if (notes.length) { var g = document.createElement('div'); g.className = 'dx-group'; g.textContent = 'Whole ' + (dx.tab ? 'tab' : 'doc'); list.appendChild(g); notes.forEach(function (c) { list.appendChild(item(c)); }); }
+    if (notes.length && threads.length) { var g2 = document.createElement('div'); g2.className = 'dx-group'; g2.textContent = 'On the text'; list.appendChild(g2); }
+    threads.forEach(function (c) { list.appendChild(item(c)); });
+    box.querySelector('.dx-comments-head').addEventListener('click', function (ev) {
+      var f = ev.target.closest('[data-f]');
+      if (f) { dx.cfilter = f.getAttribute('data-f'); dxComments(true); return; }
+      var b = ev.target.closest('[data-act]');
+      if (!b) return;
+      if (b.getAttribute('data-act') === 'hide') dxComments(false);
+      else if (b.getAttribute('data-act') === 'note') dxCard(null, b, { quote: '', section: '' });
+    });
+    list.addEventListener('click', function (ev) { var it = ev.target.closest('[data-cid]'); if (it) dxGoToComment(it.getAttribute('data-cid')); });
+    box.querySelector('.dx-cgrip').addEventListener('mousedown', function (ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      var mr = dx.main.getBoundingClientRect();
+      document.body.classList.add('aiondx-dx-vdragging');
+      var move = function (e) { var h = Math.max(120, Math.min(mr.height - 160, mr.bottom - e.clientY)); box.style.height = Math.round(h) + 'px'; try { localStorage.setItem(DX_CPANE_KEY, (h / mr.height).toFixed(3)); } catch (er) {} };
+      var up = function () { document.removeEventListener('mousemove', move, true); document.removeEventListener('mouseup', up, true); document.body.classList.remove('aiondx-dx-vdragging'); };
+      document.addEventListener('mousemove', move, true);
+      document.addEventListener('mouseup', up, true);
+    });
+  }
+  /** A comment or a reply is being written: an agent's change waits (nothing redraws under it). */
+  function dxDrafting(id) { return !!((dx.cdraft && dx.cdraft.doc === id) || (dx.creply && dx.creply.doc === id && dx.creply.text)); }
   /** A comment was sent or cancelled: an agent's change that waited for it shows now. */
   function dxAfterDraft() {
+    if (dxDrafting(dx.doc)) return;
     var r = dx.pendingDoc;
     dx.pendingDoc = null;
     var nn = dx.main && dx.main.querySelector('.dx-note');
-    if (nn && /It shows when you send or cancel your comment/.test(nn.textContent)) nn.hidden = true;
+    if (nn && /It shows when you send or cancel/.test(nn.textContent)) nn.hidden = true;
     if (r && dx.view === 'doc' && dx.doc === r.id) { dx.md = r.markdown; dx.comments = r.comments || []; dx.suggestions = r.suggestions || []; dxDrawDoc(); }
+  }
+  /** Read the comments again and redraw the marks, the open card and the list (the doc's text is not redrawn). */
+  async function dxRefreshComments(cardId) {
+    var x = await dxApi('read', { id: dx.doc });
+    if (!x || !x.ok) return;
+    if (x.markdown !== dx.md && !dx.typed && !dxDrafting(dx.doc)) { dx.md = x.markdown; dx.comments = x.comments || []; dx.suggestions = x.suggestions || []; dxDrawDoc(); }
+    else { dx.comments = x.comments || []; dxMarkComments(dx.main.querySelector('.dx-body')); if (dx.cpaneOpen) dxComments(true); }
+    if (cardId) dxGoToComment(cardId);
   }
   async function dxSendComment(draft, text) {
     text = String(text || '').trim();
     if (!text) return;
     var tabTitle = dxTabTitle();
-    var r = await dxApi('comment', { id: dx.doc, quote: draft.quote, section: draft.section, text: text, tab: dx.tab || '' });
+    var r = await dxApi('comment', { id: dx.doc, quote: draft.quote || '', section: draft.label || draft.section || '', text: text, tab: dx.tab || '', on: draft.on || '', index: draft.index });
     if (!r || !r.ok) { toast('The comment was not saved.', r && r.error); return; }
-    dx.cdraft = null; dx.pendingDoc = null;   // the redraw below reads the doc as it now stands, the agent's change included
+    dx.cdraft = null;
+    dxCloseCard();
     // the answer goes through the aiondx commands every chat has (the dxdoc_* tools reach only chats started with AionDX's tool server)
+    var what = draft.quote ? '> ' + draft.quote.replace(/\n/g, '\n> ') : draft.on ? '(on ' + (draft.label || draft.on) + ')' : '(a note on the whole ' + (dx.tab ? 'tab' : 'doc') + ')';
     var msg = '[DX Doc comment] On "' + dx.title + '" (doc ' + dx.doc + (tabTitle ? ', tab "' + tabTitle + '" (' + dx.tab + ')' : '') + (draft.section ? ', section "' + draft.section + '"' : '') + ', comment ' + r.comment.id + '):\n' +
-      '> ' + draft.quote.replace(/\n/g, '\n> ') + '\n\n' + text + '\n\n(Answer in the comment’s thread: aiondx doc reply --json \'{"doc":"' + dx.doc + '","comment":"' + r.comment.id + '","text":"..."}\' (or the dxdoc_reply tool). ' +
+      what + '\n\n' + text + '\n\n(Answer in the comment’s thread: aiondx doc reply --json \'{"doc":"' + dx.doc + '","comment":"' + r.comment.id + '","text":"..."}\' (or the dxdoc_reply tool). ' +
       'When it asks for a change, make it with aiondx doc update' + (tabTitle ? ', "tab":"' + dx.tab + '" on each operation' : '') + ' (or dxdoc_update). aiondx doc help lists every operation.)';
     var sent = await postJson(dx.sendPath || '/api/conversations/' + dx.conv + '/messages', { content: msg }).catch(function () { return null; });
     if (!sent || !sent.ok) toast('The comment is saved with the doc, but the agent could not be told.', 'Send it a message to look at the doc’s comments.');
-    dxOpen(dx.doc, true).then(function () { dxComments(true); });
+    var waited = dx.pendingDoc;
+    dx.pendingDoc = null;
+    if (waited) { dx.md = waited.markdown; dx.suggestions = waited.suggestions || []; }
+    await dxRefreshComments(null);
+    if (waited) dxDrawDoc();
+  }
+  /** A reply in a thread (the agent is told), or resolve / reopen (it is not). */
+  async function dxSendReply(c, text, resolve) {
+    text = String(text || '').trim();
+    if (!text && resolve === false && !c.resolved) return;
+    var r = await dxApi('reply', { id: dx.doc, comment: c.id, text: text, resolve: text ? undefined : resolve });
+    if (!r || !r.ok) { toast(text ? 'The reply was not saved.' : 'Not changed.', r && r.error); return; }
+    dx.creply = null;
+    if (text) {
+      var tabTitle = dxTabTitle();
+      var msg = '[DX Doc reply] On "' + dx.title + '" (doc ' + dx.doc + (tabTitle ? ', tab "' + tabTitle + '" (' + dx.tab + ')' : '') + ', comment ' + c.id + '), the user replied:\n\n' + text +
+        '\n\n(The thread so far: aiondx doc comments --json \'{"doc":"' + dx.doc + '"}\'. Answer in the thread: aiondx doc reply --json \'{"doc":"' + dx.doc + '","comment":"' + c.id + '","text":"..."}\'.)';
+      dxTell(msg).then(function (ok) { if (!ok) toast('The reply is saved, but the agent could not be told.'); });
+    }
+    var waited = dx.pendingDoc;
+    dx.pendingDoc = null;
+    if (waited) { dx.md = waited.markdown; dx.suggestions = waited.suggestions || []; }
+    await dxRefreshComments(text ? c.id : null);
+    if (waited) dxDrawDoc();
+    if (!text) dxCloseCard();
   }
   function dxMore(anchor) {
     var old = document.querySelector('.dx-menu');
@@ -12971,6 +13310,8 @@
     var st = document.createElement('style');
     st.id = 'aiondx-dx-style';
     st.textContent = [
+      // hidden means hidden, whatever display a part's own rule gives it (the tab strip and the new-doc box are flex rows)
+      '.aiondx-dx [hidden]{display:none !important}',
       '.aiondx-dx{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
       // AionDX's own panel at the chat's right edge: closed it takes no room; open, half the chat area, its left edge a drag handle
       '.aiondx-dx-sider{position:relative;box-sizing:border-box;flex:0 0 0px;width:0;min-width:0;overflow:hidden;background:var(--color-bg-1,#fff)}',
@@ -13094,7 +13435,8 @@
       '.dx-row-title{font-size:13px;font-weight:600;color:var(--color-text-1)}',
       '.dx-row-meta{font-size:11.5px;color:var(--color-text-3)}',
       '.dx-empty{padding:16px;font-size:12.5px;line-height:1.5;color:var(--color-text-3)}',
-      '.dx-body{flex:1 1 auto;overflow:auto;padding:14px 18px 40px;font-size:13.5px;line-height:1.6;user-select:text}',
+      // min-height 0: the doc shrinks to make room for the comments list instead of running under it
+      '.dx-body{flex:1 1 auto;min-height:0;overflow:auto;padding:14px 18px 40px;font-size:13.5px;line-height:1.6;user-select:text}',
       '.dx-body h1{font-size:21px;margin:4px 0 12px}.dx-body h2{font-size:16px;margin:20px 0 6px}.dx-body h3{font-size:14px;margin:16px 0 4px}',
       '.dx-body p{margin:0 0 10px}.dx-body ul,.dx-body ol{margin:0 0 10px;padding-left:22px}.dx-body li{margin:2px 0}',
       '.dx-body .dx-task{list-style:none;margin-left:-18px}',
@@ -13112,16 +13454,34 @@
       '@media (prefers-reduced-motion: reduce){.dx-pending,.dx-pending-dot{animation:none}}',
       '.dx-edit{flex:1 1 auto;resize:none;border:0;outline:0;padding:12px 14px;font:12.5px/1.55 Consolas,monospace;background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
       '.dx-note{padding:8px 12px;font-size:12px;background:rgba(var(--warning-6,255,125,0),.12);color:var(--color-text-1)}',
-      '.dx-comments{flex:0 0 auto;max-height:70%;overflow:auto;border-top:1px solid var(--color-border-2,rgba(0,0,0,.1));background:var(--color-bg-2,var(--color-bg-1))}',
-      '.dx-comments-head{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;font-size:12.5px;font-weight:600}',
-      '.dx-clist{padding:0 10px 10px}',
-      '.dx-citem,.dx-cdraft{padding:8px 10px;margin:0 0 8px;border-radius:6px;background:var(--color-fill-1,rgba(0,0,0,.03));font-size:12.5px}',
-      '.dx-citem--done{opacity:.6}',
-      '.dx-cquote{font-size:12px;color:var(--color-text-3);margin-bottom:4px;max-height:3.2em;overflow:hidden}',
-      '.dx-creply{margin-top:4px;padding-left:8px;border-left:2px solid var(--color-border-2,#ddd);color:var(--color-text-2)}',
-      '.dx-cstate{margin-top:4px;font-size:11px;color:var(--color-text-3)}',
-      '.dx-ctext{width:100%;box-sizing:border-box;min-height:56px;resize:none;overflow-y:hidden;font:inherit;padding:6px;border-radius:5px;border:1px solid var(--color-border-2,#ccc);background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
-      '.dx-crow{display:flex;justify-content:flex-end;gap:6px;margin-top:6px}',
+      // comments (November 15th): the doc and the list share the panel's column, the list at its own height with its own scroll bar
+      '.dx-comments{position:relative;flex:0 0 auto;display:flex;flex-direction:column;min-height:120px;border-top:1px solid var(--color-border-2,rgba(0,0,0,.12));background:var(--color-bg-2,var(--color-bg-1))}',
+      '.dx-comments[hidden]{display:none}',
+      '.dx-cgrip{position:absolute;left:0;right:0;top:-4px;height:8px;cursor:row-resize;z-index:2}.dx-cgrip:hover,.aiondx-dx-vdragging .dx-cgrip{background:rgba(var(--primary-6),.25)}',
+      'body.aiondx-dx-vdragging{cursor:row-resize !important;user-select:none !important}',
+      '.dx-comments-head{flex:0 0 auto;display:flex;align-items:center;gap:4px;padding:6px 8px 6px 12px;font-size:12.5px;border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06))}',
+      '.dx-comments-title{font-weight:600;margin-right:auto}.dx-cfilter{display:inline-flex;gap:2px}',
+      '.dx-clist{flex:1 1 auto;min-height:0;overflow-y:scroll;padding:6px 10px 10px}',
+      '.dx-citem{padding:7px 10px;margin:0 0 6px;border-radius:8px;background:var(--color-bg-1,#fff);border:1px solid var(--color-border-1,rgba(0,0,0,.08));font-size:12.5px;cursor:pointer}',
+      '.dx-citem:hover{border-color:rgba(var(--primary-6),.45)}.dx-citem--done{opacity:.7}',
+      '.dx-cquote{font-size:12px;color:var(--color-text-3);margin-bottom:3px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}',
+      '.dx-cquote--one{-webkit-line-clamp:1}',
+      '.dx-cbody{white-space:pre-wrap;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}.dx-cbody--3{-webkit-line-clamp:3}.dx-cbody--open{display:block;-webkit-line-clamp:unset !important}',
+      '.dx-clast{margin-top:4px;font-size:11.5px;color:var(--color-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dx-cstate{margin-top:6px;font-size:11px;color:var(--color-text-3)}',
+      '.dx-ctext{width:100%;box-sizing:border-box;min-height:52px;resize:none;overflow-y:hidden;font:inherit;font-size:12.5px;line-height:18px;padding:6px;margin-top:8px;border-radius:6px;border:1px solid var(--color-border-2,#ccc);background:var(--color-bg-1,#fff);color:var(--color-text-1)}',
+      '.dx-cmark{background:rgba(255,196,0,.28);border-bottom:2px solid rgba(230,160,0,.85);cursor:pointer;border-radius:2px}.dx-cmark:hover{background:rgba(255,196,0,.42)}',
+      '.dx-cmark--flash{background:rgba(255,196,0,.7);transition:background .3s}',
+      '.dx-ccard{position:absolute;z-index:20;display:flex;flex-direction:column;overflow:hidden;padding:10px 12px;border-radius:10px;background:var(--color-bg-popup,var(--color-bg-1,#fff));border:1px solid var(--color-border-2,rgba(0,0,0,.14));box-shadow:0 8px 28px rgba(0,0,0,.22);font-size:12.5px}',
+      '.dx-cthread{flex:1 1 auto;min-height:0;overflow-y:auto;margin:0 -4px;padding:0 4px}.dx-ccard .dx-ctext,.dx-ccard .dx-crow{flex:0 0 auto}',
+      '.dx-cnav{display:inline-flex;align-items:center;gap:2px;font-size:11.5px;color:var(--color-text-3);white-space:nowrap}.dx-cnav .dx-btn{padding:0 6px}',
+      '.dx-ccard-head{flex:0 0 auto;display:flex;align-items:flex-start;gap:6px}.dx-ccard-head .dx-cquote{flex:1 1 auto}.dx-ccard-x{padding:0 6px}',
+      '.dx-cmsg{margin-top:8px}.dx-cmsg + .dx-cmsg{padding-top:8px;border-top:1px solid var(--color-border-1,rgba(0,0,0,.06))}.dx-cwho{font-size:11.5px;font-weight:600;color:var(--color-text-2);margin-bottom:1px}',
+      '.dx-cmore{border:0;background:transparent;color:rgb(var(--primary-6,22,93,255));cursor:pointer;padding:2px 0;font-size:12px}.dx-colder{margin-top:6px}',
+      '.dx-cnote{margin-top:6px;padding:4px 6px;border-radius:5px;font-size:11.5px;background:rgba(var(--warning-6,255,125,0),.14)}',
+      '.dx-fig-comment,.dx-fig-badge{position:absolute;top:2px;z-index:3;border:1px solid var(--color-border-2,rgba(0,0,0,.12));background:var(--color-bg-1,#fff);color:var(--color-text-2);border-radius:5px;font-size:11px;padding:2px 8px;cursor:pointer}',
+      '.dx-fig-comment{right:56px;opacity:0;transition:opacity .15s}figure.dx-chart:hover>.dx-fig-comment,.dx-mermaid:hover>.dx-fig-comment{opacity:.85}.dx-mermaid>.dx-fig-comment{right:2px}',
+      '.dx-fig-badge{left:2px;background:rgba(255,196,0,.3);border-color:rgba(230,160,0,.85);color:var(--color-text-1)}.dx-mermaid{position:relative}',
       '.dx-comment-btn{position:fixed;z-index:1200;border:0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;background:rgb(var(--primary-6,22,93,255));color:#fff;box-shadow:0 3px 10px rgba(0,0,0,.2)}',
       '.dx-menu{position:fixed;z-index:1200;display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:8px;background:var(--color-bg-popup,var(--color-bg-1,#fff));border:1px solid var(--color-border-2,rgba(0,0,0,.12));box-shadow:0 6px 20px rgba(0,0,0,.18)}',
       '.dx-menu button{border:0;background:transparent;text-align:left;padding:7px 10px;font-size:12.5px;border-radius:5px;cursor:pointer;color:var(--color-text-1)}',

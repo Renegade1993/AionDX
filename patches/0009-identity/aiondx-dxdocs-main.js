@@ -96,7 +96,7 @@ function create(o) {
     if (op === 'version') return { ok: true, markdown: D.readVersion(dir, req.id, req.version) };
     if (op === 'restore') return Object.assign({ ok: true }, D.restore(dir, req.id, req.version));
     if (op === 'comments') return { ok: true, comments: D.comments(dir, req.id) };
-    if (op === 'comment') return { ok: true, comment: D.addComment(dir, req.id, { quote: req.quote, text: req.text, section: req.section, tab: req.tab, by: 'user' }) };
+    if (op === 'comment') return { ok: true, comment: D.addComment(dir, req.id, { quote: req.quote, text: req.text, section: req.section, tab: req.tab, on: req.on, index: req.index, by: 'user' }) };
     if (op === 'reply') return { ok: true, comment: D.replyComment(dir, req.id, req.comment, { text: req.text, resolve: req.resolve, by: 'user' }) };
     if (op === 'image') {
       // a picture a doc shows: relative to the DX Docs folder, or a path or file: URL under the project's root (the folder above it)
