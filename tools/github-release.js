@@ -45,7 +45,8 @@ if (!args.includes('--no-whats-new')) {
   const notes = fs.readFileSync(notesFile, 'utf8').replace(/\r\n/g, '\n');
   const sec = /^## New\n([\s\S]*?)(?=^## |$(?![\s\S]))/m.exec(notes);
   if (sec) {
-    const wanted = [...sec[1].matchAll(/^- \*\*([^*]+?)\*\*/gm)].map((m) => m[1].replace(/[.:]$/, '').trim()).filter((n) => !/^For agents/i.test(n));
+    // "- **Name** ..." or, without bold (the house style bans bold bullet intros), "- Name: ..."
+    const wanted = [...sec[1].matchAll(/^- (?:\*\*([^*]+?)\*\*|([^:\n]{2,80}):\s)/gm)].map((m) => (m[1] || m[2]).replace(/[.:]$/, '').trim()).filter((n) => !/^For agents/i.test(n));
     const ui = fs.readFileSync(path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'), 'utf8');
     const wn = /var WHATS_NEW = \{\s*release: '([^']+)',\s*items: \[([\s\S]*?)\n\s*\],/.exec(ui);
     const version = tag.replace(/^v/, '').replace(/-.*$/, '');
