@@ -72,8 +72,10 @@ const deadline = setTimeout(() => { console.log('DEADLINE'); process.exit(2); },
     const pkg = mv && mv.moved && mv.moved[0] && mv.moved[0].package;
     const got = await app.js(`window.__t.call('GET', '/api/conversations/${conv.id}')`);
     const wsNow = got && got.j && (got.j.data || got.j).extra && (got.j.data || got.j).extra.workspace;
-    check('AionCore reads the chat\'s new working folder on the drive', !!pkg && wsNow === path.join(pkg, 'workspace'), JSON.stringify([pkg, wsNow]));
-    check('its file is there, and gone from AionDX\'s folder', fs.existsSync(path.join(pkg || '', 'workspace', 'notes.txt')) && !fs.existsSync(conv.ws));
+    // the working folder keeps its own name in the package (November 16th, 2026: a folder named "workspace" put the chat under Projects)
+    const own = path.join(pkg || '', path.basename(conv.ws || ''));
+    check('AionCore reads the chat\'s new working folder on the drive, under its own name', !!pkg && /-temp-/.test(path.basename(conv.ws || '')) && wsNow === own, JSON.stringify([pkg, wsNow]));
+    check('its file is there, and gone from AionDX\'s folder', fs.existsSync(path.join(own, 'notes.txt')) && !fs.existsSync(conv.ws));
     check('the drive lists it', (() => { try { return JSON.parse(fs.readFileSync(index, 'utf8')).packages.some((p) => p.id === conv.id); } catch (e) { return false; } })());
     const ens2 = await app.js(`window.__t.call('POST', '/api/conversations/${conv.id}/runtime/ensure', {})`);
     check('released, it is not refused for its folder (not held, not missing)', ens2 && !/being moved|WorkspacePath|workspace path/i.test(JSON.stringify(ens2.j)), JSON.stringify(ens2));

@@ -3,6 +3,10 @@ rem run-release-tests.cmd - the test set run before a release, against the stage
 rem   tools\hidden-run.exe cmd.exe /c "C:\AI Projects\AionDX\tools\run-release-tests.cmd"
 rem Writes %TEMP%\dx-release-tests.out and cleans up what the tests leave in %TEMP% at the end (tools\clean-test-leftovers.ps1).
 cd /d "%~dp0.."
+rem The test apps scan every drive for chats kept on one (D: to Z:) and would take in, and write back to, the user's real
+rem packages (November 16th, 2026). They look only in this empty folder; a test that needs a drive sets its own.
+if not exist "%TEMP%\dx-test-roots" mkdir "%TEMP%\dx-test-roots"
+set AIONDX_PORTABLE_ROOTS=%TEMP%\dx-test-roots\
 set OUT=%TEMP%\dx-release-tests.out
 echo ==== renderer-names > "%OUT%"
 node tools\check-renderer-names.js >> "%OUT%" 2>&1
