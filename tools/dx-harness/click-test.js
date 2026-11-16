@@ -3689,13 +3689,44 @@ async function pageTarget() {
       const c4 = await card();
       check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW28.concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
-      check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 340, JSON.stringify(box));
+      check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 360, JSON.stringify(box));
+      // November 16th: with 0.28.0's list the card ran off the top of the window ("CAN'T EVEN SEE THE WHOLE THING"). The whole card must
+      // be on screen, title and Got it included, with the list scrolling inside it; checked here at the longest list (22 items, from
+      // 0.27.4) and in a short window too.
+      const fit = () => js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); const r = c.getBoundingClientRect();
+        const t = c.querySelector('.aiondx-whatsnew-title').getBoundingClientRect(), o = c.querySelector('.aiondx-whatsnew-ok').getBoundingClientRect();
+        const l = c.querySelector('[data-testid="aiondx-whatsnew-list"]');
+        return { top: Math.round(r.top), h: Math.round(r.height), vh: innerHeight, titleOn: t.top >= 0 && t.bottom <= innerHeight, okOn: o.top >= 0 && o.bottom <= innerHeight,
+          scrolls: l.scrollHeight > l.clientHeight && getComputedStyle(l).overflowY === 'auto', open: [...c.querySelectorAll('.aiondx-whatsnew-how')].filter((h) => !h.hidden).length }; })()`);
+      let f = await fit();
+      check(sc, 'the whole card is on screen: title, Got it, and the long list scrolls inside it', f.top >= 16 && f.titleOn && f.okOn && f.scrolls && f.h <= 520, JSON.stringify(f));
+      check(sc, 'each item is one line; the first is open', f.open === 1, JSON.stringify(f));
+      await humanClick('.aiondx-whatsnew-item:nth-child(2) .aiondx-whatsnew-name');
+      await sleep(200);
+      f = await fit();
+      check(sc, 'clicking an item opens how to use it', f.open === 2, JSON.stringify(f));
+      await shot('whatsnew-light');
+      await send('Emulation.setDeviceMetricsOverride', { width: 1076, height: 520, deviceScaleFactor: 1, mobile: false });
+      await sleep(300);
+      f = await fit();
+      check(sc, 'in a short window it still fits, title and Got it on screen', f.top >= 16 && f.titleOn && f.okOn && f.h <= f.vh - 32, JSON.stringify(f));
+      await send('Emulation.clearDeviceMetricsOverride', {});
+      await sleep(200);
       await humanClick('.aiondx-whatsnew-ok');
       await sleep(300);
       check(sc, 'Got it puts it away', !(await card()));
       await load('theme=light&keepls=1');
       await sleep(3600);
       check(sc, 'and it does not come back', !(await card()));
+      // a look by eye at the user's own window size, dark, updating from 0.27.11
+      await send('Emulation.setDeviceMetricsOverride', { width: 1720, height: 1392, deviceScaleFactor: 1, mobile: false });
+      await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.11'); return 0; })()`);
+      await load('theme=dark&keepls=1');
+      await sleep(3600);
+      const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
+      check(sc, 'at 1720 x 1392, dark: the 0.28.0 card is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 14, JSON.stringify(fd));
+      await shot('whatsnew-dark');
+      await send('Emulation.clearDeviceMetricsOverride', {});
     }
 
     // ---- tips: a bubble pointing at each control until Got it (2026-11-13) ----

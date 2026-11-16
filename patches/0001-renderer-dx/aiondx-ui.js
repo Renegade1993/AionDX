@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-15.2';
+  var BUILD = '2026-11-16.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -12328,12 +12328,26 @@
     x.setAttribute('aria-label', 'Close');
     head.appendChild(x);
     card.appendChild(head);
-    (whatsNewItems.length ? whatsNewItems : WHATS_NEW.items).forEach(function (it) {
+    // November 16th: 0.28.0's fourteen items ran the card off the top of the window. The card has a fixed most height now; its title and
+    // Got it always show, the list scrolls with its own scroll bar, and each item is one line that opens to say how to use it.
+    var items = whatsNewItems.length ? whatsNewItems : WHATS_NEW.items;
+    card.appendChild(gEl('div', 'aiondx-whatsnew-sub', items.length + (items.length === 1 ? ' new thing' : ' new things') + '. Click one to read how to use it.'));
+    var list = gEl('div', 'aiondx-whatsnew-list');
+    list.setAttribute('data-testid', 'aiondx-whatsnew-list');
+    items.forEach(function (it, i) {
       var row = gEl('div', 'aiondx-whatsnew-item');
-      row.appendChild(gEl('div', 'aiondx-whatsnew-name', it[0]));
-      row.appendChild(gEl('div', 'aiondx-whatsnew-how', it[1]));
-      card.appendChild(row);
+      var name = gEl('button', 'aiondx-whatsnew-name');
+      name.type = 'button';
+      name.setAttribute('aria-expanded', i === 0 ? 'true' : 'false');
+      name.appendChild(document.createTextNode(it[0]));
+      var how = gEl('div', 'aiondx-whatsnew-how', it[1]);
+      how.hidden = i !== 0;   // the first is open
+      name.addEventListener('click', function () { how.hidden = !how.hidden; name.setAttribute('aria-expanded', how.hidden ? 'false' : 'true'); });
+      row.appendChild(name);
+      row.appendChild(how);
+      list.appendChild(row);
     });
+    card.appendChild(list);
     var ok = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small aiondx-whatsnew-ok', 'Got it');
     ok.type = 'button';
     card.appendChild(ok);
@@ -12343,16 +12357,24 @@
     var st = document.getElementById('aiondx-whatsnew-style') || document.createElement('style');
     st.id = 'aiondx-whatsnew-style';
     st.textContent = [
-      '.aiondx-whatsnew{position:fixed;right:16px;bottom:16px;z-index:1200;box-sizing:border-box;width:340px;padding:12px 14px 14px;border-radius:10px;',
+      '.aiondx-whatsnew{position:fixed;right:16px;bottom:16px;z-index:1200;box-sizing:border-box;width:360px;max-width:calc(100vw - 32px);',
+      '  max-height:min(520px,calc(100vh - 32px));display:flex;flex-direction:column;padding:12px 14px 14px;border-radius:10px;',
       '  background:var(--color-bg-popup,var(--color-bg-1,#fff));border:1px solid var(--color-border-2,rgba(0,0,0,.12));box-shadow:0 8px 28px rgba(0,0,0,.2)}',
-      '.aiondx-whatsnew-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}',
+      '.aiondx-whatsnew-head{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}',
       '.aiondx-whatsnew-title{font-size:14px;font-weight:600;color:var(--color-text-1)}',
+      '.aiondx-whatsnew-sub{flex:0 0 auto;font-size:12px;color:var(--color-text-3);margin-bottom:8px}',
       '.aiondx-whatsnew-x{border:0;background:transparent;color:var(--color-text-3);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px}',
       '.aiondx-whatsnew-x:hover{background:var(--color-fill-2,rgba(0,0,0,.06))}',
-      '.aiondx-whatsnew-item{margin:0 0 10px}',
-      '.aiondx-whatsnew-name{font-size:13px;font-weight:600;color:var(--color-text-1);margin-bottom:2px}',
-      '.aiondx-whatsnew-how{font-size:12.5px;line-height:1.45;color:var(--color-text-2)}',
-      '.aiondx-whatsnew-ok{margin-top:2px}',
+      '.aiondx-whatsnew-list{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-gutter:stable;margin:0 -6px 10px 0;padding-right:4px;border-top:1px solid var(--color-border-1,rgba(0,0,0,.08));border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.08))}',
+      '.aiondx-whatsnew-item{border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06))}',
+      '.aiondx-whatsnew-item:last-child{border-bottom:0}',
+      '.aiondx-whatsnew-name{display:flex;align-items:center;gap:6px;width:100%;padding:7px 2px;border:0;background:none;text-align:left;cursor:pointer;font-size:13px;font-weight:600;color:var(--color-text-1)}',
+      '.aiondx-whatsnew-name:hover{color:rgb(var(--primary-6))}',
+      '.aiondx-whatsnew-name::before{content:"\\203a";display:inline-block;width:10px;flex:0 0 auto;color:var(--color-text-3);transition:transform .12s}',
+      '.aiondx-whatsnew-name[aria-expanded="true"]::before{transform:rotate(90deg)}',
+      '.aiondx-whatsnew-how{font-size:12.5px;line-height:1.45;color:var(--color-text-2);padding:0 2px 9px 18px}',
+      '.aiondx-whatsnew-how[hidden]{display:none}',
+      '.aiondx-whatsnew-ok{flex:0 0 auto;align-self:flex-start}',
     ].join('\n');
     if (!st.parentNode) document.head.appendChild(st);
     document.body.appendChild(card);
