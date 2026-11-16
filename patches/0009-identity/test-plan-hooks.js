@@ -23,9 +23,7 @@ try {
   r = run('prompt', { prompt: 'What does the export dialog do?' });
   check('a question: nothing', r.code === 0 && r.j === null, JSON.stringify(r));
   r = run('prompt', { prompt: 'WHY IS THE EXPORT STILL MISSING' });
-  check('a correction: stop and re-read the asks', r.j && /repeating or correcting\. Stop\. Re-read every ask/.test(r.j.hookSpecificOutput.additionalContext), JSON.stringify(r));
-  const flag = JSON.parse(fs.readFileSync(path.join(data, 'aiondx-flags', 'c1.json'), 'utf8'));
-  check('and the bell is told (a flag for this chat)', flag.kind === 'correction' && /EXPORT/.test(flag.words), JSON.stringify(flag));
+  check('a message in capitals or one that sounds like a correction: nothing added, nothing flagged (AionDX does not judge messages)', r.code === 0 && r.j === null && !fs.existsSync(path.join(data, 'aiondx-flags', 'c1.json')), JSON.stringify(r));
   r = run('prompt', { prompt: '/compact' });
   check('a command: nothing', r.j === null);
   // stop

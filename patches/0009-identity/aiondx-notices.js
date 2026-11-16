@@ -68,7 +68,7 @@ function noticesFor(dataDir, convId, opts) {
   const rec = readJson(path.join(dataDir, 'aiondx-launches', convId + '.json'));
   if (!rec || rec.v !== 1) return [];
   const reg = readJson(path.join(dataDir, 'aiondx-projects.json'));
-  // Projects are optional (the user, November 16th, 2026: "we should not assume people use it"): a chat with no project is never asked
+  // Projects are optional (November 16th, 2026): a chat with no project is never asked
   // for one. R-128 step 6: skill changes (imports, agents' proposals) waiting for the user, in this chat's project and in their own layer.
   const projectNotice = [];
   const proj = rec.project && reg && reg.projects ? reg.projects[rec.project] : null;
@@ -80,14 +80,6 @@ function noticesFor(dataDir, convId, opts) {
     title: waiting === 1 ? 'A skill change is waiting for you' : waiting + ' skill changes are waiting for you',
     text: 'New or changed skills' + (theirs && !mine ? ' for ' + path.basename(proj.root) : '') + ' wait in DX Skills until you look at what they do and approve them.',
     action: { op: 'skills', label: 'Review them' } });
-  // R-127: the planning hook saw a message of the user's that repeats or corrects (aiondx-plan-hooks.js prompt); shown for 12 hours
-  const flag = readJson(path.join(dataDir, 'aiondx-flags', convId + '.json'));
-  if (flag && flag.kind === 'correction' && Date.now() - Number(flag.at || 0) < 12 * 3600000) {
-    const d = new Date(Number(flag.at));
-    projectNotice.push({ id: 'correction:' + convId + ':' + flag.at, kind: 'correction', conv: convId, title: 'You had to correct this agent',
-      text: 'At ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ' ("' + String(flag.words || '').slice(0, 80) + '"). AionDX told it to stop, re-read your asks from the start, say what it dropped, and add the missing check to the matching skill.',
-      action: null });
-  }
   const wanted = docsWanted(reg, rec.project, rec.acct, rec.accountKey);
   if (!wanted) return projectNotice;
   const alive = (o.pidAlive || pidAlive)(rec.pid);

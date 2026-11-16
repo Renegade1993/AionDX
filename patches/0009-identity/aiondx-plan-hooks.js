@@ -6,8 +6,8 @@
  * the cure". Claude Code runs this as a hook in every Claude chat AionDX starts (the launcher passes them with --settings; hooks merge with
  * the user's own, filed research 2026-11-15_claude-code-hooks-contract-web.md):
  *
- *   prompt   (UserPromptSubmit) a build request gets a short plan-first note; a message that repeats or corrects gets "stop and re-read
- *            the asks", and the chat's bell is told (<data>\aiondx-flags\<conversation>.json)
+ *   prompt   (UserPromptSubmit) a build request gets a short plan-first note. Nothing here judges whether a message is a correction or
+ *            tells an agent to change its skills (November 16th, 2026).
  *   stop     (Stop) an ending that says it is done, while asks in the chat's ledger are still open, is sent back once to account for each
  *   pretool  (PreToolUse on Edit, Write, MultiEdit, NotebookEdit) in a project that builds from approved plans (planGate "on" in the
  *            registry), edits wait for a plan the user approved in a DX Doc; notes and docs are always allowed
@@ -31,13 +31,6 @@ const quiet = () => process.exit(0);
 
 const BUILD_RE = /\b(build|implement|add|make|create|write|fix|change|redesign|refactor|rework|set up|wire|ship|update)\b/i;
 const QUESTION_RE = /^\s*(what|why|how|when|where|who|which|is|are|does|do|can|could|should|would|will)\b[^.!]*\?\s*$/i;
-const MISS_WORDS = /\b(why (is|isn't|are|aren't|was|wasn't|did|didn't|does|doesn't|do|don't)|i (already|just) (said|told|asked)|i told you|you (missed|forgot|ignored|skipped|dropped)|still (not|missing|broken|wrong|can't|doesn't|isn't)|not what i (asked|said|wanted)|i shouldn't have to)\b/i;
-function readsAsCorrection(t) {
-  t = String(t || '');
-  if (!t.trim() || /^\s*[/[]/.test(t)) return false;
-  if (/\b[A-Z]{3,}[\s,.!?'"]+[A-Z]{3,}[\s,.!?'"]+[A-Z]{3,}\b/.test(t)) return true;
-  return MISS_WORDS.test(t);
-}
 function readsAsBuild(t) {
   t = String(t || '').trim();
   if (!t || t.length < 12 || /^\s*[/[]/.test(t) || QUESTION_RE.test(t)) return false;
@@ -53,13 +46,6 @@ function readInput() { try { return JSON.parse(fs.readFileSync(0, 'utf8') || '{}
 
 function prompt(inp) {
   const p = String(inp.prompt || '').replace(/<pasted_content[\s\S]*?<\/pasted_content[^>]*>/g, ' ');
-  if (readsAsCorrection(p)) {
-    if (DATA && CONV) writeJson(path.join(DATA, 'aiondx-flags', CONV + '.json'), { kind: 'correction', at: Date.now(), words: p.slice(0, 300) });
-    const open = ledger().filter((a) => a.state === 'open');
-    return out({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext:
-      'AionDX: the user is repeating or correcting. Stop. Re-read every ask from the start of this work' + (open.length ? ' (aiondx asks list: ' + open.length + ' still open)' : ' (aiondx asks list)') +
-      ', find what was dropped, say so plainly, and fold it in before anything new. Add this message to the ledger in their words (aiondx asks add).' } });
-  }
   if (readsAsBuild(p)) {
     return out({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext:
       'AionDX: before you build, see the whole thing. Put each ask of this request in the ledger in the user\'s words (aiondx asks add "..."), ' +
@@ -104,7 +90,7 @@ function pretool(inp) {
     'how each is checked) with an Approve block, and wait for the user to approve it; edits open up then. Notes and docs can be written meanwhile.' } });
 }
 
-module.exports = { readsAsCorrection, readsAsBuild };
+module.exports = { readsAsBuild };
 if (require.main === module) {
   try {
     const inp = readInput();

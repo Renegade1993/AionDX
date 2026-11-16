@@ -3338,22 +3338,13 @@ async function pageTarget() {
       await shot('skills-dark');
       await js(`(() => { delete window.aiondxSkills; return 0; })()`);
       await send('Emulation.clearDeviceMetricsOverride', {});
-      // a message that reads as a correction gets one line asking for the check in the matching skill (option skills.afterMiss)
+      // the user's message is never changed (November 16th, 2026): AionDX does not judge messages or add to them
       const sendAs = (text) => js(`(async () => { window.__calls.length = 0; await fetch('http://127.0.0.1:1/api/conversations/harness1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: ${JSON.stringify(text)} }) });
         const c = window.__calls.find((x) => x.path === '/api/conversations/harness1/messages'); return c && c.body && c.body.content; })()`);
       let sent = await sendAs('WHY IS THIS STILL MISSING');
-      check(sc, 'capitals: the line is added to the message', /^WHY IS THIS STILL MISSING\n\n\[AionDX: this reads as a correction\. Once it is fixed, add the check that would have caught it to the matching skill/.test(sent || ''), sent);
+      check(sc, 'a message in capitals is sent exactly as typed (nothing added to it)', sent === 'WHY IS THIS STILL MISSING', sent);
       sent = await sendAs('why is the export button gone again?');
-      check(sc, '"why is": the line is added', /\[AionDX: this reads as a correction/.test(sent || ''), sent);
-      sent = await sendAs('Please add a chart of the totals.');
-      check(sc, 'an ordinary message is left as it is', sent === 'Please add a chart of the totals.', sent);
-      sent = await sendAs('/compact');
-      check(sc, 'a command is left as it is', sent === '/compact', sent);
-      await js(`(() => { window.__aionDx && window.__aionDx.setOption && window.__aionDx.setOption('skills.afterMiss', false); return 0; })()`);
-      sent = await sendAs('WHY IS THIS STILL MISSING');
-      const hasSet = await js(`typeof (window.__aionDx || {}).setOption === 'function'`);
-      if (hasSet) check(sc, 'with the option off, nothing is added', sent === 'WHY IS THIS STILL MISSING', sent);
-      await js(`(() => { window.__aionDx && window.__aionDx.setOption && window.__aionDx.setOption('skills.afterMiss', true); return 0; })()`);
+      check(sc, '"why is": sent exactly as typed', sent === 'why is the export button gone again?', sent);
     }
 
     // ---- DX Skills: AionUi's Skills Hub remade (R-128 step 5, November 15th, 2026) ----
@@ -3942,6 +3933,7 @@ async function pageTarget() {
       const panel = () => js(`(() => { const p = document.querySelector('#tbox [data-testid="aiondx-dx"]'); if (!p) return null;
         return { files: p.classList.contains('aiondx-dx--files'), tab: (p.querySelector('.dx-tab--on') || {}).textContent, bar: (p.querySelector('.dx-bar-title') || {}).textContent || '',
           body: (p.querySelector('.dx-body') || {}).innerHTML || '', list: [...p.querySelectorAll('.dx-row-title')].map((e) => e.textContent), empty: (p.querySelector('.dx-empty') || {}).textContent || '' }; })()`);
+      await js("localStorage.removeItem('aionui.dx.dx.openChats'); localStorage.removeItem('aionui.dx.dx.closed'); 0");
       await load('theme=light');
       await setup(true);
       await sleep(1800);
@@ -4100,7 +4092,10 @@ async function pageTarget() {
       await sleep(700);
       sd = await side();
       const wHalf = Math.max(480, Math.round(sd.bw / 2));
-      check(sc, 'a doc the agent writes opens the panel and shows that doc', sd.w === wHalf && (await panel()).bar === 'Notes', JSON.stringify(sd));
+      check(sc, 'a doc the agent writes while you have the panel closed: it stays closed (open or closed is yours), the Docs button counts it', sd.w === 0 && sd.btn === 'Docs 2' && sd.pressed === 'false', JSON.stringify(sd));
+      await humanClick('#tbox [data-testid="aiondx-dx-open"]');
+      await sleep(400);
+      check(sc, 'Docs opens it on the doc the agent wrote', (await side()).w === wHalf && (await panel()).bar === 'Notes', JSON.stringify(await side()));
       await humanClick('#tbox [data-testid="aiondx-dx-open"]');
       await sleep(300);
       check(sc, 'Docs closes it', (await side()).w === 0);
@@ -4156,26 +4151,39 @@ async function pageTarget() {
       await sleep(900);
       check(sc, 'a doc link in a reply opens the panel on that doc', Math.abs((await side()).w - wDrag) <= 2 && (await panel()).bar === 'Notes', JSON.stringify(await side()));
       await js(`(() => { document.getElementById('tcard').remove(); return 0; })()`);
-      // a chat with docs opens with the panel open; one the user closed last stays closed
-      await js(`(() => { window.__dx.calls.length = 0; location.hash = '#/conversation/other1'; return 0; })()`);
-      await sleep(6000);
-      check(sc, 'another chat with docs opens with its panel open, at the kept size', (await side()).w === wDrag);
+      // open or closed is kept per chat, set only by you (November 16th, 2026): a chat you never opened it in opens closed, docs or not
+      const goChat = async (id, ms) => { await js(`(() => { location.hash = '#/conversation/${id}'; return 0; })()`); await sleep(ms || 2500); return side(); };
+      await js(`(() => { window.__dx.calls.length = 0; return 0; })()`);
+      sd = await goChat('other1', 6000);
+      check(sc, 'another chat with docs, never opened there: the panel is closed, its Docs button counts them', sd.w === 0 && /^Docs \d/.test(sd.btn) && sd.pressed === 'false', JSON.stringify(sd));
+      await humanClick('#tbox [data-testid="aiondx-dx-open"]');
+      await sleep(400);
+      check(sc, 'opened there by Docs, at the kept size', Math.abs((await side()).w - wDrag) <= 2, JSON.stringify(await side()));
+      sd = await goChat('harness1');
+      check(sc, 'back in the chat you left it open in: open', Math.abs(sd.w - wDrag) <= 2, JSON.stringify(sd));
       await humanClick('#tbox [data-testid="aiondx-dx-close"]');
       await sleep(300);
-      await js(`(() => { location.hash = '#/conversation/harness1'; return 0; })()`);
-      await sleep(2500);
-      sd = await side();
-      check(sc, 'after the user closed it, the next chat opens with it closed, its Docs button ready', sd.w === 0 && /^Docs \d/.test(sd.btn), JSON.stringify(sd));
-      await js(`(() => { localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
+      sd = await goChat('other1');
+      check(sc, 'closing it in one chat leaves the other as you left it (open)', Math.abs(sd.w - wDrag) <= 2, JSON.stringify(sd));
+      sd = await goChat('harness1');
+      check(sc, 'and the chat you closed it in opens closed', sd.w === 0 && /^Docs \d/.test(sd.btn), JSON.stringify(sd));
+      sd = await goChat('other1');
+      sd = await goChat('harness1');
+      check(sc, 'the same each time you come back (no flip-flop)', sd.w === 0, JSON.stringify(sd));
+      const kept = await js(`Object.keys(JSON.parse(localStorage.getItem('aionui.dx.dx.openChats') || '{}'))`);
+      check(sc, 'what is kept: the chats you left it open in, and only those', JSON.stringify(kept) === '["other1"]', JSON.stringify(kept));
       // a team page: the team's docs (its id and its lead's chat), the same panel
       await js(`(() => { window.__dx.calls.length = 0; location.hash = '#/team/team1'; return 0; })()`);
       await sleep(6000);
       const wt = (await js('window.__dx.calls')).find((c) => c[0] === 'where');
-      check(sc, 'a team page gets the same panel, for the team: its id and its lead\'s chat', (await side()).w === wDrag && wt && wt[1].teamId === 'team1' && wt[1].convId === 'convA', JSON.stringify(wt));
+      const tClosed = (await side()).w === 0;
+      await humanClick('#tbox [data-testid="aiondx-dx-open"]');
+      await sleep(400);
+      check(sc, 'a team page gets the same panel, for the team (its id and its lead\'s chat), closed until you open it there', tClosed && Math.abs((await side()).w - wDrag) <= 2 && wt && wt[1].teamId === 'team1' && wt[1].convId === 'convA', JSON.stringify(wt));
       await js(`(() => { location.hash = '#/guid'; return 0; })()`);
       await sleep(1500);
       check(sc, 'leaving the chat takes the panel and its button away and stops watching', !(await js(`!!document.querySelector('[data-testid="aiondx-dx"]') || !!document.querySelector('[data-testid="aiondx-dx-open"]')`)) && (await js('window.__dx.calls')).some((c) => c[0] === 'unwatch'));
-      await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.share'); location.hash = '#/conversation/harness1'; return 0; })()`);
+      await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.share'); localStorage.removeItem('aionui.dx.dx.openChats'); location.hash = '#/conversation/harness1'; return 0; })()`);
     }
 
     // ---- DX Docs: documents and tabs (DX Docs mirror, November 15th, 2026) ----
@@ -5412,7 +5420,7 @@ async function pageTarget() {
       await addSection();
       await sleep(700);
       const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
-      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'compact.auto', 'skills.afterMiss', 'skills.atCompact', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'compact.auto', 'skills.atCompact', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
       check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.files' && o.default === 'outside' && o.choices.length === 2) && !schema.options.some((o) => o.id === 'links.external') &&
         schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));

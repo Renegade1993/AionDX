@@ -1254,8 +1254,6 @@
       label: 'Show tips for AionDX\u2019s controls', desc: 'A bubble points at each AionDX control the first time it is on screen and says how to use it, until you press Got it. Off hides them all.' },
     { id: 'compact.auto', group: 'Long chats', type: 'bool', default: true,
       label: 'Compact a full chat by itself', desc: 'A chat over half full is compacted just before its prompt cache runs out (5 minutes before an hour-long cache, 30 seconds before a 5-minute one, as measured for its account), while its Loop is off and once its agent has stopped. Also on the context ring\u2019s menu (click the ring).' },
-    { id: 'skills.afterMiss', group: 'Skills', type: 'bool', default: true,
-      label: 'Turn corrections into skill fixes', desc: 'When a message of yours reads as a correction (capitals, “why is”, “I already said”, “still missing”), AionDX adds one line asking the agent, once it is fixed, to add the check that would have caught it to the matching skill.' },
     { id: 'skills.atCompact', group: 'Skills', type: 'bool', default: true,
       label: 'Keep lessons through a compaction', desc: 'A Claude chat’s /compact asks its summary to keep, under “Lessons for skills”, what the session taught that a skill should hold.' },
     { id: 'loop.skillsLine', group: 'The Loop', type: 'bool', default: true,
@@ -11733,28 +11731,6 @@
 
   var ANY_SEND_RE = /\/api\/((?:conversations\/[^/?#]+|teams\/[^/?#]+(?:\/agents\/[^/?#]+)?))\/messages(?:[?#]|$)/;
   /** The text of a message send's JSON body (content, or input on a team's route); null when there is none. */
-  // R-128 step 6: a message that reads as a correction gets one line asking for the check in the matching skill (the user's rule: a miss
-  // he had to point out is a gap in a skill or a procedure). Capitals (three words in a row), or the words of a correction. Not a command,
-  // not AionDX's own messages (they start with [ or /), never twice.
-  var MISS_LINE = '\n\n[AionDX: this reads as a correction. Once it is fixed, add the check that would have caught it to the matching skill ' +
-    '(as a change the user approves in DX Skills: aiondx skills propose).]';
-  var MISS_WORDS = /\b(why (is|isn't|are|aren't|was|wasn't|did|didn't|does|doesn't|do|don't)|i (already|just) (said|told|asked)|i told you|you (missed|forgot|ignored|skipped|dropped)|still (not|missing|broken|wrong|can't|doesn't|isn't)|not what i (asked|said|wanted)|i shouldn't have to)\b/i;
-  function readsAsCorrection(t) {
-    t = String(t || '');
-    if (!t.trim() || /^\s*[\/\[]/.test(t) || t.indexOf('[AionDX: this reads as a correction') >= 0) return false;
-    if (/\b[A-Z]{3,}[\s,.!?'"]+[A-Z]{3,}[\s,.!?'"]+[A-Z]{3,}\b/.test(t)) return true;
-    return MISS_WORDS.test(t);
-  }
-  function withMissLine(init) {
-    try {
-      var b = JSON.parse(init.body);
-      var k = b.content !== undefined ? 'content' : b.input !== undefined ? 'input' : b.text !== undefined ? 'text' : null;
-      if (!k || typeof b[k] !== 'string' || !readsAsCorrection(b[k])) return null;
-      b[k] += MISS_LINE;
-      if (k === 'content' && typeof b.input === 'string') b.input += MISS_LINE;
-      return Object.assign({}, init, { body: JSON.stringify(b), __dxMiss: true });
-    } catch (e) { return null; }
-  }
   function sentText(init) {
     try {
       var b = init && typeof init.body === 'string' ? JSON.parse(init.body) : null;
@@ -12064,10 +12040,6 @@
             var attached = mentionAttach(input, init);
             if (attached) return attached.then(function (a) { return window.fetch(a[0], a[1]); });
           }
-          if (init && !init.__dxMiss && typeof init.body === 'string' && opt('skills.afterMiss') !== false && callId(ANY_SEND_RE, input, init, ['POST'])) {
-            var missed = withMissLine(init);
-            if (missed) return window.fetch(input, missed);
-          }
           if ((id = callId(TEAM_SESSION_RE, input, init, ['POST']))) return holdTeamWake(id, args);
           if (pendingAccount && String((init && init.method) || (input && input.method) || 'GET').toUpperCase() === 'POST' &&
               CREATE_RE.test(String(typeof input === 'string' ? input : (input && input.url) || '').replace(/^https?:\/\/[^/]+/, ''))) {
@@ -12281,8 +12253,8 @@
       ['Skills in every chat', 'The book button beside the Loop shows every skill the chat has (AionDX’s, yours, the shared ones and its project’s), how often it used each and when, and what each costs in context. Switch a skill off for that chat, pin one so the agent always has it in full, or refresh them. A team lead pins skills for its team.'],
       ['One set of skills for every agent', 'Codex, Gemini and the other agents now get the same personal, shared and project skills as Claude. Projects are optional: a chat’s menu has Project if you keep them.'],
       ['DX Skills', 'Settings > Skills: every skill, layer by layer. Import a ZIP, a folder or a GitHub link into your skills or a project’s after reviewing what its scripts do; ask an agent to write a new one as a DX Doc; browse Anthropic’s and OpenAI’s official skills; update the global library on your yes.'],
-      ['Skills that improve themselves', 'When you have to correct an agent, it is asked to add the check that would have caught it to the right skill; a compaction keeps its lessons for skills. Agents propose skill changes, and the bell tells you when one waits for you in DX Skills. Both lines can be switched off in Options.'],
-      ['Agents plan before they build', 'Every agent keeps a ledger of your asks in your words; Claude chats get a plan-first note on a build request, are sent back when they say done with asks still open, and are told to re-read your asks when you correct them (the bell shows it). Switch a project to build from approved plans only in its Project menu: code waits for your Approve in the plan doc.'],
+      ['Skills that improve themselves', 'A compaction keeps its lessons for skills (it can be switched off in Options). Agents propose skill changes, and the bell tells you when one waits for you in DX Skills.'],
+      ['Agents plan before they build', 'Every agent keeps a ledger of your asks in your words; Claude chats get a plan-first note on a build request and are sent back when they say done with asks still open. Switch a project to build from approved plans only in its Project menu: code waits for your Approve in the plan doc.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.27.10', items: [
@@ -12730,7 +12702,8 @@
   var DX_TAB_KEY = KEY_PREFIX + 'dx.tab';
   var dx = { el: null, conv: null, docsDir: null, view: 'list', doc: null, docs: [], md: '', editing: false, dirty: false, listening: false, opening: false, comments: [], open: false };
   function dxApi(op, args) { return window.aiondxDx.call(op, Object.assign({ docsDir: dx.docsDir }, args || {})); }
-  var DX_CLOSED_KEY = KEY_PREFIX + 'dx.closed';   // '1' when the user closed the panel last (chats with docs then open with it closed)
+  // Open or closed is the user's choice, per chat (November 16th, 2026): the chats and teams whose panel they left open, {key: time}. Every other chat opens with it closed; nothing else opens it.
+  var DX_OPEN_KEY = KEY_PREFIX + 'dx.openChats';
   var DX_SHARE_KEY = KEY_PREFIX + 'dx.share';     // the panel's share of the chat area, 0.25 to 0.75
   var SVG_DOC = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M10 4h20l8 8v32H10z" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M17 22h14M17 30h14M17 38h8" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>';
   function dxRoute() {
@@ -12740,7 +12713,16 @@
   /** The chat's (or team's) key for the panel: the conversation id, or team:<id>. */
   function dxKey(r) { return r.kind === 'team' ? 'team:' + r.id : r.id; }
   function dxShare() { var v = NaN; try { v = parseFloat(localStorage.getItem(DX_SHARE_KEY)); } catch (e) {} return v >= 0.25 && v <= 0.75 ? v : 0.5; }
-  function dxUserClosed() { try { return localStorage.getItem(DX_CLOSED_KEY) === '1'; } catch (e) { return false; } }
+  function dxOpenChats() { var m = null; try { m = JSON.parse(localStorage.getItem(DX_OPEN_KEY) || '{}'); } catch (e) {} return m && typeof m === 'object' ? m : {}; }
+  function dxLeftOpen(key) { return !!(key && dxOpenChats()[key]); }
+  function dxRemember(key, open) {
+    if (!key) return;
+    var m = dxOpenChats();
+    if (open) m[key] = Date.now(); else delete m[key];
+    var ks = Object.keys(m);
+    if (ks.length > 500) ks.sort(function (a, b) { return m[a] - m[b]; }).slice(0, ks.length - 500).forEach(function (k) { delete m[k]; });   // the oldest go
+    try { localStorage.setItem(DX_OPEN_KEY, JSON.stringify(m)); localStorage.removeItem(KEY_PREFIX + 'dx.closed'); } catch (e) {}
+  }
   /** The chat area (AionUi's ChatLayout: the chat column, its files sidebar, and now this panel). */
   function dxBox() { var h = document.querySelector('.chat-layout-header'); return h ? h.closest('.relative.w-full.overflow-hidden') : null; }
   /** AionDX's own panel at the chat's right edge (solo and team pages; AionUi's sidebar is narrow and missing in projects). */
@@ -12790,11 +12772,11 @@
     document.addEventListener('mousemove', move, true);
     document.addEventListener('mouseup', up, true);
   }
-  /** Open or close the panel. Opening folds AionUi's files sidebar (one panel at the right). byUser: remembered for the next chat. */
+  /** Open or close the panel. Opening folds AionUi's files sidebar (one panel at the right). byUser: remembered for this chat only. */
   function dxSetOpen(v, byUser) {
     var was = dx.open;
     dx.open = !!v;
-    if (byUser) { try { if (v) localStorage.removeItem(DX_CLOSED_KEY); else localStorage.setItem(DX_CLOSED_KEY, '1'); } catch (e) {} }
+    if (byUser) dxRemember(dx.conv, !!v);
     var box = dxBox();
     if (v && !was && box) {
       var a = box.querySelector('.chat-layout-right-sider');
@@ -12832,7 +12814,6 @@
       root.appendChild(st);
     });
   }
-  function dxExpand() { if (!dx.open) dxSetOpen(true, false); }
   function dxHide() { dxSetOpen(false, true); }
   /** The Docs button in the chat's top bar (beside the bell): opens and closes the panel, with the chat's doc count. */
   var dxBtn = null;
@@ -12971,6 +12952,8 @@
     dx.conv = conv; dx.docsDir = null; dx.view = 'list'; dx.doc = null; dx.editing = false; dx.docs = []; dx.cdraft = null; dx.pendingDoc = null;
     dx.main.innerHTML = '<div class="dx-empty">Opening this chat’s docs…</div>';
     dx.open = false;
+    // open exactly when the user left it open in this chat; closed in every other chat, docs or none
+    if (dxLeftOpen(conv)) dxSetOpen(true, false); else dxSider();
     var teamId = conv.indexOf('team:') === 0 ? conv.slice(5) : null;
     var agentConv = conv;
     dx.sendPath = '/api/conversations/' + conv + '/messages';
@@ -12994,9 +12977,7 @@
     dx.where = w;
     window.aiondxDx.call('watch', { docsDir: dx.docsDir });
     await dxList();
-    // a chat with docs opens with its panel, unless the user closed it last time
-    if (dx.conv === conv && dx.docs.length && !dxUserClosed() && !dx.open) dxSetOpen(true, false);
-    else dxSider();
+    if (dx.conv === conv) dxSider();
   }
   function dxWhen(ms) { var d = new Date(ms); return d.toDateString() === new Date().toDateString() ? hhmm(ms) : longDate(ms); }
   /** Back to this chat's own folder after a doc from All docs (another project's folder). */
@@ -14383,7 +14364,8 @@
     });
   }
   async function dxChanged(id) {
-    // a doc an agent made or changed: the sidebar opens (if shut) and shows it; the one on screen redraws in place
+    // a doc an agent made or changed: shown in the panel (open or closed is the user's: a closed one stays closed, and opens on it);
+    // the one on screen redraws in place
     var known = dx.docs.some(function (d) { return d.id === id; });
     if (dx.view === 'doc' && dx.doc === id) {
       var cur = await dxApi('read', { id: id });
@@ -14397,7 +14379,7 @@
     if (!r || !r.ok) { if (dx.view === 'list') dxList(); return; }
     if (dx.view === 'deleted') return;
     if (dxTab() !== 'docs') dxSetTab('docs');
-    dxExpand();
+    if (!known) { var lr = await dxApi('list'); if (lr && lr.ok) dx.docs = lr.docs; dxHeaderButton(); }   // a new doc: the Docs button counts it, open or closed
     dxOpen(id);
   }
   function dxEdit() {

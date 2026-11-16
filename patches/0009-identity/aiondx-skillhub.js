@@ -101,7 +101,7 @@ function lineChange(oldText, newText) {
   return { added, removed };
 }
 
-/** Projects are optional (the user, November 16th: "we should not assume people use it"): the key YOURS is the user's own layer
+/** Projects are optional (November 16th, 2026): the key YOURS is the user's own layer
  *  (~\.claude\skills, its waiting ones in ~\.claude\skills-pending), so imports, new skills and proposals work with no project at all. */
 const YOURS = '~yours';
 function projectRoot(ctx, key) {
