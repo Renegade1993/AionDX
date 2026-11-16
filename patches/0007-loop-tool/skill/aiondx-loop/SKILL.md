@@ -103,6 +103,15 @@ turn and then sends the replacement message you give it, which starts the next t
 the teammate has to agree. A Loop the user set to run until they stop it cannot be switched off by an agent, and wakes the member
 again at its next nudge; the reply says so, and you tell the user.
 
+## Changing a skill: propose it
+
+When you learn a better way, or the user had to point out something you missed, the fix belongs in the matching skill. Do not edit a
+project's skill in place: write the new SKILL.md (and any scripts) in a folder of your own, then `aiondx skills propose NAME --from
+FOLDER` (or `--from path\to\SKILL.md`; `--project KEY` when the chat has no project). It waits in DX Skills (Settings > Skills) with
+what it changes, and the user approves it; tell them it is there. A message from the user that ends with "[AionDX: this reads as a
+correction ...]" is asking for exactly this once the fix is done. After a compaction, your summary's "Lessons for skills" lists what
+to propose.
+
 ## Pinning skills for the team (team lead)
 
 A pinned skill is given in full to an agent at its start, so it follows it without looking it up. As the lead, you decide what your

@@ -2080,7 +2080,7 @@ async function pageTarget() {
       await setSlot('slotA', 'idle');
       await js('window.__aionDx.tickNow()');
       const toA = await posts('/api/teams/team1/agents/slotA/messages');
-      check(sc, 'once it stops, /compact goes through the team', toA.length === 1 && toA[0].body.content === '/compact', JSON.stringify(toA));
+      check(sc, 'once it stops, /compact goes through the team', toA.length === 1 && /^\/compact Keep, under “Lessons for skills”/.test(toA[0].body.content), JSON.stringify(toA));
 
       // An agent asks for it through the tool.
       await load('theme=light');
@@ -2088,7 +2088,7 @@ async function pageTarget() {
       await js('window.__calls.length = 0; 0');
       await js('window.__aionDx.tickNow()');
       const pa = await posts('/api/conversations/harness1/messages');
-      check(sc, "an agent's request is sent the same way", pa.length === 1 && pa[0].body.content === '/compact', JSON.stringify(pa));
+      check(sc, "an agent's request is sent the same way", pa.length === 1 && /^\/compact Keep, under “Lessons for skills”/.test(pa[0].body.content), JSON.stringify(pa));
       const tt = await toasts();
       check(sc, 'with a notice that the agent asked for it', tt.length === 1 && /^Harness agent asked for a compaction\.context is heavy$/.test(tt[0]), JSON.stringify(tt));
       await shot('click-test-agent-notice');
@@ -3322,6 +3322,22 @@ async function pageTarget() {
       await shot('skills-dark');
       await js(`(() => { delete window.aiondxSkills; return 0; })()`);
       await send('Emulation.clearDeviceMetricsOverride', {});
+      // a message that reads as a correction gets one line asking for the check in the matching skill (option skills.afterMiss)
+      const sendAs = (text) => js(`(async () => { window.__calls.length = 0; await fetch('http://127.0.0.1:1/api/conversations/harness1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: ${JSON.stringify(text)} }) });
+        const c = window.__calls.find((x) => x.path === '/api/conversations/harness1/messages'); return c && c.body && c.body.content; })()`);
+      let sent = await sendAs('WHY IS THIS STILL MISSING');
+      check(sc, 'capitals: the line is added to the message', /^WHY IS THIS STILL MISSING\n\n\[AionDX: this reads as a correction\. Once it is fixed, add the check that would have caught it to the matching skill/.test(sent || ''), sent);
+      sent = await sendAs('why is the export button gone again?');
+      check(sc, '"why is": the line is added', /\[AionDX: this reads as a correction/.test(sent || ''), sent);
+      sent = await sendAs('Please add a chart of the totals.');
+      check(sc, 'an ordinary message is left as it is', sent === 'Please add a chart of the totals.', sent);
+      sent = await sendAs('/compact');
+      check(sc, 'a command is left as it is', sent === '/compact', sent);
+      await js(`(() => { window.__aionDx && window.__aionDx.setOption && window.__aionDx.setOption('skills.afterMiss', false); return 0; })()`);
+      sent = await sendAs('WHY IS THIS STILL MISSING');
+      const hasSet = await js(`typeof (window.__aionDx || {}).setOption === 'function'`);
+      if (hasSet) check(sc, 'with the option off, nothing is added', sent === 'WHY IS THIS STILL MISSING', sent);
+      await js(`(() => { window.__aionDx && window.__aionDx.setOption && window.__aionDx.setOption('skills.afterMiss', true); return 0; })()`);
     }
 
     // ---- DX Skills: AionUi's Skills Hub remade (R-128 step 5, November 15th, 2026) ----
@@ -3631,7 +3647,7 @@ async function pageTarget() {
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
-      const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills'];
+      const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.0' && JSON.stringify(c.names) === JSON.stringify(NEW28) &&
         /^A DX Doc can hold several tabs/.test(c.hows[0]) && /click them to open the thread beside them/.test(c.hows[1]) && /@@@ names one member of a team/.test(c.hows[7]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
@@ -4618,7 +4634,7 @@ async function pageTarget() {
       await js('window.__aionDx.tickNow()');
       await sleep(500);
       const sent = await posts('/api/conversations/harness1/messages');
-      check(sc, 'and the Loop\'s tick sends the agent\'s own /compact once it is idle', sent.length === 1 && sent[0].body.content === '/compact', JSON.stringify(sent));
+      check(sc, 'and the Loop\'s tick sends the agent\'s own /compact once it is idle', sent.length === 1 && /^\/compact Keep, under “Lessons for skills”/.test(sent[0].body.content), JSON.stringify(sent));
       await js('window.__aionDx.autoCompactNow()');
       await sleep(300);
       check(sc, 'not asked again for the same reply', (await js(`JSON.parse(localStorage.getItem('aionui.dx.harness1') || '{}').compactAt`)) === st.compactAt);
@@ -4643,7 +4659,7 @@ async function pageTarget() {
         await js('window.__aionDx.tickNow()');
         await sleep(500);
         const sent2 = await posts('/api/conversations/harness1/messages');
-        check(sc, 'and sends its /compact on the next check, once the agent runs', sent2.length === 1 && sent2[0].body.content === '/compact', JSON.stringify(sent2));
+        check(sc, 'and sends its /compact on the next check, once the agent runs', sent2.length === 1 && /^\/compact Keep, under “Lessons for skills”/.test(sent2[0].body.content), JSON.stringify(sent2));
       }
       // a request for one cache window is dropped when a newer reply refreshed the cache before it could go
       await load('theme=light');

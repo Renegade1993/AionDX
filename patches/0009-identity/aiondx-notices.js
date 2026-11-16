@@ -74,6 +74,14 @@ function noticesFor(dataDir, convId, opts) {
       text: 'This chat has no project, so it has your own and the shared skills but not a project\'s. Choose its project and its skills load when the agent next starts.',
       action: { op: 'project', label: 'Choose a project' } }]
     : [];
+  // R-128 step 6: skill changes (imports, agents' proposals) waiting for the user in this chat's project
+  const proj = rec.project && reg && reg.projects ? reg.projects[rec.project] : null;
+  let waiting = 0;
+  try { if (proj && proj.root) waiting = fs.readdirSync(path.join(proj.root, '.claude', 'skills-pending'), { withFileTypes: true }).filter((e) => e.isDirectory()).length; } catch { /* none */ }
+  if (waiting) projectNotice.push({ id: 'skills-pending:' + rec.project + ':' + waiting, kind: 'skills', conv: convId,
+    title: waiting === 1 ? 'A skill change is waiting for you' : waiting + ' skill changes are waiting for you',
+    text: 'New or changed skills for ' + path.basename(proj.root) + ' wait in DX Skills until you look at what they do and approve them.',
+    action: { op: 'skills', label: 'Review them' } });
   const wanted = docsWanted(reg, rec.project, rec.acct, rec.accountKey);
   if (!wanted) return projectNotice;
   const alive = (o.pidAlive || pidAlive)(rec.pid);

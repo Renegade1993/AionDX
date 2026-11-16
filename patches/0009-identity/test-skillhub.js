@@ -77,6 +77,15 @@ const TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.
     check('a link that is not a skill is refused, saying what is taken', /not a GitHub repository or folder/.test(threw || ''), threw);
     threw = null; try { await H.importSkills(ctx, src, 'nope'); } catch (e) { threw = e.message; }
     check('an unknown project is refused', /no project called nope/.test(threw || ''), threw);
+    // an agent's proposal (aiondx skills propose writes only who and when): reviewed on display, with what it changes
+    const prop = path.join(proj, '.claude', 'skills-pending', 'build');
+    fs.mkdirSync(prop, { recursive: true });
+    fs.writeFileSync(path.join(prop, 'SKILL.md'), '---\nname: build\ndescription: About build\n---\nnew build\nand a check');
+    fs.writeFileSync(path.join(prop, '.aiondx-review.json'), JSON.stringify({ source: 'proposed by Lead', proposal: true, approved: false }));
+    h = H.hub(ctx);
+    const pr = h.layers.find((l) => l.kind === 'project').pending.find((s) => s.folder === 'build');
+    check('a proposal is reviewed when shown, and says how it changes the current skill', pr && pr.review.files.length === 1 && pr.review.change && pr.review.change.added === 1 && pr.review.change.removed === 0 && pr.review.proposal === true, JSON.stringify(pr && pr.review));
+    H.reject(ctx, 'atlas', 'build');
     // link a library skill into the project, then take the link out
     r = H.link(ctx, 'atlas', 'pdf');
     const at = path.join(proj, '.claude', 'skills', 'pdf');

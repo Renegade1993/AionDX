@@ -890,7 +890,7 @@
     if (pending) {
       var rv = s.review || {};
       var n = (rv.flags || []).length;
-      meta.insertBefore(gEl('span', 'aiondx-dxs-flags' + (n ? ' aiondx-dxs-flags--bad' : ''), plural((rv.files || []).length, 'file', 'files') + ', ' + plural((rv.scripts || []).length, 'script', 'scripts') + ', ' + (n ? plural(n, 'thing', 'things') + ' to look at' : 'nothing flagged')), where);
+      meta.insertBefore(gEl('span', 'aiondx-dxs-flags' + (n ? ' aiondx-dxs-flags--bad' : ''), (rv.change ? 'Changes the current skill (+' + rv.change.added + ' −' + rv.change.removed + ' lines); ' : '') + plural((rv.files || []).length, 'file', 'files') + ', ' + plural((rv.scripts || []).length, 'script', 'scripts') + ', ' + (n ? plural(n, 'thing', 'things') + ' to look at' : 'nothing flagged')), where);
       ctl.appendChild(dxsBtn('Review', 'review'));
       ctl.appendChild(dxsBtn('Approve', 'approve', 'aiondx-skill-pin--on'));
       ctl.appendChild(dxsBtn('Reject', 'reject'));
@@ -920,7 +920,7 @@
       if (!box.hidden) { box.hidden = true; return; }
       var rv = s.review || {};
       box.textContent = '';
-      box.appendChild(gEl('div', 'aiondx-dxs-rvline', 'From ' + (rv.source || 'unknown') + (rv.at ? ', ' + longDate(Date.parse(rv.at)) : '') + '.'));
+      box.appendChild(gEl('div', 'aiondx-dxs-rvline', (rv.proposal ? 'P' + String(rv.source || 'proposed by an agent').slice(1) : 'From ' + (rv.source || 'unknown')) + (rv.at ? ', ' + longDate(Date.parse(rv.at)) : '') + '.'));
       if ((rv.scripts || []).length) box.appendChild(gEl('div', 'aiondx-dxs-rvline', 'Scripts it would run: ' + rv.scripts.join(', ') + '.'));
       (rv.flags || []).forEach(function (f) { var d = gEl('div', 'aiondx-dxs-flag'); d.appendChild(gEl('strong', '', f.file + (f.line ? ':' + f.line : '') + ' ' + f.why)); if (f.text) d.appendChild(gEl('code', '', f.text)); box.appendChild(d); });
       if (!(rv.flags || []).length) box.appendChild(gEl('div', 'aiondx-dxs-rvline', 'Nothing in it downloads and runs code, reaches the network, touches keys or deletes folders.'));
@@ -1252,6 +1252,10 @@
       label: 'Show tips for AionDX\u2019s controls', desc: 'A bubble points at each AionDX control the first time it is on screen and says how to use it, until you press Got it. Off hides them all.' },
     { id: 'compact.auto', group: 'Long chats', type: 'bool', default: true,
       label: 'Compact a full chat by itself', desc: 'A chat over half full is compacted just before its prompt cache runs out (5 minutes before an hour-long cache, 30 seconds before a 5-minute one, as measured for its account), while its Loop is off and once its agent has stopped. Also on the context ring\u2019s menu (click the ring).' },
+    { id: 'skills.afterMiss', group: 'Skills', type: 'bool', default: true,
+      label: 'Turn corrections into skill fixes', desc: 'When a message of yours reads as a correction (capitals, “why is”, “I already said”, “still missing”), AionDX adds one line asking the agent, once it is fixed, to add the check that would have caught it to the matching skill.' },
+    { id: 'skills.atCompact', group: 'Skills', type: 'bool', default: true,
+      label: 'Keep lessons through a compaction', desc: 'A Claude chat’s /compact asks its summary to keep, under “Lessons for skills”, what the session taught that a skill should hold.' },
     { id: 'loop.skillsLine', group: 'The Loop', type: 'bool', default: true,
       label: 'Remind agents of their skills', desc: 'Each Loop nudge to keep working ends with one line: check the project\u2019s skills before a task, and update the matching skill when you learn a better way. Agents rarely open a skill unless told (measured on a team, November 10th).' },
     { id: 'spellcheck', group: 'Typing', type: 'bool', default: true,
@@ -2697,6 +2701,16 @@
   /** Send a requested compaction, now that the agent has stopped. `send` posts the text the way a
    *  nudge goes to this kind of chat; a team member's recognized command reaches it bare
    *  (aionui-team recognized_command_is_sent_bare_to_member). */
+  // Claude Code's /compact takes focus instructions for its summary (Commands reference, filed November 15th, 2026)
+  var COMPACT_FOCUS = 'Keep, under “Lessons for skills”, anything this session taught that one of your skills should hold, naming the skill, so you can propose the change after this.';
+  var backendOf = {};
+  async function chatIsClaude(t, convId) {
+    if (backendOf[convId] === undefined) {
+      var g = await getJson('/api/conversations/' + encodeURIComponent(convId));
+      backendOf[convId] = String((g && g.data && g.data.extra && g.data.extra.backend) || '').toLowerCase();
+    }
+    return /^claude/.test(backendOf[convId]);
+  }
   async function sendCompact(t, convId, send) {
     if (compacting[t.key]) return;
     compacting[t.key] = true;
@@ -2722,7 +2736,8 @@
         return;
       }
       if (hasDraft(t)) { why(t, s, 'Holding the compaction: you have an unsent draft in this box.'); return; }
-      var r = await send('/' + cmd);
+      var focus = cmd === 'compact' && opt('skills.atCompact') !== false && (await chatIsClaude(t, convId)) ? ' ' + COMPACT_FOCUS : '';
+      var r = await send('/' + cmd + focus);
       if (!r || !r.ok) return;   // the next check tries again
       s = state(t);
       var now = Date.now();
@@ -10630,6 +10645,7 @@
   async function bellAct(n, btn, st) {
     btn.disabled = true;
     try {
+      if (n.action.op === 'skills') { btn.disabled = false; closeBellPop(); location.hash = '#/settings/skills'; return; }
       if (n.action.op === 'project') {
         btn.disabled = false;
         projectPicker(btn, 'c:' + n.conv, function (name) { st.textContent = name ? 'This chat is for ' + name + ' now; its skills load when the agent next starts.' : 'No project for this chat; it will not be asked again.'; setTimeout(function () { bellCheck(true); }, 1500); });
@@ -11681,6 +11697,28 @@
 
   var ANY_SEND_RE = /\/api\/((?:conversations\/[^/?#]+|teams\/[^/?#]+(?:\/agents\/[^/?#]+)?))\/messages(?:[?#]|$)/;
   /** The text of a message send's JSON body (content, or input on a team's route); null when there is none. */
+  // R-128 step 6: a message that reads as a correction gets one line asking for the check in the matching skill (the user's rule: a miss
+  // he had to point out is a gap in a skill or a procedure). Capitals (three words in a row), or the words of a correction. Not a command,
+  // not AionDX's own messages (they start with [ or /), never twice.
+  var MISS_LINE = '\n\n[AionDX: this reads as a correction. Once it is fixed, add the check that would have caught it to the matching skill ' +
+    '(as a change the user approves in DX Skills: aiondx skills propose).]';
+  var MISS_WORDS = /\b(why (is|isn't|are|aren't|was|wasn't|did|didn't|does|doesn't|do|don't)|i (already|just) (said|told|asked)|i told you|you (missed|forgot|ignored|skipped|dropped)|still (not|missing|broken|wrong|can't|doesn't|isn't)|not what i (asked|said|wanted)|i shouldn't have to)\b/i;
+  function readsAsCorrection(t) {
+    t = String(t || '');
+    if (!t.trim() || /^\s*[\/\[]/.test(t) || t.indexOf('[AionDX: this reads as a correction') >= 0) return false;
+    if (/\b[A-Z]{3,}[\s,.!?'"]+[A-Z]{3,}[\s,.!?'"]+[A-Z]{3,}\b/.test(t)) return true;
+    return MISS_WORDS.test(t);
+  }
+  function withMissLine(init) {
+    try {
+      var b = JSON.parse(init.body);
+      var k = b.content !== undefined ? 'content' : b.input !== undefined ? 'input' : b.text !== undefined ? 'text' : null;
+      if (!k || typeof b[k] !== 'string' || !readsAsCorrection(b[k])) return null;
+      b[k] += MISS_LINE;
+      if (k === 'content' && typeof b.input === 'string') b.input += MISS_LINE;
+      return Object.assign({}, init, { body: JSON.stringify(b), __dxMiss: true });
+    } catch (e) { return null; }
+  }
   function sentText(init) {
     try {
       var b = init && typeof init.body === 'string' ? JSON.parse(init.body) : null;
@@ -11990,6 +12028,10 @@
             var attached = mentionAttach(input, init);
             if (attached) return attached.then(function (a) { return window.fetch(a[0], a[1]); });
           }
+          if (init && !init.__dxMiss && typeof init.body === 'string' && opt('skills.afterMiss') !== false && callId(ANY_SEND_RE, input, init, ['POST'])) {
+            var missed = withMissLine(init);
+            if (missed) return window.fetch(input, missed);
+          }
           if ((id = callId(TEAM_SESSION_RE, input, init, ['POST']))) return holdTeamWake(id, args);
           if (pendingAccount && String((init && init.method) || (input && input.method) || 'GET').toUpperCase() === 'POST' &&
               CREATE_RE.test(String(typeof input === 'string' ? input : (input && input.url) || '').replace(/^https?:\/\/[^/]+/, ''))) {
@@ -12203,6 +12245,7 @@
       ['Skills in every chat', 'The book button beside the Loop shows every skill the chat has (AionDX’s, yours, the shared ones and its project’s), how often it used each and when, and what each costs in context. Switch a skill off for that chat, pin one so the agent always has it in full, or refresh them. A team lead pins skills for its team.'],
       ['One set of skills for every agent', 'Codex, Gemini and the other agents now get the same personal, shared and project skills as Claude. A chat with no project is asked which project it is for, once; its menu has Project too.'],
       ['DX Skills', 'Settings > Skills: every skill, layer by layer. Import a ZIP, a folder or a GitHub link into a project after reviewing what its scripts do; ask an agent to write a new one as a DX Doc; browse Anthropic’s and OpenAI’s official skills; update the global library on your yes.'],
+      ['Skills that improve themselves', 'When you have to correct an agent, it is asked to add the check that would have caught it to the right skill; a compaction keeps its lessons for skills. Agents propose skill changes, and the bell tells you when one waits for you in DX Skills. Both lines can be switched off in Options.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.27.10', items: [

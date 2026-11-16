@@ -957,6 +957,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('no message says so', sd.status === 1 && /The message is empty/.test(sd.stdout), sd.stdout);
   }
 
+  // ---- aiondx skills propose (R-128 step 6): an agent's skill change waits for the user in the project's skills-pending ----
+  {
+    const pd = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-propose-'));
+    const projRoot = path.join(pd, 'Atlas Game');
+    fs.mkdirSync(path.join(projRoot, '.claude', 'skills', 'build'), { recursive: true });
+    fs.writeFileSync(path.join(projRoot, '.claude', 'skills', 'build', 'SKILL.md'), '---\nname: build\n---\nold');
+    fs.writeFileSync(path.join(pd, 'aiondx-projects.json'), JSON.stringify({ projects: { atlas: { root: projRoot } }, bindings: { 'team:team1': 'atlas' } }));
+    const draft = path.join(pd, 'draft');
+    fs.mkdirSync(path.join(draft, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(draft, 'SKILL.md'), '---\nname: build\n---\nnew');
+    fs.writeFileSync(path.join(draft, 'scripts', 'b.ps1'), 'Write-Host hi');
+    const penv = (conv) => Object.assign(cliEnv(conv), { AIONDX_DATA_DIR: pd });
+    let pr = await run(CLI, ['skills', 'propose', 'build', '--from', draft], penv('convW'));
+    const pend = path.join(projRoot, '.claude', 'skills-pending', 'build');
+    check('skills propose: a team member\'s change goes to its team\'s project, waiting', pr.status === 0 && /^Your change to build is waiting for the user's approval in DX Skills/.test(pr.stdout) &&
+      fs.readFileSync(path.join(pend, 'SKILL.md'), 'utf8').endsWith('new') && fs.existsSync(path.join(pend, 'scripts', 'b.ps1')) && fs.readFileSync(path.join(projRoot, '.claude', 'skills', 'build', 'SKILL.md'), 'utf8').endsWith('old'), pr.stdout);
+    const rvp = JSON.parse(fs.readFileSync(path.join(pend, '.aiondx-review.json'), 'utf8'));
+    check('its review says who proposed it, not approved', /^proposed by Worker$/.test(rvp.source) && rvp.approved === false && rvp.proposal === true, JSON.stringify(rvp));
+    pr = await run(CLI, ['skills', 'propose', 'newone', '--from', path.join(draft, 'SKILL.md')], penv('convS'));
+    check('a solo chat with no project is asked to name it', pr.status === 1 && /This chat has no project; name it: --project KEY \(atlas\)/.test(pr.stdout), pr.stdout);
+    pr = await run(CLI, ['skills', 'propose', 'newone', '--from', path.join(draft, 'SKILL.md'), '--project', 'atlas'], penv('convS'));
+    check('with --project, a new skill from one SKILL.md', pr.status === 0 && /^Your new skill newone is waiting/.test(pr.stdout) && fs.existsSync(path.join(projRoot, '.claude', 'skills-pending', 'newone', 'SKILL.md')), pr.stdout);
+    pr = await run(CLI, ['skills', 'propose', '../x', '--from', draft], penv('convW'));
+    check('a bad name is refused', pr.status === 1, pr.stdout);
+    try { fs.rmSync(pd, { recursive: true, force: true }); } catch (e) { /* temp */ }
+  }
+
   // ---- DX Docs (R-121, 2026-11-13): the agents' doc commands run the engine in the chat's project or working folder ----
   {
     const os = require('os');

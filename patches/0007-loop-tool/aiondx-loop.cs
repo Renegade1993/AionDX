@@ -4134,13 +4134,68 @@ namespace AionDx
                 : "Unpinned " + skill + " for " + who + ".";
         }
 
+        /** R-128 step 6: an agent's new skill, or its change to one, goes to the user for approval: into the chat's project's
+         *  .claude\skills-pending\NAME, where DX Skills shows it with its review and how it differs from the skill it would replace. */
+        static string SkillsPropose(string name, string from, string project)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(name ?? "", "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")) throw new ToolError("Name the skill: aiondx skills propose NAME --from FOLDER|SKILL.md");
+            if (string.IsNullOrEmpty(from) || !(Directory.Exists(from) || File.Exists(from))) throw new ToolError("--from is the folder holding the skill's SKILL.md, or the SKILL.md itself.");
+            string src = Directory.Exists(from) ? from : Path.GetDirectoryName(Path.GetFullPath(from));
+            string md = Directory.Exists(from) ? Path.Combine(from, "SKILL.md") : from;
+            if (!File.Exists(md)) throw new ToolError("There is no SKILL.md in " + from + ".");
+            var reg = File.Exists(Path.Combine(DxDataDir(), "aiondx-projects.json")) ? Json.DeserializeObject(File.ReadAllText(Path.Combine(DxDataDir(), "aiondx-projects.json"))) as Dictionary<string, object> : null;
+            var projects = reg != null && reg.ContainsKey("projects") ? reg["projects"] as Dictionary<string, object> : null;
+            var bindings = reg != null && reg.ContainsKey("bindings") ? reg["bindings"] as Dictionary<string, object> : null;
+            if (string.IsNullOrEmpty(project))
+            {
+                try
+                {
+                    var ctx = LoadContext();
+                    object b;
+                    if (bindings != null && bindings.TryGetValue("conv:" + ctx.Self.ConvId, out b) && b is string && ((string)b).Length > 0) project = (string)b;
+                    else if (bindings != null && ctx.Self.Kind == "team" && bindings.TryGetValue("team:" + ctx.Self.TeamId, out b) && b is string && ((string)b).Length > 0) project = (string)b;
+                }
+                catch (ToolError) { }
+            }
+            if (string.IsNullOrEmpty(project)) throw new ToolError("This chat has no project; name it: --project KEY (" + (projects != null ? string.Join(", ", projects.Keys) : "none known") + ").");
+            object po;
+            var p = projects != null && projects.TryGetValue(project, out po) ? po as Dictionary<string, object> : null;
+            string root = p != null && p.ContainsKey("root") ? p["root"] as string : null;
+            if (string.IsNullOrEmpty(root)) throw new ToolError("There is no project called " + project + ".");
+            string dest = Path.Combine(root, ".claude", "skills-pending", name);
+            if (Directory.Exists(dest)) Directory.Delete(dest, true);
+            Directory.CreateDirectory(dest);
+            if (Directory.Exists(from)) CopySkillTree(src, dest); else File.Copy(md, Path.Combine(dest, "SKILL.md"));
+            string who = "an agent";
+            try { var c2 = LoadContext(); who = c2.Self.Name ?? who; } catch (ToolError) { }
+            var review = new Dictionary<string, object> { { "source", "proposed by " + who }, { "at", DateTime.UtcNow.ToString("o") }, { "approved", false }, { "proposal", true } };
+            File.WriteAllText(Path.Combine(dest, ".aiondx-review.json"), Json.Serialize(review), new UTF8Encoding(false));
+            bool change = File.Exists(Path.Combine(root, ".claude", "skills", name, "SKILL.md"));
+            return (change ? "Your change to " : "Your new skill ") + name + " is waiting for the user's approval in DX Skills (Settings > Skills, " + Path.GetFileName(root) + "). " +
+                "It is not used until they approve it; tell them it is there.";
+        }
+        static void CopySkillTree(string from, string to)
+        {
+            Directory.CreateDirectory(to);
+            foreach (var f in Directory.GetFiles(from)) File.Copy(f, Path.Combine(to, Path.GetFileName(f)), true);
+            foreach (var d in Directory.GetDirectories(from)) { var n = Path.GetFileName(d); if (n == ".git" || n == "node_modules") continue; CopySkillTree(d, Path.Combine(to, n)); }
+        }
+
         static int SkillsCli(string[] args, StreamWriter o)
         {
-            const string help = "aiondx skills pins | pin NAME [--member WHO] | unpin NAME [--member WHO]   (team lead: skills given in full to a member, or to the whole team)";
+            const string help = "aiondx skills pins | pin NAME [--member WHO] | unpin NAME [--member WHO]   (team lead: skills given in full to a member, or to the whole team)\n" +
+                "aiondx skills propose NAME --from FOLDER|SKILL.md [--project KEY]   (any agent: a new skill, or a change to one, for the user to approve in DX Skills)";
             string sub = args.Length > 1 ? args[1] : "help";
             if (sub == "help" || sub == "--help" || sub == "-h") { o.WriteLine(help); return 0; }
             try
             {
+                if (sub == "propose")
+                {
+                    string name = args.Length > 2 && !args[2].StartsWith("--") ? args[2] : "", from = null, project = null;
+                    for (int i = 2; i < args.Length - 1; i++) { if (args[i] == "--from") from = args[i + 1]; if (args[i] == "--project") project = args[i + 1]; }
+                    o.WriteLine(SkillsPropose(name, from, project));
+                    return 0;
+                }
                 var a = new Dictionary<string, object> { { "action", sub == "pins" ? "list" : sub } };
                 if (args.Length > 2 && !args[2].StartsWith("--")) a["skill"] = args[2];
                 for (int i = 2; i < args.Length - 1; i++) if (args[i] == "--member") a["member"] = args[i + 1];

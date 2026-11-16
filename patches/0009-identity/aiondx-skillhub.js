@@ -73,11 +73,27 @@ function hub(ctx) {
   for (const [key, p] of Object.entries(reg.projects || {})) {
     if (!p || !p.root) continue;
     layers.push({ kind: 'project', project: key, label: path.basename(p.root), dir: path.join(p.root, '.claude', 'skills'), skills: skillsIn(path.join(p.root, '.claude', 'skills')),
-      pending: skillsIn(path.join(p.root, '.claude', 'skills-pending')).map((s) => Object.assign(s, { review: readJson(path.join(s.dir, '.aiondx-review.json')) })) });
+      pending: skillsIn(path.join(p.root, '.claude', 'skills-pending')).map((s) => {
+        const rv = readJson(path.join(s.dir, '.aiondx-review.json')) || {};
+        if (!rv.files) Object.assign(rv, reviewFolder(s.dir));   // a proposal from an agent: reviewed when it is shown
+        const cur = path.join(p.root, '.claude', 'skills', s.folder, 'SKILL.md');
+        if (exists(cur)) { try { rv.change = lineChange(fs.readFileSync(cur, 'utf8'), fs.readFileSync(path.join(s.dir, 'SKILL.md'), 'utf8')); } catch { /* unreadable */ } }
+        return Object.assign(s, { review: rv });
+      }) });
   }
   layers.push({ kind: 'store', label: 'AionUi\'s skill store (assistants)', dir: path.join(ctx.home, '.aiondx', 'skills'), skills: skillsIn(path.join(ctx.home, '.aiondx', 'skills')) });
   layers.push({ kind: 'aiondx', label: 'AionDX\'s own (every chat)', dir: ctx.builtinDir, readOnly: true, skills: skillsIn(ctx.builtinDir) });
   return { ok: true, layers, libraryRoot: libRoot };
+}
+
+/** How a new SKILL.md differs from the one it would replace: lines added and taken out (as a multiset of lines). */
+function lineChange(oldText, newText) {
+  const count = (t) => { const m = new Map(); for (const l of String(t).split(/\r?\n/)) m.set(l, (m.get(l) || 0) + 1); return m; };
+  const a = count(oldText), b = count(newText);
+  let added = 0, removed = 0;
+  for (const [l, n] of b) added += Math.max(0, n - (a.get(l) || 0));
+  for (const [l, n] of a) removed += Math.max(0, n - (b.get(l) || 0));
+  return { added, removed };
 }
 
 function projectRoot(ctx, key) {
@@ -280,4 +296,4 @@ function library(ctx, cmd, clone, yes) {
   return { ok: r.status === 0, output: out.slice(-12000), clone: cmd === 'fetch' ? cloneDir : undefined };
 }
 
-module.exports = { hub, reviewFolder, importSkills, approve, reject, remove, link, exportZip, catalog, library, downloadUrl, frontMatter };
+module.exports = { lineChange, hub, reviewFolder, importSkills, approve, reject, remove, link, exportZip, catalog, library, downloadUrl, frontMatter };

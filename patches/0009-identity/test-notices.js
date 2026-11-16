@@ -77,6 +77,16 @@ try {
   check('a team member is not asked (its team decides)', N.noticesFor(data, 'p2', alive).length === 0);
   reg({ personal: 'off', work: 'off' }, {}, {});
   check('no projects on this PC: nothing to ask', N.noticesFor(data, 'p1', alive).length === 0);
+  // skill changes waiting in the chat's project
+  const atlasRoot = path.join(root, 'Atlas');
+  fs.mkdirSync(path.join(atlasRoot, '.claude', 'skills-pending', 'deploy'), { recursive: true });
+  fs.mkdirSync(path.join(atlasRoot, '.claude', 'skills-pending', 'build'), { recursive: true });
+  reg({ personal: 'off', work: 'off' }, { atlas: { root: atlasRoot, domain: 'personal' } }, { 'conv:p1': 'atlas' });
+  launch('p1', { project: 'atlas', acct: 'personal', docs: false, fullSignIn: true, signInDir: personal });
+  n = N.noticesFor(data, 'p1', alive);
+  check('skill changes waiting in its project: one notice with the count and Review them', n.length === 1 && n[0].kind === 'skills' && n[0].title === '2 skill changes are waiting for you' && n[0].action.op === 'skills', JSON.stringify(n));
+  fs.rmSync(path.join(atlasRoot, '.claude', 'skills-pending'), { recursive: true, force: true });
+  check('approved or rejected: gone', N.noticesFor(data, 'p1', alive).length === 0);
 
   // the ipc handler: one sign-in notice per account across chats
   let handler = null;
