@@ -5376,7 +5376,7 @@ async function pageTarget() {
       await addSection();
       await sleep(700);
       const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
-      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'compact.auto', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'compact.auto', 'skills.afterMiss', 'skills.atCompact', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
       check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.files' && o.default === 'outside' && o.choices.length === 2) && !schema.options.some((o) => o.id === 'links.external') &&
         schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));
