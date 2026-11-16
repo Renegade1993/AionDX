@@ -3398,6 +3398,10 @@ async function pageTarget() {
             if (op === 'hub') return Promise.resolve(hub);
             if (op === 'approve') return Promise.resolve({ ok: true, dir: 'x' });
             if (op === 'reviewGet') return Promise.resolve({ ok: true, review: 'auto' });
+            if (op === 'notesList') return Promise.resolve({ ok: true, total: 2, counts: { 'build:given': 1, 'small:none': 1 }, marked: { fit: 0, miss: 0 },
+              items: [{ at: 1794800000000, conv: 'harness1', group: 'small', word: 'fix', note: 'none', start: 'Fix the typo in the title', fit: null },
+                      { at: 1794799000000, conv: 'harness1', group: 'build', word: 'build', note: 'given', start: 'Build the export dialog', fit: null }] });
+            if (op === 'notesMark') return Promise.resolve({ ok: true, at: a.at, fit: a.fit });
             if (op === 'reviewSet') return Promise.resolve({ ok: true, review: a.review });
             if (op === 'import') return Promise.resolve({ ok: true, project: a.project, imported: [{ name: 'chart', flags: 0 }] });
             if (op === 'catalog') return Promise.resolve({ ok: true, which: a.which, skills: [{ name: 'pdf', description: 'Work with PDF files.', inLibrary: true, url: 'https://github.com/anthropics/skills/tree/HEAD/skills/pdf' }, { name: 'xlsx', description: 'Spreadsheets.', inLibrary: false, url: 'https://github.com/anthropics/skills/tree/HEAD/skills/xlsx' }] });
@@ -3421,6 +3425,21 @@ async function pageTarget() {
       await sleep(300);
       const rset = await js('window.__dxs.find((c) => c[0] === "reviewSet")');
       check(sc, 'choosing Never saves it for the loop tool', rset && rset[1].review === 'off', JSON.stringify(rset));
+      // request notes: the user's review list (P-012, November 16th, 2026)
+      await humanClick('[data-testid="aiondx-dxs-tab-notes"]');
+      await sleep(700);
+      const nts = await js(`(() => { const l = document.querySelector('[data-testid="aiondx-dxs-notes"]'); if (!l) return null; return { sum: (l.querySelector('.aiondx-dxs-notes-sum') || {}).textContent,
+        rows: [...l.querySelectorAll('.aiondx-dxs-note')].map((r) => r.querySelector('.aiondx-skill-layer').textContent + ' | ' + r.querySelector('.aiondx-skill-desc').textContent) }; })()`);
+      check(sc, 'Request notes lists each request, newest first: group, word, note or none, its first words; with the counts', nts && /^2 requests: 0 plan, 1 build, 1 small change\./.test(nts.sum) &&
+        JSON.stringify(nts.rows) === JSON.stringify(['small · \u201cfix\u201d · no note | Fix the typo in the title', 'build · \u201cbuild\u201d · note given | Build the export dialog']), JSON.stringify(nts));
+      await humanClick('.aiondx-dxs-note[data-at="1794799000000"] button[data-act="miss"]');
+      await sleep(300);
+      const nmk = await js('window.__dxs.find((c) => c[0] === "notesMark")');
+      check(sc, 'Did not fit marks it, and the button shows it', nmk && nmk[1].at === 1794799000000 && nmk[1].fit === false &&
+        (await js(`document.querySelector('.aiondx-dxs-note[data-at="1794799000000"] button[data-act="miss"]').classList.contains('aiondx-skill-pin--on')`)), JSON.stringify(nmk));
+      await shot('request-notes');
+      await humanClick('[data-testid="aiondx-dxs-tab-layers"]');
+      await sleep(300);
       check(sc, 'every layer, the store left to its own tab; the library read-only with its source and commit', first && JSON.stringify(first.layers) === JSON.stringify(['Global library (official, read-only)', 'Yours, on this PC (every Claude chat)', 'Atlas Game', 'AionDX\u2019s own (every chat)']) &&
         first.lib === '1 skill \u00b7 read-only \u00b7 anthropics/skills at 2c5958e', JSON.stringify(first));
       const pend = await js(`(() => { const r = document.querySelector('[data-layer="project:atlas"] .aiondx-skill--pending'); return r ? { flags: r.querySelector('.aiondx-dxs-flags').textContent, acts: [...r.querySelectorAll('button[data-act]')].map((b) => b.textContent) } : null; })()`);

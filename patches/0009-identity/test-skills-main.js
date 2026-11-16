@@ -82,6 +82,17 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-skills-'));
     const rs = await handler({}, { op: 'reviewSet', review: 'off' });
     check('set to off: saved in aiondx-skills.json, read back', rs.ok && JSON.parse(fs.readFileSync(path.join(userData, 'aiondx-skills.json'), 'utf8')).review === 'off' && (await handler({}, { op: 'reviewGet' })).review === 'off', JSON.stringify(rs));
     check('anything but auto, always or off is refused', (await handler({}, { op: 'reviewSet', review: 'sometimes' })).ok === false);
+    // request notes: the review list from this PC's own folder (P-012)
+    const nd = path.join(root, 'request-notes');
+    process.env.AIONDX_REQUEST_NOTES_DIR = nd;
+    fs.mkdirSync(nd, { recursive: true });
+    fs.writeFileSync(path.join(nd, 'review.jsonl'), [{ at: 1, conv: 'c1', group: 'build', word: 'build', note: 'given', start: 'Build the dialog' }, { at: 2, conv: 'c1', group: 'small', word: 'fix', note: 'none', start: 'Fix the typo' }].map((x) => JSON.stringify(x)).join('\n') + '\n{torn');
+    let nl = await handler({}, { op: 'notesList' });
+    check('request notes: newest first, with counts by group, a torn line skipped', nl.ok && nl.total === 2 && nl.items[0].at === 2 && nl.items[1].start === 'Build the dialog' && nl.counts['build:given'] === 1 && nl.counts['small:none'] === 1, JSON.stringify(nl).slice(0, 300));
+    await handler({}, { op: 'notesMark', at: 1, fit: false });
+    nl = await handler({}, { op: 'notesList' });
+    check('a mark is kept beside the list and read back', nl.items[1].fit === false && nl.marked.miss === 1 && JSON.parse(fs.readFileSync(path.join(nd, 'marks.json'), 'utf8'))['1'] === false, JSON.stringify(nl.items));
+    delete process.env.AIONDX_REQUEST_NOTES_DIR;
   } catch (e) {
     check('no exception', false, e.stack);
   } finally {

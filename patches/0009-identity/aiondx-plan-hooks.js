@@ -29,12 +29,37 @@ function writeJson(f, v) { try { fs.mkdirSync(path.dirname(f), { recursive: true
 const out = (o) => { process.stdout.write(JSON.stringify(o)); process.exit(0); };
 const quiet = () => process.exit(0);
 
-const BUILD_RE = /\b(build|implement|add|make|create|write|fix|change|redesign|refactor|rework|set up|wire|ship|update)\b/i;
+// Request notes (P-012, the user's decisions of November 16th, 2026): a note points at a tool the chat has, worded as an offer, never as
+// an order; Plan, then Build, then Small change (which gets none); every note given is logged on this PC only (requestLog).
+const GROUPS = [
+  ['plan', /\b(plan|design|spec|outline|propose|think (it |this |that )?through)\b/i,
+    'AionDX: available here for a plan: a DX Doc the user can read and comment on, with choice and Approve blocks (aiondx doc help).'],
+  ['build', /\b(build|implement|create|redesign|refactor|rework|set up|wire)\b|\bmake (it|them|this|that|a|an|the)\b/i,
+    'AionDX: available here: the asks ledger keeps the user\'s words (aiondx asks add); a DX Doc can show a plan, a table or a chart (aiondx doc help).'],
+  ['small', /\b(fix|change|update|add|rename|remove)\b/i, null],
+];
 const QUESTION_RE = /^\s*(what|why|how|when|where|who|which|is|are|does|do|can|could|should|would|will)\b[^.!]*\?\s*$/i;
-function readsAsBuild(t) {
+/** The request group a message falls in, and the word that put it there; null for a question, a command or a short message. */
+function requestGroup(t) {
   t = String(t || '').trim();
-  if (!t || t.length < 12 || /^\s*[/[]/.test(t) || QUESTION_RE.test(t)) return false;
-  return BUILD_RE.test(t);
+  if (!t || t.length < 12 || /^\s*[/[]/.test(t) || QUESTION_RE.test(t)) return null;
+  for (const [group, re, note] of GROUPS) { const m = re.exec(t); if (m) return { group, word: m[0].toLowerCase(), note }; }
+  return null;
+}
+function readsAsBuild(t) { const g = requestGroup(t); return !!g && g.group !== 'small'; }
+/** The log of notes given, on this PC only (%LOCALAPPDATA%\AionDX\request-notes: never in a package, an export or a profile copy):
+ *  log.jsonl counts (no words of the message); review.jsonl the message's first words, for the user's own review list. */
+function requestLog(entry, start) {
+  try {
+    const dir = process.env.AIONDX_REQUEST_NOTES_DIR || path.join(process.env.LOCALAPPDATA || '', 'AionDX', 'request-notes');
+    if (!process.env.AIONDX_REQUEST_NOTES_DIR && !process.env.LOCALAPPDATA) return;
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [f, row] of [['log.jsonl', entry], ['review.jsonl', Object.assign({}, entry, { start })]]) {
+      const file = path.join(dir, f);
+      try { if (fs.statSync(file).size > 2 * 1048576) { const keep = fs.readFileSync(file, 'utf8').split('\n').slice(-2000).join('\n'); fs.writeFileSync(file, keep); } } catch { /* new */ }
+      fs.appendFileSync(file, JSON.stringify(row) + '\n');
+    }
+  } catch { /* never in the way */ }
 }
 function ledger() {
   const keys = [CONV && 'c-' + CONV, TEAM && 't-' + TEAM].filter(Boolean);
@@ -46,13 +71,14 @@ function readInput() { try { return JSON.parse(fs.readFileSync(0, 'utf8') || '{}
 
 function prompt(inp) {
   const p = String(inp.prompt || '').replace(/<pasted_content[\s\S]*?<\/pasted_content[^>]*>/g, ' ');
-  if (readsAsBuild(p)) {
-    return out({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext:
-      'AionDX: before you build, see the whole thing. Put each ask of this request in the ledger in the user\'s words (aiondx asks add "..."), ' +
-      'and for anything bigger than a small fix, the plan in a DX Doc the user can see (their asks quoted, a table of parts against what exists, how each is checked). ' +
-      'Build when you could describe the finished thing part by part.' } });
-  }
-  return quiet();
+  const g = requestGroup(p);
+  if (!g) return quiet();
+  // a chat already in Plan Mode has its plan step; the Plan note would repeat it
+  const note = g.group === 'plan' && inp.permission_mode === 'plan' ? null : g.note;
+  requestLog({ at: Date.now(), conv: CONV, team: TEAM || null, group: g.group, word: g.word, chars: p.length, note: note ? 'given' : 'none', noteChars: note ? note.length : 0 },
+    p.replace(/\s+/g, ' ').trim().slice(0, 80));
+  if (!note) return quiet();
+  return out({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: note } });
 }
 
 function stop(inp) {
@@ -90,7 +116,7 @@ function pretool(inp) {
     'how each is checked) with an Approve block, and wait for the user to approve it; edits open up then. Notes and docs can be written meanwhile.' } });
 }
 
-module.exports = { readsAsBuild };
+module.exports = { readsAsBuild, requestGroup };
 if (require.main === module) {
   try {
     const inp = readInput();

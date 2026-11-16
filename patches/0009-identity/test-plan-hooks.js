@@ -12,14 +12,37 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
 const data = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-planhooks-'));
 const run = (mode, input, env) => {
   const r = spawnSync(process.execPath, [SCRIPT, mode], { input: JSON.stringify(input), encoding: 'utf8', windowsHide: true, timeout: 20000,
-    env: Object.assign({}, process.env, { AIONDX_DATA_DIR: data, AIONDX_CONVERSATION_ID: 'c1', AIONDX_TEAM_ID: '' }, env || {}) });
+    env: Object.assign({}, process.env, { AIONDX_DATA_DIR: data, AIONDX_CONVERSATION_ID: 'c1', AIONDX_TEAM_ID: '', AIONDX_REQUEST_NOTES_DIR: path.join(data, 'request-notes') }, env || {}) });
   let j = null; try { j = r.stdout ? JSON.parse(r.stdout) : null; } catch (e) { j = { raw: r.stdout }; }
   return { code: r.status, j };
 };
 try {
   // prompt
   let r = run('prompt', { hook_event_name: 'UserPromptSubmit', prompt: 'Build the export dialog with a preview and a save button.' });
-  check('a build request: a plan-first note as additional context', r.code === 0 && r.j && r.j.hookSpecificOutput.hookEventName === 'UserPromptSubmit' && /before you build, see the whole thing/.test(r.j.hookSpecificOutput.additionalContext), JSON.stringify(r));
+  const ctx = (x) => x.j && x.j.hookSpecificOutput && x.j.hookSpecificOutput.additionalContext;
+  // request notes (P-012, November 16th, 2026): each points at a tool, worded as an offer; no orders
+  check('a build request: the Build note, pointing at the asks ledger and DX Docs', r.code === 0 && r.j && r.j.hookSpecificOutput.hookEventName === 'UserPromptSubmit' &&
+    /^AionDX: available here: the asks ledger/.test(ctx(r)) && /a DX Doc can show a plan, a table or a chart/.test(ctx(r)), JSON.stringify(r));
+  check('no note gives an order', !/\b(stop|must|before you|build when|do not|don't)\b/i.test(ctx(r)) && ctx(r).length <= 220, ctx(r));
+  r = run('prompt', { prompt: 'Plan the export dialog and how it saves.' });
+  check('a plan request: the Plan note (a DX Doc with choice and Approve blocks)', /^AionDX: available here for a plan: a DX Doc/.test(ctx(r) || ''), JSON.stringify(r));
+  r = run('prompt', { prompt: 'Plan and build the export dialog.' });
+  check('plan and build: the Plan note wins', /for a plan/.test(ctx(r) || ''), JSON.stringify(r));
+  r = run('prompt', { prompt: 'Plan the export dialog and how it saves.', permission_mode: 'plan' });
+  check('a plan request in Plan Mode: no note (it would repeat Plan Mode)', r.code === 0 && r.j === null, JSON.stringify(r));
+  r = run('prompt', { prompt: 'Fix the typo in the export dialog title.' });
+  check('a small change: no note', r.code === 0 && r.j === null, JSON.stringify(r));
+  r = run('prompt', { prompt: 'make sure the notes are saved before you close it' });
+  check('"make sure" is not a build request', r.code === 0 && r.j === null, JSON.stringify(r));
+  r = run('prompt', { prompt: 'Can you make it so the dialog remembers its size' });
+  check('"make it so" is a build request', /^AionDX: available here: the asks ledger/.test(ctx(r) || ''), JSON.stringify(r));
+  const logDir = path.join(data, 'request-notes');
+  const log = fs.readFileSync(path.join(logDir, 'log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const rev = fs.readFileSync(path.join(logDir, 'review.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  check('the log has one line per request: its group, its word, given or not, no words of the message', log.length === 6 && log[0].group === 'build' && log[0].word === 'build' && log[0].note === 'given' &&
+    log.some((x) => x.group === 'small' && x.note === 'none') && log.every((x) => !('start' in x)) && !/export dialog/.test(JSON.stringify(log)), JSON.stringify(log).slice(0, 400));
+  check('the review list has the first words of each, for the user on this PC', rev.length === 6 && rev[0].start === 'Build the export dialog with a preview and a save button.' && rev.every((x) => x.start.length <= 80), JSON.stringify(rev).slice(0, 300));
+  r = run('prompt', { prompt: 'Build the export dialog with a preview and a save button.' });
   r = run('prompt', { prompt: 'What does the export dialog do?' });
   check('a question: nothing', r.code === 0 && r.j === null, JSON.stringify(r));
   r = run('prompt', { prompt: 'WHY IS THE EXPORT STILL MISSING' });

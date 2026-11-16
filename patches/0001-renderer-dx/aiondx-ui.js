@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-16.3';
+  var BUILD = '2026-11-17.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -826,7 +826,7 @@
     });
     var tabs = gEl('div', 'aiondx-dxs-tabs');
     tabs.setAttribute('role', 'tablist');
-    [['layers', 'Layers'], ['import', 'Import'], ['catalogs', 'Official catalogs'], ['library', 'Global library'], ['store', 'AionUi’s store']].forEach(function (t) {
+    [['layers', 'Layers'], ['import', 'Import'], ['catalogs', 'Official catalogs'], ['library', 'Global library'], ['notes', 'Request notes'], ['store', 'AionUi’s store']].forEach(function (t) {
       var b = gEl('button', 'aiondx-dxs-tab', t[1]);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -859,6 +859,7 @@
     if (dxs.tab === 'import') return dxsImport(body);
     if (dxs.tab === 'catalogs') return dxsCatalogs(body);
     if (dxs.tab === 'library') return dxsLibrary(body);
+    if (dxs.tab === 'notes') return dxsNotes(body);
   }
   function dxsLayers(body) {
     var find = document.createElement('input');
@@ -1092,6 +1093,61 @@
     app.addEventListener('click', async function () {
       if (!(await placesAsk('Apply this update to the global library? It changes what every Claude chat on this PC loads. The list above is what changes.', 'Apply'))) return;
       run('apply', { clone: dxs.lib.clone, yes: true });
+    });
+  }
+  /** Request notes (P-012, November 16th, 2026): every request the planning hook sorted, newest first, with the first words of the
+   *  message, the word that sorted it and whether a note went to the agent; Fit and Did not fit for each. Read from this PC's own folder
+   *  only; never shown in a chat, never in a package or an export. */
+  var dxsNoteNames = {};
+  function dxsNoteChat(id) {
+    if (!id) return Promise.resolve('');
+    if (dxsNoteNames[id] !== undefined) return Promise.resolve(dxsNoteNames[id]);
+    return getJson('/api/conversations/' + encodeURIComponent(id)).then(function (j) { var d = j && (j.data || j); dxsNoteNames[id] = (d && d.name) || id; return dxsNoteNames[id]; }, function () { dxsNoteNames[id] = id; return id; });
+  }
+  function dxsNotes(body) {
+    body.appendChild(gEl('p', 'aiondx-dxs-desc', 'What the planning hook made of your requests in Claude chats: the group it put each in, the word that did it, and whether a short note went to the agent with it. Only on this PC, never in a chat. Mark each so the notes can be tuned.'));
+    var list = gEl('div', 'aiondx-dxs-notes');
+    list.setAttribute('data-testid', 'aiondx-dxs-notes');
+    list.appendChild(gEl('div', 'aiondx-skills-empty', 'Reading...'));
+    body.appendChild(list);
+    skillsBridge().call('notesList', { limit: 200 }).then(function (r) {
+      list.textContent = '';
+      if (!r || !r.ok) { list.appendChild(gEl('div', 'aiondx-skills-empty', 'Could not read them: ' + ((r && r.error) || 'no answer'))); return; }
+      var c = r.counts || {};
+      var sum = function (g) { return (c[g + ':given'] || 0) + (c[g + ':none'] || 0); };
+      list.appendChild(gEl('div', 'aiondx-dxs-notes-sum', plural(r.total, 'request', 'requests') + ': ' + sum('plan') + ' plan, ' + sum('build') + ' build, ' + sum('small') + ' small change. Marked ' + r.marked.fit + ' fit, ' + r.marked.miss + ' did not fit.'));
+      if (!r.items.length) { list.appendChild(gEl('div', 'aiondx-skills-empty', 'None yet. They appear as you send requests in Claude chats.')); return; }
+      r.items.forEach(function (e) {
+        var row = gEl('div', 'aiondx-skill aiondx-dxs-note');
+        row.setAttribute('data-at', String(e.at));
+        var head = gEl('div', 'aiondx-skill-head');
+        var who = gEl('span', 'aiondx-skill-name', '');
+        head.appendChild(who);
+        head.appendChild(gEl('span', 'aiondx-skill-layer', e.group + ' · “' + e.word + '” · ' + (e.note === 'given' ? 'note given' : 'no note')));
+        row.appendChild(head);
+        row.appendChild(gEl('div', 'aiondx-skill-desc', e.start || ''));
+        var meta = gEl('div', 'aiondx-skill-meta');
+        meta.appendChild(gEl('span', 'aiondx-dxs-dir', longDate(e.at) + ' ' + hhmm(e.at)));
+        var ctl = gEl('span', 'aiondx-skill-ctl');
+        var fit = dxsBtn('Fit', 'fit', e.fit === true ? 'aiondx-skill-pin--on' : ''), miss = dxsBtn('Did not fit', 'miss', e.fit === false ? 'aiondx-skill-pin--on' : '');
+        [fit, miss].forEach(function (b) {
+          b.addEventListener('click', function () {
+            var want = b === fit ? true : false;
+            var now = e.fit === want ? null : want;
+            skillsBridge().call('notesMark', { at: e.at, fit: now }).then(function (x) {
+              if (!x || !x.ok) return;
+              e.fit = now;
+              fit.classList.toggle('aiondx-skill-pin--on', now === true);
+              miss.classList.toggle('aiondx-skill-pin--on', now === false);
+            });
+          });
+          ctl.appendChild(b);
+        });
+        meta.appendChild(ctl);
+        row.appendChild(meta);
+        list.appendChild(row);
+        dxsNoteChat(e.conv).then(function (n) { who.textContent = n || 'A chat'; });
+      });
     });
   }
   /** New skill: a chat in the project's folder drafts it as a DX Doc for you to review, then saves it where DX Skills asks you to approve it. */

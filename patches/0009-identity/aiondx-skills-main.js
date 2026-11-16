@@ -166,6 +166,30 @@ function setPin(userData, key, name, on) {
   return { ok: true, pins: p[key] || [] };
 }
 
+const notesDir = () => process.env.AIONDX_REQUEST_NOTES_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(), 'AionDX', 'request-notes');
+/** The newest request notes, newest first, each with the user's mark (fit, did not fit) if any, and counts by group. */
+function notesList(dir, limit) {
+  let lines = [];
+  try { lines = fs.readFileSync(path.join(dir, 'review.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean); } catch { /* none yet */ }
+  const marks = readJson(path.join(dir, 'marks.json')) || {};
+  const all = [];
+  for (const l of lines) { try { all.push(JSON.parse(l)); } catch { /* a torn line */ } }
+  const counts = {};
+  for (const e of all) { const k = e.group + ':' + e.note; counts[k] = (counts[k] || 0) + 1; }
+  const fit = Object.values(marks).filter((v) => v === true).length, miss = Object.values(marks).filter((v) => v === false).length;
+  const items = all.slice(-Math.max(1, Math.min(1000, limit))).reverse().map((e) => Object.assign({}, e, { fit: marks[String(e.at)] === undefined ? null : marks[String(e.at)] }));
+  return { ok: true, dir, total: all.length, counts, marked: { fit, miss }, items };
+}
+function notesMark(dir, at, fit) {
+  if (!Number.isFinite(at) || at <= 0) return { ok: false, error: 'Which note?' };
+  const f = path.join(dir, 'marks.json');
+  const m = readJson(f) || {};
+  if (fit === null) delete m[String(at)]; else m[String(at)] = fit;
+  fs.mkdirSync(dir, { recursive: true });
+  writeJson(f, m);
+  return { ok: true, at, fit };
+}
+
 function install(electron, opts) {
   const o = opts || {};
   const userData = () => o.userData || electron.app.getPath('userData');
@@ -177,6 +201,10 @@ function install(electron, opts) {
       if (op === 'list') return list({ conv: String(req.conv || ''), ws: String(req.ws || ''), team: req.team ? String(req.team) : null, teamName: req.teamName || null, home: home(), userData: userData(), builtinDir: builtin() });
       if (op === 'set') return setState(String(req.ws || ''), req.name, req.state);
       if (op === 'pin') return setPin(userData(), req.key, req.name, !!req.on);
+      // request notes (P-012): the user's review list, read from this PC's own folder only (%LOCALAPPDATA%\AionDX\request-notes; the
+      // planning hook writes it); marks are kept beside it. Nothing here goes into a package, an export or a profile copy.
+      if (op === 'notesList') return notesList(notesDir(), Number(req.limit) || 200);
+      if (op === 'notesMark') return notesMark(notesDir(), Number(req.at), req.fit === true ? true : req.fit === false ? false : null);
       // agents' skill changes: reviewed first, or applied (November 16th, 2026); read by the loop tool's skills propose
       if (op === 'reviewGet') { const j = readJson(path.join(userData(), 'aiondx-skills.json')) || {}; return { ok: true, review: ['auto', 'always', 'off'].indexOf(j.review) >= 0 ? j.review : 'auto' }; }
       if (op === 'reviewSet') {
