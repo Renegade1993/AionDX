@@ -177,6 +177,31 @@ function install(electron, opts) {
       if (op === 'list') return list({ conv: String(req.conv || ''), ws: String(req.ws || ''), team: req.team ? String(req.team) : null, teamName: req.teamName || null, home: home(), userData: userData(), builtinDir: builtin() });
       if (op === 'set') return setState(String(req.ws || ''), req.name, req.state);
       if (op === 'pin') return setPin(userData(), req.key, req.name, !!req.on);
+      // DX Skills (aiondx-skillhub.js)
+      const H = require('./aiondx-skillhub.js');
+      const hctx = { userData: userData(), home: home(), builtinDir: builtin() };
+      if (op === 'hub') return H.hub(hctx);
+      if (op === 'review') return { ok: true, review: H.reviewFolder(String(req.dir || '')) };
+      if (op === 'import') {
+        let source = req.source;
+        if (!source && (req.pick === 'file' || req.pick === 'folder')) {
+          const d = await electron.dialog.showOpenDialog({ title: 'Choose a skill to import', properties: req.pick === 'file' ? ['openFile'] : ['openDirectory'], filters: req.pick === 'file' ? [{ name: 'Skill', extensions: ['zip', 'skill'] }] : undefined });
+          if (!d || d.canceled || !d.filePaths[0]) return { ok: false, canceled: true };
+          source = d.filePaths[0];
+        }
+        return await H.importSkills(hctx, source, String(req.project || ''));
+      }
+      if (op === 'approve') return H.approve(hctx, String(req.project || ''), req.name, !!req.replace);
+      if (op === 'reject') return H.reject(hctx, String(req.project || ''), req.name);
+      if (op === 'remove') return H.remove(hctx, req.dir);
+      if (op === 'link') return H.link(hctx, String(req.project || ''), req.name);
+      if (op === 'export') {
+        const d = await electron.dialog.showSaveDialog({ title: 'Export the skill as a ZIP', defaultPath: path.join(os.homedir(), 'Downloads', path.basename(String(req.dir || 'skill')) + '.zip'), filters: [{ name: 'ZIP', extensions: ['zip'] }] });
+        if (!d || d.canceled || !d.filePath) return { ok: false, canceled: true };
+        return H.exportZip(req.dir, d.filePath);
+      }
+      if (op === 'catalog') return await H.catalog(hctx, String(req.which || ''));
+      if (op === 'library') return H.library(hctx, String(req.cmd || ''), req.clone, req.yes === true);
       if (op === 'pins') return { ok: true, pins: readJson(path.join(userData(), 'aiondx-skill-pins.json')) || {} };
       return { ok: false, error: 'unknown request' };
     } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }

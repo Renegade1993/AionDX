@@ -779,6 +779,349 @@
     paint();
     refresh.addEventListener('click', function () { refreshSkills(chat, st, refresh); });
   }
+  // ---------------------------------------------------------------- DX Skills: AionUi's Skills Hub remade (R-128 step 5)
+  // The user, November 14th: "just remake AionUI's skills hub with our own DX Skills hub and they shouldn't really have to move at all",
+  // "PUT THEM WHERE THEY SHOULD BE". Settings > Skills shows DX Skills in place of AionUi's hub, whose own view (its store and the
+  // assistants that use it) stays one tab away. Every layer, read-only where it must be; imports and new skills into a project's layer after
+  // review; the official catalogs; the global library's own update procedure, applied only on the user's yes. Main: aiondx-skillhub.js.
+  var dxs = { el: null, tab: 'layers', hub: null, filter: '', open: {}, cat: 'anthropic', catData: {}, lib: null, busy: false };
+  function dxsRoute() { return /^#\/settings\/skills\/?(\?.*)?$/.test(location.hash); }
+  function renderDxSkills() {
+    var host = dxsRoute() && skillsBridge() ? document.querySelector('.settings-page-content') : null;
+    if (!host) { if (dxs.el && dxs.el.parentNode) dxs.el.parentNode.removeChild(dxs.el); return; }
+    if (!dxs.el) buildDxSkills();
+    if (dxs.el.parentNode !== host || host.firstChild !== dxs.el) host.insertBefore(dxs.el, host.firstChild);
+    var own = dxs.tab === 'store';
+    Array.prototype.forEach.call(host.children, function (c) { if (c === dxs.el) return; var want = own ? '' : 'none'; if (c.style.display !== want) c.style.display = want; });
+  }
+  function buildDxSkills() {
+    var el = dxs.el = gEl('div', 'aiondx-dxskills');
+    el.setAttribute('data-testid', 'aiondx-dxskills');
+    var head = gEl('div', 'aiondx-dxs-head');
+    head.appendChild(gEl('h2', 'aiondx-dxs-title', 'DX Skills'));
+    var nb = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small aiondx-dxs-new', 'New skill...');
+    nb.type = 'button';
+    nb.setAttribute('data-testid', 'aiondx-dxs-new');
+    nb.addEventListener('click', function () { dxsNewSkill(); });
+    head.appendChild(nb);
+    el.appendChild(head);
+    el.appendChild(gEl('p', 'aiondx-dxs-desc', 'Every skill your agents have, layer by layer. The global library holds only official skills and changes only through its own update, on your yes; ' +
+      'what you import or write goes into a project\'s skills after you review it. Claude, Codex and Gemini chats all get the same ones.'));
+    var tabs = gEl('div', 'aiondx-dxs-tabs');
+    tabs.setAttribute('role', 'tablist');
+    [['layers', 'Layers'], ['import', 'Import'], ['catalogs', 'Official catalogs'], ['library', 'Global library'], ['store', 'AionUi’s store']].forEach(function (t) {
+      var b = gEl('button', 'aiondx-dxs-tab', t[1]);
+      b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.setAttribute('data-tab', t[0]);
+      b.setAttribute('data-testid', 'aiondx-dxs-tab-' + t[0]);
+      b.addEventListener('click', function () { dxs.tab = t[0]; dxsPaint(); renderDxSkills(); });
+      tabs.appendChild(b);
+    });
+    el.appendChild(tabs);
+    var st = gEl('div', 'aiondx-dxs-status');
+    st.setAttribute('aria-live', 'polite');
+    el.appendChild(st);
+    el.appendChild(gEl('div', 'aiondx-dxs-body'));
+    dxsLoad();
+  }
+  function dxsStatus(t, bad) { var s = dxs.el && dxs.el.querySelector('.aiondx-dxs-status'); if (!s) return; s.textContent = t || ''; s.classList.toggle('aiondx-plugins-status--bad', !!bad); }
+  function dxsLoad() { return skillsBridge().call('hub').then(function (r) { if (r && r.ok) dxs.hub = r; else dxsStatus('Could not read the skills: ' + ((r && r.error) || 'no answer'), true); dxsPaint(); }); }
+  function dxsBtn(label, act, cls) { var b = gEl('button', 'aiondx-skill-pin' + (cls ? ' ' + cls : ''), label); b.type = 'button'; b.setAttribute('data-act', act); return b; }
+  function dxsProjects() { return ((dxs.hub && dxs.hub.layers) || []).filter(function (l) { return l.kind === 'project'; }); }
+  function dxsPaint() {
+    if (!dxs.el) return;
+    Array.prototype.forEach.call(dxs.el.querySelectorAll('.aiondx-dxs-tab'), function (b) { var on = b.getAttribute('data-tab') === dxs.tab; b.classList.toggle('aiondx-dxs-tab--on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    var body = dxs.el.querySelector('.aiondx-dxs-body');
+    body.textContent = '';
+    if (dxs.tab === 'store') { body.appendChild(gEl('p', 'aiondx-dxs-desc', 'AionUi’s own store, below: the skills you imported into it and the assistants that use them. They stay where they are.')); return; }
+    if (!dxs.hub) { body.appendChild(gEl('div', 'aiondx-skills-empty', 'Reading...')); return; }
+    if (dxs.tab === 'layers') return dxsLayers(body);
+    if (dxs.tab === 'import') return dxsImport(body);
+    if (dxs.tab === 'catalogs') return dxsCatalogs(body);
+    if (dxs.tab === 'library') return dxsLibrary(body);
+  }
+  function dxsLayers(body) {
+    var find = document.createElement('input');
+    find.type = 'search'; find.className = 'aiondx-places-find'; find.placeholder = 'Find a skill'; find.value = dxs.filter;
+    find.setAttribute('aria-label', 'Find a skill');
+    find.addEventListener('input', function () { dxs.filter = find.value.trim().toLowerCase(); var c = find.selectionStart; dxsPaint(); var f2 = dxs.el.querySelector('.aiondx-dxs-body .aiondx-places-find'); if (f2) { f2.focus(); try { f2.setSelectionRange(c, c); } catch (e) {} } });
+    body.appendChild(find);
+    var q = dxs.filter;
+    dxs.hub.layers.forEach(function (l) {
+      if (l.kind === 'store') return;
+      var skills = l.skills.filter(function (s) { return !q || s.name.toLowerCase().indexOf(q) >= 0 || s.description.toLowerCase().indexOf(q) >= 0; });
+      var pending = (l.pending || []).filter(function (s) { return !q || s.name.toLowerCase().indexOf(q) >= 0; });
+      if (q && !skills.length && !pending.length) return;
+      var sec = gEl('div', 'aiondx-dxs-layer');
+      sec.setAttribute('data-layer', l.kind + (l.project ? ':' + l.project : ''));
+      var key = l.kind + ':' + (l.project || l.label);
+      var open = q || dxs.open[key] || (pending.length > 0);
+      var h = gEl('button', 'aiondx-dxs-lhead');
+      h.type = 'button';
+      h.setAttribute('aria-expanded', open ? 'true' : 'false');
+      h.appendChild(gEl('span', 'aiondx-dxs-lname', l.label));
+      h.appendChild(gEl('span', 'aiondx-dxs-lmeta', plural(l.skills.length, 'skill', 'skills') + (pending.length ? ', ' + pending.length + ' waiting for review' : '') + (l.readOnly ? ' · read-only' : '') + (l.commit ? ' · ' + (l.source || '').replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '') + ' at ' + l.commit.slice(0, 7) : '')));
+      h.title = l.dir || '';
+      h.addEventListener('click', function () { dxs.open[key] = !open; dxsPaint(); });
+      sec.appendChild(h);
+      if (open) {
+        pending.forEach(function (s) { sec.appendChild(dxsRow(l, s, true)); });
+        skills.forEach(function (s) { sec.appendChild(dxsRow(l, s, false)); });
+        if (!skills.length && !pending.length) sec.appendChild(gEl('div', 'aiondx-skills-empty', 'None yet.'));
+      }
+      body.appendChild(sec);
+    });
+  }
+  function dxsRow(l, s, pending) {
+    var row = gEl('div', 'aiondx-skill' + (pending ? ' aiondx-skill--pending' : ''));
+    row.setAttribute('data-skill', s.folder);
+    var head = gEl('div', 'aiondx-skill-head');
+    head.appendChild(gEl('span', 'aiondx-skill-name', s.name));
+    if (pending) head.appendChild(gEl('span', 'aiondx-skill-layer aiondx-skill-layer--wait', 'Waiting for your review'));
+    else if (s.linked) head.appendChild(gEl('span', 'aiondx-skill-layer', 'Linked'));
+    row.appendChild(head);
+    if (s.description) row.appendChild(gEl('div', 'aiondx-skill-desc', s.description));
+    var meta = gEl('div', 'aiondx-skill-meta');
+    var where = gEl('span', 'aiondx-dxs-dir', s.linked || s.dir);
+    where.title = s.dir;
+    meta.appendChild(where);
+    var ctl = gEl('span', 'aiondx-skill-ctl');
+    if (pending) {
+      var rv = s.review || {};
+      var n = (rv.flags || []).length;
+      meta.insertBefore(gEl('span', 'aiondx-dxs-flags' + (n ? ' aiondx-dxs-flags--bad' : ''), plural((rv.files || []).length, 'file', 'files') + ', ' + plural((rv.scripts || []).length, 'script', 'scripts') + ', ' + (n ? plural(n, 'thing', 'things') + ' to look at' : 'nothing flagged')), where);
+      ctl.appendChild(dxsBtn('Review', 'review'));
+      ctl.appendChild(dxsBtn('Approve', 'approve', 'aiondx-skill-pin--on'));
+      ctl.appendChild(dxsBtn('Reject', 'reject'));
+    } else {
+      ctl.appendChild(dxsBtn('Open', 'open'));
+      ctl.appendChild(dxsBtn('Export', 'export'));
+      if ((l.kind === 'library' || l.kind === 'method') && dxsProjects().length) ctl.appendChild(dxsBtn('Use in a project...', 'link'));
+      if (!l.readOnly && l.kind !== 'aiondx') ctl.appendChild(dxsBtn(s.linked ? 'Unlink' : 'Remove', 'remove'));
+    }
+    meta.appendChild(ctl);
+    row.appendChild(meta);
+    var box = gEl('div', 'aiondx-dxs-review');
+    box.hidden = true;
+    row.appendChild(box);
+    ctl.addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-act]');
+      if (!b || dxs.busy) return;
+      dxsAct(b.getAttribute('data-act'), l, s, row, b, box);
+    });
+    return row;
+  }
+  async function dxsAct(act, l, s, row, btn, box) {
+    var B = skillsBridge(), r = null;
+    if (act === 'open') { openOutside(s.dir, false); return; }
+    if (act === 'export') { r = await B.call('export', { dir: s.dir }); if (r && r.ok) toast('Exported ' + s.name + '.', r.file); else if (r && !r.canceled) dxsStatus('Not exported: ' + r.error, true); return; }
+    if (act === 'review') {
+      if (!box.hidden) { box.hidden = true; return; }
+      var rv = s.review || {};
+      box.textContent = '';
+      box.appendChild(gEl('div', 'aiondx-dxs-rvline', 'From ' + (rv.source || 'unknown') + (rv.at ? ', ' + longDate(Date.parse(rv.at)) : '') + '.'));
+      if ((rv.scripts || []).length) box.appendChild(gEl('div', 'aiondx-dxs-rvline', 'Scripts it would run: ' + rv.scripts.join(', ') + '.'));
+      (rv.flags || []).forEach(function (f) { var d = gEl('div', 'aiondx-dxs-flag'); d.appendChild(gEl('strong', '', f.file + (f.line ? ':' + f.line : '') + ' ' + f.why)); if (f.text) d.appendChild(gEl('code', '', f.text)); box.appendChild(d); });
+      if (!(rv.flags || []).length) box.appendChild(gEl('div', 'aiondx-dxs-rvline', 'Nothing in it downloads and runs code, reaches the network, touches keys or deletes folders.'));
+      var of = gEl('button', 'aiondx-skill-pin', 'Open its folder');
+      of.type = 'button';
+      of.addEventListener('click', function () { openOutside(s.dir, false); });
+      box.appendChild(of);
+      box.hidden = false;
+      return;
+    }
+    dxs.busy = true;
+    try {
+      if (act === 'approve') {
+        var n = ((s.review || {}).flags || []).length;
+        if (n && !(await placesAsk(s.name + ' has ' + plural(n, 'thing', 'things') + ' to look at (Review lists them). Approve it anyway? Its project’s agents can use it from their next start.', 'Approve'))) return;
+        r = await B.call('approve', { project: l.project, name: s.folder });
+        if (r && r.exists && (await placesAsk(r.error, 'Replace'))) r = await B.call('approve', { project: l.project, name: s.folder, replace: true });
+        if (r && r.ok) toast(s.name + ' is one of ' + l.label + '’s skills now.', 'Its agents have it from their next start.');
+      } else if (act === 'reject') {
+        if (!(await placesAsk('Throw away the imported ' + s.name + '?', 'Reject'))) return;
+        r = await B.call('reject', { project: l.project, name: s.folder });
+      } else if (act === 'remove') {
+        if (!(await placesAsk(s.linked ? 'Unlink ' + s.name + ' from ' + l.label + '? The global library keeps it.' : 'Delete ' + s.name + ' from ' + l.label + '? Its folder is removed.', s.linked ? 'Unlink' : 'Delete'))) return;
+        r = await B.call('remove', { dir: s.dir });
+      } else if (act === 'link') {
+        var projects = dxsProjects();
+        r = await new Promise(function (res) {
+          var m = gEl('div', 'aiondx-places-menu');
+          m.setAttribute('data-testid', 'aiondx-dxs-linkmenu');
+          projects.forEach(function (p) { var b = gEl('button', 'aiondx-places-mi', p.label); b.type = 'button'; b.addEventListener('click', function () { m.remove(); B.call('link', { project: p.project, name: s.folder }).then(res); }); m.appendChild(b); });
+          var rc = btn.getBoundingClientRect();
+          m.style.left = Math.round(Math.min(rc.left, innerWidth - 280)) + 'px';
+          m.style.top = Math.round(rc.bottom + 4) + 'px';
+          document.body.appendChild(m);
+          var off = function (ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('mousedown', off, true); res(null); } };
+          setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
+        });
+        if (r && r.ok) toast(s.name + ' is linked into the project.', 'Its agents have it from their next start; the global library keeps the only copy.');
+      }
+      if (r && !r.ok && !r.exists) dxsStatus((r.error || 'It did not go through') + '.', true);
+      await dxsLoad();
+    } catch (e) { dxsStatus(String(e && e.message || e), true); }
+    finally { dxs.busy = false; }
+  }
+  function dxsProjectSelect() {
+    var sel = document.createElement('select');
+    sel.className = 'aiondx-skill-state aiondx-dxs-project';
+    sel.setAttribute('aria-label', 'Which project');
+    dxsProjects().forEach(function (p) { var o = document.createElement('option'); o.value = p.project; o.textContent = p.label; sel.appendChild(o); });
+    return sel;
+  }
+  function dxsImport(body) {
+    body.appendChild(gEl('p', 'aiondx-dxs-desc', 'A skill from anywhere else comes into one project’s skills. It waits there, with what its scripts would do, until you approve it under Layers.'));
+    var row = gEl('div', 'aiondx-dxs-irow');
+    row.appendChild(gEl('span', '', 'Into'));
+    var sel = dxsProjectSelect();
+    row.appendChild(sel);
+    body.appendChild(row);
+    var row2 = gEl('div', 'aiondx-dxs-irow');
+    var go = function (args) {
+      dxsStatus('Importing...');
+      skillsBridge().call('import', Object.assign({ project: sel.value }, args)).then(function (r) {
+        if (!r || r.canceled) { dxsStatus(''); return; }
+        if (!r.ok) { dxsStatus('Not imported: ' + r.error, true); return; }
+        dxsStatus(plural(r.imported.length, 'skill', 'skills') + ' waiting for your review in ' + (dxsProjects().filter(function (p) { return p.project === sel.value; })[0] || {}).label + ': ' +
+          r.imported.map(function (x) { return x.name + (x.flags ? ' (' + plural(x.flags, 'thing', 'things') + ' to look at)' : ''); }).join(', ') + '.');
+        dxs.open['project:' + sel.value] = true;
+        dxsLoad();
+      }, function (e) { dxsStatus(String(e), true); });
+    };
+    var f = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small', 'A .zip or .skill file...');
+    f.type = 'button'; f.setAttribute('data-testid', 'aiondx-dxs-import-file');
+    f.addEventListener('click', function () { go({ pick: 'file' }); });
+    var d = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small', 'A folder...');
+    d.type = 'button';
+    d.addEventListener('click', function () { go({ pick: 'folder' }); });
+    row2.appendChild(f); row2.appendChild(d);
+    body.appendChild(row2);
+    var row3 = gEl('div', 'aiondx-dxs-irow');
+    var url = document.createElement('input');
+    url.type = 'url'; url.className = 'aiondx-places-find'; url.placeholder = 'or paste a GitHub link to a repository or a folder in one';
+    url.setAttribute('data-testid', 'aiondx-dxs-import-url');
+    var ub = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small', 'Import');
+    ub.type = 'button'; ub.setAttribute('data-testid', 'aiondx-dxs-import-go');
+    ub.addEventListener('click', function () { if (url.value.trim()) go({ source: url.value.trim() }); });
+    row3.appendChild(url); row3.appendChild(ub);
+    body.appendChild(row3);
+  }
+  function dxsCatalogs(body) {
+    var row = gEl('div', 'aiondx-dxs-irow');
+    [['anthropic', 'Anthropic'], ['openai', 'OpenAI']].forEach(function (c) {
+      var b = gEl('button', 'aiondx-dxs-tab' + (dxs.cat === c[0] ? ' aiondx-dxs-tab--on' : ''), c[1]);
+      b.type = 'button';
+      b.addEventListener('click', function () { dxs.cat = c[0]; dxsPaint(); });
+      row.appendChild(b);
+    });
+    body.appendChild(row);
+    body.appendChild(gEl('p', 'aiondx-dxs-desc', 'The official skills, to browse. One goes into the global library only through its own update, on your yes (Global library tab); a project then uses it from Layers.'));
+    var list = gEl('div', 'aiondx-skills-list');
+    body.appendChild(list);
+    var have = dxs.catData[dxs.cat];
+    var fill = function (r) {
+      list.textContent = '';
+      if (!r || !r.ok) { list.appendChild(gEl('div', 'aiondx-skills-empty', 'Could not read the catalog: ' + ((r && r.error) || 'no answer'))); return; }
+      r.skills.forEach(function (s) {
+        var row = gEl('div', 'aiondx-skill');
+        var h = gEl('div', 'aiondx-skill-head');
+        h.appendChild(gEl('span', 'aiondx-skill-name', s.name));
+        if (s.inLibrary) h.appendChild(gEl('span', 'aiondx-skill-layer', 'In the global library'));
+        row.appendChild(h);
+        if (s.description) row.appendChild(gEl('div', 'aiondx-skill-desc', s.description));
+        var a = gEl('a', 'aiondx-dxs-dir', 'See it on GitHub');
+        a.href = s.url; a.target = '_blank'; a.rel = 'noopener';
+        row.appendChild(a);
+        list.appendChild(row);
+      });
+    };
+    if (have) fill(have);
+    else { list.appendChild(gEl('div', 'aiondx-skills-empty', 'Reading the catalog...')); var which = dxs.cat; skillsBridge().call('catalog', { which: which }).then(function (r) { if (r && r.ok) dxs.catData[which] = r; if (dxs.cat === which && dxs.tab === 'catalogs') fill(r); }); }
+  }
+  function dxsLibrary(body) {
+    var lib = (dxs.hub.layers || []).filter(function (l) { return l.kind === 'library'; })[0];
+    body.appendChild(gEl('p', 'aiondx-dxs-desc', lib ? 'The global library (' + lib.dir + '): official skills only, ' + (lib.commit ? 'from ' + lib.source.replace(/\.git$/, '') + ' at ' + lib.commit.slice(0, 7) + '. ' : '') +
+      'It changes only through its own update: check fetches the newest copy into a separate folder and lists what would change; nothing changes until you apply it.' : 'There is no global library on this PC.'));
+    if (!lib) return;
+    var row = gEl('div', 'aiondx-dxs-irow');
+    var stb = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small', 'Status');
+    stb.type = 'button';
+    var chk = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small', 'Check for an update');
+    chk.type = 'button'; chk.setAttribute('data-testid', 'aiondx-dxs-lib-fetch');
+    var app = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small', 'Apply this update...');
+    app.type = 'button'; app.setAttribute('data-testid', 'aiondx-dxs-lib-apply');
+    app.hidden = !(dxs.lib && dxs.lib.clone);
+    row.appendChild(stb); row.appendChild(chk); row.appendChild(app);
+    body.appendChild(row);
+    var out = gEl('pre', 'aiondx-dxs-out');
+    out.textContent = dxs.lib ? dxs.lib.output : '';
+    out.hidden = !dxs.lib;
+    body.appendChild(out);
+    var run = function (cmd, extra) {
+      dxsStatus(cmd === 'fetch' ? 'Fetching the newest official copy into a separate folder...' : cmd === 'apply' ? 'Applying...' : 'Reading...');
+      return skillsBridge().call('library', Object.assign({ cmd: cmd }, extra || {})).then(function (r) {
+        dxs.lib = { output: (r && (r.output || r.error)) || 'no answer', clone: cmd === 'fetch' && r && r.ok ? r.clone : null };
+        dxsStatus(r && r.ok ? '' : 'It did not go through.', !(r && r.ok));
+        if (cmd === 'apply' && r && r.ok) dxsLoad(); else dxsPaint();
+      });
+    };
+    stb.addEventListener('click', function () { run('status'); });
+    chk.addEventListener('click', function () { run('fetch'); });
+    app.addEventListener('click', async function () {
+      if (!(await placesAsk('Apply this update to the global library? It changes what every Claude chat on this PC loads. The list above is what changes.', 'Apply'))) return;
+      run('apply', { clone: dxs.lib.clone, yes: true });
+    });
+  }
+  /** New skill: a chat in the project's folder drafts it as a DX Doc for you to review, then saves it where DX Skills asks you to approve it. */
+  async function dxsNewSkill() {
+    var ps = dxsProjects();
+    if (!ps.length) { dxsStatus('New skills go into a project’s skills, and AionDX knows no project on this PC.', true); return; }
+    var back = gEl('div', 'aiondx-places-ask');
+    var card = gEl('div', 'aiondx-places-askcard aiondx-dxs-newcard');
+    card.setAttribute('data-testid', 'aiondx-dxs-newcard');
+    card.appendChild(gEl('div', 'aiondx-places-asktext', 'A new skill. An agent drafts it as a DX Doc you review; once you approve the doc it is saved into the project’s skills, and you approve it there too.'));
+    var sel = dxsProjectSelect();
+    var name = document.createElement('input'); name.className = 'aiondx-places-find'; name.placeholder = 'Its name, like release-checklist'; name.setAttribute('data-testid', 'aiondx-dxs-new-name');
+    var what = document.createElement('textarea'); what.className = 'aiondx-places-find aiondx-dxs-what'; what.placeholder = 'What it is for, and when an agent should use it'; what.setAttribute('data-testid', 'aiondx-dxs-new-what');
+    [sel, name, what].forEach(function (x) { card.appendChild(x); });
+    var row = gEl('div', 'aiondx-places-askrow');
+    var no = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small', 'Cancel'); no.type = 'button';
+    var ok = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small', 'Start the draft'); ok.type = 'button'; ok.setAttribute('data-testid', 'aiondx-dxs-new-go');
+    row.appendChild(no); row.appendChild(ok); card.appendChild(row);
+    back.appendChild(card);
+    document.body.appendChild(back);
+    name.focus();
+    no.addEventListener('click', function () { back.remove(); });
+    back.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Escape') back.remove(); });
+    ok.addEventListener('click', async function () {
+      var n = name.value.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+      if (!n || !what.value.trim()) { name.focus(); return; }
+      var p = ps.filter(function (x) { return x.project === sel.value; })[0];
+      var root = p.dir.replace(/[\\/]\.claude[\\/]skills$/, '');
+      ok.disabled = true;
+      try {
+        var al = await getJson('/api/assistants');
+        var a = ((al && al.data) || []).filter(function (x) { return x.name === 'Claude Code'; })[0] || ((al && al.data) || [])[0];
+        if (!a) throw new Error('no agent to write it');
+        var cres = await sendJson('POST', '/api/conversations', { name: 'New skill: ' + n, assistant: { id: a.id, locale: 'en-US' }, extra: { workspace: root, custom_workspace: true } });
+        var c = null;
+        try { c = await cres.json(); } catch (e) {}
+        var id = c && (c.data ? c.data.id : c.id);
+        if (!id) throw new Error((c && (c.msg || c.error)) || 'the chat was not made');
+        var text = 'Write a new skill for this project (' + p.label + '), named ' + n + '. What it is for: ' + what.value.trim() + '\n\n' +
+          'First draft it as a DX Doc for me to review (aiondx doc help shows how): its SKILL.md front matter (name: ' + n + ', and a description that says what it does and when to use it), then its body. ' +
+          'Look at the project’s other skills in ' + root + '\\.claude\\skills for the style. When I approve the doc, save the skill to ' + root + '\\.claude\\skills-pending\\' + n + '\\SKILL.md (with any scripts beside it); ' +
+          'DX Skills then asks me to approve it before any agent uses it.';
+        await postJson('/api/conversations/' + encodeURIComponent(id) + '/messages', { content: text });
+        back.remove();
+        location.hash = '#/conversation/' + id;
+      } catch (e) { ok.disabled = false; dxsStatus('The draft did not start: ' + (e && e.message || e), true); back.remove(); }
+    });
+  }
+
   /** A skill put at the start of the message box, the way the chat's agent takes one by name: Claude Code and CodeBuddy "/name", Codex
    *  "$name", the rest in words. The panel closes and the box has the cursor after it. */
   function skillCall(backend, name) {
@@ -7316,6 +7659,38 @@
     '.aiondx-skills-foot{display:flex;align-items:center;gap:10px}',
     '.aiondx-skills-status{font-size:12px;color:var(--color-text-3)}',
     '.aiondx-skills-empty{padding:12px;font-size:13px;color:var(--color-text-3)}',
+    // DX Skills (R-128 step 5)
+    '.aiondx-dxskills{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}',
+    '.aiondx-dxs-head{display:flex;align-items:center;gap:12px}',
+    '.aiondx-dxs-title{margin:0;font-size:20px;font-weight:600;color:var(--color-text-1)}',
+    '.aiondx-dxs-new{margin-left:auto}',
+    '.aiondx-dxs-desc{margin:0;font-size:13px;line-height:1.5;color:var(--color-text-2)}',
+    '.aiondx-dxs-tabs{display:flex;gap:4px;border-bottom:1px solid var(--color-border-2);padding-bottom:6px;flex-wrap:wrap}',
+    '.aiondx-dxs-tab{height:28px;padding:0 12px;border:1px solid transparent;border-radius:6px;background:none;color:var(--color-text-2);font-size:13px;cursor:pointer}',
+    '.aiondx-dxs-tab:hover{background:var(--color-fill-2)}',
+    '.aiondx-dxs-tab--on{border-color:rgb(var(--primary-6));color:rgb(var(--primary-6));background:rgba(var(--primary-6),.08)}',
+    '.aiondx-dxs-status{min-height:18px;font-size:13px;color:var(--color-text-2)}',
+    '.aiondx-dxs-body{display:flex;flex-direction:column;gap:8px}',
+    '.aiondx-dxs-layer{border:1px solid var(--color-border-2);border-radius:8px;padding:4px 8px 8px}',
+    '.aiondx-dxs-layer .aiondx-skill{margin-top:6px}',
+    '.aiondx-dxs-lhead{display:flex;align-items:baseline;gap:10px;width:100%;padding:6px 2px;border:0;background:none;text-align:left;cursor:pointer;color:var(--color-text-1)}',
+    '.aiondx-dxs-lname{font-size:14px;font-weight:600}',
+    '.aiondx-dxs-lmeta{font-size:12px;color:var(--color-text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.aiondx-dxs-dir{font-size:12px;color:var(--color-text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}',
+    '.aiondx-skill--pending{border-color:rgba(var(--warning-6),.6)}',
+    '.aiondx-skill-layer--wait{color:rgb(var(--warning-6));background:rgba(var(--warning-6),.12)}',
+    '.aiondx-dxs-flags{font-size:12px;color:var(--color-text-2)}',
+    '.aiondx-dxs-flags--bad{color:rgb(var(--warning-6));font-weight:600}',
+    '.aiondx-dxs-review{margin-top:8px;padding:8px;border-radius:6px;background:var(--color-fill-1, var(--color-fill-2));font-size:12px;color:var(--color-text-2);display:flex;flex-direction:column;gap:4px;align-items:flex-start}',
+    '.aiondx-dxs-review[hidden]{display:none}',
+    '.aiondx-dxs-flag strong{color:rgb(var(--warning-6));font-weight:600;margin-right:6px}',
+    '.aiondx-dxs-flag code{font-size:11px;word-break:break-all}',
+    '.aiondx-dxs-irow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--color-text-2)}',
+    '.aiondx-dxs-irow .aiondx-places-find{flex:1 1 320px}',
+    '.aiondx-dxs-out{max-height:320px;overflow:auto;margin:0;padding:8px;border-radius:6px;background:var(--color-fill-1, var(--color-fill-2));font-size:12px;white-space:pre-wrap;color:var(--color-text-2)}',
+    '.aiondx-dxs-out[hidden]{display:none}',
+    '.aiondx-dxs-newcard{display:flex;flex-direction:column;gap:10px;width:min(520px,92vw)}',
+    '.aiondx-dxs-what{height:90px;padding:8px 10px;resize:vertical;font-family:inherit}',
     '.aiondx-places{position:relative;width:min(760px,94vw);display:flex;flex-direction:column;max-height:88vh;overflow:hidden}',
     '.aiondx-places-bar{display:flex;align-items:center;gap:12px;margin:8px 0 6px}',
     '.aiondx-places-allbox{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-2);white-space:nowrap;cursor:pointer}',
@@ -8111,7 +8486,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel, renderDxSkills].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -11827,6 +12202,7 @@
       ['Chats where you choose', 'Settings > Where your chats live: tick any chats, teams or groups and keep them in a folder of your own, on this PC or on a drive that goes with you. Their files, history and messages go together; bring them back any time. A group can have a place for the chats made in it. A chat whose folder is missing is marked, and Find it shows AionDX where it is now.'],
       ['Skills in every chat', 'The book button beside the Loop shows every skill the chat has (AionDX’s, yours, the shared ones and its project’s), how often it used each and when, and what each costs in context. Switch a skill off for that chat, pin one so the agent always has it in full, or refresh them. A team lead pins skills for its team.'],
       ['One set of skills for every agent', 'Codex, Gemini and the other agents now get the same personal, shared and project skills as Claude. A chat with no project is asked which project it is for, once; its menu has Project too.'],
+      ['DX Skills', 'Settings > Skills: every skill, layer by layer. Import a ZIP, a folder or a GitHub link into a project after reviewing what its scripts do; ask an agent to write a new one as a DX Doc; browse Anthropic’s and OpenAI’s official skills; update the global library on your yes.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.27.10', items: [
@@ -11963,6 +12339,8 @@
       text: 'Click to sign in another Claude account; you choose what it may do before the sign-in page opens. It then gets its own pill here and shows in every chat\u2019s account button.' },
     { id: 'groups', sel: '[data-testid="aiondx-group-new"]', title: 'Groups',
       text: 'Make a group to keep related chats and teams together in this list.' },
+    { id: 'dxskills', sel: '[data-testid="aiondx-dxs-new"]', title: 'DX Skills',
+      text: 'Every skill your agents have. New skill asks an agent to write one with you; Import brings one in for you to review first.' },
     { id: 'skills', sel: '[data-testid="aiondx-skills-btn"]', title: 'Skills in this chat',
       text: 'What this chat’s agent knows how to do, and how often it used each skill. Switch one off here, or pin one so the agent always has it.' },
     { id: 'places', sel: '[data-testid="aiondx-places-open"]', title: 'Where your chats live',
