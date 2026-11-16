@@ -1358,10 +1358,15 @@
       (window.aiondxSignin ? '<div class="aiondx-accent-title aiondx-signin-title">Sign-in</div>' +
         '<div class="aiondx-accent-desc">Sign Claude Code in once, in your browser: model calls, Claude Docs, your claude.ai skills and connectors all come with it, and it renews itself.</div>' +
         '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-signin-open" data-testid="aiondx-signin-open">Sign in to your agents</button>' : '') +
-      (portableBridge() ? '<div class="aiondx-accent-title aiondx-drive-title">Chats on a drive</div>' +
-        '<div class="aiondx-accent-desc">Keep your chats, teams and their history on a drive that goes with you. AionDX on any PC opens them while the drive is plugged in.</div>' +
-        '<div class="aiondx-accent-desc aiondx-drive-state" data-testid="aiondx-drive-state">Checking...</div>' +
-        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-drive-move" data-testid="aiondx-drive-move">Move my chats to a drive...</button>' : '') +
+      (portableBridge() || placesBridge() ? '<div class="aiondx-accent-title aiondx-drive-title">Where your chats live</div>' +
+        '<div class="aiondx-accent-desc">Your chats stay in AionDX\'s own folder unless you choose a place for them. Pick any chats, teams or groups and keep them in a folder of your own, ' +
+          'on this PC or on a drive that goes with you; AionDX on another PC opens the ones on a drive while it is plugged in.</div>' +
+        (placesBridge() ? '<div class="aiondx-accent-desc aiondx-places-state" data-testid="aiondx-places-state"></div>' : '') +
+        (portableBridge() ? '<div class="aiondx-accent-desc aiondx-drive-state" data-testid="aiondx-drive-state">Checking...</div>' : '') +
+        '<div class="aiondx-accent-row aiondx-drive-buttons">' +
+        (placesBridge() ? '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-places-open" data-testid="aiondx-places-open">Choose where chats live...</button>' : '') +
+        (portableBridge() ? '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-drive-move" data-testid="aiondx-drive-move">Move everything to a drive...</button>' : '') +
+        '</div>' : '') +
       (cacheBridge() ? '<div class="aiondx-accent-title aiondx-cache-title">Agent caches</div>' +
         '<div class="aiondx-accent-desc">See what Claude Code, Devin and AionDX keep on this PC, and clear the caches, or the history older than a week, a month or more.</div>' +
         '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-open" data-testid="aiondx-cache-open">Clear agent caches</button>' : '') +
@@ -1382,6 +1387,18 @@
     if (cacheOpen) cacheOpen.addEventListener('click', function (ev) { ev.preventDefault(); openCaches(); });
     var signinOpen = el.querySelector('.aiondx-signin-open');
     if (signinOpen) signinOpen.addEventListener('click', function (ev) { ev.preventDefault(); welcome.opened = true; showWelcome('accounts'); });
+    var placesOpen = el.querySelector('.aiondx-places-open');
+    if (placesOpen) {
+      placesOpen.addEventListener('click', function (ev) { ev.preventDefault(); openPlaces(); });
+      var pst = el.querySelector('.aiondx-places-state');
+      placesLoad().then(function (r) {
+        if (!pst || !r || !r.ok) return;
+        var placed = r.items.filter(function (i) { return i.placed; }).length, miss = r.items.filter(function (i) { return i.missing; }).length;
+        pst.textContent = (placed ? plural(placed, 'chat or team has', 'chats and teams have') + ' a place of ' + (placed === 1 ? 'its' : 'their') + ' own' : 'All of them are in AionDX\'s folder') +
+          (miss ? '; ' + plural(miss, 'is', 'are') + ' missing.' : '.');
+        pst.classList.toggle('aiondx-places-state--bad', miss > 0);
+      });
+    }
     var driveMove = el.querySelector('.aiondx-drive-move');
     if (driveMove) {
       driveMove.addEventListener('click', function (ev) { ev.preventDefault(); moveToDrive(); });
@@ -2946,7 +2963,7 @@
       if (!r || !r.ok) { st.textContent = 'Could not read where the chats are.'; return; }
       st.textContent = r.portable ? 'Your chats are on the drive, in ' + r.userData + '.' : 'Your chats are on this PC, in ' + r.userData + '.';
       var btn = card.querySelector('.aiondx-drive-move');
-      if (btn) btn.textContent = r.portable ? 'Move them to another folder...' : 'Move my chats to a drive...';
+      if (btn) btn.textContent = r.portable ? 'Move everything to another folder...' : 'Move everything to a drive...';
     }, function () { st.textContent = 'Could not read where the chats are.'; });
   }
   async function moveToDrive() {
@@ -2999,6 +3016,582 @@
       }, function () {});
     }, function () {});
   }
+  // ---------------------------------------------------------------- Where your chats live (R-130, November 15th, 2026)
+  // The user: "users should be able to tick any active team, conversation, or group and move any of them to a different drive....if a chat
+  // loads as missing from a drive or expected location, a user should be able to designate where the chat that goes there is", and "the user
+  // should also be able to specify a specific location for these chats as well ... though that should be the default". Settings > Where your
+  // chats live opens a list of every group, team and chat with a tick box; the ticked ones go to a folder the user chooses (each in its own
+  // folder there: its files, its agent's history and a copy of its messages), or back to AionDX's folder. The main process (patch 0009,
+  // aiondx:places) runs the mover (patch 0016, aiondx-place-move.js); the page holds each chat's agent stopped around it (AionCore's
+  // runtime/hold, core-0020), so the folder is free to move. A chat whose folder is not there is marked in the sidebar and in the list, and
+  // opening it shows where it was with Find it. A group can have a place: chats and teams made in it go there. A chat on a drive is written
+  // back to the drive every minute and when AionDX closes; plugged into another PC, the drive's chats come in there.
+  function placesBridge() { return window.aiondxPlaces && typeof window.aiondxPlaces.call === 'function' ? window.aiondxPlaces : null; }
+  var places = { items: null, at: 0, missing: {}, recent: [], groupPlaces: {}, last: null, home: '', el: null, ticked: {}, busy: false, filter: '', loading: null, banner: null, bannerFor: '', dismissed: {} };
+  function placeKey(it) { return it.kind + ':' + it.id; }
+  function placesLoad() {
+    var b = placesBridge();
+    if (!b) return Promise.resolve(null);
+    if (places.loading) return places.loading;
+    places.loading = b.call('status').then(function (r) {
+      places.loading = null;
+      if (!r || !r.ok) return r;
+      places.items = r.items || [];
+      places.recent = r.places || [];
+      places.groupPlaces = r.groups || {};
+      places.last = r.last;
+      places.home = r.home || '';
+      places.at = Date.now();
+      places.missing = {};
+      places.items.forEach(function (it) { if (it.missing) places.missing[placeKey(it)] = it; });
+      placesMark();
+      return r;
+    }, function (e) { places.loading = null; return { ok: false, error: String(e) }; });
+    return places.loading;
+  }
+  function placeItem(key) { var l = places.items || []; for (var i = 0; i < l.length; i++) if (placeKey(l[i]) === key) return l[i]; return null; }
+  /** Hold (or release) one chat's agent: AionCore ends its process and starts none until released. A chat working on a turn is refused unless stop. */
+  async function holdConv(id, hold, stop) {
+    try {
+      var res = await nativeFetch.call(window, apiUrl('/api/conversations/' + encodeURIComponent(id) + '/runtime/hold'), {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify({ hold: !!hold, stop: !!stop }) });
+      var txt = '';
+      try { txt = await res.text(); } catch (e) {}
+      if (res.status === 409 && /WORKING:/.test(txt)) return { working: true };
+      return { ok: res.ok, status: res.status, text: txt };
+    } catch (e) { return { ok: false, error: String(e) }; }
+  }
+  /** Every chat of the items held; working ones only after the user says to stop them. Returns the held ids, or null when the user said no. */
+  async function holdItems(items, verb) {
+    var held = [], working = [];
+    for (var i = 0; i < items.length; i++) {
+      var ids = items[i].convIds || [items[i].id];
+      for (var j = 0; j < ids.length; j++) {
+        var h = await holdConv(ids[j], true, false);
+        if (h.working) { if (working.indexOf(items[i]) < 0) working.push(items[i]); continue; }
+        if (!h.ok && h.status !== 404) { await releaseIds(held); throw new Error('AionDX could not stop "' + items[i].name + '" to move it (' + (h.status || h.error || 'no answer') + ').'); }
+        held.push(ids[j]);
+      }
+    }
+    if (working.length) {
+      var names = working.map(function (w) { return '"' + w.name + '"'; }).join(', ');
+      var ok = await placesAsk(names + (working.length === 1 ? ' is' : ' are') + ' working right now. Stop ' + (working.length === 1 ? 'it' : 'them') + ' and ' + verb + '?', 'Stop and ' + verb);
+      if (!ok) { await releaseIds(held); return null; }
+      for (var k = 0; k < working.length; k++) {
+        var wids = working[k].convIds || [working[k].id];
+        for (var m = 0; m < wids.length; m++) { if (held.indexOf(wids[m]) >= 0) continue; var s = await holdConv(wids[m], true, true); if (s.ok || s.status === 404) held.push(wids[m]); }
+      }
+    }
+    return held;
+  }
+  async function releaseIds(ids) { for (var i = 0; i < (ids || []).length; i++) await holdConv(ids[i], false, false); }
+  /** The open chat (or team) was moved: its page drawn again, so it shows its files from the new place. */
+  function redrawIfOpen(items) {
+    var r = route();
+    if (!r) return;
+    var hit = (items || []).some(function (it) { return (it.kind === 't' && r.kind === 'team' && it.id === r.id) || (r.kind === 'conv' && (it.convIds || [it.id]).indexOf(r.id) >= 0); });
+    if (!hit) return;
+    var back = location.hash;
+    location.hash = '#/guid';
+    setTimeout(function () { location.hash = back; }, 350);
+  }
+  /** A move, a bring-back, Find it or an undo: the chats held, the mover run, the chats released, the list read again. */
+  async function placesDo(op, items, args, verb) {
+    var b = placesBridge();
+    if (!b || places.busy) return null;
+    places.busy = true;
+    placesPaintBusy(verb ? verb.charAt(0).toUpperCase() + verb.slice(1) + '...' : 'Working...');
+    var held = [];
+    try {
+      held = await holdItems(items, verb || 'go on');
+      if (held === null) return null;
+      var r = await b.call(op, args || {});
+      return r;
+    } catch (e) {
+      return { ok: false, error: String(e && e.message || e) };
+    } finally {
+      await releaseIds(held || []);
+      places.busy = false;
+      await placesLoad();
+      redrawIfOpen(items);
+      if (places.el && !places.el.hidden) paintPlaces();
+    }
+  }
+  /** Yes or no on a card in the middle of the window (this app has no confirm window): resolves true on the button. */
+  function placesAsk(text, yes) {
+    return new Promise(function (resolve) {
+      var old = document.querySelector('.aiondx-places-ask'); if (old) old.remove();
+      var back = gEl('div', 'aiondx-places-ask');
+      back.setAttribute('data-testid', 'aiondx-places-ask');
+      var card = gEl('div', 'aiondx-places-askcard');
+      card.setAttribute('role', 'alertdialog');
+      card.setAttribute('aria-modal', 'true');
+      card.appendChild(gEl('div', 'aiondx-places-asktext', text));
+      var row = gEl('div', 'aiondx-places-askrow');
+      var no = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small', 'Cancel');
+      no.type = 'button';
+      var ok = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small', yes);
+      ok.type = 'button';
+      ok.setAttribute('data-testid', 'aiondx-places-askyes');
+      row.appendChild(no);
+      row.appendChild(ok);
+      card.appendChild(row);
+      back.appendChild(card);
+      var finish = function (v) { back.remove(); resolve(v); };
+      no.addEventListener('click', function () { finish(false); });
+      ok.addEventListener('click', function () { finish(true); });
+      back.addEventListener('mousedown', function (ev) { if (ev.target === back) finish(false); });
+      back.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Escape') finish(false); });
+      document.body.appendChild(back);
+      setTimeout(function () { ok.focus(); }, 0);
+    });
+  }
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function itemsWord(items) {
+    var c = items.filter(function (i) { return i.kind === 'c'; }).length, t = items.length - c;
+    return [c ? plural(c, 'chat', 'chats') : '', t ? plural(t, 'team', 'teams') : ''].filter(Boolean).join(' and ');
+  }
+  async function placesMove(items, to) {
+    if (!items.length) return;
+    var b = placesBridge();
+    if (!to) { var c = await b.call('choose', { title: 'Choose where to keep ' + itemsWord(items) }); if (!c || !c.ok) return; to = c.to; }
+    var ok = await placesAsk('Move ' + itemsWord(items) + ' to ' + to + '?\n\nEach goes into its own folder there, named after it: its files, its agent\'s history and a copy of its messages. ' +
+      'You can bring ' + (items.length === 1 ? 'it' : 'them') + ' back from this list.', 'Move');
+    if (!ok) return;
+    var r = await placesDo('move', items, { items: items.map(function (i) { return { kind: i.kind, id: i.id }; }), to: to }, 'move');
+    if (!r) return;
+    if (r.ok) toast('Moved ' + itemsWord(items) + ' to ' + to + '.', 'Undo it from Settings > Where your chats live.');
+    else placesStatus('Not moved: ' + (r.error || 'no answer') + (r.partial && r.partial.length ? ' (' + plural(r.partial.length, 'was', 'were') + ' moved before that)' : ''), true);
+  }
+  async function placesBack(items) {
+    items = items.filter(function (i) { return i.placed; });
+    if (!items.length) { placesStatus('None of the ticked ones has a place of its own; they are in AionDX\'s folder already.', true); return; }
+    var ok = await placesAsk('Bring ' + itemsWord(items) + ' back to AionDX\'s own folder?', 'Bring back');
+    if (!ok) return;
+    var r = await placesDo('back', items, { items: items.map(function (i) { return { kind: i.kind, id: i.id }; }) }, 'bring back');
+    if (!r) return;
+    if (r.ok) toast('Brought ' + itemsWord(items) + ' back to AionDX\'s folder.', '');
+    else placesStatus('Not brought back: ' + (r.error || 'no answer'), true);
+  }
+  /** Find it: the folder the user picks is where the chat is now. */
+  async function placesFind(it) {
+    if (!it) return;
+    var r = await placesDo('relink', [it], { item: { kind: it.kind, id: it.id }, name: it.name }, 'find it');
+    if (!r) return;
+    if (r.ok) { toast('Found "' + it.name + '". It works from ' + r.relinked.at + ' now.', ''); hideMissingBanner(); }
+    else if (!r.canceled) { placesStatus('Not found there: ' + (r.error || 'no answer'), true); if (!places.el || places.el.hidden) toast('Not found there: ' + (r.error || 'no answer'), ''); }
+  }
+  async function placesUndo() {
+    var last = places.last;
+    if (!last) return;
+    var items = (places.items || []).filter(function (i) { return (last.names || []).indexOf(i.name) >= 0; });
+    var ok = await placesAsk('Undo the last ' + (last.op === 'move' ? 'move' : last.op === 'back' ? 'bring-back' : 'Find it') + ' (' + (last.names || []).join(', ') + ')?', 'Undo');
+    if (!ok) return;
+    var r = await placesDo('undo', items, {}, 'undo');
+    if (!r) return;
+    if (r.ok) toast('Undone.', ''); else placesStatus(r.error || 'Not undone.', true);
+  }
+
+  // ---- the dialog
+  function openPlaces() {
+    if (!placesBridge()) return;
+    if (!places.el) {
+      places.el = document.createElement('div');
+      places.el.className = 'aiondx-welcome-backdrop aiondx-places-backdrop';
+      places.el.setAttribute('data-testid', 'aiondx-places');
+      places.el.innerHTML =
+        '<div class="aiondx-welcome aiondx-places" role="dialog" aria-modal="true" aria-labelledby="aiondx-places-title">' +
+          '<button type="button" class="aiondx-plugins-close" aria-label="Close">×</button>' +
+          '<h2 id="aiondx-places-title" class="aiondx-welcome-title">Where your chats live</h2>' +
+          '<p class="aiondx-welcome-text">Each chat and team stays in AionDX\'s own folder until you choose a place for it: any folder, on this PC or on a drive ' +
+            'that goes with you. Its files, its agent\'s history and a copy of its messages go together, in one folder named after it. On a drive, AionDX on another PC opens them too.</p>' +
+          '<div class="aiondx-places-bar">' +
+            '<label class="aiondx-places-allbox"><input type="checkbox" class="aiondx-places-all" data-testid="aiondx-places-all"> Select all</label>' +
+            '<input type="search" class="aiondx-places-find" placeholder="Find a chat, team or group" aria-label="Find a chat, team or group" data-testid="aiondx-places-find">' +
+          '</div>' +
+          '<div class="aiondx-places-list" role="list" data-testid="aiondx-places-list"></div>' +
+          '<div class="aiondx-welcome-status aiondx-places-status" aria-live="polite"></div>' +
+          '<div class="aiondx-places-actions">' +
+            '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-places-move" data-testid="aiondx-places-move" disabled>Move ticked to...</button>' +
+            '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-places-back" data-testid="aiondx-places-back" disabled>Bring ticked back</button>' +
+            '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-places-undo" data-testid="aiondx-places-undo" hidden>Undo the last move</button>' +
+            '<span class="aiondx-places-gap"></span>' +
+            (portableBridge() ? '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-places-everything" data-testid="aiondx-places-everything">Move everything...</button>' : '') +
+          '</div>' +
+        '</div>';
+      var box = places.el.firstChild;
+      places.el.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Escape' && !places.busy) closePlaces(); });
+      places.el.addEventListener('mousedown', function (ev) { if (ev.target === places.el && !places.busy) closePlaces(); });
+      box.querySelector('.aiondx-plugins-close').addEventListener('click', function () { if (!places.busy) closePlaces(); });
+      box.querySelector('.aiondx-places-find').addEventListener('input', function (ev) { places.filter = String(ev.target.value || '').trim().toLowerCase(); paintPlaces(); });
+      box.querySelector('.aiondx-places-all').addEventListener('change', function (ev) {
+        var on = ev.target.checked;
+        placesVisible().forEach(function (it) { if (on) places.ticked[placeKey(it)] = true; else delete places.ticked[placeKey(it)]; });
+        paintPlaces();
+      });
+      box.querySelector('.aiondx-places-move').addEventListener('click', function (ev) { ev.preventDefault(); placesMoveMenu(ev.currentTarget); });
+      box.querySelector('.aiondx-places-back').addEventListener('click', function (ev) { ev.preventDefault(); placesBack(placesTicked()); });
+      box.querySelector('.aiondx-places-undo').addEventListener('click', function (ev) { ev.preventDefault(); placesUndo(); });
+      var every = box.querySelector('.aiondx-places-everything');
+      if (every) every.addEventListener('click', function (ev) { ev.preventDefault(); closePlaces(); moveToDrive(); });
+      box.querySelector('.aiondx-places-list').addEventListener('click', onPlacesListClick);
+      box.querySelector('.aiondx-places-list').addEventListener('change', onPlacesListChange);
+      document.body.appendChild(places.el);
+    }
+    places.el.hidden = false;
+    places.ticked = {};
+    placesStatus('Reading your chats...');
+    paintPlaces();
+    placesLoad().then(function (r) { if (!r || !r.ok) placesStatus('Could not read your chats: ' + ((r && r.error) || 'no answer'), true); else placesStatus(''); paintPlaces(); });
+  }
+  function closePlaces() { if (places.el) places.el.hidden = true; if (pMenu) { pMenu.remove(); pMenu = null; } }
+  function placesStatus(text, bad) {
+    var el = places.el && places.el.querySelector('.aiondx-places-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('aiondx-plugins-status--bad', !!bad);
+  }
+  function placesPaintBusy(text) {
+    placesStatus(text);
+    if (!places.el) return;
+    Array.prototype.forEach.call(places.el.querySelectorAll('.aiondx-places-actions button, .aiondx-places-list button, .aiondx-places-list input'), function (b) { b.disabled = true; });
+  }
+  function placesMatch(it) { return !places.filter || String(it.name || '').toLowerCase().indexOf(places.filter) >= 0 || String(it.ws || '').toLowerCase().indexOf(places.filter) >= 0; }
+  function groupOfKey(key) { return groupsState.items[key] || ''; }
+  function placesVisible() {
+    return (places.items || []).filter(function (it) {
+      if (placesMatch(it)) return true;
+      var g = groupById(groupOfKey(placeKey(it)));
+      return !!(g && places.filter && g.name.toLowerCase().indexOf(places.filter) >= 0);
+    });
+  }
+  function placesTicked() { return (places.items || []).filter(function (it) { return places.ticked[placeKey(it)]; }); }
+  function whereText(it) {
+    if (it.missing) return 'Missing: it was in ' + it.ws;
+    if (it.placed && it.place) return it.place;
+    return 'AionDX\'s folder';
+  }
+  function placesRow(it) {
+    var k = placeKey(it);
+    var row = gEl('div', 'aiondx-places-row' + (it.missing ? ' aiondx-places-row--missing' : ''));
+    row.setAttribute('role', 'listitem');
+    row.setAttribute('data-key', k);
+    row.setAttribute('data-testid', 'aiondx-places-row-' + k.replace(':', '-'));
+    var lab = gEl('label', 'aiondx-places-tick');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'aiondx-places-cb';
+    cb.checked = !!places.ticked[k];
+    cb.setAttribute('aria-label', it.name);
+    lab.appendChild(cb);
+    var ic = gEl('span', 'aiondx-places-icon');
+    ic.innerHTML = it.kind === 't' ? SVG_G_TEAM : SVG_G_CHAT;
+    lab.appendChild(ic);
+    var txt = gEl('span', 'aiondx-places-text');
+    txt.appendChild(gEl('span', 'aiondx-places-name', it.name + (it.kind === 't' && it.members ? ' (' + plural(it.members, 'member', 'members') + ')' : '')));
+    var where = gEl('span', 'aiondx-places-where', whereText(it));
+    where.title = it.missing ? it.ws : (it.placed ? it.package || '' : it.ws || '');
+    txt.appendChild(where);
+    lab.appendChild(txt);
+    row.appendChild(lab);
+    if (it.missing) {
+      var find = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-mini aiondx-places-findit', 'Find it...');
+      find.type = 'button';
+      find.setAttribute('data-act', 'find');
+      find.setAttribute('data-testid', 'aiondx-places-findit-' + k.replace(':', '-'));
+      row.appendChild(find);
+    }
+    return row;
+  }
+  function paintPlaces() {
+    if (!places.el || places.el.hidden) return;
+    var box = places.el.firstChild;
+    var list = box.querySelector('.aiondx-places-list');
+    var keepScroll = list.scrollTop;
+    list.textContent = '';
+    if (!placesBridge()) { placesStatus('This works in the AionDX app, not in the browser (WebUI).', true); return; }
+    if (!places.items) { list.appendChild(gEl('div', 'aiondx-places-empty', 'Reading...')); return; }
+    var vis = placesVisible();
+    var visSet = {};
+    vis.forEach(function (it) { visSet[placeKey(it)] = it; });
+    // groups first (a group ticks what is in it), then teams and chats not in a group
+    var inGroup = {};
+    groupsState.groups.forEach(function (g) {
+      var keys = groupKeys(g.id).filter(function (k) { return visSet[k]; });
+      keys.forEach(function (k) { inGroup[k] = true; });
+      var gmatch = places.filter && g.name.toLowerCase().indexOf(places.filter) >= 0;
+      if (!keys.length && !gmatch) return;
+      var head = gEl('div', 'aiondx-places-group');
+      head.setAttribute('data-group', g.id);
+      head.setAttribute('data-testid', 'aiondx-places-group-' + g.id);
+      var lab = gEl('label', 'aiondx-places-tick');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'aiondx-places-gcb';
+      var n = keys.filter(function (k) { return places.ticked[k]; }).length;
+      cb.checked = keys.length > 0 && n === keys.length;
+      cb.indeterminate = n > 0 && n < keys.length;
+      cb.setAttribute('aria-label', 'Group ' + g.name);
+      lab.appendChild(cb);
+      var ic = gEl('span', 'aiondx-places-icon');
+      ic.innerHTML = SVG_G_FOLDER;
+      lab.appendChild(ic);
+      var txt = gEl('span', 'aiondx-places-text');
+      txt.appendChild(gEl('span', 'aiondx-places-name', g.name + ' (' + keys.length + ')'));
+      var gp = places.groupPlaces[g.id];
+      txt.appendChild(gEl('span', 'aiondx-places-where', gp ? 'New chats in it go to ' + gp : 'New chats in it stay in AionDX\'s folder'));
+      lab.appendChild(txt);
+      head.appendChild(lab);
+      var set = gEl('button', 'arco-btn arco-btn-text arco-btn-size-mini aiondx-places-gplace', gp ? 'Change...' : 'Choose a place...');
+      set.type = 'button';
+      set.setAttribute('data-act', 'gplace');
+      set.setAttribute('data-testid', 'aiondx-places-gplace-' + g.id);
+      head.appendChild(set);
+      if (gp) {
+        var clr = gEl('button', 'arco-btn arco-btn-text arco-btn-size-mini aiondx-places-gclear', 'No place');
+        clr.type = 'button';
+        clr.setAttribute('data-act', 'gclear');
+        head.appendChild(clr);
+      }
+      list.appendChild(head);
+      keys.forEach(function (k) { var r = placesRow(visSet[k]); r.classList.add('aiondx-places-row--in'); list.appendChild(r); });
+    });
+    var teams = vis.filter(function (it) { return it.kind === 't' && !inGroup[placeKey(it)]; });
+    var chats = vis.filter(function (it) { return it.kind === 'c' && !inGroup[placeKey(it)]; });
+    var byNew = function (a, b) { return (b.missing - a.missing) || ((b.updated || 0) - (a.updated || 0)); };
+    if (teams.length) { list.appendChild(gEl('div', 'aiondx-places-head', 'Teams')); teams.sort(byNew).forEach(function (it) { list.appendChild(placesRow(it)); }); }
+    if (chats.length) { list.appendChild(gEl('div', 'aiondx-places-head', 'Chats')); chats.sort(byNew).forEach(function (it) { list.appendChild(placesRow(it)); }); }
+    if (!list.children.length) list.appendChild(gEl('div', 'aiondx-places-empty', places.filter ? 'Nothing by that name.' : 'No chats yet.'));
+    list.scrollTop = keepScroll;
+    var ticked = placesTicked();
+    var all = box.querySelector('.aiondx-places-all');
+    var nVis = vis.filter(function (it) { return places.ticked[placeKey(it)]; }).length;
+    all.checked = vis.length > 0 && nVis === vis.length;
+    all.indeterminate = nVis > 0 && nVis < vis.length;
+    var mv = box.querySelector('.aiondx-places-move'), bk = box.querySelector('.aiondx-places-back'), un = box.querySelector('.aiondx-places-undo');
+    mv.disabled = places.busy || !ticked.length;
+    mv.textContent = ticked.length ? 'Move ' + itemsWord(ticked) + ' to...' : 'Move ticked to...';
+    bk.disabled = places.busy || !ticked.some(function (i) { return i.placed; });
+    un.hidden = !places.last;
+    un.disabled = places.busy;
+    if (places.last) un.textContent = 'Undo the last ' + (places.last.op === 'move' ? 'move' : places.last.op === 'back' ? 'bring-back' : 'Find it');
+    var every = box.querySelector('.aiondx-places-everything');
+    if (every) every.disabled = places.busy;
+    var nMiss = (places.items || []).filter(function (i) { return i.missing; }).length;
+    if (!places.busy) {
+      var st = box.querySelector('.aiondx-places-status');
+      if (st && !st.classList.contains('aiondx-plugins-status--bad')) st.textContent = nMiss ? plural(nMiss, 'chat is', 'chats are') + ' missing: Find it shows AionDX where ' + (nMiss === 1 ? 'it is' : 'they are') + ' now.' : '';
+    }
+  }
+  function onPlacesListChange(ev) {
+    var t = ev.target;
+    if (!t || t.type !== 'checkbox') return;
+    placesStatus('');
+    var g = t.closest('.aiondx-places-group');
+    if (g) {
+      var vis = {};
+      placesVisible().forEach(function (it) { vis[placeKey(it)] = true; });
+      groupKeys(g.getAttribute('data-group')).forEach(function (k) { if (!vis[k]) return; if (t.checked) places.ticked[k] = true; else delete places.ticked[k]; });
+    } else {
+      var row = t.closest('.aiondx-places-row');
+      if (!row) return;
+      var k = row.getAttribute('data-key');
+      if (t.checked) places.ticked[k] = true; else delete places.ticked[k];
+    }
+    paintPlaces();
+  }
+  function onPlacesListClick(ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest('button[data-act]') : null;
+    if (!btn || places.busy) return;
+    ev.preventDefault();
+    var act = btn.getAttribute('data-act');
+    if (act === 'find') { var row = btn.closest('.aiondx-places-row'); placesFind(placeItem(row.getAttribute('data-key'))); return; }
+    var gid = btn.closest('.aiondx-places-group') && btn.closest('.aiondx-places-group').getAttribute('data-group');
+    if (!gid) return;
+    var g = groupById(gid);
+    var b = placesBridge();
+    if (act === 'gclear') { b.call('groupPlace', { group: gid, to: null }).then(function () { return placesLoad(); }).then(paintPlaces); return; }
+    if (act === 'gplace') {
+      b.call('choose', { title: 'Choose where new chats in ' + (g ? g.name : 'the group') + ' are kept' }).then(function (c) {
+        if (!c || !c.ok) return;
+        return b.call('groupPlace', { group: gid, to: c.to }).then(function () {
+          toast('New chats and teams made in ' + (g ? g.name : 'the group') + ' go to ' + c.to + '.', 'The ones in it now stay where they are; tick them and Move to take them there too.');
+          return placesLoad();
+        });
+      }).then(paintPlaces);
+    }
+  }
+  var pMenu = null;
+  /** The places used before, and Choose a folder. */
+  function placesMoveMenu(anchor) {
+    var items = placesTicked();
+    if (!items.length) return;
+    if (!places.recent.length) { placesMove(items, null); return; }
+    if (pMenu) { pMenu.remove(); pMenu = null; return; }
+    pMenu = gEl('div', 'aiondx-places-menu');
+    pMenu.setAttribute('role', 'menu');
+    pMenu.setAttribute('data-testid', 'aiondx-places-menu');
+    var add = function (label, to) {
+      var b = gEl('button', 'aiondx-places-mi', label);
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.addEventListener('click', function (ev) { ev.preventDefault(); pMenu.remove(); pMenu = null; placesMove(items, to); });
+      pMenu.appendChild(b);
+    };
+    places.recent.forEach(function (p) { add(p, p); });
+    add('Choose a folder...', null);
+    var r = anchor.getBoundingClientRect();
+    pMenu.style.left = Math.round(r.left) + 'px';
+    pMenu.style.bottom = Math.round(window.innerHeight - r.top + 6) + 'px';
+    places.el.appendChild(pMenu);
+    var off = function (ev) { if (pMenu && !pMenu.contains(ev.target) && ev.target !== anchor) { pMenu.remove(); pMenu = null; document.removeEventListener('mousedown', off, true); } };
+    document.addEventListener('mousedown', off, true);
+  }
+
+  // ---- missing: marks in the sidebar, and a notice on the chat's own page
+  function placesMark() {
+    var want = {};
+    Object.keys(places.missing).forEach(function (k) {
+      var it = places.missing[k];
+      if (it.kind === 'c') { var r = document.getElementById('c-' + it.id); if (r) want[k] = [r]; }
+      else { var ti = document.querySelector('[data-testid="team-icon-' + it.id + '"], [data-testid="team-spinner-' + it.id + '"]'); var row = ti && ti.closest('.h-34px'); if (row) want[k] = [row]; }
+      var g = document.querySelector('.aiondx-groups [data-aiondx-key="' + k + '"]');
+      if (g) (want[k] = want[k] || []).push(g);
+    });
+    var now = [];
+    Object.keys(want).forEach(function (k) { want[k].forEach(function (el) { now.push(el); if (el.getAttribute('data-aiondx-missing') !== '1') { el.setAttribute('data-aiondx-missing', '1'); el.title = 'Missing: its folder is not there. Open it to find it.'; } }); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-aiondx-missing]'), function (el) { if (now.indexOf(el) < 0) { el.removeAttribute('data-aiondx-missing'); if (/^Missing: /.test(el.title || '')) el.removeAttribute('title'); } });
+    missingBanner();
+  }
+  function hideMissingBanner() { if (places.banner) { places.banner.remove(); places.banner = null; } places.bannerFor = ''; }
+  function missingBanner() {
+    var r = route();
+    var key = r ? (r.kind === 'conv' ? 'c:' : 't:') + r.id : '';
+    var it = key && places.missing[key];
+    if (!it && r && r.kind === 'conv') {   // a member's chat: its team's mark
+      var team = (places.items || []).filter(function (x) { return x.kind === 't' && x.missing && (x.convIds || []).indexOf(r.id) >= 0; })[0];
+      if (team) { it = team; key = 't:' + team.id; }
+    }
+    if (!it || places.dismissed[key]) { if (places.banner) hideMissingBanner(); return; }
+    if (places.banner && places.bannerFor === key && document.body.contains(places.banner)) return;
+    hideMissingBanner();
+    var el = gEl('div', 'aiondx-place-missing');
+    el.setAttribute('role', 'alert');
+    el.setAttribute('data-testid', 'aiondx-place-missing');
+    var t = gEl('div', 'aiondx-place-missing-text');
+    t.appendChild(gEl('strong', '', (it.kind === 't' ? 'This team\'s' : 'This chat\'s') + ' folder is not there.'));
+    t.appendChild(gEl('span', '', ' It was in ' + it.ws + '. If it is on a drive, plug the drive in; if you moved it, show AionDX where it is now.'));
+    el.appendChild(t);
+    var f = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small', 'Find it...');
+    f.type = 'button';
+    f.setAttribute('data-testid', 'aiondx-place-findit');
+    f.addEventListener('click', function (ev) { ev.preventDefault(); placesFind(it); });
+    el.appendChild(f);
+    var x = gEl('button', 'aiondx-place-missing-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Hide this notice');
+    x.addEventListener('click', function (ev) { ev.preventDefault(); places.dismissed[key] = true; hideMissingBanner(); });
+    el.appendChild(x);
+    document.body.appendChild(el);
+    places.banner = el;
+    places.bannerFor = key;
+  }
+
+  // ---- a group's place: chats and teams made in it go there
+  var placingNew = {};
+  function placeIfNew(key, gid) {
+    var to = places.groupPlaces && places.groupPlaces[gid];
+    if (!to || !placesBridge() || placingNew[key]) return;
+    placingNew[key] = Date.now();
+    var kind = key.charAt(0), id = key.slice(2);
+    getJson((kind === 'c' ? '/api/conversations/' : '/api/teams/') + encodeURIComponent(id)).then(function (g) {
+      var d = g && g.data;
+      var made = Number(d && d.created_at) || 0;
+      if (!d || !(Date.now() - made < 600000)) { delete placingNew[key]; return; }
+      var tries = 0;
+      var go = async function () {
+        await placesLoad();
+        var it = placeItem(key);
+        if (!it || (it.placed && it.place && it.place.toLowerCase() === to.toLowerCase())) { delete placingNew[key]; return; }
+        // a chat just made is usually answering its first message: it moves once that turn is over (checked every 15 s, for 10 minutes)
+        var held = [];
+        for (var i = 0; i < it.convIds.length; i++) { var h = await holdConv(it.convIds[i], true, false); if (h.working) { await releaseIds(held); held = null; break; } if (h.ok || h.status === 404) held.push(it.convIds[i]); }
+        if (!held) { if (++tries < 40) setTimeout(go, 15000); else delete placingNew[key]; return; }
+        var r;
+        try { r = await placesBridge().call('move', { items: [{ kind: it.kind, id: it.id }], to: to }); } finally { await releaseIds(held); }
+        delete placingNew[key];
+        await placesLoad();
+        if (r && r.ok) { redrawIfOpen([it]); toast('"' + it.name + '" is kept in ' + to + ', its group\'s place.', ''); }
+        else toast('"' + it.name + '" stayed in AionDX\'s folder: ' + ((r && r.error) || 'no answer'), '');
+      };
+      go();
+    }).catch(function () { delete placingNew[key]; });
+  }
+
+  // ---- the drive sync: every minute, and once soon after start
+  var placesSyncing = false;
+  async function placesSync() {
+    var b = placesBridge();
+    if (!b || placesSyncing || places.busy || disabled()) return;
+    placesSyncing = true;
+    try {
+      var r = await b.call('sync');
+      if (!r || !r.ok) return;
+      var came = [];
+      // a drive back under another letter: its chats used from there, by themselves
+      for (var i = 0; i < (r.relink || []).length; i++) {
+        var rl = r.relink[i], it = placeItem(rl.kind + ':' + rl.id);
+        var held = it ? await holdItems([it], 'find it').catch(function () { return null; }) : [];
+        if (held === null) continue;
+        try { await b.call('relink', { item: { kind: rl.kind, id: rl.id }, to: rl.to }); } finally { await releaseIds(held); }
+      }
+      // changed on the drive by another PC: brought in (both changed: kept as a second copy)
+      for (var j = 0; j < (r.changed || []).length; j++) {
+        var ch = r.changed[j], cit = placeItem(ch.kind + ':' + ch.id);
+        var cheld = [];
+        if (cit) {
+          for (var q = 0; q < cit.convIds.length; q++) { var h = await holdConv(cit.convIds[q], true, false); if (h.working) { await releaseIds(cheld); cheld = null; break; } if (h.ok || h.status === 404) cheld.push(cit.convIds[q]); }
+        }
+        if (cheld === null) continue;   // working: the next minute
+        var ir;
+        try { ir = await b.call('import', { package: ch.package }); } finally { await releaseIds(cheld); }
+        if (ir && ir.ok && ir.imported && !ir.imported.skipped) came.push(ir.imported);
+      }
+      // new on a plugged-in drive
+      for (var k = 0; k < (r.incoming || []).length; k++) {
+        var inc = r.incoming[k];
+        var nr = await b.call('import', { package: inc.package });
+        if (nr && nr.ok && nr.imported && !nr.imported.skipped) came.push(nr.imported);
+      }
+      if (came.length || (r.relink || []).length) {
+        await placesLoad();
+        nudgeLists(came);
+        if (came.length) toast(plural(came.length, 'chat came', 'chats came') + ' in from a drive: ' + came.map(function (c) { return c.name; }).join(', ') + '.',
+          came.some(function (c) { return c.mode === 'copy'; }) ? 'Changed here and on another PC while apart: the drive\'s copy is kept beside yours, marked "from the drive".' : '');
+        redrawIfOpen(came.map(function (c) { return { kind: c.kind, id: c.id, convIds: [] }; }));
+      }
+    } catch (e) {
+    } finally { placesSyncing = false; }
+  }
+  /** Chats written into the database by the mover: AionCore told of them (a rename to the same name), so the sidebar reads them. */
+  function nudgeLists(came) {
+    (came || []).forEach(function (c) {
+      var url = c.kind === 't' ? '/api/teams/' + encodeURIComponent(c.id) + '/name' : '/api/conversations/' + encodeURIComponent(c.id);
+      getJson(c.kind === 't' ? '/api/teams/' + encodeURIComponent(c.id) : '/api/conversations/' + encodeURIComponent(c.id)).then(function (g) {
+        var name = g && g.data && g.data.name;
+        if (!name) return;
+        return nativeFetch.call(window, apiUrl(url), { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify({ name: name }) });
+      }).catch(function () {});
+    });
+  }
+  function startPlaces() {
+    window.addEventListener('hashchange', function () { setTimeout(missingBanner, 50); });
+    if (!placesBridge()) return;
+    setTimeout(function () { placesLoad().then(function () { placesSync(); }); }, 6000);
+    setInterval(function () { placesSync(); }, 60000);
+    setInterval(function () { if (!places.busy && !document.hidden) placesLoad(); }, 120000);
+  }
+
   function sizeText(n) {
     n = Number(n) || 0;
     if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
@@ -5701,6 +6294,7 @@
     }, function () { back("Could not reach AionDX's backend; your message is back in the box."); });
   }
   setTimeout(function () { try { if (!disabled()) driveNotices(); } catch (e) {} }, 4000);
+  try { startPlaces(); } catch (e) {}
   function watchRespondNow() {
     window.addEventListener('keydown', function (ev) {
       var enter = ev.key === 'Enter' || ev.code === 'Enter' || ev.code === 'NumpadEnter' || ev.keyCode === 13;
@@ -6460,6 +7054,55 @@
     // Claude Code plugins (/plugin).
     '.aiondx-plugins-backdrop[hidden],.aiondx-cache-backdrop[hidden]{display:none !important}',
     '.aiondx-cache{position:relative;width:min(720px,94vw)}',
+    // Where your chats live (R-130)
+    '.aiondx-places-backdrop[hidden],.aiondx-places [hidden]{display:none !important}',
+    '.aiondx-places{position:relative;width:min(760px,94vw);display:flex;flex-direction:column;max-height:88vh;overflow:hidden}',
+    '.aiondx-places-bar{display:flex;align-items:center;gap:12px;margin:8px 0 6px}',
+    '.aiondx-places-allbox{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-2);white-space:nowrap;cursor:pointer}',
+    '.aiondx-places-find{flex:1 1 auto;min-width:0;height:30px;padding:0 10px;box-sizing:border-box;border:1px solid var(--color-border-2);border-radius:6px;background:var(--color-fill-1, var(--color-bg-2));color:var(--color-text-1);font-size:13px;outline:none}',
+    '.aiondx-places-find:focus{border-color:rgb(var(--primary-6))}',
+    '.aiondx-places-find::placeholder{color:var(--color-text-3)}',
+    '.aiondx-places-list{flex:1 1 auto;min-height:120px;max-height:52vh;overflow-y:auto;border:1px solid var(--color-border-2);border-radius:8px;padding:4px 0;scrollbar-gutter:stable}',
+    '.aiondx-places-head{position:sticky;top:-4px;z-index:1;padding:8px 12px 4px;font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--color-text-3);background:var(--color-bg-1, var(--color-bg-2))}',
+    '.aiondx-places-row,.aiondx-places-group{display:flex;align-items:center;gap:8px;padding:5px 12px;min-height:40px;box-sizing:border-box}',
+    '.aiondx-places-row:hover,.aiondx-places-group:hover{background:var(--color-fill-2)}',
+    '.aiondx-places-group{margin-top:4px;border-top:1px solid var(--color-border-1)}',
+    '.aiondx-places-group:first-child{margin-top:0;border-top:0}',
+    '.aiondx-places-row--in{padding-left:34px}',
+    '.aiondx-places-tick{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;cursor:pointer}',
+    '.aiondx-places-tick input{flex:0 0 auto;width:15px;height:15px;margin:0;accent-color:rgb(var(--primary-6))}',
+    '.aiondx-places-icon{flex:0 0 auto;display:inline-flex;color:var(--color-text-2)}',
+    '.aiondx-places-icon img,.aiondx-places-icon svg{width:16px;height:16px}',
+    '.aiondx-places-text{display:flex;flex-direction:column;min-width:0}',
+    '.aiondx-places-name{font-size:13px;color:var(--color-text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-places-group .aiondx-places-name{font-weight:600}',
+    '.aiondx-places-where{font-size:12px;color:var(--color-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-places-row--missing .aiondx-places-where{color:rgb(var(--danger-6))}',
+    '.aiondx-places-findit,.aiondx-places-gplace,.aiondx-places-gclear{flex:0 0 auto}',
+    '.aiondx-places-empty{padding:18px 12px;font-size:13px;color:var(--color-text-3)}',
+    '.aiondx-places-status{min-height:18px;margin-top:8px}',
+    '.aiondx-places-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}',
+    '.aiondx-places-gap{flex:1 1 auto}',
+    '.aiondx-places-menu{position:fixed;z-index:10060;min-width:260px;max-width:min(520px,90vw);padding:4px;border:1px solid var(--color-border-2);border-radius:8px;background:var(--color-bg-popup, var(--color-bg-2));box-shadow:0 8px 24px rgba(0,0,0,.25)}',
+    '.aiondx-places-mi{display:block;width:100%;padding:7px 10px;border:0;border-radius:6px;background:none;color:var(--color-text-1);font-size:13px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-places-mi:hover,.aiondx-places-mi:focus-visible{background:var(--color-fill-2);outline:none}',
+    '.aiondx-places-mi:last-child{margin-top:2px;border-top:1px solid var(--color-border-1);border-radius:0 0 6px 6px;color:rgb(var(--primary-6))}',
+    '.aiondx-places-ask{position:fixed;inset:0;z-index:10070;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}',
+    '.aiondx-places-askcard{box-sizing:border-box;width:min(460px,90vw);padding:18px 20px;border-radius:10px;background:var(--color-bg-popup, var(--color-bg-2));border:1px solid var(--color-border-2);box-shadow:0 12px 32px rgba(0,0,0,.3)}',
+    '.aiondx-places-asktext{font-size:14px;line-height:1.5;color:var(--color-text-1);white-space:pre-wrap;overflow-wrap:anywhere}',
+    '.aiondx-places-askrow{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}',
+    '.aiondx-places-state--bad{color:rgb(var(--danger-6))}',
+    '.aiondx-drive-buttons{margin-top:8px;gap:8px}',
+    // a chat whose folder is missing: a mark on its row in the sidebar, and a notice on its page
+    '[data-aiondx-missing="1"]{position:relative}',
+    '[data-aiondx-missing="1"]::after{content:"Missing";position:absolute;right:30px;top:50%;transform:translateY(-50%);padding:0 6px;border-radius:9px;font-size:11px;line-height:17px;' +
+      'color:rgb(var(--danger-6));background:rgba(var(--danger-6),.12);pointer-events:none}',
+    '.aiondx-place-missing{position:fixed;z-index:10040;top:64px;right:16px;display:flex;align-items:center;gap:12px;box-sizing:border-box;' +
+      'width:min(460px,calc(100vw - 32px));padding:10px 12px 10px 16px;border:1px solid rgba(var(--danger-6),.45);border-radius:10px;background:var(--color-bg-popup, var(--color-bg-2));box-shadow:0 6px 20px rgba(0,0,0,.18)}',
+    '.aiondx-place-missing-text{flex:1 1 auto;min-width:0;font-size:13px;line-height:1.45;color:var(--color-text-2);overflow-wrap:anywhere}',
+    '.aiondx-place-missing-text strong{color:var(--color-text-1)}',
+    '.aiondx-place-missing-x{flex:0 0 auto;width:26px;height:26px;border:0;border-radius:6px;background:none;color:var(--color-text-3);font-size:18px;cursor:pointer}',
+    '.aiondx-place-missing-x:hover{background:var(--color-fill-2)}',
     '.aiondx-cache-age{display:flex;align-items:center;gap:8px;margin:6px 0 4px;font-size:13px;color:var(--color-text-2)}',
     '.aiondx-cache-days{height:28px;padding:0 8px;border:1px solid var(--color-border-2);border-radius:6px;background:var(--color-bg-2);color:var(--color-text-1)}',
     '.aiondx-cache-list{display:flex;flex-direction:column;gap:8px;margin-top:6px;max-height:50vh;overflow-y:auto;padding-right:4px}',
@@ -7584,6 +8227,7 @@
   function timedRender() {
     var t0 = performance.now();
     render();
+    if (places.items && Object.keys(places.missing).length) { try { placesMark(); } catch (e) {} }
     lastRenderMs = performance.now() - t0;
     lastRenderAt = Date.now();
   }
@@ -8595,6 +9239,7 @@
       if (at >= 0) groupsState.order.splice(after ? at + 1 : at, 0, key); else groupsState.order.push(key);
     }
     saveGroups();
+    if (gid) { try { placeIfNew(key, gid); } catch (e) {} }   // a group with a place: a chat or team just made in it goes there (R-130)
   }
   /** The keys of a group, in the order the user placed them. */
   function groupKeys(gid) { return groupsState.order.filter(function (k) { return groupsState.items[k] === gid; }); }
@@ -10904,6 +11549,7 @@
       ['More charts, and drawings', 'Waterfall, range, bar with a line and funnel charts; a goal line, notes on points, one bar in colour with the rest grey, forecasts dashed; a chart can read a CSV file in the project. Agents draw 2x2s, pillars and timelines. Double-click any words in a chart or drawing to change them; paste or drop a picture into a doc.'],
       ['Docs you can find', '+ New doc names a doc in the panel; click a doc\u2019s title to rename it; \u22ef > Delete the doc puts it in Recently deleted, where it can be restored. All docs lists every project\u2019s docs. Earlier versions show what changed since.'],
       ['@@ and @@@ in every chat', 'Type @@ in a team chat too, to name a chat or a team (a team goes to its lead). @@@ names one member of a team, in any chat. Any agent can now write to any other chat, team or member when you tell it to.'],
+      ['Chats where you choose', 'Settings > Where your chats live: tick any chats, teams or groups and keep them in a folder of your own, on this PC or on a drive that goes with you. Their files, history and messages go together; bring them back any time. A group can have a place for the chats made in it. A chat whose folder is missing is marked, and Find it shows AionDX where it is now.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.27.10', items: [
@@ -11040,7 +11686,9 @@
       text: 'Click to sign in another Claude account; you choose what it may do before the sign-in page opens. It then gets its own pill here and shows in every chat\u2019s account button.' },
     { id: 'groups', sel: '[data-testid="aiondx-group-new"]', title: 'Groups',
       text: 'Make a group to keep related chats and teams together in this list.' },
-    { id: 'drive', sel: '[data-testid="aiondx-drive-move"]', title: 'Chats on a drive',
+    { id: 'places', sel: '[data-testid="aiondx-places-open"]', title: 'Where your chats live',
+      text: 'Tick the chats, teams or groups you want somewhere else and choose a folder for them, on this PC or a drive. The rest stay where they are.' },
+    { id: 'drive', sel: '[data-testid="aiondx-drive-move"]', title: 'Everything on a drive',
       text: 'Moves all your chats to another drive or a USB drive. AionDX then works from there, and the drive carries them to another PC.' },
     { id: 'signin', sel: '[data-testid="aiondx-signin-open"]', title: 'Sign in your agents',
       text: 'Sign each Claude account in once here; Claude Docs and your claude.ai skills come with that sign-in.' },

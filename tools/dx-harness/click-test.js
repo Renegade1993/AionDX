@@ -3106,6 +3106,156 @@ async function pageTarget() {
       await js('(() => { delete window.aiondxPortable; delete window.aiondxSignin; return 0; })()');
     }
 
+    // ---- where your chats live (R-130, November 15th, 2026) ----
+    {
+      const sc = 'places';
+      const addCards = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
+        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
+        sec.appendChild(grid); document.body.appendChild(sec);
+        const row = document.createElement('div'); row.className = 'chat-history__item'; row.id = 'c-c3'; row.style.cssText = 'position:fixed;left:8px;top:220px;width:240px;height:34px';
+        row.innerHTML = '<span></span><span class="chat-history__item-name">Old notes</span>'; document.body.appendChild(row);
+        return 0; })()`);
+      // a group (g1) holding the second chat and the team; the first chat on a drive; the third missing
+      const groups = { v: 1, at: 1, groups: [{ id: 'g1', name: 'Client work' }], items: { 'c:convB': 'g1', 't:team1': 'g1' }, order: ['c:convB', 't:team1'], collapsed: {} };
+      const bridge = (last) => js(`(() => {
+        window.__pl = { calls: [], seq: [] };
+        const items = [
+          { kind: 'c', id: 'c1', name: 'Chat one', ws: 'H:\\\\Chats\\\\Chat one (c1)\\\\workspace', exists: true, placed: true, package: 'H:\\\\Chats\\\\Chat one (c1)', place: 'H:\\\\Chats', missing: false, convIds: ['c1'], updated: 30 },
+          { kind: 'c', id: 'convB', name: 'Draft plan', ws: 'C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\AionDX\\\\aionui\\\\conversations\\\\convB', exists: true, placed: false, package: null, place: null, missing: false, convIds: ['convB'], updated: 20 },
+          { kind: 'c', id: 'c3', name: 'Old notes', ws: 'E:\\\\Work\\\\c3', exists: false, placed: false, custom: true, package: null, place: null, missing: true, convIds: ['c3'], updated: 10 },
+          { kind: 't', id: 'team1', name: 'Review team', members: 2, ws: 'C:\\\\x\\\\team', exists: true, placed: false, package: null, place: null, missing: false, convIds: ['m1', 'm2'], updated: 40 } ];
+        window.aiondxPlaces = { call: (op, a) => {
+          window.__pl.calls.push([op, a || {}]); window.__pl.seq.push(op);
+          if (op === 'status') return Promise.resolve({ ok: true, items, places: ['H:\\\\Chats'], groups: {}, home: 'C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\AionDX', last: ${JSON.stringify(last || null)} });
+          if (op === 'choose') return Promise.resolve({ ok: true, to: 'F:\\\\Picked' });
+          if (op === 'move') return Promise.resolve({ ok: true, moved: a.items.map((i) => ({ kind: i.kind, id: i.id, name: i.id, package: a.to + '\\\\' + i.id, journal: 'j' })) });
+          if (op === 'back') return Promise.resolve({ ok: true, back: a.items.map((i) => ({ kind: i.kind, id: i.id, name: i.id, journal: 'j' })) });
+          if (op === 'relink') return Promise.resolve({ ok: true, relinked: { kind: 'c', id: 'c3', name: 'Old notes', at: 'F:\\\\Picked\\\\c3', journal: 'j' } });
+          if (op === 'undo') return Promise.resolve({ ok: true, undone: 'move', names: ['Chat one'] });
+          if (op === 'groupPlace') return Promise.resolve({ ok: true, groups: { g1: a.to } });
+          if (op === 'sync') return Promise.resolve({ ok: true, exported: 0, changed: [], relink: [], incoming: [] });
+          return Promise.resolve({ ok: false, error: 'unknown' });
+        } };
+        // AionCore's hold: the second chat is working (refused until stop), the rest hold at once
+        ['c1', 'convB', 'c3', 'm1', 'm2'].forEach((id) => { window.__stub.routes['POST /api/conversations/' + id + '/runtime/hold'] = (url, body) => {
+          window.__pl.seq.push((body.hold ? 'hold' : 'release') + ':' + id + (body.stop ? ':stop' : ''));
+          if (id === 'convB' && body.hold && !body.stop) return { __status: 409, success: false, msg: 'WORKING: conversation convB is working on a turn' };
+          return { success: true, data: { held: !!body.hold, stopped: !!body.stop } }; }; });
+        return 0; })()`);
+      const toasts = () => js('[...document.querySelectorAll(".aiondx-toasts .aiondx-toast")].map(t => [...t.querySelectorAll(".aiondx-toast-text, .aiondx-toast-sub")].map(e => e.textContent).join(""))');
+      const rowWhere = (k) => js(`(document.querySelector('[data-testid="aiondx-places-row-${k}"] .aiondx-places-where') || {}).textContent`);
+      const askYes = async (re) => {
+        const t = await js(`(document.querySelector('[data-testid="aiondx-places-ask"] .aiondx-places-asktext') || {}).textContent`);
+        const ok = !!t && re.test(t);
+        if (t) await humanClick('[data-testid="aiondx-places-askyes"]');
+        await sleep(400);
+        return { ok, t };
+      };
+      await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await load('theme=light');
+      await js(`localStorage.setItem('aionui.dx.groups', ${JSON.stringify(JSON.stringify(groups))}); 0`);
+      await load('theme=light&keepls=1');
+      await bridge(null);
+      await addCards();
+      await sleep(1200);
+      const title = await js(`(document.querySelector('.aiondx-drive-title') || {}).textContent`);
+      const st = await js(`(document.querySelector('[data-testid="aiondx-places-state"]') || {}).textContent`);
+      check(sc, 'Settings: Where your chats live, with what has a place and what is missing', title === 'Where your chats live' &&
+        st === '1 chat or team has a place of its own; 1 is missing.', JSON.stringify([title, st]));
+      check(sc, 'the sidebar marks the missing chat', await js(`document.getElementById('c-c3').getAttribute('data-aiondx-missing') === '1'`));
+      await humanClick('[data-testid="aiondx-places-open"]');
+      await sleep(700);
+      const order = await js(`[...document.querySelectorAll('[data-testid="aiondx-places-list"] > *')].map((e) => e.getAttribute('data-testid') || e.textContent)`);
+      check(sc, 'the list: the group with its chat and team, then the chats, the missing one first', JSON.stringify(order) ===
+        JSON.stringify(['aiondx-places-group-g1', 'aiondx-places-row-c-convB', 'aiondx-places-row-t-team1', 'Chats', 'aiondx-places-row-c-c3', 'aiondx-places-row-c-c1']), JSON.stringify(order));
+      const w1 = await rowWhere('c-c1'), w2 = await rowWhere('c-convB'), w3 = await rowWhere('c-c3');
+      check(sc, 'each row says where it is: its place, AionDX\'s folder, or missing with where it was', w1 === 'H:\\Chats' && w2 === 'AionDX\'s folder' && w3 === 'Missing: it was in E:\\Work\\c3', JSON.stringify([w1, w2, w3]));
+      check(sc, 'with nothing ticked, Move and Bring back are off', await js(`document.querySelector('[data-testid="aiondx-places-move"]').disabled && document.querySelector('[data-testid="aiondx-places-back"]').disabled`));
+      await shot('places-light');
+      await humanClick('[data-testid="aiondx-places-group-g1"] input');
+      await sleep(300);
+      const ticked = await js(`[...document.querySelectorAll('.aiondx-places-row input:checked')].map((i) => i.closest('.aiondx-places-row').getAttribute('data-key'))`);
+      const mvText = await js(`document.querySelector('[data-testid="aiondx-places-move"]').textContent`);
+      check(sc, 'ticking the group ticks what is in it, and Move says what goes', JSON.stringify(ticked) === '["c:convB","t:team1"]' && mvText === 'Move 1 chat and 1 team to...', JSON.stringify([ticked, mvText]));
+      await humanClick('[data-testid="aiondx-places-move"]');
+      await sleep(300);
+      const menu = await js(`[...document.querySelectorAll('[data-testid="aiondx-places-menu"] button')].map((b) => b.textContent)`);
+      check(sc, 'Move offers the places used before and Choose a folder', JSON.stringify(menu) === JSON.stringify(['H:\\Chats', 'Choose a folder...']), JSON.stringify(menu));
+      await shot('places-menu-light');
+      await humanClick('[data-testid="aiondx-places-menu"] button');
+      await sleep(400);
+      const a1 = await askYes(/^Move 1 chat and 1 team to H:\\Chats\?/);
+      check(sc, 'a plain question first: what goes where', a1.ok, a1.t);
+      await sleep(600);
+      const a2 = await askYes(/^"Draft plan" is working right now\. Stop it and move\?$/);
+      check(sc, 'a chat that is working: asked before it is stopped', a2.ok, a2.t);
+      await sleep(1200);
+      const seq = await js('window.__pl.seq.filter((s) => s !== "status" && s !== "sync")');
+      check(sc, 'each chat held (the working one stopped on yes), then moved, then released', JSON.stringify(seq) === JSON.stringify(
+        ['hold:convB', 'hold:m1', 'hold:m2', 'hold:convB:stop', 'move', 'release:m1', 'release:m2', 'release:convB']), JSON.stringify(seq));
+      const mv = await js('window.__pl.calls.find((c) => c[0] === "move")');
+      check(sc, 'the move names the chat, the team and the place', mv && JSON.stringify(mv[1]) === JSON.stringify({ items: [{ kind: 'c', id: 'convB' }, { kind: 't', id: 'team1' }], to: 'H:\\Chats' }), JSON.stringify(mv));
+      let tn = await toasts();
+      check(sc, 'and says it is done', tn.some((t) => /^Moved 1 chat and 1 team to H:\\Chats\./.test(t)), JSON.stringify(tn));
+      // Find it
+      await js('window.__pl.seq = []; 0');
+      await humanClick('[data-testid="aiondx-places-findit-c-c3"]');
+      await sleep(1000);
+      const rl = await js('window.__pl.calls.find((c) => c[0] === "relink")');
+      const seq2 = await js('window.__pl.seq.filter((s) => s !== "status")');
+      check(sc, 'Find it: the chat held, the folder asked for, used from there, released', rl && rl[1].item.id === 'c3' && !rl[1].to &&
+        JSON.stringify(seq2) === JSON.stringify(['hold:c3', 'relink', 'release:c3']), JSON.stringify([rl, seq2]));
+      tn = await toasts();
+      check(sc, 'and says where it works from now', tn.some((t) => /^Found "Old notes"\. It works from F:\\Picked\\c3 now\./.test(t)), JSON.stringify(tn));
+      // Bring back, from the filter
+      await js(`(() => { const f = document.querySelector('[data-testid="aiondx-places-find"]'); f.value = 'chat one'; f.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await sleep(300);
+      const shown = await js(`[...document.querySelectorAll('.aiondx-places-row')].map((r) => r.getAttribute('data-key'))`);
+      check(sc, 'Find a chat narrows the list', JSON.stringify(shown) === '["c:c1"]', JSON.stringify(shown));
+      await humanClick('[data-testid="aiondx-places-row-c-c1"] input');
+      await sleep(200);
+      await humanClick('[data-testid="aiondx-places-back"]');
+      await sleep(300);
+      const a3 = await askYes(/^Bring 1 chat back to AionDX's own folder\?$/);
+      await sleep(900);
+      const bk = await js('window.__pl.calls.find((c) => c[0] === "back")');
+      check(sc, 'Bring back: asked, then the chat goes back', a3.ok && bk && JSON.stringify(bk[1].items) === '[{"kind":"c","id":"c1"}]', JSON.stringify([a3, bk]));
+      // a group's place
+      await js(`(() => { const f = document.querySelector('[data-testid="aiondx-places-find"]'); f.value = ''; f.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-places-gplace-g1"]');
+      await sleep(600);
+      const gp = await js('window.__pl.calls.find((c) => c[0] === "groupPlace")');
+      check(sc, 'a group gets a place: the folder box, then the group\'s place kept', gp && JSON.stringify(gp[1]) === JSON.stringify({ group: 'g1', to: 'F:\\Picked' }), JSON.stringify(gp));
+      await humanClick('.aiondx-places .aiondx-plugins-close');
+      await sleep(300);
+      // the missing chat's own page
+      await js(`location.hash = '#/conversation/c3'; 0`);
+      await sleep(600);
+      const bn = await js(`(document.querySelector('[data-testid="aiondx-place-missing"]') || {}).textContent`);
+      check(sc, 'opening the missing chat says where it was, with Find it', /^This chat's folder is not there\. It was in E:\\Work\\c3\./.test(bn || '') && /Find it\.\.\./.test(bn || ''), bn);
+      await shot('places-missing-light');
+      await humanClick('.aiondx-place-missing-x');
+      await sleep(200);
+      check(sc, 'and the notice can be put away', !(await js(`!!document.querySelector('[data-testid="aiondx-place-missing"]')`)));
+      // Undo, and dark
+      await load('theme=dark&keepls=1');
+      await bridge({ op: 'move', names: ['Chat one'], at: 1 });
+      await addCards();
+      await sleep(1200);
+      await humanClick('[data-testid="aiondx-places-open"]');
+      await sleep(700);
+      await shot('places-dark');
+      check(sc, 'Undo the last move shows after a move', await js(`!document.querySelector('[data-testid="aiondx-places-undo"]').hidden`));
+      await humanClick('[data-testid="aiondx-places-undo"]');
+      await sleep(300);
+      const a4 = await askYes(/^Undo the last move \(Chat one\)\?$/);
+      await sleep(900);
+      check(sc, 'Undo: asked, then undone', a4.ok && (await js('window.__pl.calls.some((c) => c[0] === "undo")')), JSON.stringify(a4));
+      await js(`(() => { delete window.aiondxPlaces; location.hash = ''; return 0; })()`);
+      await send('Emulation.clearDeviceMetricsOverride', {});
+    }
+
     // ---- the chat's notification bell (R-112, 2026-11-13) ----
     {
       const sc = 'bell';
@@ -3275,7 +3425,7 @@ async function pageTarget() {
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
-      const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat'];
+      const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.0' && JSON.stringify(c.names) === JSON.stringify(NEW28) &&
         /^A DX Doc can hold several tabs/.test(c.hows[0]) && /click them to open the thread beside them/.test(c.hows[1]) && /@@@ names one member of a team/.test(c.hows[7]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
@@ -3325,7 +3475,7 @@ async function pageTarget() {
       t = await tip();
       check(sc, 'and after a reload the Loop tip stays away', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
       // the Docs link tip, on a page with a doc link, once the others are done
-      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','sched','bolt','menu','dxdocs','dxcharts','dxedit','dxsuggest','dxexport','add-account','groups','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','sched','bolt','menu','dxdocs','dxcharts','dxedit','dxsuggest','dxexport','add-account','groups','places','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
       await load('theme=light&tips=1&keepls=1');
       await sleep(2600);
       t = await tip();

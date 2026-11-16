@@ -1,0 +1,195 @@
+diff --git a/crates/aionui-ai-agent/src/task_manager.rs b/crates/aionui-ai-agent/src/task_manager.rs
+index d44e5849..1b2a5a5e 100644
+--- a/crates/aionui-ai-agent/src/task_manager.rs
++++ b/crates/aionui-ai-agent/src/task_manager.rs
+@@ -76,6 +76,15 @@ pub trait IWorkerTaskManager: Send + Sync {
+     /// - have been idle longer than `idle_threshold_ms`
+     /// - are not protected by an active foreground lease
+     fn collect_idle(&self, idle_threshold_ms: TimestampMs) -> Vec<String>;
++
++    /// AionDX core-0020: hold a conversation's agent stopped while its working folder is moved (a folder an agent runs in cannot be
++    /// moved on Windows). While held, no task is built for it; released, it starts again as usual.
++    fn set_held(&self, _conversation_id: &str, _held: bool) {}
++
++    /// AionDX core-0020: whether [`IWorkerTaskManager::set_held`] holds this conversation.
++    fn is_held(&self, _conversation_id: &str) -> bool {
++        false
++    }
+ }
+ 
+ #[derive(Clone)]
+@@ -96,6 +105,8 @@ pub struct WorkerTaskManagerImpl {
+     factory: AgentFactory,
+     active_leases: Arc<ActiveLeaseRegistry>,
+     runtime_token_service: Option<Arc<RuntimeTokenService>>,
++    /// AionDX core-0020: conversations held stopped while their folder moves.
++    held: DashMap<String, ()>,
+ }
+ 
+ impl WorkerTaskManagerImpl {
+@@ -109,6 +120,7 @@ impl WorkerTaskManagerImpl {
+             factory,
+             active_leases,
+             runtime_token_service: None,
++            held: DashMap::new(),
+         }
+     }
+ 
+@@ -171,6 +183,11 @@ impl IWorkerTaskManager for WorkerTaskManagerImpl {
+         conversation_id: &str,
+         mut options: BuildTaskOptions,
+     ) -> Result<AgentInstance, AgentError> {
++        if self.held.contains_key(conversation_id) {
++            return Err(AgentError::conflict(format!(
++                "conversation {conversation_id} is being moved; it starts again when the move is done"
++            )));
++        }
+         if let Some(existing) = self.initialised_managed_task(conversation_id)
+             && !existing.runtime_capabilities.satisfies(&options.runtime_capabilities)
+         {
+@@ -291,6 +308,18 @@ impl IWorkerTaskManager for WorkerTaskManagerImpl {
+         self.tasks.iter().filter(|entry| entry.value().get().is_some()).count()
+     }
+ 
++    fn set_held(&self, conversation_id: &str, held: bool) {
++        if held {
++            self.held.insert(conversation_id.to_owned(), ());
++        } else {
++            self.held.remove(conversation_id);
++        }
++    }
++
++    fn is_held(&self, conversation_id: &str) -> bool {
++        self.held.contains_key(conversation_id)
++    }
++
+     fn active_conversation_ids(&self) -> Vec<String> {
+         self.tasks
+             .iter()
+@@ -610,6 +639,23 @@ mod tests {
+         assert!(mgr.get_task("nonexistent").is_none());
+     }
+ 
++    /// AionDX core-0020: a held conversation gets no task until released; others are not affected.
++    #[tokio::test]
++    async fn held_conversation_is_not_built_until_released() {
++        let mgr = make_manager();
++        mgr.set_held("conv-1", true);
++        assert!(mgr.is_held("conv-1"));
++        let err = mgr.get_or_build_task("conv-1", make_options("conv-1")).await.err().expect("held");
++        assert!(err.to_string().contains("being moved"), "{err}");
++        assert_eq!(mgr.active_count(), 0);
++        mgr.get_or_build_task("conv-2", make_options("conv-2")).await.unwrap();
++        assert_eq!(mgr.active_count(), 1);
++        mgr.set_held("conv-1", false);
++        assert!(!mgr.is_held("conv-1"));
++        mgr.get_or_build_task("conv-1", make_options("conv-1")).await.unwrap();
++        assert_eq!(mgr.active_count(), 2);
++    }
++
+     #[tokio::test]
+     async fn get_or_build_creates_task() {
+         let mgr = make_manager();
+diff --git a/crates/aionui-conversation/src/routes.rs b/crates/aionui-conversation/src/routes.rs
+index 8159f852..53146f8e 100644
+--- a/crates/aionui-conversation/src/routes.rs
++++ b/crates/aionui-conversation/src/routes.rs
+@@ -137,6 +137,8 @@ pub fn conversation_routes(state: ConversationRouterState) -> Router {
+         )
+         .route("/api/conversations/{id}/runtime/ensure", post(ensure_runtime))
+         .route("/api/conversations/{id}/runtime/restart", post(restart_runtime))
++        // AionDX core-0020: held stopped while its folder moves, then released.
++        .route("/api/conversations/{id}/runtime/hold", post(hold_runtime))
+         // Replace the MCP selection after creation (PATCH keeps refusing it).
+         .route("/api/conversations/{id}/mcp", put(update_mcp))
+         .route("/api/conversations/{id}/active-lease", post(active_lease))
+@@ -413,6 +415,35 @@ async fn ensure_runtime(
+     Ok(Json(ApiResponse::ok(response)))
+ }
+ 
++/// AionDX core-0020: body of `POST /api/conversations/{id}/runtime/hold`.
++#[derive(serde::Deserialize)]
++struct HoldRuntimeRequest {
++    hold: bool,
++    #[serde(default)]
++    stop: bool,
++}
++
++#[derive(serde::Serialize)]
++struct HoldRuntimeResponse {
++    held: bool,
++    stopped: bool,
++}
++
++async fn hold_runtime(
++    State(state): State<ConversationRouterState>,
++    Extension(user): Extension<CurrentUser>,
++    Path(id): Path<String>,
++    body: Result<Json<HoldRuntimeRequest>, JsonRejection>,
++) -> Result<Json<ApiResponse<HoldRuntimeResponse>>, ApiError> {
++    let Json(req) = body.map_err(ApiError::from)?;
++    let (held, stopped) = state
++        .service
++        .hold_runtime(&user.id, &id, req.hold, req.stop, &state.task_manager)
++        .await
++        .map_err(ApiError::from)?;
++    Ok(Json(ApiResponse::ok(HoldRuntimeResponse { held, stopped })))
++}
++
+ async fn restart_runtime(
+     State(state): State<ConversationRouterState>,
+     Extension(user): Extension<CurrentUser>,
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index 7b2dc349..c137de10 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -5029,6 +5029,49 @@ impl ConversationService {
+     /// are intentionally left untouched so the rebuilt runtime can resume the
+     /// existing backend session.
+     #[tracing::instrument(skip_all, fields(user_id = %user_id, conversation_id = %conversation_id))]
++    /// AionDX core-0020: hold a conversation's agent stopped while its working folder is moved, or release it. Holding one whose turn
++    /// is running is refused (a `WORKING:` conflict) unless `stop` is set, which ends the turn as the Stop button does. Held, its agent
++    /// process is ended and none is started for it (by a send, its team or a schedule) until it is released. Returns whether it is held
++    /// now and whether a turn was stopped.
++    pub async fn hold_runtime(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++        hold: bool,
++        stop: bool,
++        task_manager: &Arc<dyn IWorkerTaskManager>,
++    ) -> Result<(bool, bool), ConversationError> {
++        self.conversation_repo
++            .get(user_id, conversation_id)
++            .await?
++            .ok_or_else(|| ConversationError::NotFound {
++                id: conversation_id.to_owned(),
++            })?;
++        if !hold {
++            task_manager.set_held(conversation_id, false);
++            info!(conversation_id, "Released conversation runtime after a move");
++            return Ok((false, false));
++        }
++        let mut stopped = false;
++        if let Some(turn_id) = self.runtime_state.active_turn_id_for(conversation_id) {
++            if !stop {
++                return Err(ConversationError::Busy {
++                    reason: format!("WORKING: conversation {conversation_id} is working on a turn"),
++                });
++            }
++            self.cancel_with_cause(user_id, conversation_id, &turn_id, task_manager, TurnCancelCause::UserRequested)
++                .await?;
++            stopped = true;
++        }
++        task_manager.set_held(conversation_id, true);
++        task_manager
++            .kill_and_wait(conversation_id, Some(AgentKillReason::RuntimeRestart))
++            .await;
++        self.runtime_state.clear_turn_state_for_restart(conversation_id);
++        info!(conversation_id, stopped, "Holding conversation runtime for a move");
++        Ok((true, stopped))
++    }
++
+     pub async fn restart_runtime(
+         &self,
+         user_id: &str,

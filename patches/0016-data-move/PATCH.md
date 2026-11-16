@@ -43,3 +43,17 @@ Not covered: no real session of each agent was resumed after a move (the test ma
 - The mover takes `--pointer`, `--local`, `--home`, `--roaming` (it runs with the user's own environment when AionDX starts it through WMI),
   and `--skip-process-check` / `--no-reopen` for tests. The run's folder name is unique per run (two moves in one second met each other's
   backup file). `tools\test-live-drive.js`: the built app moves itself to a second drive through its own bridge and opens again from it (9).
+
+## aiondx-place-move.js: one chat, team or group where the user chooses (R-130, November 15th, 2026)
+
+Run by AionDX's main process (patch 0009, `aiondx-places-main.js`, IPC `aiondx:places`) with the bundled Node, hidden, while AionDX stays open. The page holds each chat's agent stopped first (AionCore `POST /api/conversations/{id}/runtime/hold`, core-0020) and releases it after. Shipped in `resources\aiondx\bin` (tools\build-release.ps1).
+
+- `move`: each item into `<place>\<name> (<id8>)`: `workspace` (a team's members with folders of their own under `members\<n> <name>`), `agents` (Claude history copied for another PC), `aiondx-chat.db` (the item's rows) and `aiondx-chat.json` (kind, ids, where each folder sits, the folders it came from, a version stamp). Same drive: renamed; another drive: copied, counted, the original removed only once everything else worked. Only the item's own rows are rewritten (every spelling, the path at a separator or at the end of a value, so a neighbour whose name starts the same is left alone). Claude history folders renamed; other agents' files rewritten with a backup each. A drive other than the PC's own gets `AionDX-chats.json` at its root listing its packages.
+- `back`: to the folder it came from (or AionDX's folder when that is taken); the package's own files kept with the journal for undo.
+- `relink` (Find it): the package (or a bare working folder for a chat) is where the user points, or one level inside it.
+- `export`: rows written to the package when they changed (`version`: last change and counts).
+- `import`: another PC's package into this database: this PC's user, paths where the package is now (and the history's old paths too), history into this PC's Claude folders. Same id here and both sides changed since they last met (`lastSync`): the package comes in as a copy with new ids, named "(from the drive, <date>)"; only the drive changed: replaced.
+- `undo`: from the journal, newest step first; a removed original is copied back before the copy is removed.
+- `status`: every chat not in a team and every team, its folder, whether it is there, whether it is placed.
+
+Exit codes 0 ok, 1 refused or failed and undone, 2 failed and not fully undone. Tests: `test-place-move.js` (79, with a second drive at H: when present), `patches\0009-identity\test-places-main.js` (23), the click section `places` (21), `tools\test-live-places.js` (the built app).
