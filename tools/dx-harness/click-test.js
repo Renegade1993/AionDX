@@ -5577,6 +5577,9 @@ async function pageTarget() {
       const swaps = (await items()).filter((i) => i.group === 'swap');
       check(sc, 'its menu offers to swap the member for any other enabled agent, in the same slot', swaps.length >= 2 && swaps.every((i) => i.assistant && /A new conversation on this agent/.test(i.text)), JSON.stringify(swaps));
       check(sc, 'the title says who is being swapped', /Swap this member for/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)));
+      // November 16th: a Claude account already in "Agent for this chat" (switched in place, memory kept) is not offered again as a swap
+      const both = await js(`(() => { const t = (g) => [...document.querySelectorAll('.aiondx-acct-menu [data-group="' + g + '"] .aiondx-item-title')].map((e) => e.textContent); const h = t('here'); return t('swap').filter((n) => h.indexOf(n) >= 0); })()`);
+      check(sc, 'no agent is in both lists', Array.isArray(both) && both.length === 0, JSON.stringify(both));
       await js(`window.__stub.routes['POST /api/teams/team1/agents/slotB/replace'] = { success: true, data: { slot_id: 'slotB' } }; window.__calls.length = 0; 0`);
       await js(`document.querySelector('.aiondx-acct-menu [data-assistant="${swaps[0].assistant}"]').click(); 0`);   // the menu can run past a short page: a real press would miss it
       check(sc, 'a click asks first: what stays, what is new, and that the team stops', /Swap this member for/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)) && /Every agent in this team stops now/.test(await js(`(document.querySelector('.aiondx-acct-menu') || {}).textContent || ''`)));

@@ -5073,7 +5073,11 @@
       // role, gives the slot a new conversation on the new agent, and stops the team's running agents; they start again on the next message.
       var cache = teamCache[t.teamId];
       var mine = cache && cache.assistants ? cache.assistants[t.slotId] : '';
-      var swaps = enabledAgents().filter(function (a) { return a.id !== mine && a.status !== 'offline' && a.status !== 'missing'; });
+      // November 16th ("now you have two sets of swappable agents"): a Claude account that "Agent for this chat" already switches to in
+      // place, memory kept, is not offered again as a swap for a fresh conversation; the swap list is for other kinds of agent.
+      var inPlaceT = {};
+      inPlace.forEach(function (a) { inPlaceT[a.agentId] = true; });
+      var swaps = enabledAgents().filter(function (a) { return a.id !== mine && a.status !== 'offline' && a.status !== 'missing' && !(a.source === 'generated' && inPlaceT[a.agentId]); });
       if (swaps.length) {
         var more2 = m.querySelector('.aiondx-acct-more');
         more2.innerHTML = '<div class="arco-dropdown-menu-group-title">Swap this ' + (isLeadRole(t.role) ? 'lead' : 'member') + ' for</div><div class="aiondx-acct-items" data-group="swap"></div>';
