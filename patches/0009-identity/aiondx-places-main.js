@@ -132,7 +132,11 @@ function install(electron, opts) {
   }
 
   /** The minute's work: placed items written back (unless someone else wrote their package since), and what the drives hold. */
+  let tidied = false;
   async function sync() {
+    // once per start: packages made before November 16th, 2026 get their working folders' own names back (AionUi listed them under
+    // Projects); a chat whose agent holds its folder is skipped and tried again at the next start
+    if (!tidied) { tidied = true; try { await run('tidy', {}, 300000); } catch { /* next start */ } }
     const st = await status();
     if (!st.ok) return st;
     const rec = readRec();

@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-16.2';
+  var BUILD = '2026-11-16.3';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -12298,14 +12298,14 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.28.1',
+    release: '0.28.2',
     items: [
       ['Install Claude Code from AionDX', 'On a PC without Claude Code, Sign in to your agents (Settings > Appearance) has an Install Claude Code button: it runs Anthropic\u2019s own installer, then you sign in in your browser. Add another Claude account now asks for its name in the panel.'],
       ['Docs stay as you left them', 'The Docs panel opens in a chat only if you left it open there; every other chat opens with it closed. An agent\u2019s new doc waits in the panel, and the Docs button counts it.'],
       ['Skill changes your way', 'Settings > Skills: agents’ skill changes ask you first only in chats that ask before acting (the default), always, or never. A skill they replace is kept in .claude\\skills-history.'],
       ['Projects are optional', 'Nothing asks a chat for a project. DX Skills imports, writes and links skills into your own skills when you keep no projects, and agents propose skill changes there too.'],
       ['Your messages go out as you type them', 'AionDX no longer adds a line to a message it took for a correction, and the bell no longer says an agent had to be corrected.'],
-      ['Fixes', 'The What\u2019s new card fits on screen and scrolls inside; a team member\u2019s agent menu no longer lists the same account twice.'],
+      ['Fixes', 'Chats you keep on a drive come in on another PC whole; moving them again leaves nothing behind, and they no longer show under Projects. The What\u2019s new card fits on screen; a team member\u2019s agent menu no longer lists the same account twice.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.0', items: [

@@ -272,6 +272,10 @@ function packageLayout(db, info, pkg, homeMap) {
 function exportRows(db, info, pkg, layout, homeOf, userHome) {
   if (userHome) exportHistory(db, userHome, pkg, layout);
   const rows = itemRows(db, info);
+  // a chat's assistant snapshot points at an assistant record this PC made (November 16th, 2026: another PC has none, so every chat
+  // was refused there with "FOREIGN KEY constraint failed"): those records go with it, for the other PC to add when it lacks them
+  const defIds = [...new Set((rows.conversation_assistant_snapshots || []).map((r) => r.assistant_definition_id).filter(Boolean))];
+  if (defIds.length && hasTable(db, 'assistant_definitions')) rows.assistant_definitions = defIds.map((id) => db.prepare('SELECT * FROM assistant_definitions WHERE id = ?').get(id)).filter(Boolean);
   const tmp = path.join(pkg, ROWS + '.tmp');
   fs.rmSync(tmp, { force: true });
   const out = openDb(tmp, false);
@@ -630,7 +634,9 @@ function cmdImport(db, a, ctx) {
   if (!m || !m.id) throw new Error('No AionDX chat in ' + pkg + '.');
   const src = openDb(path.join(pkg, ROWS), true);
   const rows = {};
-  try { for (const t of CONV_TABLES.concat(TEAM_TABLES).map((x) => x[0])) if (hasTable(src, t)) rows[t] = src.prepare('SELECT * FROM "' + t + '"').all(); } finally { src.close(); }
+  try { for (const t of CONV_TABLES.concat(TEAM_TABLES).map((x) => x[0]).concat(['assistant_definitions'])) if (hasTable(src, t)) rows[t] = src.prepare('SELECT * FROM "' + t + '"').all(); } finally { src.close(); }
+  const defs = rows.assistant_definitions || [];
+  delete rows.assistant_definitions;
   const user = db.prepare('SELECT user_id AS u, COUNT(*) AS n FROM conversations GROUP BY user_id ORDER BY n DESC LIMIT 1').get() || db.prepare('SELECT id AS u FROM users LIMIT 1').get();
   if (!user || !user.u) throw new Error('This AionDX has no user to give the chat to yet; open it once first.');
   // the paths the package's rows were written with, and where its folders are on this PC now
@@ -672,12 +678,39 @@ function cmdImport(db, a, ctx) {
       if (m.kind === 't') for (const [t, col] of TEAM_TABLES.slice().reverse()) if (hasTable(db, t)) db.prepare('DELETE FROM "' + t + '" WHERE "' + col + '" = ?').run(m.id);
       for (const [t, col] of CONV_TABLES.slice().reverse()) if (hasTable(db, t)) db.prepare('DELETE FROM "' + t + '" WHERE "' + col + '" IN (' + m.convIds.map(() => '?').join(',') + ')').run(...m.convIds);
     }
-    let n = 0;
+    let n = 0, skipped = 0;
+    if (defs.length && hasTable(db, 'assistant_definitions')) {
+      const have = new Set(tableCols(db, 'assistant_definitions').map((c) => c.name));
+      for (const d0 of defs) {
+        if (db.prepare('SELECT 1 FROM assistant_definitions WHERE id = ?').get(d0.id)) continue;
+        const d = Object.assign({}, d0);
+        if ('user_id' in d) d.user_id = user.u;
+        const cols = Object.keys(d).filter((c) => have.has(c));
+        db.prepare('INSERT OR IGNORE INTO assistant_definitions (' + cols.map((c) => '"' + c + '"').join(',') + ') VALUES (' + cols.map(() => '?').join(',') + ')').run(...cols.map((c) => d[c]));
+      }
+    }
+    // a link to something this PC does not have (and the package did not bring): a column that may be empty is emptied, else the row
+    // is left out, so one stale link never refuses a whole chat
+    const fkCache = new Map();
+    const linksOf = (t) => { if (!fkCache.has(t)) { let l = []; try { l = db.prepare('PRAGMA foreign_key_list("' + t + '")').all(); } catch { /* none */ } fkCache.set(t, l); } return fkCache.get(t); };
+    const notNull = (t, c) => tableCols(db, t).some((x) => x.name === c && x.notnull);
+    const linked = (t, r) => {
+      for (const f of linksOf(t)) {
+        const v = r[f.from];
+        if (v === null || v === undefined) continue;
+        if (!hasTable(db, f.table)) continue;
+        if (db.prepare('SELECT 1 FROM "' + f.table + '" WHERE "' + (f.to || 'id') + '" = ?').get(v)) continue;
+        if (notNull(t, f.from)) return false;
+        r[f.from] = null;
+      }
+      return true;
+    };
     for (const [t, list] of Object.entries(rows)) {
       if (!hasTable(db, t) || !list.length) continue;
       const have = new Set(tableCols(db, t).map((c) => c.name));
       for (const r0 of list) {
         const r = fixRow(t, r0);
+        if (!linked(t, r)) { skipped++; continue; }
         const cols = Object.keys(r).filter((c) => have.has(c));
         db.prepare('INSERT INTO "' + t + '" (' + cols.map((c) => '"' + c + '"').join(',') + ') VALUES (' + cols.map(() => '?').join(',') + ')').run(...cols.map((c) => r[c]));
         n++;
@@ -690,7 +723,7 @@ function cmdImport(db, a, ctx) {
     const history = importHistory(ctx.home, pkg, m, histPairs);
     let version = null;
     try { version = localVersion(db, itemInfo(db, { kind: m.kind, id: newId })); } catch { /* counted next time */ }
-    return { imported: { id: newId, from: m.id, kind: m.kind, name: m.name, mode, rows: n, history, version, exportedAt: m.exportedAt } };
+    return { imported: { id: newId, from: m.id, kind: m.kind, name: m.name, mode, rows: n, skipped, history, version, exportedAt: m.exportedAt } };
   } catch (e) { try { db.exec('ROLLBACK'); } catch { /* none */ } throw e; }
 }
 
