@@ -149,6 +149,18 @@ process.env.AIONDX_PORTABLE_ROOTS = ROOT;
   check('unbind a team', r.ok && !('team:t1' in r.bindings), JSON.stringify(r));
   r = await a.call('bind', { key: 'c:c2', project: 'nope' });
   check('bind: an unknown project is refused', !r.ok && /no project called nope/.test(r.error), JSON.stringify(r));
+  // R-127: plans approved in a DX Doc, and a project's edit gate
+  r = await a.call('approvePlan', { conv: 'c2', team: 't7', doc: 'plan-export' });
+  const plans = JSON.parse(fs.readFileSync(path.join(pc1.userData, 'aiondx-plans.json'), 'utf8'));
+  check('approvePlan records the plan for the chat and its team', r.ok && plans['c:c2'].doc === 'plan-export' && plans['t:t7'].doc === 'plan-export', JSON.stringify(plans));
+  r = await a.call('planGate', { project: 'atlas', on: true });
+  let reg2 = JSON.parse(fs.readFileSync(path.join(pc1.userData, 'aiondx-projects.json'), 'utf8'));
+  check('planGate on: written into the project, the rest kept', r.ok && reg2.projects.atlas.planGate === 'on' && reg2.projects.zed.root === 'C:/x/Beacon', JSON.stringify(reg2));
+  r = await a.call('projects');
+  check('the projects list says which builds from approved plans', r.projects.find((p) => p.key === 'atlas').planGate === true && r.projects.find((p) => p.key === 'zed').planGate === false);
+  r = await a.call('planGate', { project: 'atlas', on: false });
+  reg2 = JSON.parse(fs.readFileSync(path.join(pc1.userData, 'aiondx-projects.json'), 'utf8'));
+  check('planGate off', r.ok && !('planGate' in reg2.projects.atlas));
   r = await a.call('decline', { id: 'zz' });
   check('decline: kept', r.ok);
   clearTimeout(deadline);

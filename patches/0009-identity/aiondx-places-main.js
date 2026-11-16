@@ -242,7 +242,7 @@ function install(electron, opts) {
     if (op === 'projects') {
       const reg = readRegistry();
       if (!reg) return { ok: true, projects: [], bindings: {} };
-      const projects = Object.keys(reg.projects || {}).map((k) => { const p = reg.projects[k] || {}; return { key: k, name: p.root ? path.basename(String(p.root)) : k, root: p.root || '' }; })
+      const projects = Object.keys(reg.projects || {}).map((k) => { const p = reg.projects[k] || {}; return { key: k, name: p.root ? path.basename(String(p.root)) : k, root: p.root || '', planGate: p.planGate === 'on' }; })
         .sort((a, b) => a.name.localeCompare(b.name));
       return { ok: true, projects, bindings: reg.bindings || {} };
     }
@@ -261,6 +261,25 @@ function install(electron, opts) {
       fs.writeFileSync(f + '.tmp', JSON.stringify(reg, null, 2));
       fs.renameSync(f + '.tmp', f);
       return { ok: true, bindings: reg.bindings };
+    }
+    // R-127: a plan the user approved in a DX Doc (the edit gate of a project that asks for one), and that gate per project
+    if (op === 'approvePlan') {
+      const f = path.join(userData(), 'aiondx-plans.json');
+      let p = {}; try { p = JSON.parse(fs.readFileSync(f, 'utf8')) || {}; } catch { /* none yet */ }
+      const rec = { doc: String(req.doc || ''), at: Date.now() };
+      if (req.conv && /^[A-Za-z0-9_-]{1,80}$/.test(String(req.conv))) p['c:' + req.conv] = rec;
+      if (req.team && /^[A-Za-z0-9_-]{1,80}$/.test(String(req.team))) p['t:' + req.team] = rec;
+      fs.writeFileSync(f + '.tmp', JSON.stringify(p, null, 1)); fs.renameSync(f + '.tmp', f);
+      return { ok: true };
+    }
+    if (op === 'planGate') {
+      const reg = readRegistry();
+      if (!reg || !reg.projects || !reg.projects[req.project]) return { ok: false, error: 'There is no project called ' + req.project + '.' };
+      if (req.on) reg.projects[req.project].planGate = 'on'; else delete reg.projects[req.project].planGate;
+      reg.updatedAt = new Date().toISOString();
+      const f = registryFile();
+      fs.writeFileSync(f + '.tmp', JSON.stringify(reg, null, 2)); fs.renameSync(f + '.tmp', f);
+      return { ok: true, on: !!req.on };
     }
     if (op === 'groupPlace') {
       const rec = readRec();

@@ -539,6 +539,7 @@ function projectSetup(env, dbPath, convId, facts, label) {
   const added = [];
   for (const d of dirs) { if (!have.has(d.toLowerCase())) { args.push('--add-dir', d); have.add(d.toLowerCase()); added.push(d); } }
   if (isClaude) pinnedSkills(dataDir, convId, facts.teamId, roots, proj);
+  if (isClaude) planHooks(env, dataDir, convId, facts.teamId);
   // which account this is, by its label, against the project's domain and allowed accounts
   const acct = /work/i.test(String(label || '')) ? 'work' : 'personal';
   const owns = proj && ((proj.domain === 'work' && acct === 'work') || (proj.domain === 'personal' && acct === 'personal'));
@@ -559,6 +560,32 @@ function projectSetup(env, dbPath, convId, facts, label) {
   }
   routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'} sign-in=${fullSignIn ? 'full' : 'token or none'}${strictDropped ? ' strict-mcp dropped' : ''}`);
   if (isClaude && convId && dataDir) recordLaunch(dataDir, convId, { project: name || null, team: facts.teamId || null, acct, accountKey: accountKey || null, docs, fullSignIn, signInDir: signInFolder });
+}
+
+/** R-127: AionDX's planning hooks (aiondx-plan-hooks.js, beside this launcher) in every Claude chat: a plan-first note on a build request,
+ *  "re-read the asks" on a correction, an ending that says done sent back once while asks are open, and edits held for an approved plan in
+ *  a project that asks for one. Passed with --settings (a file in the data folder holding only "hooks"): hook entries merge with the
+ *  user's own across settings levels (filed research 2026-11-15_claude-code-hooks-contract-web.md). Switched off by the registry's
+ *  "planHooks": "off". Any trouble: no hooks, the launch goes on. */
+function planHooks(env, dataDir, convId, teamId) {
+  try {
+    const script = path.join(__dirname, 'aiondx-plan-hooks.js');
+    if (!fs.existsSync(script) || !dataDir) return;
+    const reg = (() => { try { return JSON.parse(fs.readFileSync(path.join(dataDir, 'aiondx-projects.json'), 'utf8')); } catch { return {}; } })();
+    if (reg.planHooks === 'off') return;
+    const cmd = (mode) => '"' + process.execPath + '" "' + script + '" ' + mode;
+    const hooks = { hooks: {
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: cmd('prompt'), timeout: 10 }] }],
+      Stop: [{ hooks: [{ type: 'command', command: cmd('stop'), timeout: 10 }] }],
+      PreToolUse: [{ matcher: 'Edit|Write|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: cmd('pretool'), timeout: 10 }] }] } };
+    const file = path.join(dataDir, 'aiondx-claude-hooks.json');
+    const text = JSON.stringify(hooks, null, 1);
+    let have = ''; try { have = fs.readFileSync(file, 'utf8'); } catch { /* first time */ }
+    if (have !== text) { fs.writeFileSync(file + '.tmp', text); fs.renameSync(file + '.tmp', file); }
+    if (args.indexOf('--settings') < 0) args.push('--settings', file);
+    env.AIONDX_DATA_DIR = dataDir;
+    if (teamId) env.AIONDX_TEAM_ID = teamId;
+  } catch { /* no hooks */ }
 }
 
 /** R-128: pinned skills (<data folder>\aiondx-skill-pins.json, { "c:<conversation>": [names], "t:<team>": [names] }, set from the Skills

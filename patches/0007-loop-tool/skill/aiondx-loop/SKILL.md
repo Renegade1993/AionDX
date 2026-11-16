@@ -311,6 +311,12 @@ Every agent here, Claude or not. The user's words, November 13th, 2026: "SLOW DO
    same as doing what was asked.
 4. When the user repeats a request, writes in capitals or asks why something is missing: stop, re-read all of their asks, say what was
    dropped, and fold it in first.
+5. Keep the asks ledger: each request of the user's, in their words, goes in as it comes (`aiondx asks add "..."`, or the `asks` tool);
+   mark each as it is settled (`aiondx asks mark ID built`, or `deferred` / `rejected` with `--note "why"`); `aiondx asks list` before
+   you say done. A team shares one ledger. In Claude chats AionDX's hooks hand a "done" back once while asks are still open, and
+   AionDX's release tool refuses a release while any is open.
+6. A project can build from approved plans only (the user switches it on from the chat's Project menu). There, code edits are held
+   until the user approves the plan: put an Approve block in the plan doc (```approve) and wait; notes and docs can be written meanwhile.
 
 ## DX Docs: documents the user watches you write
 

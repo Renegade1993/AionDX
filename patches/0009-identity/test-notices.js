@@ -87,6 +87,13 @@ try {
   check('skill changes waiting in its project: one notice with the count and Review them', n.length === 1 && n[0].kind === 'skills' && n[0].title === '2 skill changes are waiting for you' && n[0].action.op === 'skills', JSON.stringify(n));
   fs.rmSync(path.join(atlasRoot, '.claude', 'skills-pending'), { recursive: true, force: true });
   check('approved or rejected: gone', N.noticesFor(data, 'p1', alive).length === 0);
+  // a correction the planning hook saw
+  fs.mkdirSync(path.join(data, 'aiondx-flags'), { recursive: true });
+  fs.writeFileSync(path.join(data, 'aiondx-flags', 'p1.json'), JSON.stringify({ kind: 'correction', at: Date.now() - 60000, words: 'WHY IS IT STILL MISSING' }));
+  n = N.noticesFor(data, 'p1', alive);
+  check('a correction: the bell says so, quoting it', n.length === 1 && n[0].kind === 'correction' && /"WHY IS IT STILL MISSING"/.test(n[0].text), JSON.stringify(n));
+  fs.writeFileSync(path.join(data, 'aiondx-flags', 'p1.json'), JSON.stringify({ kind: 'correction', at: Date.now() - 13 * 3600000, words: 'x' }));
+  check('after 12 hours it is gone', N.noticesFor(data, 'p1', alive).length === 0);
 
   // the ipc handler: one sign-in notice per account across chats
   let handler = null;

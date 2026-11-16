@@ -296,7 +296,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const tl = await solo.rpc('tools/list', {});
   const tools = (tl.result && tl.result.tools) || [];
-  check('tools/list offers loop_status, loop_set, priority_send, skills_pin, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the ten DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,skills_pin,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,context_status,chat_send,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_comment,dxdoc_look,dxdoc_decide,dxdoc_list,dxdoc_comments,dxdoc_reply,dxdoc_suggest,usage_alert', tools.map((t) => t.name));
+  check('tools/list offers loop_status, loop_set, priority_send, asks, skills_pin, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the ten DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,asks,skills_pin,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,context_status,chat_send,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_comment,dxdoc_look,dxdoc_decide,dxdoc_list,dxdoc_comments,dxdoc_reply,dxdoc_suggest,usage_alert', tools.map((t) => t.name));
   const schemaText = JSON.stringify(tools.map((t) => t.inputSchema));
   check('schemas use only type, properties, description and items (every backend takes them; a parameter may be called title)', !/additionalProperties|\$schema|"required"|"title":"/.test(schemaText), schemaText);
   const set = tools.find((t) => t.name === 'loop_set') || { inputSchema: { properties: {} } };
@@ -547,7 +547,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const orphan = startTool('convS', { AIONDX_CONVERSATION_ID: '', AIONDX_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
-  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 26, tlOrphan.result && tlOrphan.result.tools.length);
+  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 27, tlOrphan.result && tlOrphan.result.tools.length);
   r = await orphan.call('loop_status');
   check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionUi chat/.test(r.text), r.text);
 
@@ -955,6 +955,32 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('a wrong chat id says it was not delivered and why', sd.status === 1 && /^Not delivered \(404\): target conversation not found: nope Is the chat id right\?/.test(sd.stdout), sd.stdout);
     sd = await cli(['send', '--to', 'convL'], 'convS');
     check('no message says so', sd.status === 1 && /The message is empty/.test(sd.stdout), sd.stdout);
+  }
+
+  // ---- the asks ledger (R-127) ----
+  {
+    const ad = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-asks-'));
+    const aenv = (conv) => Object.assign(cliEnv(conv), { AIONDX_DATA_DIR: ad });
+    let ar = await run(CLI, ['asks', 'list'], aenv('convS'));
+    check('asks: an empty ledger says how to add', ar.status === 0 && /The asks ledger is empty/.test(ar.stdout), ar.stdout);
+    ar = await run(CLI, ['asks', 'add', 'a', 'save', 'button', 'that', 'works'], aenv('convS'));
+    check('add keeps the words, numbered', ar.status === 0 && /^Added #1\./.test(ar.stdout), ar.stdout);
+    await run(CLI, ['asks', 'add', 'a preview'], aenv('convS'));
+    ar = await run(CLI, ['asks', 'mark', '1', 'built'], aenv('convS'));
+    check('mark built', ar.status === 0 && /^#1 is built\./.test(ar.stdout), ar.stdout);
+    ar = await run(CLI, ['asks', 'mark', '2', 'deferred'], aenv('convS'));
+    check('deferred needs a reason', ar.status === 1 && /Say why in a note/.test(ar.stdout), ar.stdout);
+    ar = await run(CLI, ['asks', 'list'], aenv('convS'));
+    check('list shows each with its state, and how many are open', /#1 \[built\] "a save button that works"/.test(ar.stdout) && /#2 \[open\] "a preview"/.test(ar.stdout) && /1 of 2 open\./.test(ar.stdout), ar.stdout);
+    const file = JSON.parse(fs.readFileSync(path.join(ad, 'aiondx-asks', 'c-convS.json'), 'utf8'));
+    check('a solo chat\'s ledger is its own file', file.asks.length === 2 && file.asks[0].state === 'built', JSON.stringify(file));
+    ar = await run(CLI, ['asks', 'add', 'team ask'], aenv('convW'));
+    check('a team member writes the team\'s ledger', ar.status === 0 && fs.existsSync(path.join(ad, 'aiondx-asks', 't-team1.json')), ar.stdout);
+    const at = startTool('convL', { AIONDX_DATA_DIR: ad });
+    await at.rpc('initialize', { protocolVersion: '2025-06-18' });
+    r = await at.call('asks', { action: 'mark', id: 1, state: 'rejected', note: 'not wanted after all' });
+    check('the asks tool marks the team\'s ask from the lead', !r.isError && /#1 is rejected/.test(r.text), r.text);
+    try { fs.rmSync(ad, { recursive: true, force: true }); } catch (e) { /* temp */ }
   }
 
   // ---- aiondx skills propose (R-128 step 6): an agent's skill change waits for the user in the project's skills-pending ----

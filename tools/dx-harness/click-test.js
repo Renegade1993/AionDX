@@ -3475,6 +3475,23 @@ async function pageTarget() {
       check(sc, 'picking one binds this chat to it', bind && JSON.stringify(bind[1]) === JSON.stringify({ key: 'c:harness1', project: 'atlas' }), JSON.stringify(bind));
       const tn = await js('[...document.querySelectorAll(".aiondx-toasts .aiondx-toast")].map(t => [...t.querySelectorAll(".aiondx-toast-text, .aiondx-toast-sub")].map(e => e.textContent).join(""))');
       check(sc, 'and says what happens next', (tn || []).some((t) => /^This chat is for Atlas Game now\.Its skills load when the agent next starts\.$/.test(t)), JSON.stringify(tn));
+      // R-127: the chat's project can build from approved plans only
+      await js(`(() => { const old = window.aiondxPlaces.call; window.aiondxPlaces.call = (op, a) => { if (op === 'projects') { window.__pj.push([op, a || {}]); return Promise.resolve({ ok: true,
+        projects: [{ key: 'atlas', name: 'Atlas Game', root: 'C:\\\\x\\\\Atlas Game', planGate: false }, { key: 'zed', name: 'Beacon', root: 'C:\\\\x\\\\Beacon', planGate: false }], bindings: { 'conv:harness1': 'atlas' } }); }
+        if (op === 'planGate') { window.__pj.push([op, a]); return Promise.resolve({ ok: true, on: a.on }); } return old(op, a); };
+        window.__pjList = [{ id: 'no-project:x2', kind: 'project', conv: 'harness1', title: 'Which project is this chat for?', text: 'x', action: { op: 'project', label: 'Choose a project' } }]; return 0; })()`);
+      await js(`(() => { window.__pj = []; return 0; })()`);
+      {
+        await sleep(4500);
+        await humanClick('#th [data-testid="aiondx-bell"]');
+        await sleep(600);
+        if (!(await js(`!!document.querySelector('.aiondx-bell-item .aiondx-bell-act')`))) { await humanClick('#th [data-testid="aiondx-bell"]'); await sleep(600); }
+        await humanClick('.aiondx-bell-item .aiondx-bell-act');
+        await sleep(600);
+        const gateTxt = await js(`(document.querySelector('[data-testid="aiondx-proj-gate"]') || {}).textContent`);
+        check(sc, 'the picker offers the project\'s plan gate', gateTxt === 'In Atlas Game, edits wait for an approved plan', gateTxt);
+      }
+      await js(`(() => { delete window.aiondxPlaces; delete window.aiondxNotices; const h = document.getElementById('th'); if (h) h.remove(); return 0; })()`);
       await js(`(() => { delete window.aiondxPlaces; delete window.aiondxNotices; const h = document.getElementById('th'); if (h) h.remove(); return 0; })()`);
     }
 
@@ -3647,7 +3664,7 @@ async function pageTarget() {
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
-      const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves'];
+      const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.0' && JSON.stringify(c.names) === JSON.stringify(NEW28) &&
         /^A DX Doc can hold several tabs/.test(c.hows[0]) && /click them to open the thread beside them/.test(c.hows[1]) && /@@@ names one member of a team/.test(c.hows[7]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);

@@ -82,6 +82,14 @@ function noticesFor(dataDir, convId, opts) {
     title: waiting === 1 ? 'A skill change is waiting for you' : waiting + ' skill changes are waiting for you',
     text: 'New or changed skills for ' + path.basename(proj.root) + ' wait in DX Skills until you look at what they do and approve them.',
     action: { op: 'skills', label: 'Review them' } });
+  // R-127: the planning hook saw a message of the user's that repeats or corrects (aiondx-plan-hooks.js prompt); shown for 12 hours
+  const flag = readJson(path.join(dataDir, 'aiondx-flags', convId + '.json'));
+  if (flag && flag.kind === 'correction' && Date.now() - Number(flag.at || 0) < 12 * 3600000) {
+    const d = new Date(Number(flag.at));
+    projectNotice.push({ id: 'correction:' + convId + ':' + flag.at, kind: 'correction', conv: convId, title: 'You had to correct this agent',
+      text: 'At ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ' ("' + String(flag.words || '').slice(0, 80) + '"). AionDX told it to stop, re-read your asks from the start, say what it dropped, and add the missing check to the matching skill.',
+      action: null });
+  }
   const wanted = docsWanted(reg, rec.project, rec.acct, rec.accountKey);
   if (!wanted) return projectNotice;
   const alive = (o.pidAlive || pidAlive)(rec.pid);

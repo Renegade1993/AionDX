@@ -3701,6 +3701,24 @@
       none.type = 'button';
       none.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); pick(null); });
       projMenu.appendChild(none);
+      // R-127: a project can build from approved plans only (the planning hooks hold code edits until a plan is approved in a DX Doc)
+      var curP = (r.projects || []).filter(function (x) { return x.key === cur; })[0];
+      if (curP) {
+        var gate = gEl('button', 'aiondx-places-mi aiondx-proj-gate', (curP.planGate ? '✓ ' : '') + 'In ' + curP.name + ', edits wait for an approved plan');
+        gate.type = 'button';
+        gate.setAttribute('data-testid', 'aiondx-proj-gate');
+        gate.title = 'Agents write the plan in a DX Doc with an Approve button, and edit code only once you approve it. Notes and docs are always allowed.';
+        gate.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          projMenu.remove(); projMenu = null;
+          placesBridge().call('planGate', { project: curP.key, on: !curP.planGate }).then(function (x) {
+            if (!x || !x.ok) { toast('Not changed: ' + ((x && x.error) || 'no answer'), ''); return; }
+            toast(x.on ? 'In ' + curP.name + ', agents now plan in a DX Doc and wait for your Approve before they edit code.' : 'In ' + curP.name + ', edits no longer wait for a plan.',
+              'Claude chats follow it from their next start.');
+          });
+        });
+        projMenu.appendChild(gate);
+      }
       var rc = anchor.getBoundingClientRect();
       projMenu.style.left = Math.round(Math.min(rc.left, window.innerWidth - 280)) + 'px';
       if (rc.bottom + 320 < window.innerHeight) projMenu.style.top = Math.round(rc.bottom + 4) + 'px'; else projMenu.style.bottom = Math.round(window.innerHeight - rc.top + 4) + 'px';
@@ -12246,6 +12264,7 @@
       ['One set of skills for every agent', 'Codex, Gemini and the other agents now get the same personal, shared and project skills as Claude. A chat with no project is asked which project it is for, once; its menu has Project too.'],
       ['DX Skills', 'Settings > Skills: every skill, layer by layer. Import a ZIP, a folder or a GitHub link into a project after reviewing what its scripts do; ask an agent to write a new one as a DX Doc; browse Anthropic’s and OpenAI’s official skills; update the global library on your yes.'],
       ['Skills that improve themselves', 'When you have to correct an agent, it is asked to add the check that would have caught it to the right skill; a compaction keeps its lessons for skills. Agents propose skill changes, and the bell tells you when one waits for you in DX Skills. Both lines can be switched off in Options.'],
+      ['Agents plan before they build', 'Every agent keeps a ledger of your asks in your words; Claude chats get a plan-first note on a build request, are sent back when they say done with asks still open, and are told to re-read your asks when you correct them (the bell shows it). Switch a project to build from approved plans only in its Project menu: code waits for your Approve in the plan doc.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.27.10', items: [
@@ -13772,6 +13791,8 @@
     if (verdict === 'changes') { note = await dxAskName(anchor, 'What should change?', ''); if (!note) return; }
     s.status = verdict === 'yes' ? 'approved' : 'changes'; s.note = note; s.by = 'you'; s.at = Date.now();
     await dxReplaceAtom(card, m[1] + 'approve\n' + JSON.stringify(s) + '\n' + m[1]);
+    // R-127: an approved plan opens the edit gate of a project that builds from approved plans (aiondx-plan-hooks.js pretool)
+    if (verdict === 'yes' && placesBridge()) { var rr = route(); placesBridge().call('approvePlan', { conv: dx.conv || null, team: rr && rr.kind === 'team' ? rr.id : null, doc: dx.doc || '' }).catch(function () {}); }
     dxTell('[DX Doc approval] In ' + dxWhere() + ', "' + (s.label || 'the plan') + '": ' + (verdict === 'yes' ? 'the user approved it. Go ahead.' : 'the user asked for changes: ' + note));
   }
   /** Insert ▾ on the bar: chips, a question, an Approve button, callouts. */

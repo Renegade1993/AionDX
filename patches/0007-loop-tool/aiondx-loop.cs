@@ -315,6 +315,22 @@ namespace AionDx
                             { "message", Prop("string", "What to tell it. Up to 8000 characters. Both member and message are needed.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", false }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
+                    { "name", "asks" },
+                    { "title", "The asks ledger" },
+                    { "description",
+                        "The user's requests in their own words, each open until it is built, deferred (with the reason) or rejected. Add every ask " +
+                        "of a request before building (action add, words); mark each as it is done (action mark, id, state, note); list them before " +
+                        "saying done (action list). A team shares one ledger. AionDX sends a done back while any is open, and refuses a release." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "action", Prop("string", "list, add or mark.") },
+                            { "words", Prop("string", "add: the request in the user's own words.") },
+                            { "id", Prop("number", "mark: the ask's number.") },
+                            { "state", Prop("string", "mark: built, deferred, rejected or open.") },
+                            { "note", Prop("string", "mark: why (needed for deferred and rejected).") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
                     { "name", "skills_pin" },
                     { "title", "Pin a skill for the team" },
                     { "description",
@@ -642,6 +658,7 @@ namespace AionDx
                 else if (name == "priority_send") text = PrioritySend(a);
                 else if (name == "agent_stop") text = AgentStop(a);
                 else if (name == "skills_pin") text = SkillsPin(a);
+                else if (name == "asks") text = Asks(a);
                 else if (name == "mcp_status") text = McpStatus(a);
                 else if (name == "mcp_set") text = McpSet(a);
                 else if (name == "mcp_tools") text = McpToolsText(Str(a, "server"), Str(a, "tool"), false, TimeoutArg(a, 60) * 1000);
@@ -660,7 +677,7 @@ namespace AionDx
                     isError = r.Item2;
                     text = isError ? "tool error" : "ok";
                 }
-                else throw new ToolError("Unknown tool: " + name + ". This server has loop_status, loop_set, priority_send, agent_stop, skills_pin, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file and usage_alert.");
+                else throw new ToolError("Unknown tool: " + name + ". This server has loop_status, loop_set, priority_send, agent_stop, skills_pin, asks, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file and usage_alert.");
             }
             catch (ToolError e) { text = e.Message; isError = true; content = null; }
             catch (Exception e) { text = "The Loop tool failed: " + e.Message; isError = true; content = null; }
@@ -2585,6 +2602,7 @@ namespace AionDx
             if (args[0] == "setup") return SetupCli(args, o);
             if (args[0] == "github") return GitHubCli(args, o);
             if (args[0] == "skills") return SkillsCli(args, o);
+            if (args[0] == "asks") return AsksCli(args, o);
             if (args[0] == "show") return ShowCli(args, o);
             if (args[0] == "usage") return UsageCli(args, o);
             if (args[0] == "config") return ConfigCli(args, o);
@@ -4179,6 +4197,85 @@ namespace AionDx
             Directory.CreateDirectory(to);
             foreach (var f in Directory.GetFiles(from)) File.Copy(f, Path.Combine(to, Path.GetFileName(f)), true);
             foreach (var d in Directory.GetDirectories(from)) { var n = Path.GetFileName(d); if (n == ".git" || n == "node_modules") continue; CopySkillTree(d, Path.Combine(to, n)); }
+        }
+
+        /** R-127: the asks ledger. The user's requests in their words, each open until it is built, deferred (with the reason) or rejected.
+         *  <data folder>\aiondx-asks\c-<conversation>.json for a solo chat, t-<team>.json for a team (the lead and its members share it).
+         *  AionDX's hooks send a "done" back while any is open, and AionDX's release tool refuses a release while any is open. */
+        static string Asks(Dictionary<string, object> a)
+        {
+            string action = (Str(a, "action") ?? "list").Trim().ToLowerInvariant();
+            var ctx = LoadContext();
+            string key = ctx.Self.Kind == "team" ? "t-" + ctx.Self.TeamId : "c-" + ctx.Self.ConvId;
+            string file = Path.Combine(DxDataDir(), "aiondx-asks", key + ".json");
+            var asks = new List<Dictionary<string, object>>();
+            try
+            {
+                var j = File.Exists(file) ? Json.DeserializeObject(File.ReadAllText(file)) as Dictionary<string, object> : null;
+                object v;
+                if (j != null && j.TryGetValue("asks", out v) && v is System.Collections.IEnumerable)
+                    foreach (var x in (System.Collections.IEnumerable)v) { var d = x as Dictionary<string, object>; if (d != null) asks.Add(d); }
+            }
+            catch (Exception) { }
+            Func<Dictionary<string, object>, string> line = d => "#" + d["id"] + " [" + d["state"] + "] \"" + d["words"] + "\"" + (d.ContainsKey("note") && d["note"] != null && d["note"].ToString().Length > 0 ? " (" + d["note"] + ")" : "");
+            Action save = () =>
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(file));
+                File.WriteAllText(file + ".tmp", Json.Serialize(new Dictionary<string, object> { { "asks", asks.ToArray() } }), new UTF8Encoding(false));
+                if (File.Exists(file)) File.Delete(file);
+                File.Move(file + ".tmp", file);
+            };
+            if (action == "list")
+            {
+                if (asks.Count == 0) return "The asks ledger is empty. Add each of the user's requests in their own words: aiondx asks add \"...\".";
+                int open = asks.Count(d => (d["state"] as string) == "open");
+                return string.Join("\n", asks.Select(line)) + "\n" + open + " of " + asks.Count + " open.";
+            }
+            if (action == "add")
+            {
+                string words = (Str(a, "words") ?? "").Trim();
+                if (words.Length == 0) throw new ToolError("words is required: the user's request in their own words.");
+                if (words.Length > 2000) words = words.Substring(0, 2000);
+                int id = asks.Count == 0 ? 1 : asks.Max(d => Convert.ToInt32(d["id"])) + 1;
+                asks.Add(new Dictionary<string, object> { { "id", id }, { "at", DateTime.UtcNow.ToString("o") }, { "words", words }, { "state", "open" }, { "by", ctx.Self.Name ?? "" } });
+                save();
+                return "Added #" + id + ". Mark it built, deferred or rejected when it is: aiondx asks mark " + id + " built.";
+            }
+            if (action == "mark")
+            {
+                int id = (int)Dbl(a, "id");
+                string state = (Str(a, "state") ?? "").Trim().ToLowerInvariant();
+                string note = (Str(a, "note") ?? "").Trim();
+                if (state != "open" && state != "built" && state != "deferred" && state != "rejected") throw new ToolError("state is built, deferred, rejected or open.");
+                if ((state == "deferred" || state == "rejected") && note.Length == 0) throw new ToolError("Say why in a note: --note \"...\" (the user reads it).");
+                var d = asks.FirstOrDefault(x => Convert.ToInt32(x["id"]) == id);
+                if (d == null) throw new ToolError("There is no ask #" + id + ". aiondx asks list shows them.");
+                d["state"] = state; d["note"] = note; d["markedAt"] = DateTime.UtcNow.ToString("o");
+                save();
+                return "#" + id + " is " + state + ".";
+            }
+            throw new ToolError("action is list, add or mark.");
+        }
+
+        static int AsksCli(string[] args, StreamWriter o)
+        {
+            const string help = "aiondx asks list | add \"THE USER'S WORDS\" | mark ID built|deferred|rejected|open [--note \"WHY\"]   (the ledger of the user's requests)";
+            string sub = args.Length > 1 ? args[1] : "list";
+            if (sub == "help" || sub == "--help" || sub == "-h") { o.WriteLine(help); return 0; }
+            try
+            {
+                var a = new Dictionary<string, object> { { "action", sub } };
+                if (sub == "add") a["words"] = string.Join(" ", args.Skip(2));
+                if (sub == "mark")
+                {
+                    if (args.Length > 2) { double n; if (double.TryParse(args[2].TrimStart('#'), out n)) a["id"] = n; }
+                    if (args.Length > 3) a["state"] = args[3];
+                    for (int i = 4; i < args.Length - 1; i++) if (args[i] == "--note") a["note"] = args[i + 1];
+                }
+                o.WriteLine(Asks(a));
+                return 0;
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
         }
 
         static int SkillsCli(string[] args, StreamWriter o)

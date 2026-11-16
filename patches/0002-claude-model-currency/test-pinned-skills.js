@@ -15,6 +15,7 @@ try {
   const cat = path.join(root, 'router');
   fs.mkdirSync(cat);
   for (const f of ['claude-account-router.js', 'claude-stream-proxy.js']) fs.copyFileSync(path.join(__dirname, f), path.join(cat, f));
+  fs.copyFileSync(path.join(__dirname, '..', '0009-identity', 'aiondx-plan-hooks.js'), path.join(cat, 'aiondx-plan-hooks.js'));
   const claudeExe = path.join(root, 'bin', 'claude.exe');
   fs.mkdirSync(path.dirname(claudeExe));
   fs.copyFileSync(process.execPath, claudeExe);
@@ -55,6 +56,11 @@ try {
   check('each pinned skill in full', /PERSONAL NOTES BODY/.test(t) && /SHARED REVIEW BODY/.test(t) && /<pinned-skill name="review"/.test(t), t);
   check('the bound project\'s skill wins over the user\'s own of the same name', /PROJECT BUILD BODY/.test(t) && !/PERSONAL BUILD BODY/.test(t), t);
   check('another chat\'s pins are not given', !/nope/.test(t));
+  // R-127: the planning hooks, passed with --settings (a file holding only hooks)
+  const st = a[a.indexOf('--settings') + 1];
+  let hk = null; try { hk = JSON.parse(fs.readFileSync(st, 'utf8')); } catch (e) {}
+  check('the planning hooks go in with --settings: a file of hooks only, prompt, stop and edits', st === path.join(data, 'aiondx-claude-hooks.json') && hk && JSON.stringify(Object.keys(hk)) === '["hooks"]' &&
+    /aiondx-plan-hooks.js" prompt$/.test(hk.hooks.UserPromptSubmit[0].hooks[0].command) && /" stop$/.test(hk.hooks.Stop[0].hooks[0].command) && hk.hooks.PreToolUse[0].matcher === 'Edit|Write|MultiEdit|NotebookEdit', JSON.stringify(hk));
   a = run([]);
   check('no system prompt argument from AionCore: one is added', /^Pinned skills:/.test(sp(a) || ''), JSON.stringify(a).slice(0, 300));
 } catch (e) {

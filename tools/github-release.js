@@ -79,6 +79,22 @@ if (!args.includes('--same-build')) {
   }
 }
 
+// R-127: no release while an ask of this cycle is unaccounted for. The chat running this (AIONDX_CONVERSATION_ID, set in every AionDX
+// chat) keeps the user's requests in its asks ledger (aiondx asks); any still open is listed and the release refused. --asks-ok overrides.
+if (!args.includes('--asks-ok')) {
+  const dataDir = process.env.AIONDX_DATA_DIR || path.join(process.env.APPDATA || '', 'AionDX');
+  const conv = process.env.AIONDX_CONVERSATION_ID || '', team = process.env.AIONDX_TEAM_ID || '';
+  const open = [];
+  for (const k of [conv && 'c-' + conv, team && 't-' + team].filter(Boolean)) {
+    try { for (const a of (JSON.parse(fs.readFileSync(path.join(dataDir, 'aiondx-asks', k + '.json'), 'utf8')).asks || [])) if (a.state === 'open') open.push(a); } catch (e) { /* no ledger */ }
+  }
+  if (open.length) {
+    console.error('github-release: ' + open.length + ' ask' + (open.length === 1 ? ' is' : 's are') + ' still open in this chat\'s ledger. Build, defer (with the reason) or reject each first (aiondx asks mark ID ...):\n' +
+      open.map((a) => '  #' + a.id + ' "' + String(a.words).slice(0, 160) + '"').join('\n') + '\nOr pass --asks-ok.');
+    process.exit(6);
+  }
+}
+
 // --check-only: the checks above, then stop before GitHub is touched (testing this tool once made a real draft release, November 13th).
 if (args.includes('--check-only')) { console.log('github-release: checks passed for ' + tag + ' (--check-only: nothing sent to GitHub)'); process.exit(0); }
 
