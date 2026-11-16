@@ -53,7 +53,12 @@ async function launch(opts) {
   if (hadKey) reg(['export', 'HKCU\\Software\\Classes\\aionui', regBackup, '/y']);
   if (!opts.keepProfile) fs.rmSync(profile, { recursive: true, force: true });
   fs.mkdirSync(profile, { recursive: true });
-  const env = Object.assign({}, process.env, { AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONDX_E2E_TEST: '1', AIONDX_E2E_USER_DATA_DIR: profile }, opts.env || {});
+  // The app scans every drive for chats kept on one, and would take in and write back to the user's real packages (November 16th,
+  // 2026): a test app looks only in an empty folder of its own, unless the test names the roots it wants.
+  const roots = path.join(os.tmpdir(), 'aiondx-live-roots');
+  fs.mkdirSync(roots, { recursive: true });
+  const env = Object.assign({}, process.env, { AIONDX_NO_ACTIVATE: '1', AIONDX_NO_UPDATE_CHECK: '1', AIONDX_E2E_TEST: '1', AIONDX_E2E_USER_DATA_DIR: profile,
+    AIONDX_PORTABLE_ROOTS: process.env.AIONDX_PORTABLE_ROOTS || (roots + path.sep) }, opts.env || {});
   // The Claude Code session this runs in must not be mistaken for the app's own: no runtime variables of an AionDX (or an earlier AionUi) go in.
   Object.keys(env).forEach((k) => { if (/^AION(DX|UI)_(RUNTIME_TOKEN|BASE_URL|USER_ID|CONVERSATION_ID|CDP_)/.test(k)) delete env[k]; });
   // Nor the installed AionDX's helpers on the inherited PATH: the app's agent detection runs what it finds there. Not enough on
