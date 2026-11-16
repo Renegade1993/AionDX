@@ -3577,29 +3577,29 @@
   // opening it shows where it was with Find it. A group can have a place: chats and teams made in it go there. A chat on a drive is written
   // back to the drive every minute and when AionDX closes; plugged into another PC, the drive's chats come in there.
   function placesBridge() { return window.aiondxPlaces && typeof window.aiondxPlaces.call === 'function' ? window.aiondxPlaces : null; }
-  var places = { items: null, at: 0, missing: {}, recent: [], groupPlaces: {}, last: null, home: '', el: null, ticked: {}, busy: false, filter: '', loading: null, banner: null, bannerFor: '', dismissed: {} };
+  var chatPlaces = { items: null, at: 0, missing: {}, recent: [], groupPlaces: {}, last: null, home: '', el: null, ticked: {}, busy: false, filter: '', loading: null, banner: null, bannerFor: '', dismissed: {} };
   function placeKey(it) { return it.kind + ':' + it.id; }
   function placesLoad() {
     var b = placesBridge();
     if (!b) return Promise.resolve(null);
-    if (places.loading) return places.loading;
-    places.loading = b.call('status').then(function (r) {
-      places.loading = null;
+    if (chatPlaces.loading) return chatPlaces.loading;
+    chatPlaces.loading = b.call('status').then(function (r) {
+      chatPlaces.loading = null;
       if (!r || !r.ok) return r;
-      places.items = r.items || [];
-      places.recent = r.places || [];
-      places.groupPlaces = r.groups || {};
-      places.last = r.last;
-      places.home = r.home || '';
-      places.at = Date.now();
-      places.missing = {};
-      places.items.forEach(function (it) { if (it.missing) places.missing[placeKey(it)] = it; });
+      chatPlaces.items = r.items || [];
+      chatPlaces.recent = r.places || [];
+      chatPlaces.groupPlaces = r.groups || {};
+      chatPlaces.last = r.last;
+      chatPlaces.home = r.home || '';
+      chatPlaces.at = Date.now();
+      chatPlaces.missing = {};
+      chatPlaces.items.forEach(function (it) { if (it.missing) chatPlaces.missing[placeKey(it)] = it; });
       placesMark();
       return r;
-    }, function (e) { places.loading = null; return { ok: false, error: String(e) }; });
-    return places.loading;
+    }, function (e) { chatPlaces.loading = null; return { ok: false, error: String(e) }; });
+    return chatPlaces.loading;
   }
-  function placeItem(key) { var l = places.items || []; for (var i = 0; i < l.length; i++) if (placeKey(l[i]) === key) return l[i]; return null; }
+  function placeItem(key) { var l = chatPlaces.items || []; for (var i = 0; i < l.length; i++) if (placeKey(l[i]) === key) return l[i]; return null; }
   /** Hold (or release) one chat's agent: AionCore ends its process and starts none until released. A chat working on a turn is refused unless stop. */
   async function holdConv(id, hold, stop) {
     try {
@@ -3648,8 +3648,8 @@
   /** A move, a bring-back, Find it or an undo: the chats held, the mover run, the chats released, the list read again. */
   async function placesDo(op, items, args, verb) {
     var b = placesBridge();
-    if (!b || places.busy) return null;
-    places.busy = true;
+    if (!b || chatPlaces.busy) return null;
+    chatPlaces.busy = true;
     placesPaintBusy(verb ? verb.charAt(0).toUpperCase() + verb.slice(1) + '...' : 'Working...');
     var held = [];
     try {
@@ -3661,10 +3661,10 @@
       return { ok: false, error: String(e && e.message || e) };
     } finally {
       await releaseIds(held || []);
-      places.busy = false;
+      chatPlaces.busy = false;
       await placesLoad();
       redrawIfOpen(items);
-      if (places.el && !places.el.hidden) paintPlaces();
+      if (chatPlaces.el && !chatPlaces.el.hidden) paintPlaces();
     }
   }
   // ---- a chat's project (R-128): its project's skills load into it. The list is AionDX's projects registry (main: aiondx:places projects/bind).
@@ -3791,12 +3791,12 @@
     var r = await placesDo('relink', [it], { item: { kind: it.kind, id: it.id }, name: it.name }, 'find it');
     if (!r) return;
     if (r.ok) { toast('Found "' + it.name + '". It works from ' + r.relinked.at + ' now.', ''); hideMissingBanner(); }
-    else if (!r.canceled) { placesStatus('Not found there: ' + (r.error || 'no answer'), true); if (!places.el || places.el.hidden) toast('Not found there: ' + (r.error || 'no answer'), ''); }
+    else if (!r.canceled) { placesStatus('Not found there: ' + (r.error || 'no answer'), true); if (!chatPlaces.el || chatPlaces.el.hidden) toast('Not found there: ' + (r.error || 'no answer'), ''); }
   }
   async function placesUndo() {
-    var last = places.last;
+    var last = chatPlaces.last;
     if (!last) return;
-    var items = (places.items || []).filter(function (i) { return (last.names || []).indexOf(i.name) >= 0; });
+    var items = (chatPlaces.items || []).filter(function (i) { return (last.names || []).indexOf(i.name) >= 0; });
     var ok = await placesAsk('Undo the last ' + (last.op === 'move' ? 'move' : last.op === 'back' ? 'bring-back' : 'Find it') + ' (' + (last.names || []).join(', ') + ')?', 'Undo');
     if (!ok) return;
     var r = await placesDo('undo', items, {}, 'undo');
@@ -3807,11 +3807,11 @@
   // ---- the dialog
   function openPlaces() {
     if (!placesBridge()) return;
-    if (!places.el) {
-      places.el = document.createElement('div');
-      places.el.className = 'aiondx-welcome-backdrop aiondx-places-backdrop';
-      places.el.setAttribute('data-testid', 'aiondx-places');
-      places.el.innerHTML =
+    if (!chatPlaces.el) {
+      chatPlaces.el = document.createElement('div');
+      chatPlaces.el.className = 'aiondx-welcome-backdrop aiondx-places-backdrop';
+      chatPlaces.el.setAttribute('data-testid', 'aiondx-places');
+      chatPlaces.el.innerHTML =
         '<div class="aiondx-welcome aiondx-places" role="dialog" aria-modal="true" aria-labelledby="aiondx-places-title">' +
           '<button type="button" class="aiondx-plugins-close" aria-label="Close">×</button>' +
           '<h2 id="aiondx-places-title" class="aiondx-welcome-title">Where your chats live</h2>' +
@@ -3831,14 +3831,14 @@
             (portableBridge() ? '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-places-everything" data-testid="aiondx-places-everything">Move everything...</button>' : '') +
           '</div>' +
         '</div>';
-      var box = places.el.firstChild;
-      places.el.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Escape' && !places.busy) closePlaces(); });
-      places.el.addEventListener('mousedown', function (ev) { if (ev.target === places.el && !places.busy) closePlaces(); });
-      box.querySelector('.aiondx-plugins-close').addEventListener('click', function () { if (!places.busy) closePlaces(); });
-      box.querySelector('.aiondx-places-find').addEventListener('input', function (ev) { places.filter = String(ev.target.value || '').trim().toLowerCase(); paintPlaces(); });
+      var box = chatPlaces.el.firstChild;
+      chatPlaces.el.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Escape' && !chatPlaces.busy) closePlaces(); });
+      chatPlaces.el.addEventListener('mousedown', function (ev) { if (ev.target === chatPlaces.el && !chatPlaces.busy) closePlaces(); });
+      box.querySelector('.aiondx-plugins-close').addEventListener('click', function () { if (!chatPlaces.busy) closePlaces(); });
+      box.querySelector('.aiondx-places-find').addEventListener('input', function (ev) { chatPlaces.filter = String(ev.target.value || '').trim().toLowerCase(); paintPlaces(); });
       box.querySelector('.aiondx-places-all').addEventListener('change', function (ev) {
         var on = ev.target.checked;
-        placesVisible().forEach(function (it) { if (on) places.ticked[placeKey(it)] = true; else delete places.ticked[placeKey(it)]; });
+        placesVisible().forEach(function (it) { if (on) chatPlaces.ticked[placeKey(it)] = true; else delete chatPlaces.ticked[placeKey(it)]; });
         paintPlaces();
       });
       box.querySelector('.aiondx-places-move').addEventListener('click', function (ev) { ev.preventDefault(); placesMoveMenu(ev.currentTarget); });
@@ -3848,36 +3848,36 @@
       if (every) every.addEventListener('click', function (ev) { ev.preventDefault(); closePlaces(); moveToDrive(); });
       box.querySelector('.aiondx-places-list').addEventListener('click', onPlacesListClick);
       box.querySelector('.aiondx-places-list').addEventListener('change', onPlacesListChange);
-      document.body.appendChild(places.el);
+      document.body.appendChild(chatPlaces.el);
     }
-    places.el.hidden = false;
-    places.ticked = {};
+    chatPlaces.el.hidden = false;
+    chatPlaces.ticked = {};
     placesStatus('Reading your chats...');
     paintPlaces();
     placesLoad().then(function (r) { if (!r || !r.ok) placesStatus('Could not read your chats: ' + ((r && r.error) || 'no answer'), true); else placesStatus(''); paintPlaces(); });
   }
-  function closePlaces() { if (places.el) places.el.hidden = true; if (pMenu) { pMenu.remove(); pMenu = null; } }
+  function closePlaces() { if (chatPlaces.el) chatPlaces.el.hidden = true; if (pMenu) { pMenu.remove(); pMenu = null; } }
   function placesStatus(text, bad) {
-    var el = places.el && places.el.querySelector('.aiondx-places-status');
+    var el = chatPlaces.el && chatPlaces.el.querySelector('.aiondx-places-status');
     if (!el) return;
     el.textContent = text || '';
     el.classList.toggle('aiondx-plugins-status--bad', !!bad);
   }
   function placesPaintBusy(text) {
     placesStatus(text);
-    if (!places.el) return;
-    Array.prototype.forEach.call(places.el.querySelectorAll('.aiondx-places-actions button, .aiondx-places-list button, .aiondx-places-list input'), function (b) { b.disabled = true; });
+    if (!chatPlaces.el) return;
+    Array.prototype.forEach.call(chatPlaces.el.querySelectorAll('.aiondx-places-actions button, .aiondx-places-list button, .aiondx-places-list input'), function (b) { b.disabled = true; });
   }
-  function placesMatch(it) { return !places.filter || String(it.name || '').toLowerCase().indexOf(places.filter) >= 0 || String(it.ws || '').toLowerCase().indexOf(places.filter) >= 0; }
+  function placesMatch(it) { return !chatPlaces.filter || String(it.name || '').toLowerCase().indexOf(chatPlaces.filter) >= 0 || String(it.ws || '').toLowerCase().indexOf(chatPlaces.filter) >= 0; }
   function groupOfKey(key) { return groupsState.items[key] || ''; }
   function placesVisible() {
-    return (places.items || []).filter(function (it) {
+    return (chatPlaces.items || []).filter(function (it) {
       if (placesMatch(it)) return true;
       var g = groupById(groupOfKey(placeKey(it)));
-      return !!(g && places.filter && g.name.toLowerCase().indexOf(places.filter) >= 0);
+      return !!(g && chatPlaces.filter && g.name.toLowerCase().indexOf(chatPlaces.filter) >= 0);
     });
   }
-  function placesTicked() { return (places.items || []).filter(function (it) { return places.ticked[placeKey(it)]; }); }
+  function placesTicked() { return (chatPlaces.items || []).filter(function (it) { return chatPlaces.ticked[placeKey(it)]; }); }
   function whereText(it) {
     if (it.missing) return 'Missing: it was in ' + it.ws;
     if (it.placed && it.place) return it.place;
@@ -3893,7 +3893,7 @@
     var cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'aiondx-places-cb';
-    cb.checked = !!places.ticked[k];
+    cb.checked = !!chatPlaces.ticked[k];
     cb.setAttribute('aria-label', it.name);
     lab.appendChild(cb);
     var ic = gEl('span', 'aiondx-places-icon');
@@ -3916,13 +3916,13 @@
     return row;
   }
   function paintPlaces() {
-    if (!places.el || places.el.hidden) return;
-    var box = places.el.firstChild;
+    if (!chatPlaces.el || chatPlaces.el.hidden) return;
+    var box = chatPlaces.el.firstChild;
     var list = box.querySelector('.aiondx-places-list');
     var keepScroll = list.scrollTop;
     list.textContent = '';
     if (!placesBridge()) { placesStatus('This works in the AionDX app, not in the browser (WebUI).', true); return; }
-    if (!places.items) { list.appendChild(gEl('div', 'aiondx-places-empty', 'Reading...')); return; }
+    if (!chatPlaces.items) { list.appendChild(gEl('div', 'aiondx-places-empty', 'Reading...')); return; }
     var vis = placesVisible();
     var visSet = {};
     vis.forEach(function (it) { visSet[placeKey(it)] = it; });
@@ -3931,7 +3931,7 @@
     groupsState.groups.forEach(function (g) {
       var keys = groupKeys(g.id).filter(function (k) { return visSet[k]; });
       keys.forEach(function (k) { inGroup[k] = true; });
-      var gmatch = places.filter && g.name.toLowerCase().indexOf(places.filter) >= 0;
+      var gmatch = chatPlaces.filter && g.name.toLowerCase().indexOf(chatPlaces.filter) >= 0;
       if (!keys.length && !gmatch) return;
       var head = gEl('div', 'aiondx-places-group');
       head.setAttribute('data-group', g.id);
@@ -3940,7 +3940,7 @@
       var cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'aiondx-places-gcb';
-      var n = keys.filter(function (k) { return places.ticked[k]; }).length;
+      var n = keys.filter(function (k) { return chatPlaces.ticked[k]; }).length;
       cb.checked = keys.length > 0 && n === keys.length;
       cb.indeterminate = n > 0 && n < keys.length;
       cb.setAttribute('aria-label', 'Group ' + g.name);
@@ -3950,7 +3950,7 @@
       lab.appendChild(ic);
       var txt = gEl('span', 'aiondx-places-text');
       txt.appendChild(gEl('span', 'aiondx-places-name', g.name + ' (' + keys.length + ')'));
-      var gp = places.groupPlaces[g.id];
+      var gp = chatPlaces.groupPlaces[g.id];
       txt.appendChild(gEl('span', 'aiondx-places-where', gp ? 'New chats in it go to ' + gp : 'New chats in it stay in AionDX\'s folder'));
       lab.appendChild(txt);
       head.appendChild(lab);
@@ -3973,24 +3973,24 @@
     var byNew = function (a, b) { return (b.missing - a.missing) || ((b.updated || 0) - (a.updated || 0)); };
     if (teams.length) { list.appendChild(gEl('div', 'aiondx-places-head', 'Teams')); teams.sort(byNew).forEach(function (it) { list.appendChild(placesRow(it)); }); }
     if (chats.length) { list.appendChild(gEl('div', 'aiondx-places-head', 'Chats')); chats.sort(byNew).forEach(function (it) { list.appendChild(placesRow(it)); }); }
-    if (!list.children.length) list.appendChild(gEl('div', 'aiondx-places-empty', places.filter ? 'Nothing by that name.' : 'No chats yet.'));
+    if (!list.children.length) list.appendChild(gEl('div', 'aiondx-places-empty', chatPlaces.filter ? 'Nothing by that name.' : 'No chats yet.'));
     list.scrollTop = keepScroll;
     var ticked = placesTicked();
     var all = box.querySelector('.aiondx-places-all');
-    var nVis = vis.filter(function (it) { return places.ticked[placeKey(it)]; }).length;
+    var nVis = vis.filter(function (it) { return chatPlaces.ticked[placeKey(it)]; }).length;
     all.checked = vis.length > 0 && nVis === vis.length;
     all.indeterminate = nVis > 0 && nVis < vis.length;
     var mv = box.querySelector('.aiondx-places-move'), bk = box.querySelector('.aiondx-places-back'), un = box.querySelector('.aiondx-places-undo');
-    mv.disabled = places.busy || !ticked.length;
+    mv.disabled = chatPlaces.busy || !ticked.length;
     mv.textContent = ticked.length ? 'Move ' + itemsWord(ticked) + ' to...' : 'Move ticked to...';
-    bk.disabled = places.busy || !ticked.some(function (i) { return i.placed; });
-    un.hidden = !places.last;
-    un.disabled = places.busy;
-    if (places.last) un.textContent = 'Undo the last ' + (places.last.op === 'move' ? 'move' : places.last.op === 'back' ? 'bring-back' : 'Find it');
+    bk.disabled = chatPlaces.busy || !ticked.some(function (i) { return i.placed; });
+    un.hidden = !chatPlaces.last;
+    un.disabled = chatPlaces.busy;
+    if (chatPlaces.last) un.textContent = 'Undo the last ' + (chatPlaces.last.op === 'move' ? 'move' : chatPlaces.last.op === 'back' ? 'bring-back' : 'Find it');
     var every = box.querySelector('.aiondx-places-everything');
-    if (every) every.disabled = places.busy;
-    var nMiss = (places.items || []).filter(function (i) { return i.missing; }).length;
-    if (!places.busy) {
+    if (every) every.disabled = chatPlaces.busy;
+    var nMiss = (chatPlaces.items || []).filter(function (i) { return i.missing; }).length;
+    if (!chatPlaces.busy) {
       var st = box.querySelector('.aiondx-places-status');
       if (st && !st.classList.contains('aiondx-plugins-status--bad')) st.textContent = nMiss ? plural(nMiss, 'chat is', 'chats are') + ' missing: Find it shows AionDX where ' + (nMiss === 1 ? 'it is' : 'they are') + ' now.' : '';
     }
@@ -4003,18 +4003,18 @@
     if (g) {
       var vis = {};
       placesVisible().forEach(function (it) { vis[placeKey(it)] = true; });
-      groupKeys(g.getAttribute('data-group')).forEach(function (k) { if (!vis[k]) return; if (t.checked) places.ticked[k] = true; else delete places.ticked[k]; });
+      groupKeys(g.getAttribute('data-group')).forEach(function (k) { if (!vis[k]) return; if (t.checked) chatPlaces.ticked[k] = true; else delete chatPlaces.ticked[k]; });
     } else {
       var row = t.closest('.aiondx-places-row');
       if (!row) return;
       var k = row.getAttribute('data-key');
-      if (t.checked) places.ticked[k] = true; else delete places.ticked[k];
+      if (t.checked) chatPlaces.ticked[k] = true; else delete chatPlaces.ticked[k];
     }
     paintPlaces();
   }
   function onPlacesListClick(ev) {
     var btn = ev.target && ev.target.closest ? ev.target.closest('button[data-act]') : null;
-    if (!btn || places.busy) return;
+    if (!btn || chatPlaces.busy) return;
     ev.preventDefault();
     var act = btn.getAttribute('data-act');
     if (act === 'find') { var row = btn.closest('.aiondx-places-row'); placesFind(placeItem(row.getAttribute('data-key'))); return; }
@@ -4038,7 +4038,7 @@
   function placesMoveMenu(anchor) {
     var items = placesTicked();
     if (!items.length) return;
-    if (!places.recent.length) { placesMove(items, null); return; }
+    if (!chatPlaces.recent.length) { placesMove(items, null); return; }
     if (pMenu) { pMenu.remove(); pMenu = null; return; }
     pMenu = gEl('div', 'aiondx-places-menu');
     pMenu.setAttribute('role', 'menu');
@@ -4050,12 +4050,12 @@
       b.addEventListener('click', function (ev) { ev.preventDefault(); pMenu.remove(); pMenu = null; placesMove(items, to); });
       pMenu.appendChild(b);
     };
-    places.recent.forEach(function (p) { add(p, p); });
+    chatPlaces.recent.forEach(function (p) { add(p, p); });
     add('Choose a folder...', null);
     var r = anchor.getBoundingClientRect();
     pMenu.style.left = Math.round(r.left) + 'px';
     pMenu.style.bottom = Math.round(window.innerHeight - r.top + 6) + 'px';
-    places.el.appendChild(pMenu);
+    chatPlaces.el.appendChild(pMenu);
     var off = function (ev) { if (pMenu && !pMenu.contains(ev.target) && ev.target !== anchor) { pMenu.remove(); pMenu = null; document.removeEventListener('mousedown', off, true); } };
     document.addEventListener('mousedown', off, true);
   }
@@ -4063,8 +4063,8 @@
   // ---- missing: marks in the sidebar, and a notice on the chat's own page
   function placesMark() {
     var want = {};
-    Object.keys(places.missing).forEach(function (k) {
-      var it = places.missing[k];
+    Object.keys(chatPlaces.missing).forEach(function (k) {
+      var it = chatPlaces.missing[k];
       if (it.kind === 'c') { var r = document.getElementById('c-' + it.id); if (r) want[k] = [r]; }
       else { var ti = document.querySelector('[data-testid="team-icon-' + it.id + '"], [data-testid="team-spinner-' + it.id + '"]'); var row = ti && ti.closest('.h-34px'); if (row) want[k] = [row]; }
       var g = document.querySelector('.aiondx-groups [data-aiondx-key="' + k + '"]');
@@ -4075,17 +4075,17 @@
     Array.prototype.forEach.call(document.querySelectorAll('[data-aiondx-missing]'), function (el) { if (now.indexOf(el) < 0) { el.removeAttribute('data-aiondx-missing'); if (/^Missing: /.test(el.title || '')) el.removeAttribute('title'); } });
     missingBanner();
   }
-  function hideMissingBanner() { if (places.banner) { places.banner.remove(); places.banner = null; } places.bannerFor = ''; }
+  function hideMissingBanner() { if (chatPlaces.banner) { chatPlaces.banner.remove(); chatPlaces.banner = null; } chatPlaces.bannerFor = ''; }
   function missingBanner() {
     var r = route();
     var key = r ? (r.kind === 'conv' ? 'c:' : 't:') + r.id : '';
-    var it = key && places.missing[key];
+    var it = key && chatPlaces.missing[key];
     if (!it && r && r.kind === 'conv') {   // a member's chat: its team's mark
-      var team = (places.items || []).filter(function (x) { return x.kind === 't' && x.missing && (x.convIds || []).indexOf(r.id) >= 0; })[0];
+      var team = (chatPlaces.items || []).filter(function (x) { return x.kind === 't' && x.missing && (x.convIds || []).indexOf(r.id) >= 0; })[0];
       if (team) { it = team; key = 't:' + team.id; }
     }
-    if (!it || places.dismissed[key]) { if (places.banner) hideMissingBanner(); return; }
-    if (places.banner && places.bannerFor === key && document.body.contains(places.banner)) return;
+    if (!it || chatPlaces.dismissed[key]) { if (chatPlaces.banner) hideMissingBanner(); return; }
+    if (chatPlaces.banner && chatPlaces.bannerFor === key && document.body.contains(chatPlaces.banner)) return;
     hideMissingBanner();
     var el = gEl('div', 'aiondx-place-missing');
     el.setAttribute('role', 'alert');
@@ -4102,17 +4102,17 @@
     var x = gEl('button', 'aiondx-place-missing-x', '×');
     x.type = 'button';
     x.setAttribute('aria-label', 'Hide this notice');
-    x.addEventListener('click', function (ev) { ev.preventDefault(); places.dismissed[key] = true; hideMissingBanner(); });
+    x.addEventListener('click', function (ev) { ev.preventDefault(); chatPlaces.dismissed[key] = true; hideMissingBanner(); });
     el.appendChild(x);
     document.body.appendChild(el);
-    places.banner = el;
-    places.bannerFor = key;
+    chatPlaces.banner = el;
+    chatPlaces.bannerFor = key;
   }
 
   // ---- a group's place: chats and teams made in it go there
   var placingNew = {};
   function placeIfNew(key, gid) {
-    var to = places.groupPlaces && places.groupPlaces[gid];
+    var to = chatPlaces.groupPlaces && chatPlaces.groupPlaces[gid];
     if (!to || !placesBridge() || placingNew[key]) return;
     placingNew[key] = Date.now();
     var kind = key.charAt(0), id = key.slice(2);
@@ -4144,7 +4144,7 @@
   var placesSyncing = false;
   async function placesSync() {
     var b = placesBridge();
-    if (!b || placesSyncing || places.busy || disabled()) return;
+    if (!b || placesSyncing || chatPlaces.busy || disabled()) return;
     placesSyncing = true;
     try {
       var r = await b.call('sync');
@@ -4201,7 +4201,7 @@
     if (!placesBridge()) return;
     setTimeout(function () { placesLoad().then(function () { placesSync(); }); }, 6000);
     setInterval(function () { placesSync(); }, 60000);
-    setInterval(function () { if (!places.busy && !document.hidden) placesLoad(); }, 120000);
+    setInterval(function () { if (!chatPlaces.busy && !document.hidden) placesLoad(); }, 120000);
   }
 
   function sizeText(n) {
@@ -8913,7 +8913,7 @@
   function timedRender() {
     var t0 = performance.now();
     render();
-    if (places.items && Object.keys(places.missing).length) { try { placesMark(); } catch (e) {} }
+    if (chatPlaces.items && Object.keys(chatPlaces.missing).length) { try { placesMark(); } catch (e) {} }
     lastRenderMs = performance.now() - t0;
     lastRenderAt = Date.now();
   }
