@@ -3284,7 +3284,7 @@ async function pageTarget() {
       const view = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-skills"]'); if (!p) return null;
         return { sum: p.querySelector('.aiondx-skills-sum').textContent, names: [...p.querySelectorAll('.aiondx-skill-name')].map((e) => e.textContent),
           layers: [...p.querySelectorAll('.aiondx-skill-layer')].map((e) => e.textContent), uses: [...p.querySelectorAll('.aiondx-skill-uses')].map((e) => e.textContent),
-          pins: [...p.querySelectorAll('.aiondx-skill-pin')].map((e) => e.textContent), states: [...p.querySelectorAll('.aiondx-skill-state')].map((e) => e.value) }; })()`);
+          pins: [...p.querySelectorAll('.aiondx-skill-pin:not(.aiondx-skill-use)')].map((e) => e.textContent), states: [...p.querySelectorAll('.aiondx-skill-state')].map((e) => e.value) }; })()`);
       check(sc, 'the panel says how many, how many used here and the context they take', view && view.sum === '3 skills, 2 used in this chat; about 1,229 tokens of its context.', JSON.stringify(view));
       check(sc, 'each skill with its layer, its uses here and when last, its pin and its switch', view && JSON.stringify(view.layers) === '["Atlas Game","Shared","AionDX"]' &&
         view.uses[0] === 'Used 3 times here, last November 12th' && view.uses[1] === 'Never used here' && JSON.stringify(view.pins) === '["Pinned","Pin","Pin"]' && JSON.stringify(view.states) === '["on","on","off"]', JSON.stringify(view));
@@ -3295,10 +3295,10 @@ async function pageTarget() {
       await sleep(300);
       const set = await js('window.__sk.find((c) => c[0] === "set")');
       check(sc, 'a switch is written for this chat\'s folder', set && JSON.stringify(set[1]) === JSON.stringify({ ws: 'C:\\chats\\harness1', name: 'review', state: 'name-only' }), JSON.stringify(set));
-      await humanClick('[data-skill="review"] .aiondx-skill-pin');
+      await humanClick('[data-skill="review"] .aiondx-skill-pin:not(.aiondx-skill-use)');
       await sleep(300);
       const pin = await js('window.__sk.find((c) => c[0] === "pin")');
-      const pinText = await js(`document.querySelector('[data-skill="review"] .aiondx-skill-pin').textContent`);
+      const pinText = await js(`document.querySelector('[data-skill="review"] .aiondx-skill-pin:not(.aiondx-skill-use)').textContent`);
       check(sc, 'Pin pins it for this chat', pin && JSON.stringify(pin[1]) === JSON.stringify({ key: 'c:harness1', name: 'review', on: true }) && pinText === 'Pinned', JSON.stringify([pin, pinText]));
       await humanClick('[data-testid="aiondx-skills-refresh"]');
       await sleep(900);
@@ -3307,6 +3307,13 @@ async function pageTarget() {
       check(sc, 'Refresh skills restarts the agent (the chat kept) and says so', JSON.stringify(rs) === '["/api/conversations/harness1/runtime/restart"]' && /^Refreshed/.test(rst), JSON.stringify([rs, rst]));
       const fits = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-skills"]').getBoundingClientRect(); return r.top >= 0 && r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()`);
       check(sc, 'the panel is on screen', fits);
+      await js(`(() => { const ta = document.querySelector('[data-testid="sendbox-input"] textarea, textarea[data-testid="sendbox-input"]'); const d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); d.set.call(ta, '  check the build'); ta.dispatchEvent(new Event('input', { bubbles: true })); return 0; })()`);
+      await humanClick('[data-skill="review"] .aiondx-skill-use');
+      await sleep(300);
+      const box = await js(`(() => { const ta = document.querySelector('[data-testid="sendbox-input"] textarea, textarea[data-testid="sendbox-input"]'); return { v: ta.value, focus: document.activeElement === ta, open: !!document.querySelector('[data-testid="aiondx-skills"]') }; })()`);
+      check(sc, 'Use puts the skill at the start of the message box the way a Claude chat takes it, and closes the panel', box.v === '/review check the build' && box.focus && !box.open, JSON.stringify(box));
+      await humanClick('[data-testid="aiondx-skills-btn"]');
+      await sleep(900);
       await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
       await sleep(200);
       await shots('dark');

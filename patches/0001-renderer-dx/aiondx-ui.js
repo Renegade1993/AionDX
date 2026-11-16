@@ -665,7 +665,7 @@
     var ex = d.extra || {};
     team = team || ex.teamId || ex.team_id || null;
     if (team) { var tg = await getJson('/api/teams/' + encodeURIComponent(team)); teamName = (tg && tg.data && tg.data.name) || ''; }
-    return { conv: conv, ws: ex.workspace || '', team: team, teamName: teamName, slot: slot, status: d.status };
+    return { conv: conv, ws: ex.workspace || '', team: team, teamName: teamName, slot: slot, status: d.status, backend: String(ex.backend || d.type || '').toLowerCase() };
   }
   var SK_STATES = [['on', 'On'], ['name-only', 'Name only'], ['user-invocable-only', 'You only'], ['off', 'Off']];
   async function openSkills(btn, t) {
@@ -759,6 +759,11 @@
           });
         });
         ctl.appendChild(pin);
+        var use = gEl('button', 'aiondx-skill-pin aiondx-skill-use', 'Use');
+        use.type = 'button';
+        use.title = 'Put it in the message box, the way this agent takes a skill by name';
+        use.addEventListener('click', function () { useSkill(t, chat, s); });
+        ctl.appendChild(use);
         row.appendChild(meta);
         list.appendChild(row);
       });
@@ -773,6 +778,25 @@
     find.addEventListener('input', paint);
     paint();
     refresh.addEventListener('click', function () { refreshSkills(chat, st, refresh); });
+  }
+  /** A skill put at the start of the message box, the way the chat's agent takes one by name: Claude Code and CodeBuddy "/name", Codex
+   *  "$name", the rest in words. The panel closes and the box has the cursor after it. */
+  function skillCall(backend, name) {
+    if (/^(claude|codebuddy)/.test(backend)) return '/' + name + ' ';
+    if (/^codex/.test(backend)) return '$' + name + ' ';
+    return 'Use the ' + name + ' skill: ';
+  }
+  function useSkill(t, chat, s) {
+    var ta = draftBox(t);
+    if (!ta) return;
+    var add = skillCall(chat.backend, s.name);
+    var v = add + String(ta.value || '').replace(/^\s+/, '');
+    var desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ta), 'value');
+    if (desc && desc.set) desc.set.call(ta, v); else ta.value = v;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    closeSkills();
+    ta.focus();
+    try { ta.setSelectionRange(add.length, add.length); } catch (e) {}
   }
   /** The agent restarted with its skills as they are now, once its turn is over (checked every 5 s, for 10 minutes). The chat is kept. */
   async function refreshSkills(chat, st, btn) {
