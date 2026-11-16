@@ -3728,9 +3728,9 @@ async function pageTarget() {
       await sleep(2600);
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
-      const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
+      const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.1' && JSON.stringify(c.names) === JSON.stringify(NEW281) &&
-        /^On a PC without Claude Code/.test(c.hows[0]) && /only if you left it open there/.test(c.hows[1]) && /Nothing asks a chat for a project/.test(c.hows[2]), JSON.stringify(c));
+        /^On a PC without Claude Code/.test(c.hows[0]) && /only if you left it open there/.test(c.hows[1]) && /ask you first only in chats that ask before acting/.test(c.hows[2]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
@@ -3772,7 +3772,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.1 card (with 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 19, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.1 card (with 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 20, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }

@@ -12302,6 +12302,7 @@
     items: [
       ['Install Claude Code from AionDX', 'On a PC without Claude Code, Sign in to your agents (Settings > Appearance) has an Install Claude Code button: it runs Anthropic\u2019s own installer, then you sign in in your browser. Add another Claude account now asks for its name in the panel.'],
       ['Docs stay as you left them', 'The Docs panel opens in a chat only if you left it open there; every other chat opens with it closed. An agent\u2019s new doc waits in the panel, and the Docs button counts it.'],
+      ['Skill changes your way', 'Settings > Skills: agents’ skill changes ask you first only in chats that ask before acting (the default), always, or never. A skill they replace is kept in .claude\\skills-history.'],
       ['Projects are optional', 'Nothing asks a chat for a project. DX Skills imports, writes and links skills into your own skills when you keep no projects, and agents propose skill changes there too.'],
       ['Your messages go out as you type them', 'AionDX no longer adds a line to a message it took for a correction, and the bell no longer says an agent had to be corrected.'],
       ['Fixes', 'The What\u2019s new card fits on screen and scrolls inside; a team member\u2019s agent menu no longer lists the same account twice.'],
