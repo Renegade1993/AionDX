@@ -116,7 +116,7 @@ let r = run('move', { items: [{ kind: 'c', id: 'c1' }], to: place1 });
 check('move: a chat to a folder: ok', r.code === 0 && r.out && r.out.ok, r.raw);
 const pkg1 = r.out && r.out.moved && r.out.moved[0] && r.out.moved[0].package;
 check('move: the package is named after the chat', pkg1 === path.join(place1, 'Chat c1 (c1)'), pkg1);
-const pws1 = path.join(pkg1 || '', 'workspace');
+const pws1 = path.join(pkg1 || '', 'chat-temp-c1');
 check('move: its files are in the package', fs.existsSync(path.join(pws1, 'a.txt')) && fs.readFileSync(path.join(pws1, 'sub', 'b.txt'), 'utf8').length === 1000);
 check('move: the old working folder is gone', !fs.existsSync(ws.c1));
 check('move: the neighbour whose name starts the same is untouched', fs.existsSync(path.join(ws.c2, 'a.txt')) && extraWs('c2') === ws.c2);
@@ -131,14 +131,14 @@ check('move: the neighbour\'s Claude history untouched', fs.existsSync(path.join
 const codex = fs.readFileSync(path.join(home, '.codex', 'sessions', 'one.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).cwd);
 check('move: another agent\'s file rewritten (only this chat\'s folder)', codex[0] === pws1 && codex[1] === ws.c2, codex.join(' | '));
 const man1 = pkg1 && JSON.parse(fs.readFileSync(path.join(pkg1, 'aiondx-chat.json'), 'utf8'));
-check('move: manifest says what it is and where it came from', man1 && man1.kind === 'c' && man1.id === 'c1' && man1.home.c1 === ws.c1 && man1.workspaces.length === 1 && man1.workspaces[0].rel === 'workspace', JSON.stringify(man1));
+check('move: manifest says what it is and where it came from', man1 && man1.kind === 'c' && man1.id === 'c1' && man1.home.c1 === ws.c1 && man1.workspaces.length === 1 && man1.workspaces[0].rel === 'chat-temp-c1', JSON.stringify(man1));
 {
   const pdb = new DatabaseSync(path.join(pkg1, 'aiondx-chat.db'), { readOnly: true });
   const nC = pdb.prepare('SELECT COUNT(*) AS n FROM conversations').get().n, nM = pdb.prepare('SELECT COUNT(*) AS n FROM messages').get().n;
   pdb.close();
   check('move: the package database holds this chat only (1 chat, 2 messages)', nC === 1 && nM === 2, nC + ' ' + nM);
 }
-check('move: its history copied into the package', fs.existsSync(path.join(pkg1, 'agents', '.claude', 'workspace', 's-c1.jsonl')) || fs.existsSync(path.join(pkg1, 'agents', '.claude', mangle('workspace'), 's-c1.jsonl')));
+check('move: its history copied into the package', fs.existsSync(path.join(pkg1, 'agents', '.claude', 'chat-temp-c1', 's-c1.jsonl')) || fs.existsSync(path.join(pkg1, 'agents', '.claude', mangle('chat-temp-c1'), 's-c1.jsonl')));
 check('move: no drive index on the PC\'s own drive', !fs.existsSync(path.join(path.parse(pkg1).root, 'AionDX-chats.json')) || true);
 
 {
@@ -195,6 +195,35 @@ r = run('undo', { journal: j4 });
 check('undo: ok', r.code === 0 && r.out.undone === true, r.raw);
 check('undo: everything as it was', snapshot() === original && fs.existsSync(path.join(ws.c4, 'a.txt')) && fs.existsSync(path.join(hist(ws.c4), 's-c4.jsonl')) && !fs.existsSync(path.join(place1, 'Chat c4 (c4)')));
 
+// ---------------------------------------------------------------- 6b. moved twice, and an old-style package tidied (November 16th, 2026)
+{
+  const placeA = path.join(BASE, 'Twice A'), placeB = path.join(BASE, 'Twice A', 'Inner B');
+  r = run('move', { items: [{ kind: 'c', id: 'c4' }], to: placeA });
+  const pA = r.out && r.out.moved && r.out.moved[0].package;
+  check('twice: the first move keeps the working folder its own name (AionUi lists any other name under Projects)', r.code === 0 && fs.existsSync(path.join(pA, 'chat-temp-c4', 'a.txt')) && extraWs('c4') === path.join(pA, 'chat-temp-c4'), r.raw);
+  r = run('move', { items: [{ kind: 'c', id: 'c4' }], to: placeB });
+  const pB = r.out && r.out.moved && r.out.moved[0].package;
+  check('twice: the second move leaves nothing of the first package behind', r.code === 0 && !fs.existsSync(pA) && fs.existsSync(path.join(pB, 'chat-temp-c4', 'a.txt')), JSON.stringify([r.raw, fs.existsSync(pA) && fs.readdirSync(pA)]));
+  const mB = JSON.parse(fs.readFileSync(path.join(pB, 'aiondx-chat.json'), 'utf8'));
+  check('twice: it still knows where it lived first', mB.home.c4 === ws.c4, JSON.stringify(mB.home));
+  r = run('undo', { journal: r.out.moved[0].journal });
+  check('twice: undoing the second move puts the first package back whole', r.code === 0 && r.out.undone && fs.existsSync(path.join(pA, 'aiondx-chat.json')) && fs.existsSync(path.join(pA, 'chat-temp-c4', 'a.txt')) && extraWs('c4') === path.join(pA, 'chat-temp-c4'), r.raw);
+  // a package as made before the fix: its working folder named "workspace"
+  fs.renameSync(path.join(pA, 'chat-temp-c4'), path.join(pA, 'workspace'));
+  r = run('relink', { item: { kind: 'c', id: 'c4' }, to: path.join(pA, 'workspace') });
+  const mf = path.join(pA, 'aiondx-chat.json');
+  const mA = JSON.parse(fs.readFileSync(mf, 'utf8')); mA.workspaces[0].rel = 'workspace'; fs.writeFileSync(mf, JSON.stringify(mA));
+  check('tidy: an old-style package to tidy', r.code === 0 && extraWs('c4') === path.join(pA, 'workspace'), r.raw);
+  r = run('tidy', {});
+  const t4 = r.out && r.out.tidied && r.out.tidied.find((t) => t.id === 'c4');
+  check('tidy: its working folder gets its own name back, and the chat uses it', r.code === 0 && t4 && !t4.error && fs.existsSync(path.join(pA, 'chat-temp-c4', 'a.txt')) && !fs.existsSync(path.join(pA, 'workspace')) &&
+    extraWs('c4') === path.join(pA, 'chat-temp-c4') && JSON.parse(fs.readFileSync(mf, 'utf8')).workspaces[0].rel === 'chat-temp-c4', JSON.stringify([r.raw, extraWs('c4')]));
+  r = run('tidy', {});
+  check('tidy: run again, nothing to do', r.code === 0 && !(r.out.tidied || []).some((t) => t.id === 'c4'), r.raw);
+  r = run('back', { items: [{ kind: 'c', id: 'c4' }] });
+  check('tidy: then Bring back takes it home, and nothing is left of the package', r.code === 0 && extraWs('c4') === ws.c4 && fs.existsSync(path.join(ws.c4, 'a.txt')) && !fs.existsSync(pA), r.raw);
+}
+
 // ---------------------------------------------------------------- 7. Find it: the package moved while AionDX was not looking
 r = run('move', { items: [{ kind: 'c', id: 'c3' }], to: place1 });
 const pkg3 = r.out && r.out.moved && r.out.moved[0].package;
@@ -209,9 +238,9 @@ r = run('relink', { item: { kind: 'c', id: 'c1' }, to: moved3 });
 check('find it: another chat\'s package is refused', r.code === 1 && /holds "Chat c3"/.test(r.out.error), r.raw);
 r = run('relink', { item: { kind: 'c', id: 'c3' }, to: path.join(BASE, 'Another place') });
 check('find it: ok, pointing at the folder the package is in', r.code === 0 && r.out.relinked.at === moved3, r.raw);
-check('find it: the chat uses the folder where it is now', extraWs('c3') === path.join(moved3, 'workspace'), extraWs('c3'));
-check('find it: messages point there', q("SELECT content FROM messages WHERE id = 'c3-m1'")[0].content.includes(esc(path.join(moved3, 'workspace'))));
-check('find it: history follows', fs.existsSync(path.join(hist(path.join(moved3, 'workspace')), 's-c3.jsonl')));
+check('find it: the chat uses the folder where it is now', extraWs('c3') === path.join(moved3, 'chat-temp-c3'), extraWs('c3'));
+check('find it: messages point there', q("SELECT content FROM messages WHERE id = 'c3-m1'")[0].content.includes(esc(path.join(moved3, 'chat-temp-c3'))));
+check('find it: history follows', fs.existsSync(path.join(hist(path.join(moved3, 'chat-temp-c3')), 's-c3.jsonl')));
 r = run('back', { items: [{ kind: 'c', id: 'c3' }] });
 check('find it: and back from there', r.code === 0 && extraWs('c3') === ws.c3 && fs.existsSync(path.join(ws.c3, 'a.txt')), r.raw);
 check('find it: rows as they were before the first move', snapshot() === original);

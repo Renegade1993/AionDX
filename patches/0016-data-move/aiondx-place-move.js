@@ -20,6 +20,8 @@
  *   relink { item, to: <folder> }                                       the package (or working folder) is at <folder> now: use it from there
  *   export { items: [...] }                                             the rows into each package (kept current while the chat lives there)
  *   import { package: <folder> }                                        a package another PC wrote: its chat (or team) into this database
+ *   tidy   { items?: [...] }                                           packages made before November 16th, 2026: their working folders
+ *                                                                       get their own names back (AionUi listed "workspace" ones under Projects)
  *   undo   { journal: <file> }                                          a move undone from its journal
  *   status {}                                                           every chat and team: its working folder, whether it is there, placed
  * Common: --db <chats database> --home <user folder> --work <folder for journals and backups>. Prints one JSON line; exit 0 ok, 1 refused
@@ -245,23 +247,24 @@ function undoJournal(j, db) {
 const MANIFEST = 'aiondx-chat.json', ROWS = 'aiondx-chat.db', DRIVE_INDEX = 'AionDX-chats.json';
 function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } }
 /** Where each working folder of an item goes in its package: the first (a chat's, or a team's) is workspace\, others members\<n>\. */
-function packageLayout(db, info, pkg) {
+function packageLayout(db, info, pkg, homeMap) {
   const map = [];   // [{ convId, old, rel }]
   const seen = new Map();
   const teamWs = info.kind === 't' && info.team.workspace ? info.team.workspace : null;
-  if (teamWs) seen.set(teamWs.toLowerCase(), 'workspace');
+  const teamRel = ownName((homeMap && homeMap._team) || teamWs);
+  if (teamWs) seen.set(teamWs.toLowerCase(), teamRel);
   let k = 0;
   for (const id of info.convIds) {
     const ws = workspaceOf(db, id);
     if (!ws) continue;
     let rel = seen.get(ws.toLowerCase());
     if (!rel) {
-      rel = !teamWs && !seen.size ? 'workspace' : path.join('members', String(++k) + ' ' + safeName((info.agents || []).find((a) => a.conversation_id === id) ? (info.agents.find((a) => a.conversation_id === id).name) : id.slice(0, 8)));
+      rel = !teamWs && !seen.size ? ownName((homeMap && homeMap[id]) || ws) : path.join('members', String(++k) + ' ' + safeName((info.agents || []).find((a) => a.conversation_id === id) ? (info.agents.find((a) => a.conversation_id === id).name) : id.slice(0, 8)));
       seen.set(ws.toLowerCase(), rel);
     }
     map.push({ convId: id, old: ws, rel });
   }
-  if (teamWs) map.push({ convId: null, old: teamWs, rel: 'workspace' });
+  if (teamWs) map.push({ convId: null, old: teamWs, rel: teamRel });
   void pkg;
   return map;
 }
@@ -385,10 +388,12 @@ function cmdMove(db, a, ctx) {
     const pkg = path.join(to, safeName(info.name) + ' (' + info.id.slice(0, 8) + ')');
     if (exists(pkg)) throw new Error('Something is already at ' + pkg + '.');
     const journal = newJournal(ctx.work, 'move ' + info.kind + ':' + info.id);
+    // moved again from a place it already has (November 16th, 2026: the first package's own files were left behind): that package
+    const prev = packageOf(db, info);
     try {
       fs.mkdirSync(pkg, { recursive: true });
       journal.steps.push({ kind: 'mkdir', dir: pkg });
-      const layout = packageLayout(db, info, pkg);
+      const layout = packageLayout(db, info, pkg, prev && prev.m.home);
       const home = {};
       const pairs = [];
       const moved = new Set();
@@ -402,6 +407,7 @@ function cmdMove(db, a, ctx) {
         moveFolder(l.old, dest, journal);
         pairs.push([l.old, dest]);
       }
+      if (prev && prev.m.home) Object.assign(home, prev.m.home);
       journal.save();
       const cdirs = claudeDirs(ctx.home, db);
       for (const [o, n] of pairs) moveClaudeHistory(cdirs, o, n, journal);
@@ -415,6 +421,7 @@ function cmdMove(db, a, ctx) {
       indexOnDrive(pkg, info, false);
       journal.steps.push({ kind: 'index', pkg, id: info.id, ikind: info.kind, name: info.name, remove: false });
       for (const old of journal.removeAfter) { try { fs.rmSync(old, { recursive: true, force: true }); } catch (e) { journal.notes.push('the old folder could not be removed: ' + old); } }
+      if (prev && path.resolve(prev.dir).toLowerCase() !== path.resolve(pkg).toLowerCase()) dropPackageFiles(prev.dir, journal);
       journal.state = 'done'; journal.save();
       done.push({ kind: info.kind, id: info.id, name: info.name, package: pkg, folders: pairs.length, rows: changed, agentFiles: agents.files, journal: journal.file });
     } catch (e) {
@@ -432,10 +439,9 @@ function cmdBack(db, a, ctx) {
   const done = [];
   for (const item of a.items || []) {
     const info = itemInfo(db, item);
-    const firstWs = workspaceOf(db, info.convIds[0]) || (info.team && info.team.workspace);
-    const pkg = firstWs ? path.dirname(firstWs.replace(/[\\/]members[\\/][^\\/]+$/, '').replace(/[\\/]workspace$/, '') + path.sep + 'x') : null;
-    const m = pkg && readJson(path.join(pkg, MANIFEST));
-    if (!m || m.id !== info.id) throw new Error('"' + info.name + '" is not in a place of its own (it is in AionDX\'s folder already).');
+    const at = packageOf(db, info);
+    const pkg = at ? at.dir : null, m = at ? at.m : null;
+    if (!m) throw new Error('"' + info.name + '" is not in a place of its own (it is in AionDX\'s folder already).');
     const journal = newJournal(ctx.work, 'back ' + info.kind + ':' + info.id);
     try {
       const pairs = [];
@@ -456,19 +462,7 @@ function cmdBack(db, a, ctx) {
       indexOnDrive(pkg, info, true);
       journal.steps.push({ kind: 'index', pkg, id: info.id, ikind: info.kind, name: info.name, remove: true });
       for (const old of journal.removeAfter) { try { fs.rmSync(old, { recursive: true, force: true }); } catch { journal.notes.push('could not remove ' + old); } }
-      // the package's own files go (a copy kept with the journal, for undo), and the package's folder once nothing else is in it
-      try {
-        for (const f of [MANIFEST, ROWS, 'agents']) {
-          const p = path.join(pkg, f);
-          if (!exists(p)) continue;
-          const saved = path.join(journal.dir, 'package', f);
-          fs.mkdirSync(path.dirname(saved), { recursive: true });
-          fs.cpSync(p, saved, { recursive: true, preserveTimestamps: true });
-          journal.steps.push({ kind: 'saved', file: p, saved });
-          fs.rmSync(p, { recursive: true, force: true });
-        }
-        if (!fs.readdirSync(pkg).length) { fs.rmdirSync(pkg); journal.steps.push({ kind: 'rmdir', dir: pkg }); }
-      } catch { /* left for the user */ }
+      dropPackageFiles(pkg, journal);
       journal.state = 'done'; journal.save();
       done.push({ kind: info.kind, id: info.id, name: info.name, to: pairs.map((p) => p[1]), journal: journal.file });
     } catch (e) {
@@ -481,6 +475,98 @@ function cmdBack(db, a, ctx) {
   }
   return { back: done };
 }
+/** The package an item is in now: the folder holding its working folder (workspace\ or members\<n>\) whose manifest is this item's. */
+function packageOf(db, info) {
+  const firstWs = workspaceOf(db, info.convIds[0]) || (info.team && info.team.workspace);
+  return firstWs ? pkgDirOf(firstWs, info.id) : null;
+}
+/** The package holding a working folder: its parent (workspace\ or the folder's own name), or two up (members\<n>\). */
+function pkgDirOf(ws, id) {
+  const cands = [path.dirname(ws.replace(/[\\/]members[\\/][^\\/]+$/i, '').replace(/[\\/]workspace$/i, '') + path.sep + 'x'), path.dirname(ws), path.dirname(path.dirname(ws))];
+  for (const d of cands) { const m = readJson(path.join(d, MANIFEST)); if (m && (!id || m.id === id)) return { dir: d, m }; }
+  return null;
+}
+/** A working folder that was in a package (now missing or not): its folder is named for the package's shape, or its parent is
+ *  "<name> (<id8>)". */
+function looksPackaged(ws, id) {
+  return /[\\/](workspace|members[\\/][^\\/]+)$/i.test(ws) || (!!id && path.basename(path.dirname(ws)).endsWith('(' + String(id).slice(0, 8) + ')'));
+}
+/** The name a working folder keeps in its package: its own when AionUi counts it as a chat's own folder (a "-temp-" name; any other
+ *  name made AionUi list the chat under Projects, November 16th, 2026), else "workspace". */
+function ownName(ws) {
+  const leaf = ws ? path.basename(ws) : '';
+  return /-temp-/.test(leaf) ? leaf : 'workspace';
+}
+/** A package's own files go once its working folders have moved out (a copy kept with the journal, for undo), then an empty members\
+ *  folder, then the package's folder once nothing else is in it. Anything the user put there is left. */
+function dropPackageFiles(pkg, journal) {
+  try {
+    for (const f of [MANIFEST, ROWS, 'agents']) {
+      const p = path.join(pkg, f);
+      if (!exists(p)) continue;
+      const saved = path.join(journal.dir, 'package', f);
+      fs.mkdirSync(path.dirname(saved), { recursive: true });
+      fs.cpSync(p, saved, { recursive: true, preserveTimestamps: true });
+      journal.steps.push({ kind: 'saved', file: p, saved });
+      fs.rmSync(p, { recursive: true, force: true });
+    }
+    const mem = path.join(pkg, 'members');
+    if (exists(mem) && !fs.readdirSync(mem).length) { fs.rmdirSync(mem); journal.steps.push({ kind: 'rmdir', dir: mem }); }
+    if (!fs.readdirSync(pkg).length) { fs.rmdirSync(pkg); journal.steps.push({ kind: 'rmdir', dir: pkg }); }
+  } catch { /* left for the user */ }
+}
+/** Tidy: a package made before November 16th, 2026 named its working folder "workspace", so AionUi listed the chat under Projects.
+ *  Each such folder gets its own name back (from the manifest's record of where it lived), with the rows, the agents' history and the
+ *  manifest following. One journal per item; a failure puts that item back. Items with nothing to do are skipped. */
+function cmdTidy(db, a, ctx) {
+  const out = [];
+  let items = a.items;
+  if (!items) {   // every chat and team
+    items = db.prepare('SELECT id FROM conversations').all().map((r) => ({ kind: 'c', id: r.id }));
+    if (hasTable(db, 'teams')) items = items.concat(db.prepare('SELECT id FROM teams').all().map((r) => ({ kind: 't', id: r.id })));
+  }
+  for (const item of items) {
+    let info; try { info = itemInfo(db, item); } catch (e) { continue; }
+    if (item.kind === 'c' && info.team) continue;   // a member: its team is tidied
+    const at = packageOf(db, info);
+    if (!at || !Array.isArray(at.m.workspaces)) continue;
+    const ren = [];
+    for (const w of at.m.workspaces) {
+      if (w.rel !== 'workspace') continue;
+      const want = ownName(at.m.home && at.m.home[w.convId || '_team']);
+      if (want === 'workspace' || ren.some((r) => r.to === want)) continue;
+      ren.push({ from: path.join(at.dir, 'workspace'), to: want });
+    }
+    if (!ren.length) continue;
+    const journal = newJournal(ctx.work, 'tidy ' + info.kind + ':' + info.id);
+    try {
+      const pairs = [];
+      for (const r of ren) {
+        const dest = path.join(at.dir, r.to);
+        if (exists(dest)) throw new Error('Something is already at ' + dest + '.');
+        moveFolder(r.from, dest, journal);
+        pairs.push([r.from, dest]);
+      }
+      journal.save();
+      const cdirs = claudeDirs(ctx.home, db);
+      for (const [o, n] of pairs) moveClaudeHistory(cdirs, o, n, journal);
+      const rows = rewriteRows(db, info, pairs, journal);
+      journal.save();
+      moveOtherHistory(ctx.home, pairs, journal, 30000);
+      for (const f of [MANIFEST, ROWS]) { const pth = path.join(at.dir, f); if (exists(pth)) { const saved = path.join(journal.dir, 'package', f); fs.mkdirSync(path.dirname(saved), { recursive: true }); fs.copyFileSync(pth, saved); journal.steps.push({ kind: 'saved', file: pth, saved }); } }
+      const layout = at.m.workspaces.map((w) => ({ convId: w.convId, old: path.join(at.dir, w.rel === 'workspace' ? (ren[0] ? ren[0].to : w.rel) : w.rel), rel: w.rel === 'workspace' ? (ren[0] ? ren[0].to : w.rel) : w.rel }));
+      exportRows(db, info, at.dir, layout, at.m.home, ctx.home);
+      for (const old of journal.removeAfter) { try { fs.rmSync(old, { recursive: true, force: true }); } catch { /* left */ } }
+      journal.state = 'done'; journal.save();
+      out.push({ kind: info.kind, id: info.id, name: info.name, renamed: ren.map((r) => r.to), rows, journal: journal.file });
+    } catch (e) {
+      journal.state = 'failed'; journal.save();
+      const left = undoJournal(journal, db);
+      out.push({ kind: info.kind, id: info.id, name: info.name, error: e.message + (left.length ? ' (not everything could be put back: ' + left.join('; ') + ')' : '') });
+    }
+  }
+  return { tidied: out };
+}
 /** Find it: the folder the user points at is the package (or the bare working folder) now; the rows and history follow it there. */
 function cmdRelink(db, a, ctx) {
   const info = itemInfo(db, a.item || {});
@@ -491,7 +577,7 @@ function cmdRelink(db, a, ctx) {
     try { for (const e of fs.readdirSync(to, { withFileTypes: true })) { if (!e.isDirectory()) continue; const mm = readJson(path.join(to, e.name, MANIFEST)); if (mm && mm.id === info.id) { to = path.join(to, e.name); m = mm; break; } } } catch { /* unreadable */ }
   }
   const was = workspaceOf(db, info.convIds[0]) || (info.team && info.team.workspace) || '';
-  if (!m && /[\\/](workspace|members[\\/][^\\/]+)$/i.test(was) && readJson(path.join(was.replace(/[\\/]members[\\/][^\\/]+$/i, '').replace(/[\\/]workspace$/i, ''), MANIFEST)) === null)
+  if (!m && looksPackaged(was, info.id) && !pkgDirOf(was, info.id))
     throw new Error('"' + info.name + '" is not in that folder. Pick the folder named "' + safeName(info.name) + ' (' + info.id.slice(0, 8) + ')", or the one it is in.');
   const journal = newJournal(ctx.work, 'relink ' + info.kind + ':' + info.id);
   const pairs = [];
@@ -526,10 +612,9 @@ function cmdExport(db, a, ctx) {
   const out = [];
   for (const item of a.items || []) {
     let info; try { info = itemInfo(db, item); } catch (e) { out.push({ id: item.id, error: e.message }); continue; }
-    const ws = workspaceOf(db, info.convIds[0]) || (info.team && info.team.workspace);
-    const pkg = ws ? path.dirname(ws.replace(/[\\/]members[\\/][^\\/]+$/, '').replace(/[\\/]workspace$/, '') + path.sep + 'x') : null;
-    const m = pkg && readJson(path.join(pkg, MANIFEST));
-    if (!m || m.id !== info.id) { out.push({ id: info.id, skipped: 'not placed' }); continue; }
+    const at = packageOf(db, info);
+    const pkg = at ? at.dir : null, m = at ? at.m : null;
+    if (!m) { out.push({ id: info.id, skipped: 'not placed' }); continue; }
     if (!a.force && m.version === localVersion(db, info)) { out.push({ id: info.id, skipped: 'unchanged' }); continue; }
     const layout = m.workspaces.map((w) => ({ convId: w.convId, old: path.join(pkg, w.rel), rel: w.rel }));
     const nm = exportRows(db, info, pkg, layout, m.home, ctx && ctx.home);
@@ -622,9 +707,8 @@ function cmdStatus(db) {
   const look = (ws, id) => {
     if (!ws) return { exists: false, placed: false };
     const there = exists(ws);
-    const pkg = path.dirname(ws.replace(/[\\/]members[\\/][^\\/]+$/i, '').replace(/[\\/]workspace$/i, '') + path.sep + 'x');
-    const m = there ? readJson(path.join(pkg, MANIFEST)) : null;
-    return { exists: there, placed: !!(m && m.id === id), package: m && m.id === id ? pkg : null, packaged: /[\\/](workspace|members[\\/][^\\/]+)$/i.test(ws) };
+    const at = there ? pkgDirOf(ws, id) : null;
+    return { exists: there, placed: !!at, package: at ? at.dir : null, packaged: looksPackaged(ws, id) };
   };
   const hasArch = tableCols(db, 'conversations').some((c) => c.name === 'archived_at');
   for (const c of db.prepare('SELECT id, name, extra, updated_at' + (hasArch ? ', archived_at' : ', NULL AS archived_at') + ' FROM conversations').all()) {
@@ -656,9 +740,10 @@ if (require.main === module) {
     db = openDb(dbFile, cmd === 'status');
     const r = cmd === 'move' ? cmdMove(db, args, ctx) : cmd === 'back' ? cmdBack(db, args, ctx) : cmd === 'relink' ? cmdRelink(db, args, ctx)
       : cmd === 'status' ? cmdStatus(db) : cmd === 'export' ? cmdExport(db, args, ctx) : cmd === 'import' ? cmdImport(db, args, ctx)
+      : cmd === 'tidy' ? cmdTidy(db, args, ctx)
       : cmd === 'undo' ? (() => { const j = readJson(args.journal); if (!j) throw new Error('No journal at ' + args.journal + '.'); const left = undoJournal(j, db); return { undone: !left.length, left }; })()
       : null;
-    if (!r) done({ ok: false, error: 'Commands: status, move, back, relink, export, import, undo.' }, 1);
+    if (!r) done({ ok: false, error: 'Commands: status, move, back, relink, export, import, tidy, undo.' }, 1);
     db.close(); db = null;
     done(Object.assign({ ok: true }, r));
   } catch (e) {
