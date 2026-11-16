@@ -1001,8 +1001,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       fs.readFileSync(path.join(pend, 'SKILL.md'), 'utf8').endsWith('new') && fs.existsSync(path.join(pend, 'scripts', 'b.ps1')) && fs.readFileSync(path.join(projRoot, '.claude', 'skills', 'build', 'SKILL.md'), 'utf8').endsWith('old'), pr.stdout);
     const rvp = JSON.parse(fs.readFileSync(path.join(pend, '.aiondx-review.json'), 'utf8'));
     check('its review says who proposed it, not approved', /^proposed by Worker$/.test(rvp.source) && rvp.approved === false && rvp.proposal === true, JSON.stringify(rvp));
-    pr = await run(CLI, ['skills', 'propose', 'newone', '--from', path.join(draft, 'SKILL.md')], penv('convS'));
-    check('a solo chat with no project is asked to name it', pr.status === 1 && /This chat has no project; name it: --project KEY \(atlas\)/.test(pr.stdout), pr.stdout);
+    const fakeHome = path.join(pd, 'home');
+    pr = await run(CLI, ['skills', 'propose', 'newone', '--from', path.join(draft, 'SKILL.md')], Object.assign(penv('convS'), { USERPROFILE: fakeHome }));
+    check('a solo chat with no project (projects are optional): the proposal waits in the user\'s own skills, under Yours', pr.status === 0 && /^Your new skill newone is waiting .*Settings > Skills, Yours\)/.test(pr.stdout) &&
+      fs.existsSync(path.join(fakeHome, '.claude', 'skills-pending', 'newone', 'SKILL.md')) && !fs.existsSync(path.join(projRoot, '.claude', 'skills-pending', 'newone')), pr.stdout);
     pr = await run(CLI, ['skills', 'propose', 'newone', '--from', path.join(draft, 'SKILL.md'), '--project', 'atlas'], penv('convS'));
     check('with --project, a new skill from one SKILL.md', pr.status === 0 && /^Your new skill newone is waiting/.test(pr.stdout) && fs.existsSync(path.join(projRoot, '.claude', 'skills-pending', 'newone', 'SKILL.md')), pr.stdout);
     pr = await run(CLI, ['skills', 'propose', '../x', '--from', draft], penv('convW'));

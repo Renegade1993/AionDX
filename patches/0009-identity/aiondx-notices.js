@@ -19,6 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 function readJson(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
 
@@ -67,20 +68,17 @@ function noticesFor(dataDir, convId, opts) {
   const rec = readJson(path.join(dataDir, 'aiondx-launches', convId + '.json'));
   if (!rec || rec.v !== 1) return [];
   const reg = readJson(path.join(dataDir, 'aiondx-projects.json'));
-  // R-128: a chat with no project gets no project's skills; asked once, until a project (or "No project") is chosen for it
-  const bound = reg && reg.bindings && Object.prototype.hasOwnProperty.call(reg.bindings, 'conv:' + convId);
-  const projectNotice = !rec.project && !rec.team && reg && reg.projects && Object.keys(reg.projects).length && !bound
-    ? [{ id: 'no-project:' + convId, kind: 'project', conv: convId, title: 'Which project is this chat for?',
-      text: 'This chat has no project, so it has your own and the shared skills but not a project\'s. Choose its project and its skills load when the agent next starts.',
-      action: { op: 'project', label: 'Choose a project' } }]
-    : [];
-  // R-128 step 6: skill changes (imports, agents' proposals) waiting for the user in this chat's project
+  // Projects are optional (the user, November 16th, 2026: "we should not assume people use it"): a chat with no project is never asked
+  // for one. R-128 step 6: skill changes (imports, agents' proposals) waiting for the user, in this chat's project and in their own layer.
+  const projectNotice = [];
   const proj = rec.project && reg && reg.projects ? reg.projects[rec.project] : null;
-  let waiting = 0;
-  try { if (proj && proj.root) waiting = fs.readdirSync(path.join(proj.root, '.claude', 'skills-pending'), { withFileTypes: true }).filter((e) => e.isDirectory()).length; } catch { /* none */ }
-  if (waiting) projectNotice.push({ id: 'skills-pending:' + rec.project + ':' + waiting, kind: 'skills', conv: convId,
+  const waitingIn = (root) => { try { return fs.readdirSync(path.join(root, '.claude', 'skills-pending'), { withFileTypes: true }).filter((e) => e.isDirectory()).length; } catch { return 0; } };
+  const mine = waitingIn(o.home || os.homedir());
+  const theirs = proj && proj.root ? waitingIn(proj.root) : 0;
+  const waiting = mine + theirs;
+  if (waiting) projectNotice.push({ id: 'skills-pending:' + (rec.project || '') + ':' + theirs + ':' + mine, kind: 'skills', conv: convId,
     title: waiting === 1 ? 'A skill change is waiting for you' : waiting + ' skill changes are waiting for you',
-    text: 'New or changed skills for ' + path.basename(proj.root) + ' wait in DX Skills until you look at what they do and approve them.',
+    text: 'New or changed skills' + (theirs && !mine ? ' for ' + path.basename(proj.root) : '') + ' wait in DX Skills until you look at what they do and approve them.',
     action: { op: 'skills', label: 'Review them' } });
   // R-127: the planning hook saw a message of the user's that repeats or corrects (aiondx-plan-hooks.js prompt); shown for 12 hours
   const flag = readJson(path.join(dataDir, 'aiondx-flags', convId + '.json'));

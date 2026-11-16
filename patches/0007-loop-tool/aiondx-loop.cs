@@ -4175,11 +4175,18 @@ namespace AionDx
                 }
                 catch (ToolError) { }
             }
-            if (string.IsNullOrEmpty(project)) throw new ToolError("This chat has no project; name it: --project KEY (" + (projects != null ? string.Join(", ", projects.Keys) : "none known") + ").");
-            object po;
-            var p = projects != null && projects.TryGetValue(project, out po) ? po as Dictionary<string, object> : null;
-            string root = p != null && p.ContainsKey("root") ? p["root"] as string : null;
-            if (string.IsNullOrEmpty(root)) throw new ToolError("There is no project called " + project + ".");
+            // Projects are optional (the user, November 16th, 2026): with none, the proposal waits in the user's own layer
+            // (~\.claude\skills-pending), shown in DX Skills under Yours.
+            string root;
+            if (string.IsNullOrEmpty(project)) root = Environment.GetEnvironmentVariable("USERPROFILE") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            else
+            {
+                object po;
+                var p = projects != null && projects.TryGetValue(project, out po) ? po as Dictionary<string, object> : null;
+                root = p != null && p.ContainsKey("root") ? p["root"] as string : null;
+                if (string.IsNullOrEmpty(root)) throw new ToolError("There is no project called " + project + ".");
+            }
+            string where = string.IsNullOrEmpty(project) ? "Yours" : Path.GetFileName(root);
             string dest = Path.Combine(root, ".claude", "skills-pending", name);
             if (Directory.Exists(dest)) Directory.Delete(dest, true);
             Directory.CreateDirectory(dest);
@@ -4189,7 +4196,7 @@ namespace AionDx
             var review = new Dictionary<string, object> { { "source", "proposed by " + who }, { "at", DateTime.UtcNow.ToString("o") }, { "approved", false }, { "proposal", true } };
             File.WriteAllText(Path.Combine(dest, ".aiondx-review.json"), Json.Serialize(review), new UTF8Encoding(false));
             bool change = File.Exists(Path.Combine(root, ".claude", "skills", name, "SKILL.md"));
-            return (change ? "Your change to " : "Your new skill ") + name + " is waiting for the user's approval in DX Skills (Settings > Skills, " + Path.GetFileName(root) + "). " +
+            return (change ? "Your change to " : "Your new skill ") + name + " is waiting for the user's approval in DX Skills (Settings > Skills, " + where + "). " +
                 "It is not used until they approve it; tell them it is there.";
         }
         static void CopySkillTree(string from, string to)

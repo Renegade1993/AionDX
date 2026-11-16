@@ -68,22 +68,27 @@ function hub(ctx) {
     layers.push({ kind: 'library', label: 'Global library (official, read-only)', dir: path.join(libRoot, 'anthropic', 'skills'), readOnly: true, source, commit, skills: skillsIn(path.join(libRoot, 'anthropic', 'skills')) });
     layers.push({ kind: 'method', label: 'Global library: method skills (read-only)', dir: path.join(libRoot, 'method'), readOnly: true, skills: skillsIn(path.join(libRoot, 'method')) });
   }
-  layers.push({ kind: 'yours', label: 'Yours, on this PC (every Claude chat)', dir: path.join(ctx.home, '.claude', 'skills'), skills: skillsIn(path.join(ctx.home, '.claude', 'skills')) });
+  layers.push({ kind: 'yours', project: YOURS, label: 'Yours, on this PC (every Claude chat)', dir: path.join(ctx.home, '.claude', 'skills'), skills: skillsIn(path.join(ctx.home, '.claude', 'skills')), pending: pendingIn(ctx.home) });
   for (const r of Array.isArray(reg.skillRoots) ? reg.skillRoots : []) layers.push({ kind: 'shared', label: 'Shared: ' + path.basename(r), dir: path.join(r, '.claude', 'skills'), readOnly: true, skills: skillsIn(path.join(r, '.claude', 'skills')) });
   for (const [key, p] of Object.entries(reg.projects || {})) {
     if (!p || !p.root) continue;
     layers.push({ kind: 'project', project: key, label: path.basename(p.root), dir: path.join(p.root, '.claude', 'skills'), skills: skillsIn(path.join(p.root, '.claude', 'skills')),
-      pending: skillsIn(path.join(p.root, '.claude', 'skills-pending')).map((s) => {
-        const rv = readJson(path.join(s.dir, '.aiondx-review.json')) || {};
-        if (!rv.files) Object.assign(rv, reviewFolder(s.dir));   // a proposal from an agent: reviewed when it is shown
-        const cur = path.join(p.root, '.claude', 'skills', s.folder, 'SKILL.md');
-        if (exists(cur)) { try { rv.change = lineChange(fs.readFileSync(cur, 'utf8'), fs.readFileSync(path.join(s.dir, 'SKILL.md'), 'utf8')); } catch { /* unreadable */ } }
-        return Object.assign(s, { review: rv });
-      }) });
+      pending: pendingIn(p.root) });
   }
   layers.push({ kind: 'store', label: 'AionUi\'s skill store (assistants)', dir: path.join(ctx.home, '.aiondx', 'skills'), skills: skillsIn(path.join(ctx.home, '.aiondx', 'skills')) });
   layers.push({ kind: 'aiondx', label: 'AionDX\'s own (every chat)', dir: ctx.builtinDir, readOnly: true, skills: skillsIn(ctx.builtinDir) });
   return { ok: true, layers, libraryRoot: libRoot };
+}
+
+/** The skills waiting for review under <root>\.claude\skills-pending, each with its review and how it differs from the one it replaces. */
+function pendingIn(root) {
+  return skillsIn(path.join(root, '.claude', 'skills-pending')).map((s) => {
+    const rv = readJson(path.join(s.dir, '.aiondx-review.json')) || {};
+    if (!rv.files) Object.assign(rv, reviewFolder(s.dir));   // a proposal from an agent: reviewed when it is shown
+    const cur = path.join(root, '.claude', 'skills', s.folder, 'SKILL.md');
+    if (exists(cur)) { try { rv.change = lineChange(fs.readFileSync(cur, 'utf8'), fs.readFileSync(path.join(s.dir, 'SKILL.md'), 'utf8')); } catch { /* unreadable */ } }
+    return Object.assign(s, { review: rv });
+  });
 }
 
 /** How a new SKILL.md differs from the one it would replace: lines added and taken out (as a multiset of lines). */
@@ -96,7 +101,11 @@ function lineChange(oldText, newText) {
   return { added, removed };
 }
 
+/** Projects are optional (the user, November 16th: "we should not assume people use it"): the key YOURS is the user's own layer
+ *  (~\.claude\skills, its waiting ones in ~\.claude\skills-pending), so imports, new skills and proposals work with no project at all. */
+const YOURS = '~yours';
 function projectRoot(ctx, key) {
+  if (key === YOURS || !key) return ctx.home;
   const { reg } = places(ctx);
   const p = reg.projects && reg.projects[key];
   if (!p || !p.root) throw new Error('There is no project called ' + key + '.');
@@ -206,8 +215,8 @@ function approve(ctx, projectKey, name, replace) {
   if (!NAME_RE.test(String(name || ''))) throw new Error('Which skill?');
   const root = projectRoot(ctx, projectKey);
   const from = path.join(root, '.claude', 'skills-pending', name), to = path.join(root, '.claude', 'skills', name);
-  if (!exists(from)) throw new Error('No skill ' + name + ' is waiting for review in that project.');
-  if (exists(to) && !replace) return { ok: false, exists: true, error: 'The project already has a skill called ' + name + '. Replace it?' };
+  if (!exists(from)) throw new Error('No skill ' + name + ' is waiting for review there.');
+  if (exists(to) && !replace) return { ok: false, exists: true, error: (projectKey === YOURS || !projectKey ? 'You already have' : 'The project already has') + ' a skill called ' + name + '. Replace it?' };
   if (exists(to)) fs.rmSync(to, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.renameSync(from, to);
@@ -242,7 +251,7 @@ function link(ctx, projectKey, name) {
   const target = [path.join(libRoot || '', 'anthropic', 'skills', name), path.join(libRoot || '', 'method', name)].find((p) => exists(path.join(p, 'SKILL.md')));
   if (!target) throw new Error('The global library has no skill called ' + name + '.');
   const at = path.join(projectRoot(ctx, projectKey), '.claude', 'skills', name);
-  if (exists(at)) throw new Error('The project already has a skill called ' + name + '.');
+  if (exists(at)) throw new Error((projectKey === YOURS || !projectKey ? 'You already have' : 'The project already has') + ' a skill called ' + name + '.');
   fs.mkdirSync(path.dirname(at), { recursive: true });
   fs.symlinkSync(target, at, 'junction');
   return { ok: true, dir: at, target };
@@ -296,4 +305,4 @@ function library(ctx, cmd, clone, yes) {
   return { ok: r.status === 0, output: out.slice(-12000), clone: cmd === 'fetch' ? cloneDir : undefined };
 }
 
-module.exports = { lineChange, hub, reviewFolder, importSkills, approve, reject, remove, link, exportZip, catalog, library, downloadUrl, frontMatter };
+module.exports = { YOURS, lineChange, hub, reviewFolder, importSkills, approve, reject, remove, link, exportZip, catalog, library, downloadUrl, frontMatter };

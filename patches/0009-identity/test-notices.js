@@ -18,7 +18,7 @@ try {
   const reg = (accountDocs, projects, bindings) => fs.writeFileSync(path.join(data, 'aiondx-projects.json'), JSON.stringify({ version: 1, skillRoots: [], projects: projects || {}, bindings: bindings || {}, accountDocs }));
   const launch = (conv, rec) => fs.writeFileSync(path.join(data, 'aiondx-launches', conv + '.json'), JSON.stringify(Object.assign({ v: 1, at: 1000, pid: 4242 }, rec)));
   const signIn = (dir, on) => { const f = path.join(dir, '.credentials.json'); if (on) fs.writeFileSync(f, JSON.stringify({ claudeAiOauth: { accessToken: 'a', refreshToken: 'r', refreshTokenExpiresAt: Date.now() + 86400000 } })); else try { fs.unlinkSync(f); } catch (e) {} };
-  const alive = { pidAlive: () => true }, dead = { pidAlive: () => false };
+  const alive = { pidAlive: () => true, home }, dead = { pidAlive: () => false, home };
 
   check('the folder names map to the sign-in account names', N.signInAccountFor(personal) === '' && N.signInAccountFor(work) === 'work' && N.signInAccountFor('C:/x/other') === null);
   reg({ personal: 'on', work: 'off' });
@@ -60,23 +60,19 @@ try {
   check('no launch record, or an odd id: nothing', N.noticesFor(data, 'none', alive).length === 0 && N.noticesFor(data, '../x', alive).length === 0);
   check('this process counts as alive; pid 0 does not', N.pidAlive(process.pid) && !N.pidAlive(0));
 
-  // R-128: a chat with no project is asked for one, until it has one or "No project" was chosen
+  // Projects are optional (November 16th, 2026): a chat with no project is never asked for one
   const projs = { atlas: { root: 'C:/x/Atlas', domain: 'personal' } };
   reg({ personal: 'off', work: 'off' }, projs, {});
   launch('p1', { project: null, acct: 'personal', docs: false, fullSignIn: true, signInDir: personal });
   n = N.noticesFor(data, 'p1', alive);
-  check('a solo chat with no project: one notice asking which project, with Choose a project', n.length === 1 && n[0].kind === 'project' && n[0].id === 'no-project:p1' && n[0].action.op === 'project', JSON.stringify(n));
-  check('the same with no agent running (the choice is for its next start)', N.noticesFor(data, 'p1', dead).length === 1);
-  reg({ personal: 'off', work: 'off' }, projs, { 'conv:p1': '' });
-  check('"No project" chosen: not asked again', N.noticesFor(data, 'p1', alive).length === 0);
-  reg({ personal: 'off', work: 'off' }, projs, { 'conv:p1': 'atlas' });
-  launch('p1', { project: 'atlas', acct: 'personal', docs: false, fullSignIn: true, signInDir: personal });
-  check('bound and started with it: nothing', N.noticesFor(data, 'p1', alive).length === 0);
-  reg({ personal: 'off', work: 'off' }, projs, {});
-  launch('p2', { project: null, team: 't1', acct: 'personal', docs: false, fullSignIn: true, signInDir: personal });
-  check('a team member is not asked (its team decides)', N.noticesFor(data, 'p2', alive).length === 0);
-  reg({ personal: 'off', work: 'off' }, {}, {});
-  check('no projects on this PC: nothing to ask', N.noticesFor(data, 'p1', alive).length === 0);
+  check('a solo chat with no project, with projects on this PC: no notice asking for one', n.length === 0, JSON.stringify(n));
+  check('the same with no agent running', N.noticesFor(data, 'p1', dead).length === 0);
+  // skill changes waiting in the user's own layer: shown in a chat with no project
+  fs.mkdirSync(path.join(home, '.claude', 'skills-pending', 'notes'), { recursive: true });
+  n = N.noticesFor(data, 'p1', alive);
+  check('a skill waiting in your own layer: the bell says so in a chat with no project', n.length === 1 && n[0].kind === 'skills' && n[0].title === 'A skill change is waiting for you' && n[0].action.op === 'skills', JSON.stringify(n));
+  fs.rmSync(path.join(home, '.claude', 'skills-pending'), { recursive: true, force: true });
+  check('approved or rejected: gone', N.noticesFor(data, 'p1', alive).length === 0);
   // skill changes waiting in the chat's project
   const atlasRoot = path.join(root, 'Atlas');
   fs.mkdirSync(path.join(atlasRoot, '.claude', 'skills-pending', 'deploy'), { recursive: true });

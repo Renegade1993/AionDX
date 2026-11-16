@@ -782,7 +782,7 @@
   // ---------------------------------------------------------------- DX Skills: AionUi's Skills Hub remade (R-128 step 5)
   // The user, November 14th: "just remake AionUI's skills hub with our own DX Skills hub and they shouldn't really have to move at all",
   // "PUT THEM WHERE THEY SHOULD BE". Settings > Skills shows DX Skills in place of AionUi's hub, whose own view (its store and the
-  // assistants that use it) stays one tab away. Every layer, read-only where it must be; imports and new skills into a project's layer after
+  // assistants that use it) stays one tab away. Every layer, read-only where it must be; imports and new skills into your own layer or a project's after
   // review; the official catalogs; the global library's own update procedure, applied only on the user's yes. Main: aiondx-skillhub.js.
   var dxs = { el: null, tab: 'layers', hub: null, filter: '', open: {}, cat: 'anthropic', catData: {}, lib: null, busy: false };
   function dxsRoute() { return /^#\/settings\/skills\/?(\?.*)?$/.test(location.hash); }
@@ -806,7 +806,7 @@
     head.appendChild(nb);
     el.appendChild(head);
     el.appendChild(gEl('p', 'aiondx-dxs-desc', 'Every skill your agents have, layer by layer. The global library holds only official skills and changes only through its own update, on your yes; ' +
-      'what you import or write goes into a project\'s skills after you review it. Claude, Codex and Gemini chats all get the same ones.'));
+      'what you import or write goes into your own skills, or a project\'s if you keep projects, after you review it. Claude, Codex and Gemini chats all get the same ones.'));
     var tabs = gEl('div', 'aiondx-dxs-tabs');
     tabs.setAttribute('role', 'tablist');
     [['layers', 'Layers'], ['import', 'Import'], ['catalogs', 'Official catalogs'], ['library', 'Global library'], ['store', 'AionUi’s store']].forEach(function (t) {
@@ -828,7 +828,9 @@
   function dxsStatus(t, bad) { var s = dxs.el && dxs.el.querySelector('.aiondx-dxs-status'); if (!s) return; s.textContent = t || ''; s.classList.toggle('aiondx-plugins-status--bad', !!bad); }
   function dxsLoad() { return skillsBridge().call('hub').then(function (r) { if (r && r.ok) dxs.hub = r; else dxsStatus('Could not read the skills: ' + ((r && r.error) || 'no answer'), true); dxsPaint(); }); }
   function dxsBtn(label, act, cls) { var b = gEl('button', 'aiondx-skill-pin' + (cls ? ' ' + cls : ''), label); b.type = 'button'; b.setAttribute('data-act', act); return b; }
-  function dxsProjects() { return ((dxs.hub && dxs.hub.layers) || []).filter(function (l) { return l.kind === 'project'; }); }
+  /** Where a skill can go: your own layer (every Claude chat on this PC; no project needed), then each project. Projects are optional. */
+  function dxsProjects() { return ((dxs.hub && dxs.hub.layers) || []).filter(function (l) { return l.kind === 'yours' || l.kind === 'project'; }); }
+  function dxsTargetName(l) { return l.kind === 'yours' ? 'Yours (every chat on this PC)' : l.label; }
   function dxsPaint() {
     if (!dxs.el) return;
     Array.prototype.forEach.call(dxs.el.querySelectorAll('.aiondx-dxs-tab'), function (b) { var on = b.getAttribute('data-tab') === dxs.tab; b.classList.toggle('aiondx-dxs-tab--on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
@@ -897,7 +899,7 @@
     } else {
       ctl.appendChild(dxsBtn('Open', 'open'));
       ctl.appendChild(dxsBtn('Export', 'export'));
-      if ((l.kind === 'library' || l.kind === 'method') && dxsProjects().length) ctl.appendChild(dxsBtn('Use in a project...', 'link'));
+      if ((l.kind === 'library' || l.kind === 'method') && dxsProjects().length) ctl.appendChild(dxsBtn('Use it in...', 'link'));
       if (!l.readOnly && l.kind !== 'aiondx') ctl.appendChild(dxsBtn(s.linked ? 'Unlink' : 'Remove', 'remove'));
     }
     meta.appendChild(ctl);
@@ -935,10 +937,10 @@
     try {
       if (act === 'approve') {
         var n = ((s.review || {}).flags || []).length;
-        if (n && !(await placesAsk(s.name + ' has ' + plural(n, 'thing', 'things') + ' to look at (Review lists them). Approve it anyway? Its project’s agents can use it from their next start.', 'Approve'))) return;
+        if (n && !(await placesAsk(s.name + ' has ' + plural(n, 'thing', 'things') + ' to look at (Review lists them). Approve it anyway? ' + (l.kind === 'yours' ? 'Your agents' : 'Its project’s agents') + ' can use it from their next start.', 'Approve'))) return;
         r = await B.call('approve', { project: l.project, name: s.folder });
         if (r && r.exists && (await placesAsk(r.error, 'Replace'))) r = await B.call('approve', { project: l.project, name: s.folder, replace: true });
-        if (r && r.ok) toast(s.name + ' is one of ' + l.label + '’s skills now.', 'Its agents have it from their next start.');
+        if (r && r.ok) toast(l.kind === 'yours' ? s.name + ' is one of your skills now.' : s.name + ' is one of ' + l.label + '’s skills now.', 'Its agents have it from their next start.');
       } else if (act === 'reject') {
         if (!(await placesAsk('Throw away the imported ' + s.name + '?', 'Reject'))) return;
         r = await B.call('reject', { project: l.project, name: s.folder });
@@ -950,7 +952,7 @@
         r = await new Promise(function (res) {
           var m = gEl('div', 'aiondx-places-menu');
           m.setAttribute('data-testid', 'aiondx-dxs-linkmenu');
-          projects.forEach(function (p) { var b = gEl('button', 'aiondx-places-mi', p.label); b.type = 'button'; b.addEventListener('click', function () { m.remove(); B.call('link', { project: p.project, name: s.folder }).then(res); }); m.appendChild(b); });
+          projects.forEach(function (p) { var b = gEl('button', 'aiondx-places-mi', dxsTargetName(p)); b.type = 'button'; b.addEventListener('click', function () { m.remove(); B.call('link', { project: p.project, name: s.folder }).then(function (x) { if (x) x.to = p; res(x); }); }); m.appendChild(b); });
           var rc = btn.getBoundingClientRect();
           m.style.left = Math.round(Math.min(rc.left, innerWidth - 280)) + 'px';
           m.style.top = Math.round(rc.bottom + 4) + 'px';
@@ -958,7 +960,7 @@
           var off = function (ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('mousedown', off, true); res(null); } };
           setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
         });
-        if (r && r.ok) toast(s.name + ' is linked into the project.', 'Its agents have it from their next start; the global library keeps the only copy.');
+        if (r && r.ok) toast(s.name + ' is linked into ' + (r.to && r.to.kind === 'yours' ? 'your skills' : 'the project') + '.', 'Its agents have it from their next start; the global library keeps the only copy.');
       }
       if (r && !r.ok && !r.exists) dxsStatus((r.error || 'It did not go through') + '.', true);
       await dxsLoad();
@@ -968,12 +970,12 @@
   function dxsProjectSelect() {
     var sel = document.createElement('select');
     sel.className = 'aiondx-skill-state aiondx-dxs-project';
-    sel.setAttribute('aria-label', 'Which project');
-    dxsProjects().forEach(function (p) { var o = document.createElement('option'); o.value = p.project; o.textContent = p.label; sel.appendChild(o); });
+    sel.setAttribute('aria-label', 'Where it goes');
+    dxsProjects().forEach(function (p) { var o = document.createElement('option'); o.value = p.project; o.textContent = dxsTargetName(p); sel.appendChild(o); });
     return sel;
   }
   function dxsImport(body) {
-    body.appendChild(gEl('p', 'aiondx-dxs-desc', 'A skill from anywhere else comes into one project’s skills. It waits there, with what its scripts would do, until you approve it under Layers.'));
+    body.appendChild(gEl('p', 'aiondx-dxs-desc', 'A skill from anywhere else comes into your own skills, or a project’s if you keep projects. It waits there, with what its scripts would do, until you approve it under Layers.'));
     var row = gEl('div', 'aiondx-dxs-irow');
     row.appendChild(gEl('span', '', 'Into'));
     var sel = dxsProjectSelect();
@@ -1078,11 +1080,10 @@
   /** New skill: a chat in the project's folder drafts it as a DX Doc for you to review, then saves it where DX Skills asks you to approve it. */
   async function dxsNewSkill() {
     var ps = dxsProjects();
-    if (!ps.length) { dxsStatus('New skills go into a project’s skills, and AionDX knows no project on this PC.', true); return; }
-    var back = gEl('div', 'aiondx-places-ask');
+        var back = gEl('div', 'aiondx-places-ask');
     var card = gEl('div', 'aiondx-places-askcard aiondx-dxs-newcard');
     card.setAttribute('data-testid', 'aiondx-dxs-newcard');
-    card.appendChild(gEl('div', 'aiondx-places-asktext', 'A new skill. An agent drafts it as a DX Doc you review; once you approve the doc it is saved into the project’s skills, and you approve it there too.'));
+    card.appendChild(gEl('div', 'aiondx-places-asktext', 'A new skill. An agent drafts it as a DX Doc you review; once you approve the doc it is saved into your skills (or the project’s you pick), and you approve it there too.'));
     var sel = dxsProjectSelect();
     var name = document.createElement('input'); name.className = 'aiondx-places-find'; name.placeholder = 'Its name, like release-checklist'; name.setAttribute('data-testid', 'aiondx-dxs-new-name');
     var what = document.createElement('textarea'); what.className = 'aiondx-places-find aiondx-dxs-what'; what.placeholder = 'What it is for, and when an agent should use it'; what.setAttribute('data-testid', 'aiondx-dxs-new-what');
@@ -1101,19 +1102,20 @@
       if (!n || !what.value.trim()) { name.focus(); return; }
       var p = ps.filter(function (x) { return x.project === sel.value; })[0];
       var root = p.dir.replace(/[\\/]\.claude[\\/]skills$/, '');
+      var yours = p.kind === 'yours';
       ok.disabled = true;
       try {
         var al = await getJson('/api/assistants');
         var a = ((al && al.data) || []).filter(function (x) { return x.name === 'Claude Code'; })[0] || ((al && al.data) || [])[0];
         if (!a) throw new Error('no agent to write it');
-        var cres = await sendJson('POST', '/api/conversations', { name: 'New skill: ' + n, assistant: { id: a.id, locale: 'en-US' }, extra: { workspace: root, custom_workspace: true } });
+        var cres = await sendJson('POST', '/api/conversations', { name: 'New skill: ' + n, assistant: { id: a.id, locale: 'en-US' }, extra: yours ? {} : { workspace: root, custom_workspace: true } });
         var c = null;
         try { c = await cres.json(); } catch (e) {}
         var id = c && (c.data ? c.data.id : c.id);
         if (!id) throw new Error((c && (c.msg || c.error)) || 'the chat was not made');
-        var text = 'Write a new skill for this project (' + p.label + '), named ' + n + '. What it is for: ' + what.value.trim() + '\n\n' +
+        var text = 'Write a new skill ' + (yours ? 'for me (my own skills, every chat on this PC)' : 'for this project (' + p.label + ')') + ', named ' + n + '. What it is for: ' + what.value.trim() + '\n\n' +
           'First draft it as a DX Doc for me to review (aiondx doc help shows how): its SKILL.md front matter (name: ' + n + ', and a description that says what it does and when to use it), then its body. ' +
-          'Look at the project’s other skills in ' + root + '\\.claude\\skills for the style. When I approve the doc, save the skill to ' + root + '\\.claude\\skills-pending\\' + n + '\\SKILL.md (with any scripts beside it); ' +
+          'Look at the other skills in ' + root + '\\.claude\\skills for the style. When I approve the doc, save the skill to ' + root + '\\.claude\\skills-pending\\' + n + '\\SKILL.md (with any scripts beside it); ' +
           'DX Skills then asks me to approve it before any agent uses it.';
         await postJson('/api/conversations/' + encodeURIComponent(id) + '/messages', { content: text });
         back.remove();
@@ -10459,7 +10461,7 @@
         m.appendChild(pl);
         var ptx = pl.querySelector('.aiondx-gitem-text');
         ptx.textContent = 'Project...';
-        projectsLoad().then(function (r) { var b = r && r.bindings && r.bindings[(key.charAt(0) === 'c' ? 'conv:' : 'team:') + key.slice(2)]; var p = b && (r.projects || []).filter(function (x) { return x.key === b; })[0]; ptx.textContent = p ? 'Project: ' + p.name : 'Choose a project'; });
+        projectsLoad().then(function (r) { var b = r && r.bindings && r.bindings[(key.charAt(0) === 'c' ? 'conv:' : 'team:') + key.slice(2)]; var p = b && (r.projects || []).filter(function (x) { return x.key === b; })[0]; ptx.textContent = p ? 'Project: ' + p.name : 'Project: none'; });
         pl.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); projectPicker(pl, key, null); });
       }
     }
@@ -10685,11 +10687,6 @@
     btn.disabled = true;
     try {
       if (n.action.op === 'skills') { btn.disabled = false; closeBellPop(); location.hash = '#/settings/skills'; return; }
-      if (n.action.op === 'project') {
-        btn.disabled = false;
-        projectPicker(btn, 'c:' + n.conv, function (name) { st.textContent = name ? 'This chat is for ' + name + ' now; its skills load when the agent next starts.' : 'No project for this chat; it will not be asked again.'; setTimeout(function () { bellCheck(true); }, 1500); });
-        return;
-      }
       if (n.action.op === 'reconnect') {
         var c = await getJson('/api/conversations/' + encodeURIComponent(n.conv));
         if (c && c.data && c.data.status === 'running') { st.textContent = 'It is working right now. Reconnect when it finishes, so nothing it is doing is cut off.'; btn.disabled = false; return; }
@@ -12282,8 +12279,8 @@
       ['@@ and @@@ in every chat', 'Type @@ in a team chat too, to name a chat or a team (a team goes to its lead). @@@ names one member of a team, in any chat. Any agent can now write to any other chat, team or member when you tell it to.'],
       ['Chats where you choose', 'Settings > Where your chats live: tick any chats, teams or groups and keep them in a folder of your own, on this PC or on a drive that goes with you. Their files, history and messages go together; bring them back any time. A group can have a place for the chats made in it. A chat whose folder is missing is marked, and Find it shows AionDX where it is now.'],
       ['Skills in every chat', 'The book button beside the Loop shows every skill the chat has (AionDX’s, yours, the shared ones and its project’s), how often it used each and when, and what each costs in context. Switch a skill off for that chat, pin one so the agent always has it in full, or refresh them. A team lead pins skills for its team.'],
-      ['One set of skills for every agent', 'Codex, Gemini and the other agents now get the same personal, shared and project skills as Claude. A chat with no project is asked which project it is for, once; its menu has Project too.'],
-      ['DX Skills', 'Settings > Skills: every skill, layer by layer. Import a ZIP, a folder or a GitHub link into a project after reviewing what its scripts do; ask an agent to write a new one as a DX Doc; browse Anthropic’s and OpenAI’s official skills; update the global library on your yes.'],
+      ['One set of skills for every agent', 'Codex, Gemini and the other agents now get the same personal, shared and project skills as Claude. Projects are optional: a chat’s menu has Project if you keep them.'],
+      ['DX Skills', 'Settings > Skills: every skill, layer by layer. Import a ZIP, a folder or a GitHub link into your skills or a project’s after reviewing what its scripts do; ask an agent to write a new one as a DX Doc; browse Anthropic’s and OpenAI’s official skills; update the global library on your yes.'],
       ['Skills that improve themselves', 'When you have to correct an agent, it is asked to add the check that would have caught it to the right skill; a compaction keeps its lessons for skills. Agents propose skill changes, and the bell tells you when one waits for you in DX Skills. Both lines can be switched off in Options.'],
       ['Agents plan before they build', 'Every agent keeps a ledger of your asks in your words; Claude chats get a plan-first note on a build request, are sent back when they say done with asks still open, and are told to re-read your asks when you correct them (the bell shows it). Switch a project to build from approved plans only in its Project menu: code waits for your Approve in the plan doc.'],
     ],
@@ -15616,6 +15613,7 @@
 
   function firstTarget() { var l = targets(); return l.length ? l[0] : null; }
   window.__aionDx = {
+    projectPicker: function (sel, key) { var el = document.querySelector(sel); if (el) projectPicker(el, key, null); return !!el; },
     targets: function () { return targets().map(function (t) { return { key: t.key, on: state(t).on }; }); },
     status: function () { var t = firstTarget(); return t ? state(t) : null; },
     on: function () { var t = firstTarget(); if (t) setOn(t, true, 'console'); },

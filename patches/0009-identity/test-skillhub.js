@@ -96,6 +96,23 @@ const TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.
     check('removing the link leaves the library\'s skill alone', r.ok && !fs.existsSync(at) && fs.existsSync(path.join(lib, 'anthropic', 'skills', 'pdf', 'SKILL.md')));
     threw = null; try { H.remove(ctx, path.join(lib, 'anthropic', 'skills', 'pdf')); } catch (e) { threw = e.message; }
     check('the global library cannot be changed from here', /read-only/.test(threw || ''), threw);
+    // no projects at all (projects are optional): imports go into your own layer, wait there, and are approved there
+    const ud2 = path.join(root, 'ud2');
+    fs.mkdirSync(ud2, { recursive: true });
+    fs.writeFileSync(path.join(ud2, 'aiondx-projects.json'), JSON.stringify({ skillRoots: [], projects: {}, bindings: {} }));
+    const ctx2 = { userData: ud2, home, builtinDir: builtin };
+    r = await H.importSkills(ctx2, src, H.YOURS);
+    const mine = path.join(home, '.claude', 'skills-pending', 'deploy');
+    check('no projects: an import goes into your own pending folder', r.ok && fs.existsSync(path.join(mine, 'SKILL.md')) && !fs.existsSync(path.join(home, '.claude', 'skills', 'deploy')), JSON.stringify(r));
+    h = H.hub(ctx2);
+    const yl = h.layers.find((l) => l.kind === 'yours');
+    check('the hub shows it waiting under Yours, with its review', yl.project === H.YOURS && yl.pending.length === 1 && yl.pending[0].review.flags.length > 0, JSON.stringify(yl));
+    r = H.approve(ctx2, H.YOURS, 'deploy');
+    check('approve: it moves into your skills', r.ok && fs.existsSync(path.join(home, '.claude', 'skills', 'deploy', 'SKILL.md')) && !fs.existsSync(mine), JSON.stringify(r));
+    r = await H.importSkills(ctx2, src, '');
+    check('no project named: your own layer, and approving over yours asks first in your words', r.ok && fs.existsSync(path.join(mine, 'SKILL.md')) && /^You already have/.test(H.approve(ctx2, '', 'deploy').error || ''));
+    H.reject(ctx2, H.YOURS, 'deploy');
+    check('reject removes it from your pending folder', !fs.existsSync(mine));
     // export
     const out = path.join(root, 'out', 'deploy.zip');
     fs.mkdirSync(path.dirname(out));
