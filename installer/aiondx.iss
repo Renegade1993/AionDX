@@ -40,6 +40,10 @@
 #include "generated.iss"
 
 [Setup]
+; Inno Setup 6.7 turns Windows' RedirectionGuard on for Setup, and up to 6.7.3 the app started by "Start AionDX now" (and by an
+; in-app update) inherited it: AionDX and every agent it started could not open a folder link (a junction) made by the user, so
+; linked skills never loaded (found November 16th, 2026). Setup keeps no guard, so the app it starts carries none.
+RedirectionGuard=no
 ; Never change AppId: the uninstall key is {AppId}_is1 and every later installer finds this one by it.
 AppId={{6C1F4E2A-4B7D-4E0B-9C1E-AE1D0B5DC2A1}
 AppName=AionDX
