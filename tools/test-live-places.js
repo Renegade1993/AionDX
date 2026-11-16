@@ -42,7 +42,9 @@ const deadline = setTimeout(() => { console.log('DEADLINE'); process.exit(2); },
     // the helper is made again whenever the page lost it (a reload)
     const T = `(window.__t || (window.__t = { base: 'http://127.0.0.1:' + window.__backendPort,
       h: () => ({ 'Content-Type': 'application/json', 'x-csrf-token': window.__coreCsrfToken || (document.cookie.match(/aionui-csrf-token=([^;]+)/) || [])[1] || '' }),
-      call: async (m, p, b) => { const r = await fetch(window.__t.base + p, { method: m, credentials: 'include', headers: window.__t.h(), body: b === undefined ? undefined : JSON.stringify(b) }); let j = null; try { j = await r.json(); } catch (e) {} return { status: r.status, j }; } })), `;
+      // XMLHttpRequest, not fetch: AionDX's page holds a chat's start requests made with fetch (holdStart), which would hold this test's
+      call: (m, p, b) => new Promise((res) => { const x = new XMLHttpRequest(); x.open(m, window.__t.base + p); x.withCredentials = true; const hd = window.__t.h(); Object.keys(hd).forEach((k) => x.setRequestHeader(k, hd[k])); x.timeout = 30000;
+        x.onload = () => { let j = null; try { j = JSON.parse(x.responseText); } catch (e) {} res({ status: x.status, j }); }; x.onerror = x.ontimeout = () => res({ status: 0, j: null }); x.send(b === undefined ? null : JSON.stringify(b)); }) })), `;
     const origJs = app.js.bind(app);
     app.js = (expr) => origJs(/window\.__t\b/.test(expr) ? '(' + T + expr + ')' : expr);
     check('the places bridge is there', await app.js('!!(window.aiondxPlaces && window.aiondxPlaces.call)'));
