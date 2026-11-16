@@ -27,9 +27,15 @@ param(
   # AionCore goes to another PC only after it has passed its tests here (September 26th).
   [switch]$AionDxCore,
   # Stop after the staged app and its privacy checks, before the installer is compiled (for tests on the staged app).
-  [switch]$StageOnly
+  [switch]$StageOnly,
+  # The words asking for this installer. An installer is cut only when the owner asks for one (November 16th, 2026: "please do not
+  # cut a new installer until I ask you to"); a stage-only build for tests needs none.
+  [string]$AskedFor = ''
 )
 $ErrorActionPreference = 'Stop'
+if (-not $StageOnly -and $AskedFor.Trim().Length -lt 3) {
+  throw 'An installer is cut only when the owner asks for one. Pass -AskedFor "<their words asking for it>", or -StageOnly to stage the app for tests.'
+}
 if ($Version -notmatch '^\d+(\.\d+){1,3}(-[0-9A-Za-z.]+)?$') { throw "-Version must look like 0.1.0 (got '$Version')" }
 $root = Split-Path -Parent $PSScriptRoot   # the repo root (this script lives in tools\); was a hardcoded 'C:\AI Projects\AionDX' junction, which an untrusted-mount-point restriction now blocks for child processes
 # The base: an installed AionUi, else the copy unpacked from its official installer (tools\fetch-aionui-base.js).
