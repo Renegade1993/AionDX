@@ -3256,6 +3256,67 @@ async function pageTarget() {
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
 
+    // ---- the Skills panel (R-128 step 3, November 15th, 2026) ----
+    {
+      const sc = 'skills';
+      const SK = [
+        { name: 'build', folder: 'build', description: 'Build and package the game for a release.', layer: { kind: 'project', label: 'Atlas Game' }, dir: 'C:\\x\\Atlas Game\\.claude\\skills\\build', shadows: 'Yours', state: 'on', pinned: true, teamPinned: false, uses: 3, lastUsed: '2026-11-12T10:00:00Z', cost: 1200 },
+        { name: 'review', folder: 'review', description: 'Review code carefully before it is merged.', layer: { kind: 'shared', label: 'Shared' }, dir: 'C:\\s\\review', state: 'on', pinned: false, teamPinned: false, uses: 0, lastUsed: null, cost: 21 },
+        { name: 'aiondx-loop', folder: 'aiondx-loop', description: 'The Loop.', layer: { kind: 'aiondx', label: 'AionDX' }, dir: 'C:\\b\\aiondx-loop', state: 'off', pinned: false, teamPinned: false, uses: 1, lastUsed: '2026-11-11T10:00:00Z', cost: 9 } ];
+      const shots = async (theme) => {
+        await load('theme=' + theme);
+        await js(`(() => { window.__sk = [];
+          const skills = ${JSON.stringify(SK)};
+          window.aiondxSkills = { call: (op, a) => { window.__sk.push([op, a || {}]);
+            if (op === 'list') return Promise.resolve({ ok: true, skills, total: 3, used: 2, cost: 1229 });
+            return Promise.resolve({ ok: true }); } };
+          window.__stub.routes['POST /api/conversations/harness1/runtime/restart'] = { success: true, data: {} };
+          window.__stub.routes['GET /api/conversations/harness1'].data.extra = Object.assign({}, window.__stub.routes['GET /api/conversations/harness1'].data.extra, { workspace: 'C:\\\\chats\\\\harness1' });
+          document.body.appendChild(document.createElement('i')); return 0; })()`);
+        await sleep(1200);
+      };
+      await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await shots('light');
+      const pos = await js(`(() => { const l = document.querySelector('[data-testid="aiondx-loop"]'); const b = document.querySelector('[data-testid="aiondx-skills-btn"]'); return { has: !!b, next: !!(l && b && l.nextSibling === b) }; })()`);
+      check(sc, 'a Skills button sits just after the Loop button', pos.has && pos.next, JSON.stringify(pos));
+      await humanClick('[data-testid="aiondx-skills-btn"]');
+      await sleep(900);
+      const view = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-skills"]'); if (!p) return null;
+        return { sum: p.querySelector('.aiondx-skills-sum').textContent, names: [...p.querySelectorAll('.aiondx-skill-name')].map((e) => e.textContent),
+          layers: [...p.querySelectorAll('.aiondx-skill-layer')].map((e) => e.textContent), uses: [...p.querySelectorAll('.aiondx-skill-uses')].map((e) => e.textContent),
+          pins: [...p.querySelectorAll('.aiondx-skill-pin')].map((e) => e.textContent), states: [...p.querySelectorAll('.aiondx-skill-state')].map((e) => e.value) }; })()`);
+      check(sc, 'the panel says how many, how many used here and the context they take', view && view.sum === '3 skills, 2 used in this chat; about 1,229 tokens of its context.', JSON.stringify(view));
+      check(sc, 'each skill with its layer, its uses here and when last, its pin and its switch', view && JSON.stringify(view.layers) === '["Atlas Game","Shared","AionDX"]' &&
+        view.uses[0] === 'Used 3 times here, last November 12th' && view.uses[1] === 'Never used here' && JSON.stringify(view.pins) === '["Pinned","Pin","Pin"]' && JSON.stringify(view.states) === '["on","on","off"]', JSON.stringify(view));
+      const ask = await js('window.__sk.find((c) => c[0] === "list")');
+      check(sc, 'it asked for this chat by id and working folder', ask && ask[1].conv === 'harness1' && ask[1].ws === 'C:\\chats\\harness1', JSON.stringify(ask));
+      await shot('skills-light');
+      await js(`(() => { const s = document.querySelector('[data-skill="review"] .aiondx-skill-state'); s.value = 'name-only'; s.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
+      await sleep(300);
+      const set = await js('window.__sk.find((c) => c[0] === "set")');
+      check(sc, 'a switch is written for this chat\'s folder', set && JSON.stringify(set[1]) === JSON.stringify({ ws: 'C:\\chats\\harness1', name: 'review', state: 'name-only' }), JSON.stringify(set));
+      await humanClick('[data-skill="review"] .aiondx-skill-pin');
+      await sleep(300);
+      const pin = await js('window.__sk.find((c) => c[0] === "pin")');
+      const pinText = await js(`document.querySelector('[data-skill="review"] .aiondx-skill-pin').textContent`);
+      check(sc, 'Pin pins it for this chat', pin && JSON.stringify(pin[1]) === JSON.stringify({ key: 'c:harness1', name: 'review', on: true }) && pinText === 'Pinned', JSON.stringify([pin, pinText]));
+      await humanClick('[data-testid="aiondx-skills-refresh"]');
+      await sleep(900);
+      const rs = await js(`window.__calls.filter((c) => c.method === 'POST' && /runtime\\/restart$/.test(c.path)).map((c) => c.path)`);
+      const rst = await js(`document.querySelector('.aiondx-skills-status').textContent`);
+      check(sc, 'Refresh skills restarts the agent (the chat kept) and says so', JSON.stringify(rs) === '["/api/conversations/harness1/runtime/restart"]' && /^Refreshed/.test(rst), JSON.stringify([rs, rst]));
+      const fits = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-skills"]').getBoundingClientRect(); return r.top >= 0 && r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()`);
+      check(sc, 'the panel is on screen', fits);
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await sleep(200);
+      await shots('dark');
+      await humanClick('[data-testid="aiondx-skills-btn"]');
+      await sleep(900);
+      await shot('skills-dark');
+      await js(`(() => { delete window.aiondxSkills; return 0; })()`);
+      await send('Emulation.clearDeviceMetricsOverride', {});
+    }
+
     // ---- a chat's project, from the bell (R-128, November 15th, 2026) ----
     {
       const sc = 'project';
@@ -3464,7 +3525,7 @@ async function pageTarget() {
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
-      const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose'];
+      const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.0' && JSON.stringify(c.names) === JSON.stringify(NEW28) &&
         /^A DX Doc can hold several tabs/.test(c.hows[0]) && /click them to open the thread beside them/.test(c.hows[1]) && /@@@ names one member of a team/.test(c.hows[7]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
@@ -3514,7 +3575,7 @@ async function pageTarget() {
       t = await tip();
       check(sc, 'and after a reload the Loop tip stays away', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
       // the Docs link tip, on a page with a doc link, once the others are done
-      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','sched','bolt','menu','dxdocs','dxcharts','dxedit','dxsuggest','dxexport','add-account','groups','places','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','sched','bolt','menu','dxdocs','dxcharts','dxedit','dxsuggest','dxexport','add-account','groups','skills','places','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
       await load('theme=light&tips=1&keepls=1');
       await sleep(2600);
       t = await tip();

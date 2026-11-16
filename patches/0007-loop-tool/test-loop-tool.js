@@ -296,7 +296,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const tl = await solo.rpc('tools/list', {});
   const tools = (tl.result && tl.result.tools) || [];
-  check('tools/list offers loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the ten DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,context_status,chat_send,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_comment,dxdoc_look,dxdoc_decide,dxdoc_list,dxdoc_comments,dxdoc_reply,dxdoc_suggest,usage_alert', tools.map((t) => t.name));
+  check('tools/list offers loop_status, loop_set, priority_send, skills_pin, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the ten DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,skills_pin,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,context_status,chat_send,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_comment,dxdoc_look,dxdoc_decide,dxdoc_list,dxdoc_comments,dxdoc_reply,dxdoc_suggest,usage_alert', tools.map((t) => t.name));
   const schemaText = JSON.stringify(tools.map((t) => t.inputSchema));
   check('schemas use only type, properties, description and items (every backend takes them; a parameter may be called title)', !/additionalProperties|\$schema|"required"|"title":"/.test(schemaText), schemaText);
   const set = tools.find((t) => t.name === 'loop_set') || { inputSchema: { properties: {} } };
@@ -547,7 +547,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const orphan = startTool('convS', { AIONDX_CONVERSATION_ID: '', AIONDX_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
-  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 25, tlOrphan.result && tlOrphan.result.tools.length);
+  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 26, tlOrphan.result && tlOrphan.result.tools.length);
   r = await orphan.call('loop_status');
   check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionUi chat/.test(r.text), r.text);
 
@@ -627,6 +627,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('agent_stop takes one teammate at a time', r.isError && /one teammate at a time/.test(r.text), r.text);
   r = await workerTool.call('agent_stop', { member: 'Viewer' });
   check('a teammate cannot stop another', r.isError && /Only the team lead can stop a teammate/.test(r.text), r.text);
+  // ---- skills_pin (R-128): the lead pins skills for a member or the team, into a made-up data folder ----
+  {
+    const pinData = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-pins-tool-'));
+    const pinLead = startTool('convL', { AIONDX_DATA_DIR: pinData });
+    await pinLead.rpc('initialize', { protocolVersion: '2025-06-18' });
+    const pinsFile = () => JSON.parse(fs.readFileSync(path.join(pinData, 'aiondx-skill-pins.json'), 'utf8'));
+    r = await pinLead.call('skills_pin', { action: 'pin', skill: 'review' });
+    check('skills_pin: the lead pins a skill for the whole team', !r.isError && /^Pinned review for the whole team\./.test(r.text) && JSON.stringify(pinsFile()['t:team1']) === '["review"]', r.text);
+    r = await pinLead.call('skills_pin', { action: 'pin', skill: 'build', member: 'Worker' });
+    check('and for one member, by name (kept by its conversation id)', !r.isError && JSON.stringify(pinsFile()['c:convW']) === '["build"]', r.text + ' ' + JSON.stringify(pinsFile()));
+    r = await pinLead.call('skills_pin', { action: 'list' });
+    check('list names the team\'s pins and each member\'s', /^Pinned for the whole team: review\./.test(r.text) && /Pinned for Worker: build\./.test(r.text), r.text);
+    r = await pinLead.call('skills_pin', { action: 'unpin', skill: 'review' });
+    check('unpin takes it away', !r.isError && !('t:team1' in pinsFile()), JSON.stringify(pinsFile()));
+    r = await pinLead.call('skills_pin', { action: 'pin', skill: '../x' });
+    check('a bad skill name is refused', r.isError, r.text);
+    const pinWorker = startTool('convW', { AIONDX_DATA_DIR: pinData });
+    await pinWorker.rpc('initialize', { protocolVersion: '2025-06-18' });
+    r = await pinWorker.call('skills_pin', { action: 'pin', skill: 'review' });
+    check('a teammate cannot pin for the team', r.isError && /Only the team lead pins skills/.test(r.text), r.text);
+    try { fs.rmSync(pinData, { recursive: true, force: true }); } catch (e) { /* temp */ }
+  }
   r = await leadTool.call('agent_stop', { member: 'Nobody' });
   check('an unknown teammate is named in the refusal', r.isError && /No teammate matches "Nobody"/.test(r.text), r.text);
   work.slotW.state = 'running'; work.slotW.bg = 3;

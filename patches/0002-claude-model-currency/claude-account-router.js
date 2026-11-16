@@ -538,6 +538,7 @@ function projectSetup(env, dbPath, convId, facts, label) {
   for (let i = 0; i < args.length - 1; i++) if (args[i] === '--add-dir') have.add(String(args[i + 1]).toLowerCase());
   const added = [];
   for (const d of dirs) { if (!have.has(d.toLowerCase())) { args.push('--add-dir', d); have.add(d.toLowerCase()); added.push(d); } }
+  if (isClaude) pinnedSkills(dataDir, convId, facts.teamId, roots, proj);
   // which account this is, by its label, against the project's domain and allowed accounts
   const acct = /work/i.test(String(label || '')) ? 'work' : 'personal';
   const owns = proj && ((proj.domain === 'work' && acct === 'work') || (proj.domain === 'personal' && acct === 'personal'));
@@ -558,6 +559,40 @@ function projectSetup(env, dbPath, convId, facts, label) {
   }
   routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'} sign-in=${fullSignIn ? 'full' : 'token or none'}${strictDropped ? ' strict-mcp dropped' : ''}`);
   if (isClaude && convId && dataDir) recordLaunch(dataDir, convId, { project: name || null, team: facts.teamId || null, acct, accountKey: accountKey || null, docs, fullSignIn, signInDir: signInFolder });
+}
+
+/** R-128: pinned skills (<data folder>\aiondx-skill-pins.json, { "c:<conversation>": [names], "t:<team>": [names] }, set from the Skills
+ *  panel or by a team lead) are given to the agent in full at its start: each SKILL.md is added to the system prompt text AionCore already
+ *  passes (--append-system-prompt), or as one when there is none. Looked up in the same layers the chat has, nearest first: the bound
+ *  project, the shared roots, the user's own, AionDX's built-in skills. Capped at 60,000 characters. Any trouble: no pins, the launch goes on. */
+function pinnedSkills(dataDir, convId, teamId, roots, proj) {
+  try {
+    const pins = JSON.parse(fs.readFileSync(path.join(dataDir, 'aiondx-skill-pins.json'), 'utf8'));
+    const names = [...new Set([].concat((convId && pins['c:' + convId]) || [], (teamId && pins['t:' + teamId]) || []))];
+    if (!names.length) return;
+    const home = process.env.USERPROFILE || require('os').homedir();
+    const dirs = [];
+    if (proj && proj.root) dirs.push(path.join(proj.root, '.claude', 'skills'));
+    for (const r of roots.slice().reverse()) dirs.push(path.join(r, '.claude', 'skills'));
+    dirs.push(path.join(home, '.claude', 'skills'), path.join(dataDir, 'aionui', 'builtin-skills', 'auto-inject'));
+    let text = '';
+    const given = [];
+    for (const n of names) {
+      if (!/^[A-Za-z0-9:_.-]{1,80}$/.test(n)) continue;
+      const d = dirs.find((x) => fs.existsSync(path.join(x, n, 'SKILL.md')));
+      if (!d) continue;
+      const body = fs.readFileSync(path.join(d, n, 'SKILL.md'), 'utf8');
+      if (text.length + body.length > 60000) break;
+      text += '\n\n<pinned-skill name="' + n + '" folder="' + path.join(d, n) + '">\n' + body + '\n</pinned-skill>';
+      given.push(n);
+    }
+    if (!given.length) return;
+    const head = '\n\nPinned skills: the user or your team lead pinned these for you; follow them whenever they apply, without being asked.';
+    const at = args.indexOf('--append-system-prompt');
+    if (at >= 0 && at + 1 < args.length) args[at + 1] = String(args[at + 1]) + head + text;
+    else args.push('--append-system-prompt', head.trim() + text);
+    routerLog('pinned skills given: ' + given.join(', '));
+  } catch { /* no pins */ }
 }
 
 /** R-112: one small file per chat, <data folder>\aiondx-launches\<conversation id>.json, rewritten at each launch: when it started, the

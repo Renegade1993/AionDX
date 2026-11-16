@@ -622,6 +622,174 @@
     return { convId: c.map[t.slotId] || null, backend: c.backend[t.slotId] || '', name: c.names[t.slotId] || '' };
   }
 
+  // ---------------------------------------------------------------- the Skills panel (R-128 step 3, November 15th, 2026)
+  // The user: "skills should be easy as shit for you to employ, build, and continually iterate on". A button beside the Loop opens what this
+  // chat has: every skill from every layer (AionDX's, yours, the shared ones, its project's), what each is for, how often this chat used it
+  // and when, and what it costs in context; a switch per skill (Claude Code's own skillOverrides, in the chat's folder), Pin (the whole
+  // skill given to the agent at its start) and Refresh skills (the agent restarted with them once its turn is over). Main side:
+  // aiondx-skills-main.js (aiondx:skills); pins reach Claude through the launcher (claude-account-router.js pinnedSkills).
+  var SVG_SKILLS = '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M8 8H22C25 8 24 11 24 11V42C24 42 23 39 20 39H8V8Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M40 8H26C23 8 24 11 24 11V42C24 42 25 39 28 39H40V8Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M14 17H18M30 17H34M14 24H18M30 24H34" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
+  var skillBtns = {}, skPop = null;
+  function skillsBridge() { return window.aiondxSkills && typeof window.aiondxSkills.call === 'function' ? window.aiondxSkills : null; }
+  function renderSkillBtns(list) {
+    if (!skillsBridge()) return;
+    var live = {};
+    list.forEach(function (t) {
+      var p = pills[t.key];
+      if (!p || !p.el || !p.el.parentNode) return;
+      live[t.key] = true;
+      var b = skillBtns[t.key];
+      if (!b) {
+        b = skillBtns[t.key] = document.createElement('button');
+        b.type = 'button';
+        b.className = 'arco-btn arco-btn-secondary arco-btn-size-small arco-btn-shape-circle aiondx-skills-btn';
+        b.setAttribute('data-testid', 'aiondx-skills-btn');
+        b.setAttribute('aria-label', 'Skills in this chat');
+        b.title = 'Skills in this chat';
+        b.innerHTML = SVG_SKILLS;
+        b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); if (skPop && skPop._key === b._t.key) closeSkills(); else openSkills(b, b._t); });
+      }
+      b._t = t;
+      if (b.parentNode !== p.el.parentNode || p.el.nextSibling !== b) p.el.parentNode.insertBefore(b, p.el.nextSibling);
+    });
+    Object.keys(skillBtns).forEach(function (k) { if (!live[k]) { if (skillBtns[k].parentNode) skillBtns[k].parentNode.removeChild(skillBtns[k]); delete skillBtns[k]; } });
+  }
+  function closeSkills() { if (skPop) { skPop.remove(); skPop = null; } }
+  /** Which chat a composer is: its id, working folder, team. */
+  async function skillsChat(t) {
+    var conv = t.convId || null, team = t.teamId || null, teamName = '', slot = t.slotId || null;
+    if (!conv && t.kind === 'team') { var m = await memberConversation(t); conv = m && m.convId; }
+    if (!conv) return null;
+    var g = await getJson('/api/conversations/' + encodeURIComponent(conv));
+    var d = (g && g.data) || {};
+    var ex = d.extra || {};
+    team = team || ex.teamId || ex.team_id || null;
+    if (team) { var tg = await getJson('/api/teams/' + encodeURIComponent(team)); teamName = (tg && tg.data && tg.data.name) || ''; }
+    return { conv: conv, ws: ex.workspace || '', team: team, teamName: teamName, slot: slot, status: d.status };
+  }
+  var SK_STATES = [['on', 'On'], ['name-only', 'Name only'], ['user-invocable-only', 'You only'], ['off', 'Off']];
+  async function openSkills(btn, t) {
+    closeSkills();
+    var pop = skPop = gEl('div', 'aiondx-skills-pop');
+    pop._key = t.key;
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', 'Skills in this chat');
+    pop.setAttribute('data-testid', 'aiondx-skills');
+    pop.appendChild(gEl('div', 'aiondx-skills-title', 'Skills in this chat'));
+    var sum = gEl('div', 'aiondx-skills-sum', 'Reading...');
+    pop.appendChild(sum);
+    var find = document.createElement('input');
+    find.type = 'search';
+    find.className = 'aiondx-places-find aiondx-skills-find';
+    find.placeholder = 'Find a skill';
+    find.setAttribute('aria-label', 'Find a skill');
+    pop.appendChild(find);
+    var list = gEl('div', 'aiondx-skills-list');
+    list.setAttribute('role', 'list');
+    pop.appendChild(list);
+    var foot = gEl('div', 'aiondx-skills-foot');
+    var refresh = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small', 'Refresh skills');
+    refresh.type = 'button';
+    refresh.setAttribute('data-testid', 'aiondx-skills-refresh');
+    var st = gEl('span', 'aiondx-skills-status');
+    foot.appendChild(refresh);
+    foot.appendChild(st);
+    pop.appendChild(foot);
+    document.body.appendChild(pop);
+    var place = function () {
+      var r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+      pop.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - w - 8))) + 'px';
+      pop.style.top = Math.round(Math.max(8, r.top - h - 8)) + 'px';
+    };
+    place();
+    var off = function (ev) { if (!skPop || skPop !== pop) { document.removeEventListener('mousedown', off, true); return; } if (!pop.contains(ev.target) && ev.target !== btn && !btn.contains(ev.target)) { closeSkills(); document.removeEventListener('mousedown', off, true); } };
+    setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
+    pop.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeSkills(); });
+    var chat = await skillsChat(t);
+    if (skPop !== pop) return;
+    if (!chat) { sum.textContent = 'This chat has not started yet; its skills show once it has.'; place(); return; }
+    var data = null;
+    var paint = function () {
+      list.textContent = '';
+      var q = String(find.value || '').trim().toLowerCase();
+      var shown = data.skills.filter(function (s) { return !q || s.name.toLowerCase().indexOf(q) >= 0 || s.description.toLowerCase().indexOf(q) >= 0; });
+      shown.forEach(function (s) {
+        var row = gEl('div', 'aiondx-skill' + (s.state === 'off' ? ' aiondx-skill--off' : ''));
+        row.setAttribute('role', 'listitem');
+        row.setAttribute('data-skill', s.name);
+        var head = gEl('div', 'aiondx-skill-head');
+        head.appendChild(gEl('span', 'aiondx-skill-name', s.name));
+        var lay = gEl('span', 'aiondx-skill-layer aiondx-skill-layer--' + s.layer.kind, s.layer.label);
+        lay.title = s.dir + (s.shadows ? ' (used instead of the one in ' + s.shadows + ')' : '');
+        head.appendChild(lay);
+        row.appendChild(head);
+        if (s.description) row.appendChild(gEl('div', 'aiondx-skill-desc', s.description));
+        var meta = gEl('div', 'aiondx-skill-meta');
+        meta.appendChild(gEl('span', 'aiondx-skill-uses' + (s.uses ? '' : ' aiondx-skill-uses--never'),
+          s.uses ? 'Used ' + (s.uses === 1 ? 'once' : s.uses + ' times') + ' here' + (s.lastUsed ? ', last ' + longDate(Date.parse(s.lastUsed)) : '') : 'Never used here'));
+        meta.appendChild(gEl('span', 'aiondx-skill-cost', 'about ' + s.cost.toLocaleString('en-US') + ' tokens' + (s.pinned ? ' (whole skill)' : '')));
+        var sel = document.createElement('select');
+        sel.className = 'aiondx-skill-state';
+        sel.setAttribute('aria-label', 'Switch for ' + s.name);
+        SK_STATES.forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; if (o[0] === s.state) op.selected = true; sel.appendChild(op); });
+        sel.title = 'On: the agent uses it when it fits. Name only: the agent sees its name. You only: only when you call it. Off: not in this chat.';
+        sel.addEventListener('change', function () {
+          skillsBridge().call('set', { ws: chat.ws, name: s.name, state: sel.value }).then(function (x) {
+            if (!x || !x.ok) { st.textContent = 'Not changed: ' + ((x && x.error) || 'no answer'); return; }
+            s.state = sel.value; row.classList.toggle('aiondx-skill--off', s.state === 'off');
+            st.textContent = 'Refresh skills so the agent has the change.';
+          });
+        });
+        var ctl = gEl('span', 'aiondx-skill-ctl');
+        ctl.appendChild(sel);
+        meta.appendChild(ctl);
+        var pin = gEl('button', 'aiondx-skill-pin' + (s.pinned ? ' aiondx-skill-pin--on' : ''), s.teamPinned ? 'Pinned for the team' : s.pinned ? 'Pinned' : 'Pin');
+        pin.type = 'button';
+        pin.disabled = !!s.teamPinned;
+        pin.setAttribute('aria-pressed', s.pinned ? 'true' : 'false');
+        pin.title = s.teamPinned ? 'The team lead pinned it for the whole team.' : 'Pinned: the whole skill is given to the agent at its start, so it follows it without looking it up.';
+        pin.addEventListener('click', function () {
+          skillsBridge().call('pin', { key: 'c:' + chat.conv, name: s.name, on: !s.pinned }).then(function (x) {
+            if (!x || !x.ok) { st.textContent = 'Not changed: ' + ((x && x.error) || 'no answer'); return; }
+            s.pinned = !s.pinned;
+            pin.textContent = s.pinned ? 'Pinned' : 'Pin';
+            pin.classList.toggle('aiondx-skill-pin--on', s.pinned);
+            pin.setAttribute('aria-pressed', s.pinned ? 'true' : 'false');
+            st.textContent = 'Refresh skills so the agent has the change.';
+          });
+        });
+        ctl.appendChild(pin);
+        row.appendChild(meta);
+        list.appendChild(row);
+      });
+      if (!shown.length) list.appendChild(gEl('div', 'aiondx-skills-empty', q ? 'No skill by that name.' : 'No skills yet.'));
+      place();
+    };
+    var r = await skillsBridge().call('list', { conv: chat.conv, ws: chat.ws, team: chat.team, teamName: chat.teamName });
+    if (skPop !== pop) return;
+    if (!r || !r.ok) { sum.textContent = 'Could not read the skills: ' + ((r && r.error) || 'no answer'); place(); return; }
+    data = r;
+    sum.textContent = plural(r.total, 'skill', 'skills') + ', ' + r.used + ' used in this chat; about ' + r.cost.toLocaleString('en-US') + ' tokens of its context.';
+    find.addEventListener('input', paint);
+    paint();
+    refresh.addEventListener('click', function () { refreshSkills(chat, st, refresh); });
+  }
+  /** The agent restarted with its skills as they are now, once its turn is over (checked every 5 s, for 10 minutes). The chat is kept. */
+  async function refreshSkills(chat, st, btn) {
+    btn.disabled = true;
+    for (var i = 0; i < 120; i++) {
+      var g = await getJson('/api/conversations/' + encodeURIComponent(chat.conv));
+      if (!(g && g.data && g.data.status === 'running')) break;
+      if (i === 0) st.textContent = 'It is working; its skills refresh when this turn is over.';
+      await new Promise(function (res) { setTimeout(res, 5000); });
+    }
+    var r = chat.team && chat.slot ? await postJson('/api/teams/' + encodeURIComponent(chat.team) + '/agents/' + encodeURIComponent(chat.slot) + '/runtime/restart', {})
+      : await postJson('/api/conversations/' + encodeURIComponent(chat.conv) + '/runtime/restart', {});
+    // an agent that was not running has nothing to restart: its next start has them anyway
+    st.textContent = r && r.ok ? 'Refreshed: the agent has its skills as they are now. The chat is kept.' : 'Its next start has them (no agent is running now).';
+    btn.disabled = false;
+  }
+
   function hhmm(ms) {
     var d = new Date(ms);
     return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
@@ -7100,6 +7268,30 @@
     '.aiondx-cache{position:relative;width:min(720px,94vw)}',
     // Where your chats live (R-130)
     '.aiondx-places-backdrop[hidden],.aiondx-places [hidden]{display:none !important}',
+    // the Skills panel (R-128)
+    '.aiondx-skills-btn{margin-left:4px}',
+    '.aiondx-skills-btn svg{width:15px;height:15px}',
+    '.aiondx-skills-pop{position:fixed;z-index:10050;box-sizing:border-box;width:min(520px,94vw);max-height:min(620px,80vh);display:flex;flex-direction:column;gap:8px;padding:14px 14px 12px;border-radius:10px;border:1px solid var(--color-border-2);background:var(--color-bg-popup, var(--color-bg-2));box-shadow:0 10px 30px rgba(0,0,0,.25)}',
+    '.aiondx-skills-title{font-size:15px;font-weight:600;color:var(--color-text-1)}',
+    '.aiondx-skills-sum{font-size:12px;color:var(--color-text-3)}',
+    '.aiondx-skills-list{flex:1 1 auto;min-height:60px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px}',
+    '.aiondx-skill{padding:8px 10px;border:1px solid var(--color-border-2);border-radius:8px}',
+    '.aiondx-skill--off{opacity:.6}',
+    '.aiondx-skill-head{display:flex;align-items:center;gap:8px;min-width:0}',
+    '.aiondx-skill-name{font-size:13px;font-weight:600;color:var(--color-text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.aiondx-skill-layer{flex:0 0 auto;margin-left:auto;padding:0 7px;border-radius:9px;font-size:11px;line-height:18px;color:var(--color-text-2);background:var(--color-fill-2)}',
+    '.aiondx-skill-layer--project{color:rgb(var(--primary-6));background:rgba(var(--primary-6),.12)}',
+    '.aiondx-skill-desc{margin-top:3px;font-size:12px;line-height:1.45;color:var(--color-text-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
+    '.aiondx-skill-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--color-text-3)}',
+    '.aiondx-skill-uses--never{font-style:italic}',
+    '.aiondx-skill-ctl{display:flex;align-items:center;gap:6px;margin-left:auto}',
+    '.aiondx-skill-state{height:24px;padding:0 6px;border:1px solid var(--color-border-2);border-radius:6px;background:var(--color-fill-1, var(--color-bg-2));color:var(--color-text-1);font-size:12px}',
+    '.aiondx-skill-pin{height:24px;padding:0 10px;border:1px solid var(--color-border-2);border-radius:6px;background:none;color:var(--color-text-2);font-size:12px;cursor:pointer}',
+    '.aiondx-skill-pin--on{border-color:rgb(var(--primary-6));color:rgb(var(--primary-6));background:rgba(var(--primary-6),.1)}',
+    '.aiondx-skill-pin:disabled{cursor:default;opacity:.8}',
+    '.aiondx-skills-foot{display:flex;align-items:center;gap:10px}',
+    '.aiondx-skills-status{font-size:12px;color:var(--color-text-3)}',
+    '.aiondx-skills-empty{padding:12px;font-size:13px;color:var(--color-text-3)}',
     '.aiondx-places{position:relative;width:min(760px,94vw);display:flex;flex-direction:column;max-height:88vh;overflow:hidden}',
     '.aiondx-places-bar{display:flex;align-items:center;gap:12px;margin:8px 0 6px}',
     '.aiondx-places-allbox{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-2);white-space:nowrap;cursor:pointer}',
@@ -7884,6 +8076,7 @@
         diagnose('pill-failed', t.key, { error: String(e && e.stack || e).slice(0, 600) });
       }
     }
+    try { renderSkillBtns(list); } catch (e) {}
     try { diagnoseMissing(); } catch (e) {}
     var big = bigPage();
     Object.keys(pills).forEach(function (k) {
@@ -11608,6 +11801,8 @@
       ['Docs you can find', '+ New doc names a doc in the panel; click a doc\u2019s title to rename it; \u22ef > Delete the doc puts it in Recently deleted, where it can be restored. All docs lists every project\u2019s docs. Earlier versions show what changed since.'],
       ['@@ and @@@ in every chat', 'Type @@ in a team chat too, to name a chat or a team (a team goes to its lead). @@@ names one member of a team, in any chat. Any agent can now write to any other chat, team or member when you tell it to.'],
       ['Chats where you choose', 'Settings > Where your chats live: tick any chats, teams or groups and keep them in a folder of your own, on this PC or on a drive that goes with you. Their files, history and messages go together; bring them back any time. A group can have a place for the chats made in it. A chat whose folder is missing is marked, and Find it shows AionDX where it is now.'],
+      ['Skills in every chat', 'The book button beside the Loop shows every skill the chat has (AionDX’s, yours, the shared ones and its project’s), how often it used each and when, and what each costs in context. Switch a skill off for that chat, pin one so the agent always has it in full, or refresh them. A team lead pins skills for its team.'],
+      ['One set of skills for every agent', 'Codex, Gemini and the other agents now get the same personal, shared and project skills as Claude. A chat with no project is asked which project it is for, once; its menu has Project too.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.27.10', items: [
@@ -11744,6 +11939,8 @@
       text: 'Click to sign in another Claude account; you choose what it may do before the sign-in page opens. It then gets its own pill here and shows in every chat\u2019s account button.' },
     { id: 'groups', sel: '[data-testid="aiondx-group-new"]', title: 'Groups',
       text: 'Make a group to keep related chats and teams together in this list.' },
+    { id: 'skills', sel: '[data-testid="aiondx-skills-btn"]', title: 'Skills in this chat',
+      text: 'What this chat’s agent knows how to do, and how often it used each skill. Switch one off here, or pin one so the agent always has it.' },
     { id: 'places', sel: '[data-testid="aiondx-places-open"]', title: 'Where your chats live',
       text: 'Tick the chats, teams or groups you want somewhere else and choose a folder for them, on this PC or a drive. The rest stay where they are.' },
     { id: 'drive', sel: '[data-testid="aiondx-drive-move"]', title: 'Everything on a drive',

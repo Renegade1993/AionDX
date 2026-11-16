@@ -315,6 +315,21 @@ namespace AionDx
                             { "message", Prop("string", "What to tell it. Up to 8000 characters. Both member and message are needed.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", false }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
+                    { "name", "skills_pin" },
+                    { "title", "Pin a skill for the team" },
+                    { "description",
+                        "Team lead only. Pins a skill so it is given in full to a teammate (member) or to every member of the team (no member) at its next start, " +
+                        "so they follow it without looking it up; unpin takes it away; list shows the team's pins. Read the skill first and pin only what the " +
+                        "work needs: every pinned skill costs context in every turn of the agents it is pinned for. The user sees and changes pins in each " +
+                        "chat's Skills panel. A pin reaches a running member at its next start (refresh it with the team runtime's restart)." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "action", Prop("string", "pin, unpin or list.") },
+                            { "skill", Prop("string", "The skill's name (its folder name).") },
+                            { "member", Prop("string", "One teammate: its name, slot id or conversation id. Leave out for the whole team.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
                     { "name", "agent_stop" },
                     { "title", "Stop a teammate" },
                     { "description",
@@ -626,6 +641,7 @@ namespace AionDx
                 else if (name == "loop_set") text = LoopSet(a);
                 else if (name == "priority_send") text = PrioritySend(a);
                 else if (name == "agent_stop") text = AgentStop(a);
+                else if (name == "skills_pin") text = SkillsPin(a);
                 else if (name == "mcp_status") text = McpStatus(a);
                 else if (name == "mcp_set") text = McpSet(a);
                 else if (name == "mcp_tools") text = McpToolsText(Str(a, "server"), Str(a, "tool"), false, TimeoutArg(a, 60) * 1000);
@@ -644,7 +660,7 @@ namespace AionDx
                     isError = r.Item2;
                     text = isError ? "tool error" : "ok";
                 }
-                else throw new ToolError("Unknown tool: " + name + ". This server has loop_status, loop_set, priority_send, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file and usage_alert.");
+                else throw new ToolError("Unknown tool: " + name + ". This server has loop_status, loop_set, priority_send, agent_stop, skills_pin, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file and usage_alert.");
             }
             catch (ToolError e) { text = e.Message; isError = true; content = null; }
             catch (Exception e) { text = "The Loop tool failed: " + e.Message; isError = true; content = null; }
@@ -2568,6 +2584,7 @@ namespace AionDx
             if (args[0] == "mcp") return McpCli(args, o);
             if (args[0] == "setup") return SetupCli(args, o);
             if (args[0] == "github") return GitHubCli(args, o);
+            if (args[0] == "skills") return SkillsCli(args, o);
             if (args[0] == "show") return ShowCli(args, o);
             if (args[0] == "usage") return UsageCli(args, o);
             if (args[0] == "config") return ConfigCli(args, o);
@@ -4078,6 +4095,61 @@ namespace AionDx
         // claims nothing from its queue until the user writes to it (the UI's Stop button for a member calls it). Cancel and pause end the
         // turn but not what the agent's process started in the background, so the member's runtime is restarted too, which ends the
         // process and everything under it.
+        /** R-128: a team lead pins skills for a member or the whole team (<data folder>\aiondx-skill-pins.json, read by the Claude launcher). */
+        static string SkillsPin(Dictionary<string, object> a)
+        {
+            string action = (Str(a, "action") ?? "pin").Trim().ToLowerInvariant();
+            string skill = (Str(a, "skill") ?? "").Trim();
+            string member = (Str(a, "member") ?? "").Trim();
+            var ctx = LoadContext();
+            if (ctx.Self.Kind != "team") throw new ToolError("Pinning skills for others is for a team lead, and this chat is not on a team. The user pins skills for a chat in its Skills panel.");
+            if (ctx.Self.Role != "lead") throw new ToolError("Only the team lead pins skills for the team.");
+            string file = Path.Combine(DxDataDir(), "aiondx-skill-pins.json");
+            Dictionary<string, object> pins = null;
+            try { pins = File.Exists(file) ? Json.DeserializeObject(File.ReadAllText(file)) as Dictionary<string, object> : null; } catch (Exception) { }
+            if (pins == null) pins = new Dictionary<string, object>();
+            Func<string, List<string>> get = k => { var l = new List<string>(); object v; if (pins.TryGetValue(k, out v) && v is System.Collections.IEnumerable && !(v is string)) foreach (var x in (System.Collections.IEnumerable)v) if (x is string) l.Add((string)x); return l; };
+            string teamKey = "t:" + ctx.Self.TeamId;
+            if (action == "list")
+            {
+                var sb = new StringBuilder();
+                var tl = get(teamKey);
+                sb.AppendLine("Pinned for the whole team: " + (tl.Count > 0 ? string.Join(", ", tl) : "none") + ".");
+                foreach (var m in ctx.Members) { var ml = get("c:" + m.ConvId); if (ml.Count > 0) sb.AppendLine("Pinned for " + (m.Name ?? m.SlotId) + ": " + string.Join(", ", ml) + "."); }
+                return sb.ToString().TrimEnd();
+            }
+            if (action != "pin" && action != "unpin") throw new ToolError("action is pin, unpin or list.");
+            if (!System.Text.RegularExpressions.Regex.IsMatch(skill, "^[A-Za-z0-9:_.-]{1,80}$")) throw new ToolError("skill is required: the skill's folder name.");
+            string key = teamKey, who = "the whole team";
+            if (member.Length > 0) { var t = Resolve(ctx, member, true)[0]; key = "c:" + t.ConvId; who = t.Name ?? t.SlotId; }
+            var list = get(key);
+            if (action == "pin" && !list.Contains(skill)) list.Add(skill);
+            if (action == "unpin") list.Remove(skill);
+            list.Sort(StringComparer.Ordinal);
+            if (list.Count > 0) pins[key] = list.ToArray(); else pins.Remove(key);
+            File.WriteAllText(file + ".tmp", Json.Serialize(pins), new UTF8Encoding(false));
+            if (File.Exists(file)) File.Delete(file);
+            File.Move(file + ".tmp", file);
+            return action == "pin" ? "Pinned " + skill + " for " + who + ". It is given in full at the next start of " + (member.Length > 0 ? "that member" : "each member") + "."
+                : "Unpinned " + skill + " for " + who + ".";
+        }
+
+        static int SkillsCli(string[] args, StreamWriter o)
+        {
+            const string help = "aiondx skills pins | pin NAME [--member WHO] | unpin NAME [--member WHO]   (team lead: skills given in full to a member, or to the whole team)";
+            string sub = args.Length > 1 ? args[1] : "help";
+            if (sub == "help" || sub == "--help" || sub == "-h") { o.WriteLine(help); return 0; }
+            try
+            {
+                var a = new Dictionary<string, object> { { "action", sub == "pins" ? "list" : sub } };
+                if (args.Length > 2 && !args[2].StartsWith("--")) a["skill"] = args[2];
+                for (int i = 2; i < args.Length - 1; i++) if (args[i] == "--member") a["member"] = args[i + 1];
+                o.WriteLine(SkillsPin(a));
+                return 0;
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+        }
+
         static string AgentStop(Dictionary<string, object> a)
         {
             string member = (Str(a, "member") ?? "").Trim();

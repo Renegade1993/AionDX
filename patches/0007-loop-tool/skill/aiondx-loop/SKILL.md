@@ -103,6 +103,15 @@ turn and then sends the replacement message you give it, which starts the next t
 the teammate has to agree. A Loop the user set to run until they stop it cannot be switched off by an agent, and wakes the member
 again at its next nudge; the reply says so, and you tell the user.
 
+## Pinning skills for the team (team lead)
+
+A pinned skill is given in full to an agent at its start, so it follows it without looking it up. As the lead, you decide what your
+team pins: `aiondx skills pin NAME` (the whole team), `aiondx skills pin NAME --member WHO` (one teammate), `aiondx skills unpin
+NAME [--member WHO]`, `aiondx skills pins` (what is pinned); the `skills_pin` tool does the same. Read a skill before you pin it, and
+pin only what the work needs: every pinned skill costs context in every turn of each agent it is pinned for. A pin reaches a running
+member at its next start. Nothing is pinned unless you or the user pin it; the user sees and changes pins in each chat's Skills panel
+(the button beside the Loop), which also shows how often each skill was used in that chat and switches a skill on or off there.
+
 ## MCP servers and their credentials
 
 The user's MCP servers and their access credentials live in one file, the AionDX MCP file
