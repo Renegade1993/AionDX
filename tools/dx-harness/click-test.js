@@ -3256,6 +3256,22 @@ async function pageTarget() {
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
 
+    // ---- stale Unread, Unsend and Edit (R-124) ----
+    {
+      const sc = 'staleunread';
+      await load('theme=light');
+      await js(`(() => { window.__rd = 0; window.__stub.routes['GET /api/conversations/harness1/messages/m-77'] = () => { window.__rd++; return { success: true, data: { id: 'm-77', msg_id: 'u77', status: window.__rd > 1 ? 'finish' : 'pending' } }; }; return 0; })()`);
+      await sleep(1500);
+      const vis = () => js(`(() => { const b = document.querySelector('#message-m-77 [data-testid="message-status-badge"]'); if (!b) return null; const cs = getComputedStyle(b); return { shown: cs.display !== 'none', text: b.textContent }; })()`);
+      let v = await vis();
+      check(sc, 'while the message is pending, Unread with Unsend and Edit stays', v && v.shown && /Unread/.test(v.text) && /Unsend/.test(v.text) && /Edit/.test(v.text), JSON.stringify(v));
+      await sleep(6500);
+      await js(`(() => { document.body.appendChild(document.createElement('i')); return 0; })()`);
+      await sleep(800);
+      v = await vis();
+      check(sc, 'once the backend says it was read, the badge with Unsend and Edit goes, without a reload', v && !v.shown && (await js('window.__rd')) >= 2, JSON.stringify([v, await js('window.__rd')]));
+    }
+
     // ---- the Skills panel (R-128 step 3, November 15th, 2026) ----
     {
       const sc = 'skills';

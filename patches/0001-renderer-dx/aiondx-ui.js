@@ -7151,6 +7151,21 @@
     try { await unsendSteps(convId, messageId, fail); }
     catch (e) { fail('Could not unsend: ' + (e && e.message ? e.message : 'the request failed') + '.'); }
   }
+  // R-124 (the user, November 13th: "these messages from 5+ minutes ago still haven't updated to show that the unsend and edit options
+  // aren't available anymore"): AionUi shows "Unread" while its own copy of a message says pending, and that copy is not refreshed when the
+  // agent reads a message mid-turn. While a badge shows, the backend is asked about that message every 5 seconds; once it is not pending
+  // the row is marked read (data-aiondx-read): the badge and its Unsend and Edit go.
+  var readChecked = {}, readDone = {};
+  function checkStillUnread(row, convId) {
+    var mid = row.id.slice('message-'.length);
+    if (readDone[mid]) { if (row.getAttribute('data-aiondx-read') !== '1') row.setAttribute('data-aiondx-read', '1'); return; }
+    if (!convId || unsendPending[mid] || Date.now() - (readChecked[mid] || 0) < 5000) return;
+    readChecked[mid] = Date.now();
+    getJson('/api/conversations/' + encodeURIComponent(convId) + '/messages/' + encodeURIComponent(mid)).then(function (g) {
+      var m = g && !g.err && g.data ? (g.data.message || g.data) : null;
+      if (m && m.status && m.status !== 'pending') { readDone[mid] = true; var el = document.getElementById('message-' + mid); if (el) el.setAttribute('data-aiondx-read', '1'); }
+    }).catch(function () {});
+  }
   async function unsendSteps(convId, messageId, fail) {
     var m = null;
     var g = await getJson('/api/conversations/' + convId + '/messages/' + encodeURIComponent(messageId));
@@ -7191,6 +7206,7 @@
    *  { row element -> { t, id: mailbox id } }: those are taken back from the team's queue; the others are the member's own chat messages. */
   function unsendButtons(scope, convId, queued, chatToo) {
     var badges = scope.querySelectorAll('[data-testid="message-status-badge"]');
+    for (var rb = 0; rb < badges.length; rb++) { var rr = badges[rb].closest('[id^="message-"]'); if (rr) checkStillUnread(rr, convId); }
     for (var i = 0; i < badges.length; i++) {
       var badge = badges[i];
       var row = badge.closest('[id^="message-"]');
@@ -7901,6 +7917,7 @@
     '.aiondx-edit[disabled]{color:var(--color-text-3);cursor:default;text-decoration:none}',
     '.aiondx-unsend-foot .aiondx-unsend[disabled]{color:var(--color-text-3);cursor:default;text-decoration:none}',
     '[data-aiondx-unsent] .aiondx-unsend-foot{display:none}',
+    '[data-aiondx-read="1"] [data-testid="message-status-badge"]{display:none !important}',
     '[data-aiondx-unsent] [data-testid="message-text-content"] > *{text-decoration:line-through;opacity:.5}',
     '[data-aiondx-unsent] [data-testid="message-status-badge"]{display:none}',
     '[data-aiondx-unsent] [data-testid="message-text-content"]::after{content:"Unsent";display:block;margin-top:2px;',
