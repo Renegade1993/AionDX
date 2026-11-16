@@ -269,7 +269,8 @@ function packageLayout(db, info, pkg, homeMap) {
   return map;
 }
 /** The rows of an item into its package's database (a fresh file swapped in), and its manifest. */
-function exportRows(db, info, pkg, layout, homeOf, userHome) {
+/** group: the name of the item's sidebar group on this PC (null: none); undefined keeps what the manifest had. */
+function exportRows(db, info, pkg, layout, homeOf, userHome, group) {
   if (userHome) exportHistory(db, userHome, pkg, layout);
   const rows = itemRows(db, info);
   // a chat's assistant snapshot points at an assistant record this PC made (November 16th, 2026: another PC has none, so every chat
@@ -300,6 +301,7 @@ function exportRows(db, info, pkg, layout, homeOf, userHome) {
   const manifest = { format: 1, kind: info.kind, id: info.id, name: info.name, convIds: info.convIds,
     workspaces: layout.map((l) => ({ convId: l.convId, rel: l.rel, path: path.join(pkg, l.rel) })),
     home: homeOf || (readJson(path.join(pkg, MANIFEST)) || {}).home || {},
+    group: group !== undefined ? (group || null) : ((readJson(path.join(pkg, MANIFEST)) || {}).group || null),
     version, exportedAt: Date.now(), exportedBy: os.hostname() };
   fs.writeFileSync(path.join(pkg, MANIFEST), JSON.stringify(manifest, null, 1));
   return manifest;
@@ -420,7 +422,7 @@ function cmdMove(db, a, ctx) {
       journal.save();
       const agents = moveOtherHistory(ctx.home, pairs, journal, 30000);
       if (process.env.AIONDX_PLACE_FAIL_AFTER === 'rows') throw new Error('injected failure after rows');
-      exportRows(db, info, pkg, layout.map((l) => Object.assign({}, l)), home, ctx.home);
+      exportRows(db, info, pkg, layout.map((l) => Object.assign({}, l)), home, ctx.home, a.groupOf ? (a.groupOf[info.id] || null) : (prev ? prev.m.group : undefined));
       journal.steps.push({ kind: 'write', file: path.join(pkg, MANIFEST) }, { kind: 'write', file: path.join(pkg, ROWS) });
       indexOnDrive(pkg, info, false);
       journal.steps.push({ kind: 'index', pkg, id: info.id, ikind: info.kind, name: info.name, remove: false });
@@ -619,9 +621,11 @@ function cmdExport(db, a, ctx) {
     const at = packageOf(db, info);
     const pkg = at ? at.dir : null, m = at ? at.m : null;
     if (!m) { out.push({ id: info.id, skipped: 'not placed' }); continue; }
-    if (!a.force && m.version === localVersion(db, info)) { out.push({ id: info.id, skipped: 'unchanged' }); continue; }
+    const group = a.groupOf ? (a.groupOf[info.id] || null) : undefined;
+    const groupMoved = group !== undefined && (m.group || null) !== group;
+    if (!a.force && !groupMoved && m.version === localVersion(db, info)) { out.push({ id: info.id, skipped: 'unchanged' }); continue; }
     const layout = m.workspaces.map((w) => ({ convId: w.convId, old: path.join(pkg, w.rel), rel: w.rel }));
-    const nm = exportRows(db, info, pkg, layout, m.home, ctx && ctx.home);
+    const nm = exportRows(db, info, pkg, layout, m.home, ctx && ctx.home, group);
     out.push({ id: info.id, exported: nm.version, exportedAt: nm.exportedAt });
   }
   return { exported: out };
@@ -723,7 +727,7 @@ function cmdImport(db, a, ctx) {
     const history = importHistory(ctx.home, pkg, m, histPairs);
     let version = null;
     try { version = localVersion(db, itemInfo(db, { kind: m.kind, id: newId })); } catch { /* counted next time */ }
-    return { imported: { id: newId, from: m.id, kind: m.kind, name: m.name, mode, rows: n, skipped, history, version, exportedAt: m.exportedAt } };
+    return { imported: { id: newId, from: m.id, kind: m.kind, name: m.name, mode, rows: n, skipped, history, version, exportedAt: m.exportedAt, group: m.group || null } };
   } catch (e) { try { db.exec('ROLLBACK'); } catch { /* none */ } throw e; }
 }
 

@@ -133,7 +133,10 @@ function install(electron, opts) {
 
   /** The minute's work: placed items written back (unless someone else wrote their package since), and what the drives hold. */
   let tidied = false;
-  async function sync() {
+  /** groupOf: { item id: its sidebar group's name } from the page, written into each package so another PC files it the same way. */
+  let lastGroupOf;   // the page's groups at its last sync, for the export as AionDX quits
+  async function sync(groupOf) {
+    if (groupOf) lastGroupOf = groupOf;
     // once per start: packages made before November 16th, 2026 get their working folders' own names back (AionUi listed them under
     // Projects); a chat whose agent holds its folder is skipped and tried again at the next start
     if (!tidied) { tidied = true; try { await run('tidy', {}, 300000); } catch { /* next start */ } }
@@ -152,7 +155,7 @@ function install(electron, opts) {
     }
     let exported = [];
     if (toExport.length) {
-      const r = await run('export', { items: toExport }, 300000);
+      const r = await run('export', { items: toExport, groupOf }, 300000);
       if (r.ok) {
         exported = r.exported.filter((e) => e.exported);
         for (const e of exported) rec.sync[e.id] = { version: e.exported, exportedAt: e.exportedAt };
@@ -176,7 +179,7 @@ function install(electron, opts) {
     if (op === 'move') {
       const to = String(req.to || '');
       if (!path.isAbsolute(to)) return { ok: false, error: 'Choose a folder first.' };
-      const r = await run('move', { items: req.items || [], to });
+      const r = await run('move', { items: req.items || [], to, groupOf: req.groupOf || undefined });
       const rec = readRec();
       const done = (r.moved || (r.partial || [])).filter(Boolean);
       for (const d of done) { rec.placed[d.id] = { kind: d.kind, package: d.package, at: Date.now() }; delete rec.sync[d.id]; }
@@ -218,7 +221,7 @@ function install(electron, opts) {
       writeRec(rec2);
       return left.length ? { ok: false, error: 'Not everything could be undone: ' + left.join(' | ') } : { ok: true, undone: last.op, names: last.names };
     }
-    if (op === 'sync') return sync();
+    if (op === 'sync') return sync(req.groupOf || undefined);
     if (op === 'import') {
       const pkg = String(req.package || '');
       let m = null;
@@ -313,7 +316,7 @@ function install(electron, opts) {
       const node = nodeExe();
       if (!safe.length || !node || !fs.existsSync(mover())) return;
       const jf = path.join(os.tmpdir(), 'aiondx-place-quit-' + process.pid + '.json');
-      fs.writeFileSync(jf, JSON.stringify({ items: safe }));
+      fs.writeFileSync(jf, JSON.stringify({ items: safe, groupOf: lastGroupOf }));
       const r = cp.spawnSync(node, ['--no-warnings', mover(), 'export', '--db', dbFile(), '--home', homeDir(), '--work', workDir(), '--json-file', jf], { windowsHide: true, timeout: 30000, encoding: 'utf8', env: childEnv() });
       try { fs.rmSync(jf, { force: true }); } catch { /* best effort */ }
       try {

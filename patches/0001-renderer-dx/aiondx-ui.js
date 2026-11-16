@@ -4203,7 +4203,7 @@
         for (var i = 0; i < it.convIds.length; i++) { var h = await holdConv(it.convIds[i], true, false); if (h.working) { await releaseIds(held); held = null; break; } if (h.ok || h.status === 404) held.push(it.convIds[i]); }
         if (!held) { if (++tries < 40) setTimeout(go, 15000); else delete placingNew[key]; return; }
         var r;
-        try { r = await placesBridge().call('move', { items: [{ kind: it.kind, id: it.id }], to: to }); } finally { await releaseIds(held); }
+        try { r = await placesBridge().call('move', { items: [{ kind: it.kind, id: it.id }], to: to, groupOf: placesGroupOf() }); } finally { await releaseIds(held); }
         delete placingNew[key];
         await placesLoad();
         if (r && r.ok) { redrawIfOpen([it]); toast('"' + it.name + '" is kept in ' + to + ', its group\'s place.', ''); }
@@ -4220,7 +4220,7 @@
     if (!b || placesSyncing || chatPlaces.busy || disabled()) return;
     placesSyncing = true;
     try {
-      var r = await b.call('sync');
+      var r = await b.call('sync', { groupOf: placesGroupOf() });
       if (!r || !r.ok) return;
       var came = [];
       // a drive back under another letter: its chats used from there, by themselves
@@ -4250,6 +4250,7 @@
       }
       if (came.length || (r.relink || []).length) {
         await placesLoad();
+        placesFileCame(came);
         nudgeLists(came);
         if (came.length) toast(plural(came.length, 'chat came', 'chats came') + ' in from a drive: ' + came.map(function (c) { return c.name; }).join(', ') + '.',
           came.some(function (c) { return c.mode === 'copy'; }) ? 'Changed here and on another PC while apart: the drive\'s copy is kept beside yours, marked "from the drive".' : '');
@@ -4257,6 +4258,21 @@
       }
     } catch (e) {
     } finally { placesSyncing = false; }
+  }
+  /** Each grouped chat's and team's sidebar group, by name, for the packages: another PC files them the same way (November 16th, 2026). */
+  function placesGroupOf() {
+    var o = {};
+    Object.keys(groupsState.items).forEach(function (k) { var g = groupById(groupsState.items[k]); if (g) o[k.slice(2)] = g.name; });
+    return o;
+  }
+  /** Chats that came in from a drive go into the group their package names, made here when there is none of that name. */
+  function placesFileCame(came) {
+    (came || []).forEach(function (c) {
+      if (!c || !c.group || !c.id) return;
+      var key = (c.kind === 't' ? 't:' : 'c:') + c.id;
+      var gid = createGroup(c.group);
+      if (gid && groupsState.items[key] !== gid) assignGroup(key, gid);
+    });
   }
   /** Chats written into the database by the mover: AionCore told of them (a rename to the same name), so the sidebar reads them. */
   function nudgeLists(came) {
@@ -15717,6 +15733,7 @@
 
   function firstTarget() { var l = targets(); return l.length ? l[0] : null; }
   window.__aionDx = {
+    placesSyncNow: function () { return placesSync(); },
     projectPicker: function (sel, key) { var el = document.querySelector(sel); if (el) projectPicker(el, key, null); return !!el; },
     targets: function () { return targets().map(function (t) { return { key: t.key, on: state(t).on }; }); },
     status: function () { var t = firstTarget(); return t ? state(t) : null; },

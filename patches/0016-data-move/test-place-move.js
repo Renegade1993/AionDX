@@ -224,6 +224,29 @@ check('undo: everything as it was', snapshot() === original && fs.existsSync(pat
   check('tidy: then Bring back takes it home, and nothing is left of the package', r.code === 0 && extraWs('c4') === ws.c4 && fs.existsSync(path.join(ws.c4, 'a.txt')) && !fs.existsSync(pA), r.raw);
 }
 
+// ---------------------------------------------------------------- 6c. the sidebar group goes with the package (November 16th, 2026)
+{
+  const placeG = path.join(BASE, 'Grouped');
+  r = run('move', { items: [{ kind: 'c', id: 'c4' }], to: placeG, groupOf: { c4: 'Work' } });
+  const pG = r.out && r.out.moved && r.out.moved[0].package;
+  const mf = path.join(pG || '', 'aiondx-chat.json');
+  check('group: the package records the chat\'s sidebar group by name', r.code === 0 && JSON.parse(fs.readFileSync(mf, 'utf8')).group === 'Work', r.raw);
+  r = run('export', { items: [{ kind: 'c', id: 'c4' }] });
+  check('group: an export that names no groups keeps it', JSON.parse(fs.readFileSync(mf, 'utf8')).group === 'Work', r.raw);
+  r = run('export', { items: [{ kind: 'c', id: 'c4' }], groupOf: { c4: 'Clients' } });
+  check('group: moved to another group, the package is written again with it (rows unchanged)', r.code === 0 && r.out.exported[0].exported && JSON.parse(fs.readFileSync(mf, 'utf8')).group === 'Clients', r.raw);
+  r = run('export', { items: [{ kind: 'c', id: 'c4' }], groupOf: {} });
+  check('group: out of every group, the package says none', JSON.parse(fs.readFileSync(mf, 'utf8')).group === null, r.raw);
+  run('export', { items: [{ kind: 'c', id: 'c4' }], groupOf: { c4: 'Work' } });
+  const db2 = path.join(BASE, 'other-pc-g.db');
+  fs.copyFileSync(dbFile, db2);
+  { const d = new DatabaseSync(db2); d.exec('PRAGMA foreign_keys = OFF'); for (const t of ['messages', 'acp_session']) d.prepare('DELETE FROM ' + t + " WHERE conversation_id = 'c4'").run(); d.prepare("DELETE FROM conversations WHERE id = 'c4'").run(); d.close(); }
+  r = run('import', { package: pG }, null, db2);
+  check('group: another PC\'s import says which group it belongs in', r.code === 0 && r.out.imported.group === 'Work', r.raw);
+  r = run('back', { items: [{ kind: 'c', id: 'c4' }] });
+  check('group: back home after', r.code === 0 && extraWs('c4') === ws.c4, r.raw);
+}
+
 // ---------------------------------------------------------------- 7. Find it: the package moved while AionDX was not looking
 r = run('move', { items: [{ kind: 'c', id: 'c3' }], to: place1 });
 const pkg3 = r.out && r.out.moved && r.out.moved[0].package;

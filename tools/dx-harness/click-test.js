@@ -3284,6 +3284,19 @@ async function pageTarget() {
       const a4 = await askYes(/^Undo the last move \(Chat one\)\?$/);
       await sleep(900);
       check(sc, 'Undo: asked, then undone', a4.ok && (await js('window.__pl.calls.some((c) => c[0] === "undo")')), JSON.stringify(a4));
+      // chats from a drive land in the group their package names (November 16th, 2026: "placed in the correct group on the laptop side")
+      await js(`(() => { const old = window.aiondxPlaces.call; window.aiondxPlaces.call = (op, a) => {
+        if (op === 'sync') { window.__pl.calls.push([op, a || {}]); return Promise.resolve({ ok: true, exported: 0, changed: [], relink: [], incoming: [{ kind: 'c', id: 'newc', name: 'From laptop', package: 'W:\\\\x\\\\newc' }, { kind: 'c', id: 'newd', name: 'Another', package: 'W:\\\\x\\\\newd' }] }); }
+        if (op === 'import') { window.__pl.calls.push([op, a || {}]); const id = /newc/.test(a.package) ? 'newc' : 'newd';
+          return Promise.resolve({ ok: true, imported: { id, kind: 'c', name: id, mode: 'new', group: id === 'newc' ? 'Client work' : 'Brand new' } }); }
+        return old(op, a); }; return 0; })()`);
+      await js('window.__aionDx.placesSyncNow()');
+      await sleep(1500);
+      const gs = await js(`(() => { const g = JSON.parse(localStorage.getItem('aionui.dx.groups') || '{}'); const name = (id) => ((g.groups || []).find((x) => x.id === id) || {}).name;
+        return { newc: name((g.items || {})['c:newc']), newd: name((g.items || {})['c:newd']), groups: (g.groups || []).map((x) => x.name) }; })()`);
+      check(sc, 'a chat from a drive goes into the group its package names; a group missing here is made', gs.newc === 'Client work' && gs.newd === 'Brand new' && gs.groups.filter((n) => n === 'Client work').length === 1, JSON.stringify(gs));
+      const sy = await js('window.__pl.calls.filter((c) => c[0] === "sync").pop()');
+      check(sc, 'the sync sends each grouped chat\'s and team\'s group by name, for the packages', sy && sy[1].groupOf && sy[1].groupOf.convB === 'Client work' && sy[1].groupOf.team1 === 'Client work', JSON.stringify(sy));
       await js(`(() => { delete window.aiondxPlaces; location.hash = ''; return 0; })()`);
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
