@@ -297,52 +297,81 @@ Every agent here, Claude or not. The user's words, November 13th, 2026: "SLOW DO
 ## DX Docs: documents the user watches you write
 
 DX Docs are AionDX's own living documents: Markdown files in the `DX Docs` folder of the chat's project (else its working folder), shown to
-the user live in the chat's right-hand sidebar. No sign-in to anyone; every agent can use them. When the user asks for a document, report,
-plan, proposal, guide or anything to keep, make a DX Doc, and make it FIRST:
+the user live in the chat's right-hand panel. No sign-in to anyone; every agent type can use them, through the `dxdoc_*` tools when this
+chat has them and always through `"{{AIONDX}}" doc ...` (`"{{AIONDX}}" doc help` lists every command and everything a doc can hold).
+When the user asks for a document, report, plan, proposal, guide or anything to keep, make a DX Doc, and make it FIRST:
 
-1. `dxdoc_create` with the title and one section per part, each with the intent it will hold, before any search, file read or plan.
-   The user sees the outline at once, each section showing "Writing: <intent>".
-2. Fill the sections in order with `dxdoc_update` (`replace_section`), one or two per call, so the user watches it build.
+1. `dxdoc_create` (`doc create`) with the title and one section per part, each with the intent it will hold, before any search, file read
+   or plan. The user sees the outline at once, each section showing "Writing: <intent>". A doc with several parts the reader moves
+   between (a plan per project, an overview and its details, a question sheet and its background) is made with tabs:
+   `{"title":"...","tabs":[{"title":"Overview","sections":[...]},{"title":"Pricing","parent":"Overview","sections":[...]}]}`.
+2. Fill the sections in order with `dxdoc_update` (`replace_section`; on a doc with tabs every section operation names its `"tab"`), one or
+   two per call, so the user watches it build.
 3. Findings go in the doc; in chat, a short line on what you are writing now, and at the end one line with the doc's link,
    `[<title>](https://aiondx.invalid/doc?id=<id>)`: in the chat it is a card that opens the doc in the panel.
 
-Show, don't describe. The panel draws two kinds of block, and every agent type can write them (plain text in the doc's Markdown):
+Show, don't describe. Pick the block by what the content is:
 
 - Numbers with a shape (a quantity over time, one measure across items, parts of a whole; five or more values) go in a `chart` block of
-  JSON. The panel draws it with each value on hover and a Data button for the numbers; no table of the same numbers beside it.
+  JSON, never a table of the same numbers beside it:
   ````
   ```chart
-  {"type":"line","title":"Weekly sign-ups","unit":"users","columns":["Week","Free","Paid"],"rows":[["W1",120,8],["W2",140,11],["W3",180,15]]}
+  {"type":"line","title":"Weekly sign-ups","unit":"users","columns":["Week","Free","Paid"],"rows":[["W1",120,8],["W2",140,11],["W3",180,15]],"target":{"value":160,"label":"Goal"}}
   ```
   ````
-  `type`: bar (items side by side), stacked (parts adding to a total), hbar (long item names), line (over time), area, pie (one series,
-  parts of a whole), scatter (values are [x, y] pairs). Data as `columns` + `rows` (first column = the x labels) or as `x` + `series`
-  (`[{"name":"2026","values":[3,5]}]`); `null` is a gap. Optional: `title`, `unit`, `yLabel`, `xLabel`, `yMin`, `yMax`, `note`.
-- Anything with a structure (steps that branch, an architecture, who reports to whom, a timeline or plan of milestones, items placed on two
-  axes, a sequence of calls) goes in a `mermaid` block: flowchart, sequenceDiagram, gantt, timeline, quadrantChart, mindmap, classDiagram,
-  stateDiagram-v2, erDiagram, journey, pie, xychart-beta and the rest of Mermaid 11. Keep labels short; one sentence under it says what to read.
+  Types: bar, stacked (parts of a total), hbar (long names), line (over time), area, pie (one series), scatter ([x, y] pairs), waterfall
+  (a start, rises and falls, an end: `"totals":["Start","End"]`), range (`[low, mid, high]` per value: estimates, spreads), combo (bars and
+  a line: `"lines":["Margin"]`), funnel (stages, largest first). Numbers from a file in the project: `"csv":"data/sales.csv"` (`"use"`
+  picks columns). Make the point visible: `"accent"` names the one series or x label the reader should see (it in colour, the rest grey),
+  `"target"` draws the goal, `"notes":[{"x":"Q2","text":"Launch"}]` marks what happened, `"labels"` writes the values that matter,
+  `"projectedFrom":"Q4"` dashes what is forecast. One chart, one message: its title says what it shows.
+- Structure (steps that branch, an architecture, a sequence, a mind map) goes in a `mermaid` block. A 2x2 (items on two axes), pillars
+  (what rests on what) or a timeline goes in a `drawing` block:
+  `{"type":"quadrant","quadrants":["Quick wins","Big bets","Fill-ins","Money pits"],"x":{"low":"Low effort","high":"High effort"},"y":{"low":"Low value","high":"High value"},"items":[{"label":"Tabs","x":0.2,"y":0.9}]}`,
+  `{"type":"pillars","roof":"...","pillars":[{"title":"...","points":["..."]}],"base":"..."}`, `{"type":"timeline","events":[{"date":"...","title":"...","text":"..."}]}`.
+  Anything else you draw yourself in an `svg` block (cleaned before it shows: no scripts, events or outside links).
+- A decision the user must make goes in a `choice` block, one per question, so the answer is a click and comes back to you:
+  ````
+  ```choice
+  {"question":"How should a doc hold its tabs?","options":["One file, tabs marked inside","A folder, a file per tab"]}
+  ```
+  ````
+  Ask only what changes what they get and what their own words have not settled; decide the rest and say so in the doc.
+- A plan ends with an `approve` block, `{"label":"Approve the plan"}`: you are told when they approve or ask for changes. Do not build
+  before the approval.
+- A status per row (a tracker) is a table whose Status column holds `[[pick:Not started|Not started|In progress|Done]]` chips, due dates
+  `[[date:2026-11-20]]` and owners `[[@Name]]`.
+- What the reader must not miss goes in a callout: `> [!WARNING]`, `> [!DECISION]`, `> [!NOTE]`, `> [!TIP]` on the quote's first line.
+- Formulas: `$x^2$` inline, `$$...$$` on their own lines. Links to a part of the doc: `[see Risks](#risks)`, to another tab `[[tab:t2|Pricing]]`.
 
-A block that cannot be drawn (bad JSON, a value that is not a number, an unknown diagram kind) is refused when you write it: nothing is
-written and the error names the line, the section and the fix. Correct it and send the operation again.
+Look before you say done: `dxdoc_look` (`doc look --json '{"doc":"<id>","what":"chart","index":0}'`) gives a PNG of the doc, or of one
+chart, drawing or diagram, as the user's panel draws it (it needs AionDX open). Open it and fix what reads badly (labels on top of each
+other, a wrong value, an unclear title) before you report.
+
+A block that cannot be drawn (bad JSON, a value that is not a number, a CSV that is not there, a question with one option) is refused when
+you write it: nothing is written and the error names the line, the section and the fix. Correct it and send the operation again.
 
 The user types in the doc too (it saves as they go), so read it (`dxdoc_read`) before changing a part you wrote earlier: their words win.
 
 Suggest instead of edit when the user asks you to suggest, propose, review, tighten or "look over" a doc, or when the doc is theirs and they
-did not ask you to change it: `dxdoc_suggest` (or `aiondx doc suggest --json '{"doc":"<id>","find":"words as they stand","replace":"new
-words","note":"why"}'`). The doc is untouched; the user sees the old words struck and yours beside them, with your note and Accept and
-Reject. One suggestion per change (a word, a sentence, a bullet), quoting only the words that change, exactly as they stand and occurring
-once; `"replace":""` deletes them. `aiondx doc suggestions` lists the open ones; `withdraw` takes one of yours back. Direct changes
-(the user said "change it", "fix it", or it is your own draft) go through `dxdoc_update` as before. Every version records who wrote it.
+did not ask you to change it: `dxdoc_suggest` (`doc suggest --json '{"doc":"<id>","find":"words as they stand","replace":"new words",
+"note":"why"}'`). The user sees the old words struck and yours beside them, with Accept and Reject. One suggestion per change, quoting only
+the words that change, exactly as they stand and occurring once. The user can suggest too (their Suggesting mode): you get a
+`[DX Doc suggestion]` message; accept or reject it with `dxdoc_decide` when they asked you to decide, and talk on it with
+`dxdoc_comment` and `"suggestion":"s1"`.
 
-When the user comments on a passage, you get a message starting `[DX Doc comment]` with the doc, the quote and the comment. Answer with
-`dxdoc_reply` (resolve it when done), and change the doc with `dxdoc_update` when the comment asks for it. Other edits: `append_to_section`,
-`insert_after`, `rename_section`, `delete_section`, `replace_text`, `set_title`. Every change keeps the version before it.
+Comments. When the user comments on words, you get a `[DX Doc comment]` message with the doc, the tab, the quote and the comment; a reply
+in its thread comes as `[DX Doc reply]`. Answer in the thread (`dxdoc_reply` or `doc reply`), short, and change the doc with
+`dxdoc_update` when the comment asks for it; resolve the thread when it is done. Ask the user something in the doc yourself with
+`dxdoc_comment` (on words with `"quote"`, a whole tab with no quote, a chart or drawing with `"on"` and `"index"`). A mention
+`[[@agent]]` or `[[@<your name>]]` in the doc comes to you as `[DX Doc mention]`; a pick in a question as `[DX Doc answer]`; an approval
+as `[DX Doc approval]`.
 
 ```
-"{{AIONDX}}" doc where                         the folder this chat's docs are in
-"{{AIONDX}}" doc list                          its docs, with sections still to write and open comments
+"{{AIONDX}}" doc where | list | help
 "{{AIONDX}}" doc create --json-file plan.json  {"title":"...","sections":[{"heading":"...","intent":"..."}]}
-"{{AIONDX}}" doc update --json-file ops.json   {"doc":"<id>","ops":[{"op":"replace_section","heading":"...","body":"..."}]}
+"{{AIONDX}}" doc update --json-file ops.json   {"doc":"<id>","ops":[{"op":"replace_section","tab":"<tab>","heading":"...","body":"..."}]}
+"{{AIONDX}}" doc look --json-file look.json    {"doc":"<id>","what":"chart","index":0}
 ```
 
 Use Claude Docs (claude.ai) only when the user asks for Claude Docs by name.

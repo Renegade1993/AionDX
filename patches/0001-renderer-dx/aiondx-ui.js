@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-14.1';
+  var BUILD = '2026-11-15.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -10894,14 +10894,23 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.27.10',
+    release: '0.28.0',
     items: [
+      ['Tabs in your docs', 'A DX Doc can hold several tabs, and sub-tabs under a tab: + beside the tabs adds one, a double-click renames it, its \u25be menu moves or deletes it. Agents write into any tab. Export one tab or all of them to Word, PDF or a Markdown file.'],
+      ['Comments, the Claude Docs way', 'Commented words are highlighted; click them to open the thread beside them, reply or resolve it there. Comments opens the list at its own height (drag its top edge) with its own scroll bar; resolved ones are a click away. Comment on a chart or a drawing with its Comment button.'],
+      ['Suggest edits yourself', 'Switch on Suggesting in a doc: what you type is proposed, not made, and the agent is told. Talk on any suggestion, and Accept all or Reject all in one go.'],
+      ['Questions, approvals, dates and statuses', 'Insert \u25be puts a date, a status with its own options, a mention, a link to a tab or doc, a question, an Approve button or a callout in the doc. Your answer, your approval or a mention of an agent goes to that agent at once.'],
+      ['Richer writing and tables', 'Heading 4, underline, highlight, formulas, code languages, links to a heading, CSV and Markdown blocks. Table \u25be adds, moves and deletes rows and columns, colours cells, aligns and widens columns, and merges cells.'],
+      ['More charts, and drawings', 'Waterfall, range, bar with a line and funnel charts; a goal line, notes on points, one bar in colour with the rest grey, forecasts dashed; a chart can read a CSV file in the project. Agents draw 2x2s, pillars and timelines. Double-click any words in a chart or drawing to change them; paste or drop a picture into a doc.'],
+      ['Docs you can find', '+ New doc names a doc in the panel; click a doc\u2019s title to rename it; \u22ef > Delete the doc puts it in Recently deleted, where it can be restored. All docs lists every project\u2019s docs. Earlier versions show what changed since.'],
+      ['@@ and @@@ in every chat', 'Type @@ in a team chat too, to name a chat or a team (a team goes to its lead). @@@ names one member of a team, in any chat. Any agent can now write to any other chat, team or member when you tell it to.'],
+    ],
+    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
+    earlier: [{ release: '0.27.10', items: [
       ['Type in your docs', 'Click into a DX Doc and type, as in Claude Docs. The bar above it has headings, bold, italic, lists, tasks, tables and links. It saves by itself a moment after you stop, and every save keeps the version before: \u22ef > Earlier versions says who wrote each one.'],
       ['Suggestions', 'Ask an agent to suggest changes to a doc (\u201csuggest edits to the plan\u201d): each shows in the doc, the old words struck and the new ones beside them, with a card to Accept or Reject. The doc changes only when you accept.'],
       ['Export to Word', 'In a doc\u2019s \u22ef menu: Export as Word (charts and diagrams come as pictures), Export as PDF, or Copy as Markdown.'],
-    ],
-    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
-    earlier: [{ release: '0.27.9', items: [
+    ] }, { release: '0.27.9', items: [
       ['Charts and diagrams', 'Ask any agent for a chart or a diagram in a DX Doc (\u201cput the numbers in a chart\u201d, \u201cdraw the steps as a flowchart\u201d): the panel draws it. Hover a bar or a point for its value; Data shows the numbers. Tasks in a doc can be ticked, and a doc\u2019s link in a reply is a card that opens it.'],
     ] }, { release: '0.27.8', items: [
       ['Ask for a DX Doc', 'Type \u201cmake a DX Doc about \u2026\u201d in any chat: it opens in a wide panel beside the chat and fills in while you watch. The Docs button at the top opens and closes it. Say \u201cDX Doc\u201d by name: a Claude chat may otherwise use Anthropic\u2019s Claude Docs, which needs a claude.ai sign-in. Select text in it to comment; the agent is told.'],
@@ -11011,6 +11020,20 @@
       text: 'Click anywhere in the doc and type; this bar formats it (headings, bold, lists, tasks, tables, links). It saves by itself a moment after you stop.' },
     { id: 'dxsuggest', sel: '[data-testid="aiondx-dx-sg"]', title: 'A suggestion',
       text: 'An agent proposes this change; the doc is untouched until you press Accept. Reject drops it. Hover the card to see where it is in the doc.' },
+    { id: 'dxtabs', sel: '[data-testid="aiondx-dx-tabadd"]', title: 'Tabs',
+      text: 'Add a tab with +, rename one with a double-click, and move or delete it from \u25be. A tab under another is a sub-tab. Agents write into any tab.' },
+    { id: 'dxinsert', sel: '.dx-fmt-b[data-fmt="insert"]', title: 'Insert',
+      text: 'A date, a status with its options, a mention (a mention of an agent tells it), a link to a tab or doc, a question for an agent to read the answer to, an Approve button, or a callout.' },
+    { id: 'dxtable', sel: '.dx-fmt-b[data-fmt="tablemenu"]', title: 'Shape a table',
+      text: 'With the cursor in a table: add, move or delete rows and columns, colour a cell, align or widen a column, merge a cell with the next.' },
+    { id: 'dxcmark', sel: '.dx-body .dx-cmark', title: 'A comment here',
+      text: 'Highlighted words have a comment on them. Click them to open the thread: reply, or resolve it when it is done.' },
+    { id: 'dxsuggesting', sel: '[data-testid="aiondx-dx-suggesting"]', title: 'Suggesting',
+      text: 'Switch it on and what you type becomes a suggestion: the doc stays as it was until it is accepted, and the agent is told.' },
+    { id: 'dxalldocs', sel: '[data-testid="aiondx-dx-alldocs"]', title: 'All docs',
+      text: 'Every project\u2019s DX Docs in one list. Open one from another project and it opens here.' },
+    { id: 'mention3', sel: '[data-testid="aiondx-mention-menu"]', title: '@@ and @@@',
+      text: '@@ names a chat or a team (a team goes to its lead); @@@ names one member of a team. The agent may read them, and writes to them only when you tell it to.' },
     { id: 'dxexport', sel: '[data-testid="aiondx-dx-more"]', title: 'Export and history',
       text: 'Export as Word or PDF, copy as Markdown, see earlier versions and who wrote them, or edit the raw Markdown.' },
     { id: 'add-account', sel: '[data-testid="aiondx-add-account"]', title: 'Add another Claude account',

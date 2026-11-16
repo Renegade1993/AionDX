@@ -60,6 +60,25 @@ if (!args.includes('--no-whats-new')) {
   }
 }
 
+// The renderer's BUILD stamp changes with every release: agents read it (aiondx loop status) to know which AionDX they run, and it stayed
+// 2026-11-13.1 through 0.27.10 and 0.27.11 (a team lead could not tell its build, November 15th). Compared with the newest earlier v* tag.
+// --same-build allows it (a release with no renderer change).
+const spawnGit = (a) => { try { return require('child_process').execFileSync('git', a, { cwd: path.join(__dirname, '..'), encoding: 'utf8', windowsHide: true, timeout: 30000, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) { return ''; } };
+if (!args.includes('--same-build')) {
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'), 'utf8');
+  const now = (/var BUILD = '([^']+)'/.exec(ui) || [])[1];
+  spawnGit(['fetch', '--tags', '--quiet']);   // releases are tagged on GitHub; their tags may not be here yet
+  const tags = spawnGit(['tag', '--list', 'v*', '--sort=-creatordate']).split('\n').map((t) => t.trim()).filter((t) => t && t !== tag);
+  const prevTag = tags[0];
+  if (prevTag) {
+    const before = (/var BUILD = '([^']+)'/.exec(spawnGit(['show', prevTag + ':patches/0001-renderer-dx/aiondx-ui.js'])) || [])[1];
+    if (now && before && now === before) {
+      console.error('github-release: the renderer\'s BUILD (' + now + ') is the same as in ' + prevTag + '. Give this release its own (var BUILD in aiondx-ui.js), or pass --same-build when the renderer did not change.');
+      process.exit(5);
+    }
+  }
+}
+
 // --check-only: the checks above, then stop before GitHub is touched (testing this tool once made a real draft release, November 13th).
 if (args.includes('--check-only')) { console.log('github-release: checks passed for ' + tag + ' (--check-only: nothing sent to GitHub)'); process.exit(0); }
 
