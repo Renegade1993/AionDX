@@ -75,7 +75,7 @@ function hub(ctx) {
     layers.push({ kind: 'project', project: key, label: path.basename(p.root), dir: path.join(p.root, '.claude', 'skills'), skills: skillsIn(path.join(p.root, '.claude', 'skills')),
       pending: pendingIn(p.root) });
   }
-  layers.push({ kind: 'store', label: 'AionUi\'s skill store (assistants)', dir: path.join(ctx.home, '.aiondx', 'skills'), skills: skillsIn(path.join(ctx.home, '.aiondx', 'skills')) });
+  layers.push({ kind: 'store', label: 'Assistant skill store', dir: path.join(ctx.home, '.aiondx', 'skills'), skills: skillsIn(path.join(ctx.home, '.aiondx', 'skills')) });
   layers.push({ kind: 'aiondx', label: 'AionDX\'s own (every chat)', dir: ctx.builtinDir, readOnly: true, skills: skillsIn(ctx.builtinDir) });
   return { ok: true, layers, libraryRoot: libRoot };
 }

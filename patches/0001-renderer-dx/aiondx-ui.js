@@ -826,7 +826,7 @@
     });
     var tabs = gEl('div', 'aiondx-dxs-tabs');
     tabs.setAttribute('role', 'tablist');
-    [['layers', 'Layers'], ['import', 'Import'], ['catalogs', 'Official catalogs'], ['library', 'Global library'], ['notes', 'Request notes'], ['store', 'AionUi’s store']].forEach(function (t) {
+    [['layers', 'Layers'], ['import', 'Import'], ['catalogs', 'Official catalogs'], ['library', 'Global library'], ['notes', 'Request notes'], ['store', 'Assistant skills']].forEach(function (t) {
       var b = gEl('button', 'aiondx-dxs-tab', t[1]);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -853,7 +853,7 @@
     Array.prototype.forEach.call(dxs.el.querySelectorAll('.aiondx-dxs-tab'), function (b) { var on = b.getAttribute('data-tab') === dxs.tab; b.classList.toggle('aiondx-dxs-tab--on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
     var body = dxs.el.querySelector('.aiondx-dxs-body');
     body.textContent = '';
-    if (dxs.tab === 'store') { body.appendChild(gEl('p', 'aiondx-dxs-desc', 'AionUi’s own store, below: the skills you imported into it and the assistants that use them. They stay where they are.')); return; }
+    if (dxs.tab === 'store') { body.appendChild(gEl('p', 'aiondx-dxs-desc', 'The skill store your assistants use, below: the skills you imported into it and the assistants that use them. They stay where they are.')); return; }
     if (!dxs.hub) { body.appendChild(gEl('div', 'aiondx-skills-empty', 'Reading...')); return; }
     if (dxs.tab === 'layers') return dxsLayers(body);
     if (dxs.tab === 'import') return dxsImport(body);
@@ -6285,7 +6285,7 @@
     lines.push('AionDX setup, from the Welcome screen (' + new Date().toISOString().slice(0, 10) + ').');
     lines.push('');
     lines.push(mode === 'external'  // an agent outside AionDX; otherwise one in it, which has the skill
-      ? 'You are setting AionDX up on this Windows PC for its user. AionDX is a free edition of AionUi. Its setup procedure is %APPDATA%\\AionUi\\aionui\\builtin-skills\\auto-inject\\aiondx-setup\\SKILL.md; its safety rules apply to everything below.'
+      ? 'You are setting AionDX up on this Windows PC for its user. AionDX is a free app for working with AI agents. Its setup procedure is %APPDATA%\\AionDX\\aionui\\builtin-skills\\auto-inject\\aiondx-setup\\SKILL.md; its safety rules apply to everything below.'
       : 'Set AionDX up for me now, with your aiondx-setup skill and its safety rules.');
     lines.push('');
     lines.push('Do every step yourself, in this chat: run the commands, read and write the files. Never give me a script or a command to run, and never ask me to open a terminal. If a step fails, fix it or tell me what failed; do not hand the work back to me.');
@@ -7255,7 +7255,7 @@
           clear[UNSEND_REQ + p.msgId] = null;
           putPrefs(clear);
           notify(convTarget(p.conv), 'Not unsent: this chat\'s Claude process did not answer.',
-            'It can unsend once it has restarted with the current AionDX router (Reconnect agent, or AionUi\'s next start).');
+            'It can unsend once it has restarted with the current AionDX router (Reconnect agent, or AionDX\'s next start).');
         }
         return;
       }
@@ -8416,7 +8416,7 @@
           'After ' + STALL_LIMIT + ' nudges with no reply it waits for the agent to answer, and stays on.',
           'It ends when you switch it off from its menu, press the agent\'s Stop button, say stop, or ask for its Loop to be ' +
             'turned off ("turn off your loop"). No agent turns it off on its own.',
-          'Runs on any page while AionUi is open.'
+          'Runs on any page while AionDX is open.'
         ]
       };
     }
@@ -8433,7 +8433,7 @@
         team ? 'After a rate-limit pause it waits for the reset, then resumes, teammates first.'
              : 'After a rate-limit failure it waits for the reset.',
         'Your messages keep it on; saying stop ("stop", "time to stop work", "stand down", "good night") switches it off.',
-        'Also off from its menu, the agent\'s Stop button, "turn off your loop", or after ' + STALL_LIMIT + ' nudges with no reply. Runs on any page while AionUi is open.'
+        'Also off from its menu, the agent\'s Stop button, "turn off your loop", or after ' + STALL_LIMIT + ' nudges with no reply. Runs on any page while AionDX is open.'
       ]
     };
   }
@@ -9454,7 +9454,7 @@
     el._t = t;
     if (!placedBefore(el, wrap)) wrap.parentNode.insertBefore(el, wrap);
     var btn = el.firstChild;
-    var tip = 'Stop: AionUi shows no Stop button, but this chat is still working.';
+    var tip = 'Stop: this chat is still working, and its own Stop button is not showing.';
     if (btn.title !== tip) { btn.title = tip; btn.setAttribute('aria-label', tip); }
   }
   async function fallbackStop(t) {
