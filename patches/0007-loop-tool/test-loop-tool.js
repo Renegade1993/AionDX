@@ -51,6 +51,7 @@ const teams = [{
     { slot_id: 'slotV', name: 'Viewer', role: 'teammate', conversation_id: 'convV', backend: 'devin' },
   ],
 }];
+const modes = {};   // a chat's permission mode (extra.session_mode), set by a check
 const conversations = { convS: 'Solo chat', convL: 'Lead chat', convW: 'Worker chat', convV: 'Viewer chat', convG: 'Gemini chat', convN: 'No-compact chat' };
 const slash = {
   convS: ['compact', 'clear', 'context'], convL: ['compact'], convW: ['compact'], convV: [],
@@ -184,6 +185,7 @@ server = http.createServer((req, res) => {
       // The solo chat was started with aiondx-loop, and (as AionDX's AionCore build keeps it) its agent reported it connected.
       const more = m[1] === 'convS' ? { extra: { mcp_server_ids: ['mcp-1'], mcp_servers: [{ id: 'mcp-1', name: 'aiondx-loop' }] },
         runtime: { mcp_servers: [{ name: 'aiondx-loop', status: 'connected' }] } } : {};
+      if (modes[m[1]]) more.extra = Object.assign({}, more.extra || {}, { session_mode: modes[m[1]] });
       return conversations[m[1]] ? reply(res, 200, { success: true, data: { id: m[1], name: conversations[m[1]], status: 'finished', ...more } })
                                  : reply(res, 404, { success: false, message: 'not found' });
     }
@@ -1009,6 +1011,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('with --project, a new skill from one SKILL.md', pr.status === 0 && /^Your new skill newone is waiting/.test(pr.stdout) && fs.existsSync(path.join(projRoot, '.claude', 'skills-pending', 'newone', 'SKILL.md')), pr.stdout);
     pr = await run(CLI, ['skills', 'propose', '../x', '--from', draft], penv('convW'));
     check('a bad name is refused', pr.status === 1, pr.stdout);
+    // review setting (November 16th, 2026): "auto" asks only in a chat that asks before acting; "off" never; "always" always
+    const live = path.join(projRoot, '.claude', 'skills', 'build');
+    fs.rmSync(path.join(projRoot, '.claude', 'skills-pending'), { recursive: true, force: true });
+    modes.convW = 'bypassPermissions';
+    pr = await run(CLI, ['skills', 'propose', 'build', '--from', draft], penv('convW'));
+    check('auto, a chat in bypassPermissions: the change goes straight in, the old version kept in skills-history', pr.status === 0 && /^Your change to build is in place in /.test(pr.stdout) &&
+      fs.readFileSync(path.join(live, 'SKILL.md'), 'utf8').endsWith('new') && fs.existsSync(path.join(live, 'scripts', 'b.ps1')) && !fs.existsSync(path.join(projRoot, '.claude', 'skills-pending', 'build')) &&
+      fs.readdirSync(path.join(projRoot, '.claude', 'skills-history', 'build')).length === 1 && JSON.parse(fs.readFileSync(path.join(live, '.aiondx-review.json'), 'utf8')).approved === true, pr.stdout);
+    const histDir = path.join(projRoot, '.claude', 'skills-history', 'build');
+    check('...and the kept version is the one it replaced', fs.readFileSync(path.join(histDir, fs.readdirSync(histDir)[0], 'SKILL.md'), 'utf8').endsWith('old'));
+    fs.writeFileSync(path.join(pd, 'aiondx-skills.json'), JSON.stringify({ review: 'always' }));
+    pr = await run(CLI, ['skills', 'propose', 'build', '--from', draft], penv('convW'));
+    check('always: even a bypassPermissions chat\'s change waits for approval', pr.status === 0 && /waiting for the user's approval/.test(pr.stdout) && fs.existsSync(path.join(projRoot, '.claude', 'skills-pending', 'build', 'SKILL.md')), pr.stdout);
+    fs.rmSync(path.join(projRoot, '.claude', 'skills-pending'), { recursive: true, force: true });
+    delete modes.convW;
+    fs.writeFileSync(path.join(pd, 'aiondx-skills.json'), JSON.stringify({ review: 'off' }));
+    pr = await run(CLI, ['skills', 'propose', 'lint', '--from', path.join(draft, 'SKILL.md')], penv('convW'));
+    check('off: a chat that asks before acting still has its new skill put in place, no approval', pr.status === 0 && /^Your new skill lint is in place/.test(pr.stdout) && fs.existsSync(path.join(projRoot, '.claude', 'skills', 'lint', 'SKILL.md')), pr.stdout);
+    fs.rmSync(path.join(pd, 'aiondx-skills.json'), { force: true });
     try { fs.rmSync(pd, { recursive: true, force: true }); } catch (e) { /* temp */ }
   }
 

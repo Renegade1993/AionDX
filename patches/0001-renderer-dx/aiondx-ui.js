@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-16.1';
+  var BUILD = '2026-11-16.2';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -807,6 +807,23 @@
     el.appendChild(head);
     el.appendChild(gEl('p', 'aiondx-dxs-desc', 'Every skill your agents have, layer by layer. The global library holds only official skills and changes only through its own update, on your yes; ' +
       'what you import or write goes into your own skills, or a project\'s if you keep projects, after you review it. Claude, Codex and Gemini chats all get the same ones.'));
+    // agents' skill changes: reviewed first or applied (November 16th, 2026); the loop tool's skills propose reads the saved choice
+    var rv = gEl('label', 'aiondx-dxs-review');
+    rv.appendChild(gEl('span', 'aiondx-dxs-review-label', 'Skill changes from agents'));
+    var rsel = document.createElement('select');
+    rsel.className = 'aiondx-skill-state aiondx-dxs-review-pick';
+    rsel.setAttribute('data-testid', 'aiondx-dxs-review');
+    [['auto', 'Ask me only in chats that ask before acting'], ['always', 'Always ask me first'], ['off', 'Never ask: put them in']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; rsel.appendChild(op);
+    });
+    rsel.disabled = true;
+    rv.appendChild(rsel);
+    rv.appendChild(gEl('span', 'aiondx-dxs-review-note', 'A chat in yolo (bypassPermissions) does not ask before acting. A replaced skill is kept in .claude\\skills-history.'));
+    el.appendChild(rv);
+    skillsBridge().call('reviewGet').then(function (r) { if (r && r.ok) rsel.value = r.review; rsel.disabled = false; }, function () { rsel.disabled = false; });
+    rsel.addEventListener('change', function () {
+      skillsBridge().call('reviewSet', { review: rsel.value }).then(function (r) { dxsStatus(r && r.ok ? '' : 'Not saved: ' + ((r && r.error) || 'no answer'), !(r && r.ok)); });
+    });
     var tabs = gEl('div', 'aiondx-dxs-tabs');
     tabs.setAttribute('role', 'tablist');
     [['layers', 'Layers'], ['import', 'Import'], ['catalogs', 'Official catalogs'], ['library', 'Global library'], ['store', 'AionUi’s store']].forEach(function (t) {
@@ -6400,7 +6417,7 @@
     return window.aiondxSignin.status('claude').then(function (r) {
       if (!accountsBox()) return;
       if (!r || !r.ok) st.textContent = 'Could not ask Claude Code: ' + ((r && r.error) || 'no answer') + '.';
-      else if (!r.installed) st.textContent = 'Not installed on this PC.';
+      else if (!r.installed) st.textContent = 'Claude Code is not on this PC yet. Install it here, then sign in.';
       else if (r.loggedIn && r.renews === false) st.textContent = 'Signed in' + (r.email ? ' as ' + r.email : '') + ' with an old sign-in that cannot renew itself and carries no Claude Docs or claude.ai skills: sign in again once.';
       else if (r.loggedIn) st.textContent = 'Signed in' + (r.email ? ' as ' + r.email : '') + (r.plan ? ' (' + r.plan + ')' : '') + '. It renews itself' +
         (r.renewsUntil ? ' until ' + longDate(r.renewsUntil) + '; sign in again before then' : '') + '; Claude Docs and your claude.ai skills come with it.';
@@ -6409,7 +6426,30 @@
       b.textContent = r && r.loggedIn ? 'Sign in again' : 'Sign in';
       b.disabled = !!(r && r.installed === false);
       box.querySelector('.aiondx-acc-add').disabled = !!(r && r.installed === false);
+      var ib = box.querySelector('.aiondx-acc-install');
+      if (ib) ib.hidden = !(r && r.ok && r.installed === false && window.aiondxSignin.install);
     }, function () { if (accountsBox()) st.textContent = 'Could not ask Claude Code.'; });
+  }
+  /** Claude Code missing (a new PC): Anthropic's own installer, run hidden by the main process; then the sign-in is ready, and a restart
+   *  of AionDX lets its chats use it (November 16th, 2026: the user had no way to sign in on a PC without Claude Code). */
+  async function accountsInstall() {
+    var box = accountsBox();
+    if (!box) return;
+    var ib = box.querySelector('.aiondx-acc-install');
+    ib.disabled = true;
+    box.querySelectorAll('.aiondx-acc-signin, .aiondx-acc-add').forEach(function (b) { b.disabled = true; });
+    welcomeStatus('Installing Claude Code with Anthropic\u2019s own installer (claude.ai/install.ps1). It shows no progress while it downloads; leave this open.', '');
+    var r = null;
+    try { r = await window.aiondxSignin.install(); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+    if (!accountsBox()) return;
+    ib.disabled = false;
+    if (!r || !r.ok) { welcomeStatus('Claude Code was not installed: ' + ((r && r.error) || 'no answer') + '.', (r && r.text) || ''); accountsStatus(); return; }
+    await accountsStatus();
+    var box2 = accountsBox();
+    if (!box2) return;
+    welcomeStatus((r.already ? 'Claude Code is already on this PC' : 'Claude Code ' + (r.version || '') + ' is installed') + '. Sign in now; restart AionDX once so its chats can use it.', '');
+    var rs = box2.querySelector('.aiondx-acc-restart');
+    if (rs && !r.already) rs.hidden = false;
   }
   async function accountsStart(account) {
     accounts.account = account;
@@ -6576,9 +6616,14 @@
           '<div class="aiondx-acc-name">Claude Code</div>' +
           '<div class="aiondx-acc-state">Checking...</div>' +
           '<div class="aiondx-acc-actions">' +
+            '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-acc-install" data-testid="aiondx-acc-install" hidden>Install Claude Code</button>' +
             '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-acc-signin">Sign in</button>' +
             '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-acc-add">Add another Claude account</button>' +
+            '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-acc-restart" data-testid="aiondx-acc-restart" hidden>Restart AionDX</button>' +
           '</div>' +
+          '<div class="aiondx-signin-row aiondx-acc-newrow" data-testid="aiondx-acc-newrow" hidden><input class="arco-input aiondx-acc-newname" type="text" spellcheck="false" autocomplete="off" placeholder="A short name for it, like work">' +
+          '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-acc-newgo">Sign it in</button>' +
+          '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-acc-newcancel">Cancel</button></div>' +
         '</div>' +
         '<div class="aiondx-acc-flow" hidden>' +
           '<div class="aiondx-acc-flow-msg"></div>' +
@@ -6594,13 +6639,20 @@
       box.querySelector('.aiondx-w-back').addEventListener('click', function () { accountsStop(); showWelcome(1); });
       box.querySelector('.aiondx-w-later').addEventListener('click', function () { accountsStop(); laterWelcome(); });
       box.querySelector('.aiondx-acc-signin').addEventListener('click', function () { accountsStart(''); });
-      box.querySelector('.aiondx-acc-add').addEventListener('click', function () {
-        var name = window.prompt('A short name for the other Claude account (letters, digits and dashes), for example: work');
-        if (name === null) return;
-        name = String(name).trim().toLowerCase();
-        if (!/^[a-z0-9][a-z0-9-]{0,23}$/.test(name)) { welcomeStatus('An account name is a short word: letters, digits and dashes.', ''); return; }
+      // the other account's name in the panel itself (window.prompt does nothing in the app)
+      var newRow = box.querySelector('.aiondx-acc-newrow'), newName = box.querySelector('.aiondx-acc-newname');
+      box.querySelector('.aiondx-acc-add').addEventListener('click', function () { newRow.hidden = false; newName.focus(); });
+      box.querySelector('.aiondx-acc-newcancel').addEventListener('click', function () { newRow.hidden = true; newName.value = ''; });
+      var newGo = function () {
+        var name = String(newName.value || '').trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9-]{0,23}$/.test(name)) { welcomeStatus('An account name is a short word: letters, digits and dashes.', ''); newName.focus(); return; }
+        newRow.hidden = true; newName.value = '';
         accountsStart(name);
-      });
+      };
+      box.querySelector('.aiondx-acc-newgo').addEventListener('click', newGo);
+      newName.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); newGo(); } });
+      box.querySelector('.aiondx-acc-install').addEventListener('click', accountsInstall);
+      box.querySelector('.aiondx-acc-restart').addEventListener('click', function () { if (window.aiondxSignin.restart) window.aiondxSignin.restart(); });
       box.querySelector('.aiondx-acc-send').addEventListener('click', accountsCode);
       box.querySelector('.aiondx-acc-code').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); accountsCode(); } });
       box.querySelector('.aiondx-acc-cancel').addEventListener('click', function () { window.aiondxSignin.cancel(); accountsStop(); accountsFlow(false); welcomeStatus('Sign-in cancelled.', ''); });
@@ -7656,7 +7708,8 @@
     '.aiondx-acc-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:14px 0 0;padding:10px 12px;border:1px solid var(--color-border-2);border-radius:8px}',
     '.aiondx-acc-name{font-weight:600;color:var(--color-text-1)}',
     '.aiondx-acc-state{flex:1;min-width:160px;font-size:13px;color:var(--color-text-2)}',
-    '.aiondx-acc-actions{display:flex;gap:8px}',
+    '.aiondx-acc-actions{display:flex;flex-wrap:wrap;gap:8px}',
+    '.aiondx-acc-row [hidden]{display:none !important}',
     '.aiondx-acc-flow{margin:10px 0 0;font-size:13px;color:var(--color-text-1)}',
     '.aiondx-acc-flow .aiondx-signin-row{margin-top:8px}',
     '.aiondx-acc-code{flex:1;min-width:0;height:28px;padding:0 8px}',
@@ -7718,6 +7771,9 @@
     '.aiondx-dxs-title{margin:0;font-size:20px;font-weight:600;color:var(--color-text-1)}',
     '.aiondx-dxs-new{margin-left:auto}',
     '.aiondx-dxs-desc{margin:0;font-size:13px;line-height:1.5;color:var(--color-text-2)}',
+    '.aiondx-dxs-review{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--color-text-1)}',
+    '.aiondx-dxs-review-label{font-weight:600}',
+    '.aiondx-dxs-review-note{font-size:12px;color:var(--color-text-3)}',
     '.aiondx-dxs-tabs{display:flex;gap:4px;border-bottom:1px solid var(--color-border-2);padding-bottom:6px;flex-wrap:wrap}',
     '.aiondx-dxs-tab{height:28px;padding:0 12px;border:1px solid transparent;border-radius:6px;background:none;color:var(--color-text-2);font-size:13px;cursor:pointer}',
     '.aiondx-dxs-tab:hover{background:var(--color-fill-2)}',
@@ -10644,6 +10700,9 @@
         if (c && c.name) n.who = c.name;
         if (c && c.slot) { n.slot = c.slot; n.team = c.team; }
       });
+      // skills waiting in a project are one thing, not one per team member (November 16th, 2026: a card per member)
+      var seenSk = {};
+      list = list.filter(function (n) { if (n.kind !== 'skills') return true; if (seenSk[n.id]) return false; seenSk[n.id] = 1; n.who = ''; n.slot = null; return true; });
       bellNotices = list;
       bellFor = key;
       bellAt = Date.now();
@@ -12239,8 +12298,16 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.28.0',
+    release: '0.28.1',
     items: [
+      ['Install Claude Code from AionDX', 'On a PC without Claude Code, Sign in to your agents (Settings > Appearance) has an Install Claude Code button: it runs Anthropic\u2019s own installer, then you sign in in your browser. Add another Claude account now asks for its name in the panel.'],
+      ['Docs stay as you left them', 'The Docs panel opens in a chat only if you left it open there; every other chat opens with it closed. An agent\u2019s new doc waits in the panel, and the Docs button counts it.'],
+      ['Projects are optional', 'Nothing asks a chat for a project. DX Skills imports, writes and links skills into your own skills when you keep no projects, and agents propose skill changes there too.'],
+      ['Your messages go out as you type them', 'AionDX no longer adds a line to a message it took for a correction, and the bell no longer says an agent had to be corrected.'],
+      ['Fixes', 'The What\u2019s new card fits on screen and scrolls inside; a team member\u2019s agent menu no longer lists the same account twice.'],
+    ],
+    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
+    earlier: [{ release: '0.28.0', items: [
       ['Tabs in your docs', 'A DX Doc can hold several tabs, and sub-tabs under a tab: + beside the tabs adds one, a double-click renames it, its \u25be menu moves or deletes it. Agents write into any tab. Export one tab or all of them to Word, PDF or a Markdown file.'],
       ['Comments, the Claude Docs way', 'Commented words are highlighted; click them to open the thread beside them, reply or resolve it there. Comments opens the list at its own height (drag its top edge) with its own scroll bar; resolved ones are a click away. Comment on a chart or a drawing with its Comment button.'],
       ['Suggest edits yourself', 'Switch on Suggesting in a doc: what you type is proposed, not made, and the agent is told. Talk on any suggestion, and Accept all or Reject all in one go.'],
@@ -12255,9 +12322,7 @@
       ['DX Skills', 'Settings > Skills: every skill, layer by layer. Import a ZIP, a folder or a GitHub link into your skills or a project’s after reviewing what its scripts do; ask an agent to write a new one as a DX Doc; browse Anthropic’s and OpenAI’s official skills; update the global library on your yes.'],
       ['Skills that improve themselves', 'A compaction keeps its lessons for skills (it can be switched off in Options). Agents propose skill changes, and the bell tells you when one waits for you in DX Skills.'],
       ['Agents plan before they build', 'Every agent keeps a ledger of your asks in your words; Claude chats get a plan-first note on a build request and are sent back when they say done with asks still open. Switch a project to build from approved plans only in its Project menu: code waits for your Approve in the plan doc.'],
-    ],
-    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
-    earlier: [{ release: '0.27.10', items: [
+    ] }, { release: '0.27.10', items: [
       ['Type in your docs', 'Click into a DX Doc and type, as in Claude Docs. The bar above it has headings, bold, italic, lists, tasks, tables and links. It saves by itself a moment after you stop, and every save keeps the version before: \u22ef > Earlier versions says who wrote each one.'],
       ['Suggestions', 'Ask an agent to suggest changes to a doc (\u201csuggest edits to the plan\u201d): each shows in the doc, the old words struck and the new ones beside them, with a card to Accept or Reject. The doc changes only when you accept.'],
       ['Export to Word', 'In a doc\u2019s \u22ef menu: Export as Word (charts and diagrams come as pictures), Export as PDF, or Copy as Markdown.'],

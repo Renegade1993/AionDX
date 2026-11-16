@@ -177,6 +177,15 @@ function install(electron, opts) {
       if (op === 'list') return list({ conv: String(req.conv || ''), ws: String(req.ws || ''), team: req.team ? String(req.team) : null, teamName: req.teamName || null, home: home(), userData: userData(), builtinDir: builtin() });
       if (op === 'set') return setState(String(req.ws || ''), req.name, req.state);
       if (op === 'pin') return setPin(userData(), req.key, req.name, !!req.on);
+      // agents' skill changes: reviewed first, or applied (November 16th, 2026); read by the loop tool's skills propose
+      if (op === 'reviewGet') { const j = readJson(path.join(userData(), 'aiondx-skills.json')) || {}; return { ok: true, review: ['auto', 'always', 'off'].indexOf(j.review) >= 0 ? j.review : 'auto' }; }
+      if (op === 'reviewSet') {
+        const v = String(req.review || '');
+        if (['auto', 'always', 'off'].indexOf(v) < 0) return { ok: false, error: 'auto, always or off' };
+        const f = path.join(userData(), 'aiondx-skills.json');
+        writeJson(f, Object.assign(readJson(f) || {}, { review: v }));
+        return { ok: true, review: v };
+      }
       // DX Skills (aiondx-skillhub.js)
       const H = require('./aiondx-skillhub.js');
       const hctx = { userData: userData(), home: home(), builtinDir: builtin() };

@@ -2828,7 +2828,8 @@ async function pageTarget() {
           cancel: () => { window.__si.calls.push(['cancel']); return Promise.resolve({ ok: true }); },
           register: (acc, label) => { window.__si.calls.push(['register', acc, label]); return Promise.resolve({ ok: true, id: acc, label }); },
         };
-        window.prompt = () => 'work';
+        // window.prompt does nothing in the app: a test that answers it hides that (Add another Claude account did nothing until November 16th)
+        window.prompt = () => { window.__si.prompted = true; return null; };
         return 0; })()`);
       await humanClick('.aiondx-w-agy');
       await humanClick('.aiondx-w-back');
@@ -2855,6 +2856,10 @@ async function pageTarget() {
         a.flow === null && a.state === 'Signed in as someone@example.com (pro). It renews itself; Claude Docs and your claude.ai skills come with it.' &&
         a.signin === 'Sign in again' && /^Signed in\./.test(a.status), JSON.stringify(a));
       await humanClick('.aiondx-acc-add');
+      await sleep(300);
+      check(sc, 'Add another Claude account asks for its name in the panel (no prompt box)', !(await js('window.__si.prompted')) && (await js(`!document.querySelector('[data-testid="aiondx-acc-newrow"]').hidden`)));
+      await typeInto('.aiondx-acc-newname', 'work');
+      await humanClick('.aiondx-acc-newgo');
       await sleep(400);
       await typeInto('.aiondx-acc-code', 'CODE-456');
       await humanClick('.aiondx-acc-send');
@@ -2864,6 +2869,33 @@ async function pageTarget() {
       check(sc, "Add another Claude account signs it in to its own folder and adds it to every chat's account menu",
         JSON.stringify(calls[2]) === JSON.stringify(['start', 'claude', 'work']) && JSON.stringify(calls[4]) === JSON.stringify(['register', 'work', 'Work (pro)']) &&
         ((await store())['aiondx.accounts'] || { accounts: [] }).accounts.some((x) => x.id === 'work' && x.label === 'Work (pro)') && /"Work \(pro\)" is now in every Claude chat's account menu/.test(a.status), JSON.stringify([calls, a, (await store())['aiondx.accounts']]));
+      // a PC without Claude Code (November 16th, 2026): an Install button runs Anthropic's installer, then the sign-in is ready
+      await js(`(() => { window.__si.installed = false; window.__si.logged = false;
+        window.aiondxSignin.status = () => Promise.resolve({ ok: true, installed: window.__si.installed, loggedIn: false });
+        window.aiondxSignin.install = () => { window.__si.calls.push(['install']); window.__si.installed = true; return new Promise((r) => setTimeout(() => r({ ok: true, exe: 'C:/u/.local/bin/claude.exe', version: '2.1.400 (Claude Code)' }), 2000)); };
+        window.aiondxSignin.restart = () => { window.__si.calls.push(['restart']); return Promise.resolve({ ok: true }); };
+        return 0; })()`);
+      await humanClick('.aiondx-w-back');
+      await sleep(500);
+      await humanClick('.aiondx-w-accounts');
+      await sleep(900);
+      const inst = () => js(`(() => { const r = document.querySelector('[data-testid="aiondx-acc-claude"]'); const shown = (sel) => { const e = r.querySelector(sel); const b = e.getBoundingClientRect(); return getComputedStyle(e).display !== 'none' && b.width > 0; };
+        const row = r.getBoundingClientRect(), inside = [...r.querySelectorAll('button')].filter((b) => b.getBoundingClientRect().width > 0).every((b) => { const q = b.getBoundingClientRect(); return q.right <= row.right + 1 && q.left >= row.left - 1; });
+        return { state: r.querySelector('.aiondx-acc-state').textContent, install: shown('.aiondx-acc-install'), name: shown('.aiondx-acc-newrow'), inside,
+        signinOff: r.querySelector('.aiondx-acc-signin').disabled, restart: shown('.aiondx-acc-restart'), status: (document.querySelector('.aiondx-welcome-status') || {}).textContent }; })()`);
+      let iv = await inst();
+      check(sc, 'no Claude Code on this PC: it says so, offers Install Claude Code, and Sign in waits', iv.state === 'Claude Code is not on this PC yet. Install it here, then sign in.' && iv.install && iv.signinOff && !iv.restart && !iv.name && iv.inside, JSON.stringify(iv));
+      await shot('signin-install');
+      await humanClick('[data-testid="aiondx-acc-install"]');
+      await sleep(100);
+      iv = await inst();
+      check(sc, 'while it installs, it says whose installer runs and to leave it open', /Anthropic\u2019s own installer \(claude\.ai\/install\.ps1\)/.test(iv.status), JSON.stringify(iv));
+      await sleep(2600);
+      iv = await inst();
+      check(sc, 'installed: the version, Sign in ready, Install gone, and Restart AionDX offered for the chats', !iv.install && !iv.signinOff && iv.restart && iv.inside && /^Claude Code 2\.1\.400 \(Claude Code\) is installed\. Sign in now; restart AionDX once/.test(iv.status), JSON.stringify(iv));
+      await humanClick('[data-testid="aiondx-acc-restart"]');
+      await sleep(200);
+      check(sc, 'Restart AionDX restarts it', (await js('window.__si.calls')).some((c) => c[0] === 'restart'));
       await js(`(() => { delete window.aiondxSignin; return 0; })()`);
     }
 
@@ -3365,6 +3397,8 @@ async function pageTarget() {
           window.aiondxSkills = { call: (op, a) => { window.__dxs.push([op, a || {}]);
             if (op === 'hub') return Promise.resolve(hub);
             if (op === 'approve') return Promise.resolve({ ok: true, dir: 'x' });
+            if (op === 'reviewGet') return Promise.resolve({ ok: true, review: 'auto' });
+            if (op === 'reviewSet') return Promise.resolve({ ok: true, review: a.review });
             if (op === 'import') return Promise.resolve({ ok: true, project: a.project, imported: [{ name: 'chart', flags: 0 }] });
             if (op === 'catalog') return Promise.resolve({ ok: true, which: a.which, skills: [{ name: 'pdf', description: 'Work with PDF files.', inLibrary: true, url: 'https://github.com/anthropics/skills/tree/HEAD/skills/pdf' }, { name: 'xlsx', description: 'Spreadsheets.', inLibrary: false, url: 'https://github.com/anthropics/skills/tree/HEAD/skills/xlsx' }] });
             if (op === 'library') return Promise.resolve(a.cmd === 'fetch' ? { ok: true, output: 'would change: skills/xlsx (new)', clone: 'C:\\\\T\\\\clone1' } : { ok: true, output: 'applied' });
@@ -3380,6 +3414,13 @@ async function pageTarget() {
       const first = await js(`(() => { const d = document.querySelector('[data-testid="aiondx-dxskills"]'); return d ? { first: d.parentNode.firstChild === d, hubHidden: document.getElementById('aionui-hub').style.display === 'none',
         layers: [...d.querySelectorAll('.aiondx-dxs-lname')].map((e) => e.textContent), lib: (d.querySelector('[data-layer="library"] .aiondx-dxs-lmeta') || {}).textContent } : null; })()`);
       check(sc, 'Settings > Skills shows DX Skills in place of AionUi\'s hub list', first && first.first && first.hubHidden, JSON.stringify(first));
+      // agents' skill changes: reviewed first or put in (November 16th, 2026)
+      const rvw = await js(`(() => { const s = document.querySelector('[data-testid="aiondx-dxs-review"]'); return s ? { v: s.value, off: s.disabled, opts: [...s.options].map((o) => o.value + '=' + o.textContent) } : null; })()`);
+      check(sc, 'Skill changes from agents: the saved choice, auto by default, with Always and Never', rvw && rvw.v === 'auto' && !rvw.off && JSON.stringify(rvw.opts) === JSON.stringify(['auto=Ask me only in chats that ask before acting', 'always=Always ask me first', 'off=Never ask: put them in']), JSON.stringify(rvw));
+      await js(`(() => { const s = document.querySelector('[data-testid="aiondx-dxs-review"]'); s.value = 'off'; s.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
+      await sleep(300);
+      const rset = await js('window.__dxs.find((c) => c[0] === "reviewSet")');
+      check(sc, 'choosing Never saves it for the loop tool', rset && rset[1].review === 'off', JSON.stringify(rset));
       check(sc, 'every layer, the store left to its own tab; the library read-only with its source and commit', first && JSON.stringify(first.layers) === JSON.stringify(['Global library (official, read-only)', 'Yours, on this PC (every Claude chat)', 'Atlas Game', 'AionDX\u2019s own (every chat)']) &&
         first.lib === '1 skill \u00b7 read-only \u00b7 anthropics/skills at 2c5958e', JSON.stringify(first));
       const pend = await js(`(() => { const r = document.querySelector('[data-layer="project:atlas"] .aiondx-skill--pending'); return r ? { flags: r.querySelector('.aiondx-dxs-flags').textContent, acts: [...r.querySelectorAll('button[data-act]')].map((b) => b.textContent) } : null; })()`);
@@ -3468,7 +3509,7 @@ async function pageTarget() {
       await load('theme=light');
       await js(`(() => {
         window.__pj = [];
-        window.aiondxNotices = { check: (ids) => Promise.resolve({ ok: true, notices: [] }) };
+        window.aiondxNotices = { check: (ids) => Promise.resolve({ ok: true, notices: window.__pjN || [] }) };
         window.aiondxPlaces = { call: (op, a) => { window.__pj.push([op, a || {}]);
           if (op === 'projects') return Promise.resolve({ ok: true, projects: [{ key: 'atlas', name: 'Atlas Game', root: 'C:\\\\x\\\\Atlas Game' }, { key: 'zed', name: 'Beacon', root: 'C:\\\\x\\\\Beacon' }], bindings: {} });
           if (op === 'bind') return Promise.resolve({ ok: true, bindings: { ['conv:' + a.key.slice(2)]: a.project } });
@@ -3485,6 +3526,16 @@ async function pageTarget() {
       await sleep(500);
       const asks = await js(`[...document.querySelectorAll('.aiondx-bell-pop .aiondx-bell-title')].map((e) => e.textContent)`);
       check(sc, 'a chat with no project: the bell asks nothing about projects', !(asks || []).some((x) => /project/i.test(x)), JSON.stringify(asks));
+      // the same skills queue seen from several team members is one card (November 16th, 2026: a card per member)
+      await js(`(() => { const one = (who) => ({ id: 'skills-pending:atlas:2:0', kind: 'skills', conv: 'harness1', title: '2 skill changes are waiting for you', text: 'x', action: { op: 'skills', label: 'Review them' } });
+        window.__pjN = [one(), one(), one()]; document.querySelectorAll('.aiondx-bell-pop').forEach((e) => e.remove()); return 0; })()`);
+      await sleep(4500);
+      await humanClick('#th [data-testid="aiondx-bell"]');
+      await sleep(600);
+      if (!(await js(`!!document.querySelector('.aiondx-bell-pop')`))) { await humanClick('#th [data-testid="aiondx-bell"]'); await sleep(600); }
+      const skc = await js(`[...document.querySelectorAll('.aiondx-bell-pop .aiondx-bell-title')].map((e) => e.textContent)`);
+      check(sc, 'one skills queue: one bell card, not one per member', JSON.stringify(skc) === JSON.stringify(['2 skill changes are waiting for you']), JSON.stringify(skc));
+      await js(`(() => { window.__pjN = []; document.querySelectorAll('.aiondx-bell-pop').forEach((e) => e.remove()); return 0; })()`);
       await js(`(() => { document.querySelectorAll('.aiondx-bell-pop').forEach((e) => e.remove()); return window.__aionDx.projectPicker('#th [data-testid="chat-title-editor-trigger"]', 'c:harness1'); })()`);
       await sleep(600);
       const items = await js(`[...document.querySelectorAll('[data-testid="aiondx-project-picker"] button')].map((b) => b.textContent)`);
@@ -3671,19 +3722,20 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.0');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.1');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.0' && JSON.stringify(c.names) === JSON.stringify(NEW28) &&
-        /^A DX Doc can hold several tabs/.test(c.hows[0]) && /click them to open the thread beside them/.test(c.hows[1]) && /@@@ names one member of a team/.test(c.hows[7]), JSON.stringify(c));
+      const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.1' && JSON.stringify(c.names) === JSON.stringify(NEW281) &&
+        /^On a PC without Claude Code/.test(c.hows[0]) && /only if you left it open there/.test(c.hows[1]) && /Nothing asks a chat for a project/.test(c.hows[2]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
       const c4 = await card();
-      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW28.concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
+      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW281.concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 360, JSON.stringify(box));
       // November 16th: with 0.28.0's list the card ran off the top of the window ("CAN'T EVEN SEE THE WHOLE THING"). The whole card must
@@ -3720,7 +3772,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.0 card is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 14, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.1 card (with 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 19, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }

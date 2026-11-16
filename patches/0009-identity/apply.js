@@ -341,13 +341,14 @@ function __aiondxIconFile(name) {
     const cp = require("child_process");
     const os = require("os");
     let run = null;   // { child, out, code, started }
+    let installing = false;
     const findClaude = () => {
       const dirs = String(process.env.PATH || process.env.Path || "").split(path__namespace.delimiter).filter(Boolean);
       for (const d of dirs) {
         const f = path__namespace.join(d.replace(/^"|"$/g, ""), "claude.exe");
         try { if (fs__namespace.statSync(f).isFile()) return f; } catch {}
       }
-      const native = path__namespace.join(os.homedir(), ".local", "bin", "claude.exe");
+      const native = path__namespace.join(process.env.AIONDX_SIGNIN_HOME || os.homedir(), ".local", "bin", "claude.exe");
       return fs__namespace.existsSync(native) ? native : null;
     };
     const envFor = (configDir) => {
@@ -440,6 +441,42 @@ function __aiondxIconFile(name) {
         }
         if (op === "cancel") {
           if (run && run.code === null) { try { run.child.kill(); } catch {} }
+          return { ok: true };
+        }
+        // Claude Code missing on this PC (a new PC, November 16th, 2026): Anthropic's own native installer, the one its setup page gives for
+        // Windows PowerShell ("irm https://claude.ai/install.ps1 | iex"; no administrator needed), run hidden. It puts claude.exe in
+        // %USERPROFILE%\.local\bin, where AionDX's launcher and this sign-in look for it; that folder also goes on this process's PATH so a
+        // restart of AionDX (op restart) carries it to the chats. Ten minutes at most. AIONDX_CLAUDE_INSTALLER stands in for it in tests.
+        if (op === "install") {
+          if (findClaude()) return { ok: true, already: true, exe: findClaude() };
+          if (installing) return { ok: false, error: "Claude Code is already being installed." };
+          installing = true;
+          try {
+            const stand = process.env.AIONDX_CLAUDE_INSTALLER;
+            const ps = path__namespace.join(process.env.SystemRoot || process.env.WINDIR || "C:/Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+            const file = stand || ps;
+            const argv = stand ? [] : ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "irm https://claude.ai/install.ps1 | iex"];
+            const res = await new Promise((resolve) => {
+              let text = "", child;
+              try { child = cp.spawn(file, argv, { windowsHide: true, env: envFor(""), stdio: ["ignore", "pipe", "pipe"] }); }
+              catch (e) { resolve({ code: -1, text: String(e && e.message || e) }); return; }
+              const timer = setTimeout(() => { try { child.kill(); } catch {} }, 600000);
+              child.stdout.on("data", (d) => { if (text.length < 20000) text += d; });
+              child.stderr.on("data", (d) => { if (text.length < 20000) text += d; });
+              child.on("error", (e) => { clearTimeout(timer); resolve({ code: -1, text: text + String(e && e.message || e) }); });
+              child.on("exit", (code) => { clearTimeout(timer); resolve({ code, text }); });
+            });
+            const exe = findClaude();
+            if (!exe) return { ok: false, error: "The installer ended without Claude Code in place.", text: plain(res.text).slice(-400) };
+            const folder = path__namespace.dirname(exe);
+            const cur = String(process.env.PATH || process.env.Path || "");
+            if (!cur.toLowerCase().split(path__namespace.delimiter).includes(folder.toLowerCase())) process.env.PATH = folder + path__namespace.delimiter + cur;
+            const version = await new Promise((resolve) => cp.execFile(exe, ["--version"], { windowsHide: true, timeout: 30000, env: envFor("") }, (err, stdout) => resolve(String(stdout || "").trim())));
+            return { ok: true, exe, version };
+          } finally { installing = false; }
+        }
+        if (op === "restart") {
+          setTimeout(() => { try { electron.app.relaunch(); electron.app.exit(0); } catch {} }, 600);
           return { ok: true };
         }
         return { ok: false, error: "unknown request" };
@@ -748,7 +785,9 @@ else {
     '  register: (account, label) => electron.ipcRenderer.invoke("aiondx:signin", { op: "register", agent: "claude", account, label }),\n' +
     '  code: (code) => electron.ipcRenderer.invoke("aiondx:signin", { op: "code", code }),\n' +
     '  poll: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "poll" }),\n' +
-    '  cancel: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "cancel" })\n' +
+    '  cancel: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "cancel" }),\n' +
+    '  install: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "install", agent: "claude" }),\n' +
+    '  restart: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "restart" })\n' +
     '});\n' + anchor);
   notes.push('preload: aiondxSignin');
 }

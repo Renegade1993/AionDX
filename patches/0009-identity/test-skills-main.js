@@ -77,6 +77,11 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-skills-'));
     const h = await handler({}, { op: 'list', conv: 'c1', ws });
     check('the handler lists through the same code', h.ok && h.total >= 3, JSON.stringify(h).slice(0, 200));
     check('an unknown request is refused', (await handler({}, { op: 'other' })).ok === false);
+    // agents' skill changes: the review setting the loop tool reads (November 16th, 2026)
+    check('review setting: auto when nothing is saved', (await handler({}, { op: 'reviewGet' })).review === 'auto');
+    const rs = await handler({}, { op: 'reviewSet', review: 'off' });
+    check('set to off: saved in aiondx-skills.json, read back', rs.ok && JSON.parse(fs.readFileSync(path.join(userData, 'aiondx-skills.json'), 'utf8')).review === 'off' && (await handler({}, { op: 'reviewGet' })).review === 'off', JSON.stringify(rs));
+    check('anything but auto, always or off is refused', (await handler({}, { op: 'reviewSet', review: 'sometimes' })).ok === false);
   } catch (e) {
     check('no exception', false, e.stack);
   } finally {

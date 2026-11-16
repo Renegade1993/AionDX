@@ -38,6 +38,7 @@ if (a[0] === 'auth' && a[1] === 'login') {
   process.stdin.on('data', (d) => { buf += d; if (buf.indexOf('\\n') >= 0) { if (buf.trim() === 'GOOD-CODE') { fs.writeFileSync(st, '{}'); process.stdout.write('Login successful.\\n'); process.exit(0); } process.stdout.write('Invalid code\\n'); process.exit(1); } });
   return;
 }
+if (a[0] === '--version') { process.stdout.write('2.1.400 (Claude Code)'); process.exit(0); }
 process.exit(3);
 `);
 
@@ -117,6 +118,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(400);
     r = await call({ op: 'poll' });
     check('cancel ends a sign-in', r.state === 'failed', JSON.stringify(r));
+    // a PC without Claude Code (November 16th, 2026): install runs the installer (a stand-in here), then finds it in .local/bin
+    const home2 = path.join(root, 'home');
+    const savedPath = process.env.PATH;
+    process.env.AIONDX_SIGNIN_HOME = home2;
+    process.env.PATH = path.join(process.env.WINDIR || 'C:/Windows', 'System32');
+    r = await call({ op: 'status', agent: 'claude' });
+    check('no Claude Code on PATH or in .local/bin: status says not installed', r.ok && r.installed === false, JSON.stringify(r));
+    r = await call({ op: 'start', agent: 'claude' });
+    check('and the sign-in says so', r.ok === false && /not installed/.test(r.error), JSON.stringify(r));
+    const ics = path.join(root, 'installer.cs');
+    const dest = path.join(home2, '.local', 'bin', 'claude.exe');
+    fs.writeFileSync(ics, 'using System.IO; static class P { static int Main() { Directory.CreateDirectory(' + JSON.stringify(path.dirname(dest)) + '); File.Copy(' + JSON.stringify(path.join(bin, 'claude.exe')) + ', ' + JSON.stringify(dest) + ', true); System.Console.Write("installed"); return 0; } }');
+    require('child_process').execFileSync(path.join(process.env.WINDIR || 'C:/Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
+      ['/nologo', '/target:exe', '/out:' + path.join(root, 'installer.exe'), ics], { cwd: root, windowsHide: true, timeout: 60000 });
+    process.env.AIONDX_CLAUDE_INSTALLER = path.join(root, 'installer.exe');
+    r = await call({ op: 'install', agent: 'claude' });
+    check('install runs the installer and finds Claude Code where it puts it, with its version', r.ok && r.exe === dest && r.version === '2.1.400 (Claude Code)', JSON.stringify(r));
+    check('...and puts that folder on PATH for a restart to carry to the chats', process.env.PATH.split(path.delimiter)[0] === path.dirname(dest), process.env.PATH.slice(0, 200));
+    r = await call({ op: 'status', agent: 'claude' });
+    check('status after: installed', r.installed === true, JSON.stringify(r));
+    fs.rmSync(path.join(root, 'installer.exe'));
+    r = await call({ op: 'install', agent: 'claude' });
+    check('install when it is already there: nothing run, says so', r.ok && r.already === true, JSON.stringify(r));
+    delete process.env.AIONDX_CLAUDE_INSTALLER; delete process.env.AIONDX_SIGNIN_HOME;
+    process.env.PATH = savedPath;
   } catch (e) {
     check('no exception', false, e.stack);
   } finally {

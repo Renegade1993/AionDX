@@ -4187,17 +4187,61 @@ namespace AionDx
                 if (string.IsNullOrEmpty(root)) throw new ToolError("There is no project called " + project + ".");
             }
             string where = string.IsNullOrEmpty(project) ? "Yours" : Path.GetFileName(root);
+            string who = "an agent";
+            try { var c2 = LoadContext(); who = c2.Self.Name ?? who; } catch (ToolError) { }
+            // Whether the user reviews it first (November 16th, 2026): <data>\aiondx-skills.json "review" is "auto" (the default: only a
+            // chat that asks before acting waits for approval; one in a no-ask mode such as bypassPermissions or yolo applies it), "always"
+            // or "off". Applied directly, the version it replaces is kept in .claude\skills-history\NAME\<time> so it can be put back.
+            if (!SkillsNeedReview())
+            {
+                string live = Path.Combine(root, ".claude", "skills", name);
+                bool had = Directory.Exists(live);
+                if (had)
+                {
+                    string hist = Path.Combine(root, ".claude", "skills-history", name, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+                    Directory.CreateDirectory(Path.GetDirectoryName(hist));
+                    CopySkillTree(live, hist);
+                    Directory.Delete(live, true);
+                }
+                Directory.CreateDirectory(live);
+                if (Directory.Exists(from)) CopySkillTree(src, live); else File.Copy(md, Path.Combine(live, "SKILL.md"));
+                var applied = new Dictionary<string, object> { { "source", "proposed by " + who }, { "at", DateTime.UtcNow.ToString("o") }, { "approved", true }, { "proposal", true }, { "applied", "without review (the user's setting)" } };
+                File.WriteAllText(Path.Combine(live, ".aiondx-review.json"), Json.Serialize(applied), new UTF8Encoding(false));
+                return (had ? "Your change to " : "Your new skill ") + name + " is in place in " + where + "'s skills; agents have it from their next start." +
+                    (had ? " The version it replaced is kept in .claude\\skills-history\\" + name + "." : "");
+            }
             string dest = Path.Combine(root, ".claude", "skills-pending", name);
             if (Directory.Exists(dest)) Directory.Delete(dest, true);
             Directory.CreateDirectory(dest);
             if (Directory.Exists(from)) CopySkillTree(src, dest); else File.Copy(md, Path.Combine(dest, "SKILL.md"));
-            string who = "an agent";
-            try { var c2 = LoadContext(); who = c2.Self.Name ?? who; } catch (ToolError) { }
             var review = new Dictionary<string, object> { { "source", "proposed by " + who }, { "at", DateTime.UtcNow.ToString("o") }, { "approved", false }, { "proposal", true } };
             File.WriteAllText(Path.Combine(dest, ".aiondx-review.json"), Json.Serialize(review), new UTF8Encoding(false));
             bool change = File.Exists(Path.Combine(root, ".claude", "skills", name, "SKILL.md"));
             return (change ? "Your change to " : "Your new skill ") + name + " is waiting for the user's approval in DX Skills (Settings > Skills, " + where + "). " +
                 "It is not used until they approve it; tell them it is there.";
+        }
+        /** The user's review setting for agents' skill changes, and this chat's mode: false means apply without asking. Any doubt asks. */
+        static bool SkillsNeedReview()
+        {
+            string review = "auto";
+            try
+            {
+                string f = Path.Combine(DxDataDir(), "aiondx-skills.json");
+                var j = File.Exists(f) ? Json.DeserializeObject(File.ReadAllText(f)) as Dictionary<string, object> : null;
+                string r = j != null ? Str(j, "review") : null;
+                if (r == "always" || r == "off" || r == "auto") review = r;
+            }
+            catch (Exception) { }
+            if (review != "auto") return review == "always";
+            try
+            {
+                var ctx = LoadContext();
+                var conv = Api("GET", "/api/conversations/" + Uri.EscapeDataString(ctx.Self.ConvId), null) as Dictionary<string, object>;
+                var extra = conv != null && conv.ContainsKey("extra") ? conv["extra"] as Dictionary<string, object> : null;
+                string mode = extra != null ? (Str(extra, "current_mode_id") ?? Str(extra, "session_mode")) : null;
+                return !(mode != null && System.Text.RegularExpressions.Regex.IsMatch(mode, "^(bypassPermissions|yolo|yoloNoSandbox|full-?auto|dontAsk)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+            }
+            catch (Exception) { return true; }
         }
         static void CopySkillTree(string from, string to)
         {
