@@ -103,15 +103,24 @@ if (args.includes('--check-only')) { console.log('github-release: checks passed 
   for (const f of assets) if (!fs.existsSync(f)) throw new Error('no such file: ' + f);
   const repo = '/repos/' + OWNER + '/' + REPO;
   const existing = await api('GET', repo + '/releases?per_page=100');
-  if (existing.ok && existing.json.some((r) => r.tag_name === tag)) throw new Error('a release for ' + tag + ' already exists (draft or published); not touching it');
-  const created = await api('POST', repo + '/releases', { tag_name: tag, target_commitish: 'main', name: title, body: fs.readFileSync(notesFile, 'utf8'), draft: true, prerelease: args.includes('--prerelease') });
-  if (!created.ok) throw new Error('could not create the draft: ' + created.status + ' ' + (created.json && created.json.message));
-  const rel = created.json;
-  console.log('draft ' + rel.id + ' created for ' + tag);
+  const had = existing.ok ? existing.json.find((r) => r.tag_name === tag) : null;
+  // --resume: a draft an earlier run left (it stalled reading back, November 16th, 2026) is finished, not made again; its assets are
+  // kept when they have the files' sizes, and everything is still read back and compared before publishing
+  if (had && !(args.includes('--resume') && had.draft)) throw new Error('a release for ' + tag + ' already exists (draft or published); not touching it' + (had.draft ? ' (--resume finishes a draft)' : ''));
+  let rel = had;
+  if (!rel) {
+    const created = await api('POST', repo + '/releases', { tag_name: tag, target_commitish: 'main', name: title, body: fs.readFileSync(notesFile, 'utf8'), draft: true, prerelease: args.includes('--prerelease') });
+    if (!created.ok) throw new Error('could not create the draft: ' + created.status + ' ' + (created.json && created.json.message));
+    rel = created.json;
+    console.log('draft ' + rel.id + ' created for ' + tag);
+  } else console.log('draft ' + rel.id + ' for ' + tag + ' resumed');
   const uploadBase = rel.upload_url.replace(/\{.*$/, '');
   for (const f of assets) {
     const name = path.basename(f);
     const size = fs.statSync(f).size;
+    const there = (rel.assets || []).find((x) => x.name === name);
+    if (there && there.size === size && there.state === 'uploaded') { console.log(name + ' is already on the draft (' + size + ' bytes)'); continue; }
+    if (there) { const d = await api('DELETE', repo + '/releases/assets/' + there.id); if (!d.ok) throw new Error('could not replace ' + name + ' on the draft: ' + d.status); }
     console.log('uploading ' + name + ' (' + (size / 1048576).toFixed(1) + ' MB) ...');
     const res = await fetch(uploadBase + '?name=' + encodeURIComponent(name), {
       method: 'POST',
@@ -129,11 +138,19 @@ if (args.includes('--check-only')) { console.log('github-release: checks passed 
     const name = path.basename(f);
     const a = back.json.assets.find((x) => x.name === name);
     if (!a) throw new Error(name + ' is not on the draft');
-    const dl = await fetch(a.url, { headers: { Authorization: 'Bearer ' + token(), Accept: 'application/octet-stream', 'User-Agent': 'AionDX-release' }, redirect: 'follow' });
-    if (!dl.ok) throw new Error('could not read ' + name + ' back: ' + dl.status);
-    const h = crypto.createHash('sha256');
-    for await (const chunk of dl.body) h.update(chunk);
-    const got = h.digest('hex'), want = await sha(f);
+    // a stalled download ended both 0.28.1 and 0.28.2's first runs (no time limit): 20 minutes a try, three tries
+    let got = null, lastErr = null;
+    for (let attempt = 1; attempt <= 3 && got === null; attempt++) {
+      try {
+        const dl = await fetch(a.url, { headers: { Authorization: 'Bearer ' + token(), Accept: 'application/octet-stream', 'User-Agent': 'AionDX-release' }, redirect: 'follow', signal: AbortSignal.timeout(20 * 60000) });
+        if (!dl.ok) throw new Error('status ' + dl.status);
+        const h = crypto.createHash('sha256');
+        for await (const chunk of dl.body) h.update(chunk);
+        got = h.digest('hex');
+      } catch (e) { lastErr = e; console.log('  reading ' + name + ' back failed (try ' + attempt + ' of 3): ' + (e && e.message || e)); }
+    }
+    if (got === null) throw new Error('could not read ' + name + ' back: ' + (lastErr && lastErr.message));
+    const want = await sha(f);
     if (got !== want) throw new Error(name + ' came back different from what was sent');
     console.log('  ' + name + ' read back, SHA-256 ' + got.slice(0, 16) + '... matches');
   }
