@@ -28,6 +28,8 @@ const pngSize = (f) => { const b = fs.readFileSync(f); return b.readUInt32BE(0) 
     check('the built app draws one chart as a PNG an agent can open', cs && cs.w >= 600 && cs.h >= 200 && cs.bytes > 3000, JSON.stringify([chart, cs]));
     const diagram = await D.look(profile, docsDir, { doc: 'look-test', what: 'diagram', index: 0 }, 45000).catch((e) => ({ error: e.message }));
     const ds = diagram.png ? pngSize(diagram.png) : null;
+    // kept for a look by eye (the PNG goes with the made-up profile otherwise)
+    try { if (diagram.png) fs.copyFileSync(diagram.png, path.join(__dirname, '..', '.tmp', 'live-look-diagram.png')); } catch (e) { /* only a copy */ }
     check('and a diagram, drawn by the app\'s own Mermaid', ds && ds.w >= 300 && ds.h >= 40 && ds.bytes > 2000, JSON.stringify([diagram, ds]));
     const whole = await D.look(profile, docsDir, { doc: 'look-test' }, 45000).catch((e) => ({ error: e.message }));
     const ws = whole.png ? pngSize(whole.png) : null;

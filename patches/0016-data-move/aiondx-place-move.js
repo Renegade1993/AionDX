@@ -273,6 +273,9 @@ function exportRows(db, info, pkg, layout, homeOf, userHome) {
   fs.rmSync(tmp, { force: true });
   const out = openDb(tmp, false);
   try {
+    // the tables come over with their foreign keys (conversations to users, and so on), but not the tables those point at: the package
+    // holds this item's rows only, so its keys are not enforced (the 0.28.0 live test: "no such table: main.users")
+    out.exec('PRAGMA foreign_keys = OFF');
     out.exec('BEGIN');
     for (const [t, list] of Object.entries(rows)) {
       const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(t);
@@ -580,8 +583,9 @@ function cmdImport(db, a, ctx) {
   db.exec('BEGIN IMMEDIATE');
   try {
     if (mode === 'replace') {
-      for (const [t, col] of CONV_TABLES) if (hasTable(db, t)) db.prepare('DELETE FROM "' + t + '" WHERE "' + col + '" IN (' + m.convIds.map(() => '?').join(',') + ')').run(...m.convIds);
-      if (m.kind === 't') for (const [t, col] of TEAM_TABLES) if (hasTable(db, t)) db.prepare('DELETE FROM "' + t + '" WHERE "' + col + '" = ?').run(m.id);
+      // children first: with foreign keys on, a chat row cannot go before its messages, a team before its mailbox
+      if (m.kind === 't') for (const [t, col] of TEAM_TABLES.slice().reverse()) if (hasTable(db, t)) db.prepare('DELETE FROM "' + t + '" WHERE "' + col + '" = ?').run(m.id);
+      for (const [t, col] of CONV_TABLES.slice().reverse()) if (hasTable(db, t)) db.prepare('DELETE FROM "' + t + '" WHERE "' + col + '" IN (' + m.convIds.map(() => '?').join(',') + ')').run(...m.convIds);
     }
     let n = 0;
     for (const [t, list] of Object.entries(rows)) {

@@ -18,11 +18,11 @@ process.on('exit', () => { try { fs.rmSync(BASE, { recursive: true, force: true 
 
 const SCHEMA = `
 CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT);
-CREATE TABLE conversations (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, type TEXT, extra TEXT, created_at INTEGER, updated_at INTEGER, project_id TEXT, folder_id TEXT, archived_at INTEGER);
-CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, content TEXT, created_at INTEGER);
+CREATE TABLE conversations (id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id), name TEXT, type TEXT, extra TEXT, created_at INTEGER, updated_at INTEGER, project_id TEXT, folder_id TEXT, archived_at INTEGER);
+CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT REFERENCES conversations(id), content TEXT, created_at INTEGER);
 CREATE TABLE acp_session (conversation_id TEXT PRIMARY KEY, session_config TEXT);
 CREATE TABLE teams (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, workspace TEXT, agents TEXT, created_at INTEGER, updated_at INTEGER, archived_at INTEGER);
-CREATE TABLE mailbox (id TEXT PRIMARY KEY, team_id TEXT, content TEXT, files TEXT, created_at INTEGER);
+CREATE TABLE mailbox (id TEXT PRIMARY KEY, team_id TEXT REFERENCES teams(id), content TEXT, files TEXT, created_at INTEGER);
 CREATE TABLE team_tasks (id TEXT PRIMARY KEY, team_id TEXT, description TEXT, created_at INTEGER);`;
 
 function makePc(name, user, chats) {

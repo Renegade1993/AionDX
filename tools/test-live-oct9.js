@@ -120,7 +120,7 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
     await app.js(`window.__aionDx.openUsagePanel({ kind: 'conv', key: 'conv:${conv.id}', convId: '${conv.id}' }); 0`);
     await sleep(300);
     const panelText = await app.js(`(() => { const p = document.querySelector('[data-testid="aiondx-usage-panel"]'); return p ? p.textContent : null; })()`);
-    check('the usage panel opens, with the current usage and the rule listed', !!panelText && /5-hour window \d+%/.test(panelText) && /5-hour window at 80%/.test(panelText), panelText);
+    check('the usage panel opens, with the current usage and the rule listed', !!panelText && /(5-hour window|Week) \d+%/.test(panelText) && /5-hour window at 80%/.test(panelText), panelText);   // whichever window has a reading now (none for 5 hours between windows, November 15th)
     await app.js(`(() => { const s = document.querySelector('.aiondx-uspanel [data-f="pollSec"]'); s.value = '10'; s.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
     await app.js(`(() => { const p = document.querySelector('.aiondx-uspanel [data-f="npct"]'); p.value = '95'; const w = document.querySelector('.aiondx-uspanel [data-f="nwin"]'); w.value = 'week'; document.querySelector('.aiondx-uspanel [data-act="add"]').click(); return 0; })()`);
     await sleep(800);

@@ -35,10 +35,16 @@ const deadline = setTimeout(() => { console.log('DEADLINE'); process.exit(2); },
     let up = false;
     for (let i = 0; i < 120 && !up; i++) { const st = await app.js('({ port: window.__backendPort || null })'); up = !!(st && st.port); if (!up) await sleep(1000); }
     check('the built app starts in the made-up profile', up);
+    // a fresh profile's first-run setup reloads the page once: wait until AionDX's renderer has been up for a few seconds in a row
+    let steady = 0;
+    for (let i = 0; i < 90 && steady < 4; i++) { const b = await app.js('window.__aionDx && window.__aionDx.build'); steady = b ? steady + 1 : 0; await sleep(1000); }
     console.log('build', await app.js('window.__aionDx && window.__aionDx.build'));
-    await app.js(`(() => { window.__t = { base: 'http://127.0.0.1:' + window.__backendPort,
+    // the helper is made again whenever the page lost it (a reload)
+    const T = `(window.__t || (window.__t = { base: 'http://127.0.0.1:' + window.__backendPort,
       h: () => ({ 'Content-Type': 'application/json', 'x-csrf-token': window.__coreCsrfToken || (document.cookie.match(/aionui-csrf-token=([^;]+)/) || [])[1] || '' }),
-      call: async (m, p, b) => { const r = await fetch(window.__t.base + p, { method: m, credentials: 'include', headers: window.__t.h(), body: b === undefined ? undefined : JSON.stringify(b) }); let j = null; try { j = await r.json(); } catch (e) {} return { status: r.status, j }; } }; return 0; })()`);
+      call: async (m, p, b) => { const r = await fetch(window.__t.base + p, { method: m, credentials: 'include', headers: window.__t.h(), body: b === undefined ? undefined : JSON.stringify(b) }); let j = null; try { j = await r.json(); } catch (e) {} return { status: r.status, j }; } })), `;
+    const origJs = app.js.bind(app);
+    app.js = (expr) => origJs(/window\.__t\b/.test(expr) ? '(' + T + expr + ')' : expr);
     check('the places bridge is there', await app.js('!!(window.aiondxPlaces && window.aiondxPlaces.call)'));
     const conv = await app.js(`(async () => {
       const list = (await window.__t.call('GET', '/api/assistants')).j;

@@ -39,13 +39,13 @@ const esc = (p) => p.replace(/\\/g, '\\\\');
 
 const SCHEMA = `
 CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT);
-CREATE TABLE conversations (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, type TEXT, extra TEXT, model TEXT, status TEXT, source TEXT, pinned INTEGER, created_at INTEGER, updated_at INTEGER, project_id TEXT, folder_id TEXT);
-CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, msg_id TEXT, type TEXT, content TEXT, position TEXT, status TEXT, hidden INTEGER, created_at INTEGER);
+CREATE TABLE conversations (id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id), name TEXT, type TEXT, extra TEXT, model TEXT, status TEXT, source TEXT, pinned INTEGER, created_at INTEGER, updated_at INTEGER, project_id TEXT, folder_id TEXT);
+CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT REFERENCES conversations(id), msg_id TEXT, type TEXT, content TEXT, position TEXT, status TEXT, hidden INTEGER, created_at INTEGER);
 CREATE TABLE acp_session (conversation_id TEXT PRIMARY KEY, agent_source TEXT, agent_id TEXT, session_id TEXT, session_status TEXT, session_config TEXT, last_active_at INTEGER);
 CREATE TABLE conversation_assistant_snapshots (conversation_id TEXT PRIMARY KEY, rules_content TEXT, created_at INTEGER);
 CREATE TABLE conversation_artifacts (id TEXT PRIMARY KEY, conversation_id TEXT, kind TEXT, payload TEXT, created_at INTEGER);
 CREATE TABLE teams (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, workspace TEXT, workspace_mode TEXT, agents TEXT, lead_agent_id TEXT, created_at INTEGER, updated_at INTEGER, project_id TEXT, folder_id TEXT);
-CREATE TABLE mailbox (id TEXT PRIMARY KEY, team_id TEXT, to_agent_id TEXT, from_agent_id TEXT, type TEXT, content TEXT, files TEXT, read INTEGER, created_at INTEGER);
+CREATE TABLE mailbox (id TEXT PRIMARY KEY, team_id TEXT REFERENCES teams(id), to_agent_id TEXT, from_agent_id TEXT, type TEXT, content TEXT, files TEXT, read INTEGER, created_at INTEGER);
 CREATE TABLE team_tasks (id TEXT PRIMARY KEY, team_id TEXT, subject TEXT, description TEXT, status TEXT, metadata TEXT, created_at INTEGER, updated_at INTEGER);`;
 
 // ---------------------------------------------------------------- the made-up PC
