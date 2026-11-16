@@ -561,10 +561,33 @@ function replyComment(docsDir, id, commentId, o) {
 }
 
 module.exports = { csvLoader, suggest, suggestions, decide, author, drawProblems, DOCS_FOLDER, resolveRoot, parse, render, pendingOf, list, info, create, read, update, save, history, readVersion, restore,
-  comments, addComment, replyComment, slugOf, ID_RE, PENDING_RE, rename, remove, recycled, undelete, allSections, MD };
+  comments, addComment, replyComment, slugOf, ID_RE, PENDING_RE, rename, remove, recycled, undelete, allSections, MD, look };
 
 // ---------------------------------------------------------------- command line: node dxdocs.js <command> --json '<args>' | --json-file F
 // Every command needs where the docs are: --docs-dir DIR, or --data-dir DIR --conv ID [--team ID] --workspace DIR. Prints one JSON answer.
+/** A look: ask the running app to draw the doc (or one chart, drawing or diagram in it) and wait for its PNG. Resolves { png, width, height }. */
+async function look(dataDir, docsDir, args, waitMs) {
+  if (!dataDir) throw new Error('A look needs the app\'s data folder (--data-dir).');
+  read(docsDir, args.doc, { tab: args.tab });   // the doc (and tab) must be there
+  const dir = path.join(dataDir, 'dx-look');
+  fs.mkdirSync(dir, { recursive: true });
+  const id = 'look-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  writeAtomic(path.join(dir, id + '.req.json'), JSON.stringify({ docsDir, doc: args.doc, tab: args.tab || '', what: args.what || 'doc', index: +args.index || 0 }));
+  const done = path.join(dir, id + '.done.json');
+  const until = Date.now() + (waitMs || 25000);
+  while (Date.now() < until) {
+    if (fs.existsSync(done)) {
+      const r = readJson(done);
+      if (!r) { await new Promise((ok) => setTimeout(ok, 150)); continue; }
+      if (!r.ok) throw new Error('The look was not drawn: ' + r.error);
+      return { png: r.png, width: r.width, height: r.height };
+    }
+    await new Promise((ok) => setTimeout(ok, 200));
+  }
+  try { fs.unlinkSync(path.join(dir, id + '.req.json')); } catch { /* taken late */ }
+  throw new Error('AionDX did not draw it in ' + Math.round((waitMs || 25000) / 1000) + ' seconds. A look needs AionDX open on this PC (it draws the doc as its panel does).');
+}
+
 if (require.main === module) {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
@@ -595,9 +618,11 @@ if (require.main === module) {
       : cmd === 'suggestions' ? { suggestions: suggestions(docsDir, args.doc) }
       : cmd === 'withdraw' ? decide(docsDir, args.doc, args.suggestion, 'withdraw', 'agent')
       // the agent answers the user's own suggestion: accept or reject it (its own it withdraws)
+      : cmd === 'look' ? null
       : cmd === 'decide' ? (() => { const s = readSuggestions(docsDir, args.doc).find((x) => x.id === args.suggestion); if (s && s.by === 'agent') throw new Error('That suggestion is yours: withdraw it, or leave it to the user.'); return decide(docsDir, args.doc, args.suggestion, args.verdict === 'accept' ? 'accept' : 'reject', 'the agent'); })()
       : null;
-    if (!r) done({ ok: false, error: 'Commands: where, list, create, read, update, comments, comment, reply, history, suggest, suggestions, withdraw, decide.' }, 2);
+    if (cmd === 'look') { look(opt('--data-dir'), docsDir, args).then((x) => done(Object.assign({ ok: true, docsDir }, x)), (e) => done({ ok: false, error: e.message }, 1)); return; }
+    if (!r) done({ ok: false, error: 'Commands: where, list, create, read, update, comments, comment, reply, history, suggest, suggestions, withdraw, decide, look.' }, 2);
     done(Object.assign({ ok: true, docsDir }, r));
   } catch (e) {
     done({ ok: false, error: e.message }, 1);

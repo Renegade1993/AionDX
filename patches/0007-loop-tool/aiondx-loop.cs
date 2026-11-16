@@ -501,6 +501,44 @@ namespace AionDx
                             { "tab", Prop("string", "Optional: a tab's id (t2) or title, for that tab's own Markdown.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
+                    { "name", "dxdoc_comment" },
+                    { "title", "Comment on a DX Doc" },
+                    { "description", "Your own comment or question in a DX Doc, the way the user comments: on words (\"quote\": the words exactly as they stand), on a whole tab or doc (no quote: a note at the top of the comments), on a chart, diagram or drawing (\"on\": chart|diagram|drawing and \"index\": its number in the tab, from 0), or in the talk on a suggestion (\"suggestion\": its id). Use it for a question that the user should answer in the doc, or a point about the words that is not a change (a change is dxdoc_suggest or dxdoc_update). The user answers in its thread; dxdoc_comments shows the replies." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "doc", Prop("string", "The doc's id.") },
+                            { "text", Prop("string", "The comment or question.") },
+                            { "quote", Prop("string", "Optional: the words it is on, exactly as they stand.") },
+                            { "tab", Prop("string", "Optional: the tab (id or title) it is on.") },
+                            { "on", Prop("string", "Optional: chart, diagram or drawing.") },
+                            { "index", Prop("number", "With on: which one in the tab, from 0.") },
+                            { "suggestion", Prop("string", "Optional: a suggestion's id (s1 ...), to talk on it.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "dxdoc_look" },
+                    { "title", "Look at a DX Doc as the user sees it" },
+                    { "description", "A picture (PNG) of a DX Doc as the user's panel draws it: the doc's tab, or one chart, drawing or diagram in it. Look at every chart and drawing you make before saying you are done, and fix what reads badly. Needs AionDX open on this PC. Gives the PNG's path; open it with your file-reading tool." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "doc", Prop("string", "The doc's id.") },
+                            { "tab", Prop("string", "Optional: the tab (id or title).") },
+                            { "what", Prop("string", "doc (the default), chart, drawing or diagram.") },
+                            { "index", Prop("number", "With chart, drawing or diagram: which one in the tab, from 0.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
+                    { "name", "dxdoc_decide" },
+                    { "title", "Accept or reject the user's suggestion" },
+                    { "description", "The user can suggest changes in a DX Doc (their Suggesting mode); you are told of each. Accept one (it is applied, the version before kept) or reject it, when the user asked you to decide or it is plainly right or wrong; say why in its talk (dxdoc_comment with suggestion). Your own suggestions you withdraw with dxdoc_suggest." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "doc", Prop("string", "The doc's id.") },
+                            { "suggestion", Prop("string", "The suggestion's id (s1 ...).") },
+                            { "verdict", Prop("string", "accept or reject.") } } } } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
                     { "name", "dxdoc_list" },
                     { "title", "List DX Docs" },
                     { "description", "The DX Docs of this chat's project (or working folder): id, title, sections still to write, open comments, newest first." },
@@ -1565,15 +1603,20 @@ namespace AionDx
             "Usage:\n" +
             "  aiondx doc where | list\n" +
             "  aiondx doc create --json '{\"title\":\"...\",\"sections\":[{\"heading\":\"...\",\"intent\":\"what it will hold\"}]}'\n" +
-            "  aiondx doc read --json '{\"doc\":\"<id>\"}'\n" +
+            "  aiondx doc read --json '{\"doc\":\"<id>\",\"tab\":\"<tab>\"}'\n" +
             "  aiondx doc update --json '{\"doc\":\"<id>\",\"ops\":[{\"op\":\"replace_section\",\"heading\":\"...\",\"body\":\"...\"}]}'\n" +
+            "  aiondx doc look --json '{\"doc\":\"<id>\",\"tab\":\"<tab>\",\"what\":\"doc|chart|drawing|diagram\",\"index\":0}'   a PNG of it as the user sees it\n" +
             "  aiondx doc comments --json '{\"doc\":\"<id>\"}' | reply --json '{\"doc\":\"<id>\",\"comment\":\"<id>\",\"text\":\"...\",\"resolve\":true}'\n" +
+            "  aiondx doc comment --json '{\"doc\":\"<id>\",\"text\":\"...\",\"quote\":\"words as they stand\"}'   your own comment or question\n" +
+            "    (no quote: a note on the whole doc or tab; \"on\":\"chart|diagram|drawing\",\"index\":n; \"suggestion\":\"s1\" talks on a suggestion)\n" +
             "  aiondx doc suggest --json '{\"doc\":\"<id>\",\"find\":\"words as they stand\",\"replace\":\"new words\",\"note\":\"why\"}'   a change the user accepts or rejects\n" +
             "  aiondx doc suggestions --json '{\"doc\":\"<id>\"}' | withdraw --json '{\"doc\":\"<id>\",\"suggestion\":\"s1\"}'\n" +
+            "  aiondx doc decide --json '{\"doc\":\"<id>\",\"suggestion\":\"s1\",\"verdict\":\"accept|reject\"}'   on one of the user's own suggestions\n" +
             "  (--json-file FILE instead of --json; in PowerShell 5.1 double quotes inside an argument are lost, so use a file there)\n" +
             "A DX Doc is a Markdown file in the DX Docs folder of the chat's project (else its working folder). The user watches it in the chat's\n" +
-            "right-hand sidebar, live. Operations: replace_section, append_to_section, append_section, insert_after, rename_section,\n" +
-            "delete_section, replace_text (find, replace, all), set_title, set_lead, write (markdown). Every change keeps the version before it.\n" +
+            "right-hand panel, live, types in it, comments on it and suggests changes. Operations: replace_section, append_to_section,\n" +
+            "append_section, insert_after, rename_section, delete_section, replace_text (find, replace, all), set_title, set_lead, write (markdown).\n" +
+            "Every change keeps the version before it.\n" +
             "Tabs (a doc can hold several, and sub-tabs under a tab):\n" +
             "  {\"op\":\"add_tab\",\"title\":\"...\",\"parent\":\"<tab>\",\"after\":\"<tab>\",\"sections\":[{\"heading\":\"...\",\"intent\":\"...\"}]}   (a doc without\n" +
             "    tabs gets them: what it had becomes the first tab, \"first_tab_title\" names it, else Overview)\n" +
@@ -1582,7 +1625,25 @@ namespace AionDx
             "  On a doc with tabs every section operation names its tab: {\"op\":\"replace_section\",\"tab\":\"Decisions\",\"heading\":\"...\",\"body\":\"...\"}\n" +
             "  (<tab> is a tab's id, like t2, or its title). read lists the tabs with their sections; read with \"tab\" gives that tab's own Markdown.\n" +
             "  create can make a doc with tabs: {\"title\":\"...\",\"tabs\":[{\"title\":\"Plan\",\"sections\":[...]},{\"title\":\"Detail\",\"parent\":\"Plan\"}]}\n" +
-            "  Comments say which tab they are on (\"tab\").";
+            "What a body can hold besides Markdown (headings to ####, lists, 5. to start a list at 5, tables, code with its language, quotes):\n" +
+            "  ++underlined++  ==highlighted==  $x^2$ and $$\\frac{a}{b}$$ (formulas, LaTeX)  [link to a heading](#its-words-in-lowercase-with-dashes)\n" +
+            "  chips: [[date:2026-11-20]]  [[pick:In progress|Not started|In progress|Done]] (the value, then the options)  [[@you]] [[@agent]] [[@Name]]\n" +
+            "         [[tab:t2|Decisions]]  [[doc:other-id|Its title]]   (a mention of an agent tells that agent)\n" +
+            "  a table cell's colour and a column's width: | Owner {.bg-green w=160} |  (gray red orange yellow green blue purple); a cell of << joins the one\n" +
+            "    on its left; alignment from the | :--- | :---: | ---: | row\n" +
+            "  > [!NOTE] / [!TIP] / [!WARNING] / [!DECISION] / [!IMPORTANT] / [!CAUTION] on a quote's first line: a callout\n" +
+            "  ```choice {\"question\":\"...\",\"options\":[\"A\",\"B\"],\"multi\":false} ```  a question the user answers in the doc; you are told the answer\n" +
+            "  ```approve {\"label\":\"Approve the plan\"} ```  an Approve button; you are told when they approve or ask for changes\n" +
+            "  ```chart {JSON} ```  bar, stacked, hbar, line, area, pie, scatter, waterfall (\"totals\":[x labels]), range ([low, mid, high]),\n" +
+            "    combo (\"lines\":[series]), funnel; \"columns\"+\"rows\" or \"x\"+\"series\" or \"csv\":\"data/file.csv\" (\"use\":[columns]) from the project;\n" +
+            "    extras: \"target\":{\"value\":n,\"label\":\"Goal\"}, \"notes\":[{\"x\":\"Q2\",\"text\":\"Launch\"}], \"labels\":true or [x labels],\n" +
+            "    \"accent\":\"<series or x label>\" (it in colour, the rest grey), \"projectedFrom\":\"<x label>\" (dashed and pale from there)\n" +
+            "  ```mermaid ... ```  flowchart, sequenceDiagram, gantt, timeline, mindmap, quadrantChart and the rest of Mermaid 11\n" +
+            "  ```drawing {JSON} ```  quadrant {\"quadrants\":[4 names],\"x\":{low,high,label},\"y\":{...},\"items\":[{label,x:0-1,y:0-1}]},\n" +
+            "    pillars {\"roof\",\"pillars\":[{\"title\",\"points\":[...]}],\"base\"}, timeline {\"events\":[{\"date\",\"title\",\"text\"}]}\n" +
+            "  ```svg <svg viewBox=...>...</svg> ```  your own drawing; cleaned before it shows (no scripts, events or outside links)\n" +
+            "  ```csv ``` (a grid)   ```markdown ``` (shown drawn)   ![words](pictures/x.png) (a picture beside the doc)\n" +
+            "A block that cannot be drawn is refused with its line and the fix. Look (aiondx doc look) at every chart and drawing before saying done.";
 
         /** The engine (dxdocs.js) and something to run it with: AionDX's own runtime (AionDX.exe as Node), else node on PATH. */
         static Tuple<string, string> DxEngine()
@@ -1695,6 +1756,22 @@ namespace AionDx
                     return "Suggested (" + (sg != null ? Str(sg, "id") : "?") + "): the user sees the old words struck and yours beside them, with Accept and Reject. The doc changes only if they accept; dxdoc_read shows whether it did.";
                 }
                 case "dxdoc_reply": { var r = DxRun("reply", a); return "Replied to the comment" + (r.ContainsKey("resolved") && r["resolved"] is bool && (bool)r["resolved"] ? " and marked it resolved." : "."); }
+                case "dxdoc_comment":
+                {
+                    var r = DxRun("comment", a);
+                    var c = r.ContainsKey("comment") ? r["comment"] as Dictionary<string, object> : null;
+                    return "Commented (" + (c != null ? Str(c, "id") : "?") + "): the user sees " + (Str(a, "quote") != null ? "your words highlighted with your comment on them" : Str(a, "suggestion") != null ? "it in the talk on that suggestion" : "it as a note on the whole " + (Str(a, "tab") != null ? "tab" : "doc")) + ", and answers in its thread (dxdoc_comments shows the replies).";
+                }
+                case "dxdoc_look":
+                {
+                    var r = DxRun("look", a);
+                    return "Drawn as the user sees it: " + Str(r, "png") + " (" + Long(r, "width") + " x " + Long(r, "height") + " pixels). Open the picture and check it before you say the work is done: labels that overlap, a value or a name wrong, a drawing that reads badly.";
+                }
+                case "dxdoc_decide":
+                {
+                    DxRun("decide", a);
+                    return (Str(a, "verdict") == "accept" ? "Accepted" : "Rejected") + " the user's suggestion " + Str(a, "suggestion") + "; the version before is kept.";
+                }
             }
             throw new ToolError("Unknown DX Docs tool " + tool + ".");
         }
@@ -1712,8 +1789,8 @@ namespace AionDx
                     else if (args[i] == "--json-file") a = Json.DeserializeObject(File.ReadAllText(Next(args, ref i, "--json-file"))) as Dictionary<string, object> ?? a;
                     else throw new ToolError("Unknown option " + args[i] + ".\n" + DocHelp);
                 }
-                if (!new[] { "where", "list", "create", "read", "update", "comments", "reply", "history", "suggest", "suggestions", "withdraw" }.Contains(cmd)) throw new ToolError("Unknown doc command \"" + args[1] + "\".\n" + DocHelp);
-                if (cmd == "create" || cmd == "update" || cmd == "reply" || cmd == "suggest") { o.WriteLine(DxText("dxdoc_" + cmd, a)); return 0; }
+                if (!new[] { "where", "list", "create", "read", "update", "comments", "comment", "reply", "history", "suggest", "suggestions", "withdraw", "decide", "look" }.Contains(cmd)) throw new ToolError("Unknown doc command \"" + args[1] + "\".\n" + DocHelp);
+                if (cmd == "create" || cmd == "update" || cmd == "reply" || cmd == "suggest" || cmd == "comment" || cmd == "look" || cmd == "decide") { o.WriteLine(DxText("dxdoc_" + cmd, a)); return 0; }
                 if (cmd == "withdraw") { a["withdraw"] = true; o.WriteLine(DxText("dxdoc_suggest", a)); return 0; }
                 var r = DxRun(cmd, a);
                 if (cmd == "where") o.WriteLine("DX Docs for this chat are in " + Str(r, "docsDir") + (Str(r, "project") != null ? " (project " + Str(r, "project") + ")" : "") + ".");

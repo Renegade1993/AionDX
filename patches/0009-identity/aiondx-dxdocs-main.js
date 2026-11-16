@@ -174,6 +174,131 @@ function create(o) {
   return { handle, watchers };
 }
 
+// ---- a look at a doc (DX Docs mirror, the dxdoc_look tool): the doc, or one chart, drawing or diagram in it, drawn as the panel draws it,
+// as a PNG an agent opens to check its own work before it says it is done (Claude Docs' agents look at their charts the same way).
+// Agents ask through files: <userData>\dx-look\<id>.req.json { docsDir, doc, tab, what: doc|chart|drawing|diagram, index }; the app draws
+// it in a hidden window and writes <id>.png and <id>.done.json { ok, png, width, height } (or { ok:false, error }). Only a doc in a folder
+// named "DX Docs" is read; nothing in it runs (charts and drawings are drawn by the engine; diagrams by the app's own Mermaid, strict).
+const LOOK_CSS = [
+  'html,body{margin:0;background:#fff}body{font:14px/1.6 "Segoe UI",Arial,sans-serif;color:#1d2129}.dx-body{padding:20px 26px;width:760px;box-sizing:border-box}',
+  'h1{font-size:24px;margin:0 0 14px}h2{font-size:18px;margin:22px 0 8px}h3{font-size:15.5px}h4{font-size:14px}table{border-collapse:collapse;margin:10px 0}td,th{border:1px solid #d4d4d4;padding:4px 8px}th{background:#f3f3f3}',
+  'pre{background:#f4f4f4;padding:10px;border-radius:6px;white-space:pre-wrap}code{font-family:Consolas,monospace}blockquote{border-left:3px solid #ccc;margin:8px 0;padding:2px 12px;color:#444}',
+  ':root,.aiondx-dx{--dxc1:#2f6fdb;--dxc2:#e8743b;--dxc3:#19a979;--dxc4:#945ecf;--dxc5:#d64a7b;--dxc6:#13a4b4;--dxc7:#b88a12;--dxc8:#6e7b8b;--dxc-bg:#fff}',
+  '.dx-chart{margin:10px 0 18px;position:relative}.dx-chart-svg,.dx-drawing-svg{display:block;width:100%;height:auto}.dx-chart-data,.dx-chart-tablewrap,.dx-fig-comment,.dx-fig-badge{display:none}',
+  '.dx-chart figcaption{font-size:12px;color:#666}.dx-ch-title{font:600 13px "Segoe UI",Arial;fill:#1d2129}.dx-ch-tick,.dx-ch-legend,.dx-ch-axis{font:11px "Segoe UI",Arial;fill:#666}',
+  '.dx-ch-grid{stroke:#ebebeb}.dx-ch-zero{stroke:#999}.dx-ch-line{fill:none;stroke-width:2;stroke-linejoin:round}.dx-ch-area{opacity:.18}.dx-ch-pct{font:600 11px "Segoe UI",Arial;fill:#fff}',
+  '.dx-ch-val{font:600 10.5px "Segoe UI",Arial;fill:#333}.dx-ch-conn{stroke:#999;stroke-dasharray:2 2}.dx-ch-note line{stroke:#888}.dx-ch-note text{font:11px "Segoe UI",Arial;fill:#111}',
+  '.dx-ch-target line{stroke:#d33;stroke-dasharray:6 4;stroke-width:1.5}.dx-ch-target text{font:600 11px "Segoe UI",Arial;fill:#d33}',
+  '.dx-ch-val,.dx-ch-target text,.dx-ch-note text{paint-order:stroke;stroke:#fff;stroke-width:3px;stroke-linejoin:round}',
+  '.dx-chart--bad{padding:8px 10px;border:1px dashed #d33;border-radius:6px;color:#444;font-size:12px}',
+  '.dx-mermaid{margin:10px 0 18px}.dx-mermaid svg{display:block;max-width:100%;height:auto;margin:0 auto}.dx-mermaid[data-drawn="1"] pre{display:none}',
+  '.dx-drawing{margin:10px 0 18px}.dx-dr-title{font:600 14px "Segoe UI",Arial;fill:#1d2129}.dx-dr-qname,.dx-dr-label{font:600 12px "Segoe UI",Arial;fill:#333}.dx-dr-box{stroke:#c8c8c8}',
+  '.dx-dr-q0{fill:#e9f6ee}.dx-dr-q1{fill:#e8effc}.dx-dr-q2{fill:#f3f3f3}.dx-dr-q3{fill:#fcecec}.dx-dr-axis,.dx-dr-stem{stroke:#888;stroke-width:1.5}.dx-dr-small{font:11px "Segoe UI",Arial;fill:#666}',
+  '.dx-dr-dot{fill:#2f6fdb}.dx-dr-item,.dx-dr-ptitle,.dx-dr-roofname{font:600 12px "Segoe UI",Arial;fill:#1d2129}.dx-dr-point{font:11.5px "Segoe UI",Arial;fill:#333}.dx-dr-date{font:600 11px "Segoe UI",Arial;fill:#2f6fdb}',
+  '.dx-dr-roof{fill:#e8effc;stroke:#2f6fdb}.dx-dr-pillar{fill:#f5f5f5;stroke:#c8c8c8}.dx-dr-base{fill:#ededed;stroke:#c8c8c8}',
+  '.dx-pending{color:#888;font-style:italic}.dx-tabmark{margin:18px 0 8px;padding:4px 10px;border-radius:6px;background:#f0f0f0;font-size:12px;font-weight:600}',
+  '.dx-chip{display:inline-block;padding:0 7px;border-radius:10px;background:#efefef;font-size:.92em}.dx-chip-caret{opacity:.6;font-size:.8em}',
+  '.dx-callout{border-left:4px solid #888;background:#f5f5f5;border-radius:0 8px 8px 0;padding:6px 12px;margin:10px 0}.dx-callout-tag{font-size:11.5px;font-weight:700;color:#666}',
+  '.dx-choice,.dx-approve{margin:10px 0;padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#fafafa}.dx-choice-q,.dx-approve-label{font-weight:600}.dx-choice-opt{display:block}.dx-choice-state,.dx-approve-state{font-size:12px;color:#777}',
+  '.dx-csv,.dx-mdblock{margin:10px 0;border:1px solid #ddd;border-radius:8px;padding:4px 8px}.dx-math--block{display:block;text-align:center;margin:10px 0}mark{background:#ffe680}img{max-width:100%}'
+].join('\n');
+/** The Markdown a look draws: the doc's open tab (or its only one), or one chart, drawing or diagram in it (the nth of its kind, from 0). */
+function lookMarkdown(markdown, req) {
+  const MD = D.MD;
+  const view = req.tab ? MD.tabView(markdown, req.tab) : MD.splitTabs(markdown).tabs.length > 1 ? MD.tabView(markdown, MD.splitTabs(markdown).tabs[0].id) : markdown;
+  const what = String(req.what || 'doc');
+  if (what === 'doc') return view;
+  const langs = what === 'chart' ? ['chart'] : what === 'diagram' ? ['mermaid'] : what === 'drawing' ? ['drawing', 'svg'] : null;
+  if (!langs) throw new Error('"what" is doc, chart, drawing or diagram.');
+  const lines = view.replace(/\r\n/g, '\n').split('\n');
+  const blocks = [];
+  for (let i = 0; i < lines.length; i++) {
+    const f = /^(```|~~~)\s*([\w+-]*)\s*$/.exec(lines[i]);
+    if (!f) continue;
+    let j = i + 1;
+    while (j < lines.length && lines[j].indexOf(f[1]) !== 0) j++;
+    if (langs.indexOf(f[2].toLowerCase()) >= 0) blocks.push(lines.slice(i, j + 1).join('\n'));
+    i = j;
+  }
+  const n = Math.max(0, +req.index || 0);
+  if (!blocks[n]) throw new Error('That ' + (req.tab ? 'tab' : 'doc') + ' has ' + blocks.length + ' ' + what + (blocks.length === 1 ? '' : 's') + '; "index" counts from 0.');
+  return blocks[n];
+}
+/** The page a look draws, with the app's own Mermaid and KaTeX beside it (file URLs). */
+function lookPage(markdown, req, docsDir, rendererDir) {
+  const { pathToFileURL } = require('url');
+  const MD = D.MD;
+  let md = lookMarkdown(markdown, req);
+  // charts that read a CSV file are drawn from it here
+  const CH = require('./dxcharts.js');
+  const load = D.csvLoader(docsDir);
+  let html = MD.toHtml(md);
+  html = html.replace(/<figure class="dx-chart dx-chart--csv" data-src="([^"]*)" data-csv="[^"]*">[\s\S]*?<\/figure>/g, (m, src) => {
+    const text = src.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const p = CH.parse(text);
+    return CH.toHtml(text, { csvText: p.pending ? load(p.pending) : false });
+  });
+  const mm = rendererDir ? path.join(rendererDir, 'aiondx-mermaid.min.js') : '';
+  const kx = rendererDir ? path.join(rendererDir, 'aiondx-katex') : '';
+  const has = (f) => f && fs.existsSync(f);
+  return '<!doctype html><html><head><meta charset="utf-8"><title>drawing</title>' +
+    (has(path.join(kx, 'katex.min.css')) ? '<link rel="stylesheet" href="' + pathToFileURL(path.join(kx, 'katex.min.css')).href + '">' : '') +
+    '<style>' + LOOK_CSS + '</style></head><body class="aiondx-dx"><div class="dx-body" id="dx">' + html + '</div>' +
+    (has(mm) ? '<script src="' + pathToFileURL(mm).href + '"></script>' : '') + (has(path.join(kx, 'katex.min.js')) ? '<script src="' + pathToFileURL(path.join(kx, 'katex.min.js')).href + '"></script>' : '') +
+    '<script>(async function () {' +
+    'try { document.querySelectorAll(".dx-math").forEach(function (el) { try { window.katex.render(el.getAttribute("data-tex") || "", el, { throwOnError: true, displayMode: el.classList.contains("dx-math--block"), trust: false, strict: "ignore" }); } catch (e) {} }); } catch (e) {}' +
+    'try { if (window.mermaid) { window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default", flowchart: { htmlLabels: false } }); var hs = document.querySelectorAll(".dx-mermaid"); for (var i = 0; i < hs.length; i++) { try { var o = await window.mermaid.render("dxl" + i, hs[i].getAttribute("data-src") || ""); hs[i].innerHTML = o.svg; hs[i].setAttribute("data-drawn", "1"); } catch (e) { hs[i].setAttribute("data-drawn", "bad"); } } } } catch (e) {}' +
+    'var b = document.getElementById("dx"); var only = b.children.length === 1 && !/^H[1-6]$/.test(b.children[0].tagName); if (only) b.style.width = "720px";' +
+    'document.title = "ready:" + Math.ceil(b.getBoundingClientRect().width) + "x" + Math.ceil(b.scrollHeight); })();</script></body></html>';
+}
+/** One request: drawn by capture(htmlFile) (the app's hidden window), answered in files. */
+async function lookOne(dir, name, capture, rendererDir) {
+  const base = path.join(dir, name.replace(/\.req\.json$/, ''));
+  const done = (o) => { try { fs.writeFileSync(base + '.done.json', JSON.stringify(o)); } catch { /* the asker times out */ } };
+  let req;
+  try { req = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')); } catch { return; }
+  try { fs.unlinkSync(path.join(dir, name)); } catch { return; }   // taken (another window may race for it)
+  try {
+    const docsDir = path.resolve(String(req.docsDir || ''));
+    if (path.basename(docsDir) !== D.DOCS_FOLDER) throw new Error('Only a doc in a DX Docs folder can be looked at.');
+    const r = D.read(docsDir, String(req.doc || ''));
+    const page = base + '.html';
+    fs.writeFileSync(page, lookPage(r.markdown, req, docsDir, rendererDir));
+    const shot = await capture(page);
+    try { fs.unlinkSync(page); } catch { /* left for the sweep */ }
+    fs.writeFileSync(base + '.png', shot.png);
+    done({ ok: true, png: base + '.png', width: shot.width, height: shot.height });
+  } catch (e) {
+    done({ ok: false, error: String((e && e.message) || e) });
+  }
+}
+/** Watch <userData>\dx-look for requests (and sweep answers over an hour old). Returns a stop function. */
+function lookService(dir, capture, rendererDir) {
+  fs.mkdirSync(dir, { recursive: true });
+  let busy = false, again = false;
+  const run = async () => {
+    if (busy) { again = true; return; }
+    busy = true;
+    try {
+      do {
+        again = false;
+        const now = Date.now();
+        for (const f of fs.readdirSync(dir)) {
+          const p = path.join(dir, f);
+          if (/\.req\.json$/.test(f)) await lookOne(dir, f, capture, rendererDir);
+          else { try { if (now - fs.statSync(p).mtimeMs > 3600000) fs.unlinkSync(p); } catch { /* gone */ } }
+        }
+      } while (again);
+    } catch { /* the next request tries again */ } finally { busy = false; }
+  };
+  let w = null;
+  try { w = fs.watch(dir, { persistent: false }, (ev, f) => { if (f && /\.req\.json$/.test(String(f))) run(); }); } catch { w = null; }
+  const t = setInterval(run, 3000);
+  if (t.unref) t.unref();
+  run();
+  return () => { try { if (w) w.close(); } catch { /* closed */ } clearInterval(t); };
+}
+
 function install(electron) {
   const { ipcMain, app, BrowserWindow, shell } = electron;
   const printPdf = async (html) => {
@@ -184,9 +309,35 @@ function install(electron) {
     } finally { w.destroy(); }
   };
   const svc = create({ dataDir: () => app.getPath('userData'), shell, printPdf });
+  // looks: a hidden window that draws offscreen (nothing reaches the screen) at the page's own size, then its frame as a PNG
+  const capture = async (page) => {
+    const w = new BrowserWindow({ show: false, width: 800, height: 600, webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, javascript: true, backgroundThrottling: false } });
+    try {
+      await w.loadFile(page);
+      let size = null;
+      for (let i = 0; i < 150 && !size; i++) {
+        const m = /^ready:(\d+)x(\d+)$/.exec(w.webContents.getTitle());
+        if (m) size = [+m[1], +m[2]]; else await new Promise((r) => setTimeout(r, 100));
+      }
+      if (!size) throw new Error('The doc did not finish drawing in 15 seconds.');
+      const W = Math.min(1600, Math.max(200, size[0])), H = Math.min(6000, Math.max(80, size[1]));
+      w.setContentSize(W, H);
+      await new Promise((r) => setTimeout(r, 250));
+      let img = await new Promise((resolve) => {
+        const to = setTimeout(() => resolve(null), 4000);
+        w.webContents.once('paint', (_e, _dirty, image) => { clearTimeout(to); resolve(image); });
+        w.webContents.invalidate();
+      });
+      if (!img || img.isEmpty()) img = await w.webContents.capturePage();
+      if (!img || img.isEmpty()) throw new Error('The drawing came out empty.');
+      const sz = img.getSize();
+      return { png: img.toPNG(), width: sz.width, height: sz.height };
+    } finally { w.destroy(); }
+  };
+  try { lookService(path.join(app.getPath('userData'), 'dx-look'), capture, path.join(__dirname, '..', 'renderer')); } catch { /* looks are not available; the asker is told */ }
   ipcMain.handle('aiondx:dxdocs', async (event, req) => {
     try { return await svc.handle(req || {}, event.sender); } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   });
 }
 
-module.exports = { install, create, exportAll };
+module.exports = { install, create, exportAll, lookService, lookMarkdown, lookPage };

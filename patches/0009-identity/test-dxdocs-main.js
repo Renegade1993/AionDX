@@ -85,6 +85,21 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-dxdocs-main-'));
     check('all docs: this chat\'s folder first, then every project with docs, each named', r.ok && r.folders.length === 2 && r.folders[0].docsDir === dir && r.folders[1].name === 'Atlas' && r.folders[1].docs[0].title === 'Atlas notes', JSON.stringify(r).slice(0, 400));
     r = await svc.handle({ op: 'read', docsDir: path.join(proj, 'DX Docs'), id: 'atlas-notes' }, wc);
     check('and a doc from another project can then be opened', r.ok && r.title === 'Atlas notes', JSON.stringify(r).slice(0, 200));
+    // a look (dxdoc_look): an agent asks through a file, the app draws it (here a stand-in for its hidden window), the agent gets a PNG
+    D.update(dir, 'plan', [{ op: 'write', tab: 't1', markdown: '## Sales\n\n```chart\n{"type":"bar","title":"First","x":["a"],"series":[{"name":"s","values":[1]}]}\n```\n\n```chart\n{"type":"line","title":"Second","x":["a","b"],"series":[{"name":"s","values":[1,2]}]}\n```' }]);
+    const pages = [];
+    const fakePng = Buffer.from('89504e470d0a1a0a', 'hex');
+    const stop = M.lookService(path.join(data, 'dx-look'), async (page) => { pages.push(fs.readFileSync(page, 'utf8')); return { png: fakePng, width: 720, height: 380 }; }, null);
+    try {
+      const lk = await D.look(data, dir, { doc: 'plan', tab: 't1', what: 'chart', index: 1 }, 8000);
+      check('a look: the app draws the one chart asked for (the second) and hands back its PNG', fs.existsSync(lk.png) && lk.width === 720 && pages.length === 1 && /Second/.test(pages[0]) && !/First/.test(pages[0]) && /dx-chart-svg/.test(pages[0]), JSON.stringify(lk));
+      const bad = await D.look(data, dir, { doc: 'plan', tab: 't1', what: 'chart', index: 5 }, 8000).then(() => '', (e) => e.message);
+      check('asking for a chart the tab does not have says how many it has', /has 2 charts; "index" counts from 0/.test(bad), bad);
+      const whole = await D.look(data, dir, { doc: 'plan', tab: 't1' }, 8000);
+      check('a look at the whole tab', fs.existsSync(whole.png) && pages.length === 2 && /First/.test(pages[1]) && /Second/.test(pages[1]));
+    } finally { stop(); }
+    const off = await D.look(data, dir, { doc: 'plan' }, 1200).then(() => '', (e) => e.message);
+    check('with AionDX not drawing, the asker is told it needs AionDX open', /needs AionDX open/.test(off), off);
     await svc.handle({ op: 'unwatch', docsDir: dir }, wc);
     check('unwatch closes the watcher when nobody watches', svc.watchers.size === 0);
   } catch (e) {

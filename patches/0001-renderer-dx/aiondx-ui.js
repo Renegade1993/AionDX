@@ -13459,12 +13459,19 @@
         var x = await dxApi('version', { id: dx.doc, version: v.version });
         if (!x || !x.ok) return;
         m.innerHTML = '<div class="dx-bar"><button type="button" class="dx-btn dx-back" data-act="back">‹</button><span class="dx-bar-title"></span>' +
-          '<button type="button" class="dx-btn dx-btn--primary" data-act="restore">Restore this version</button></div><div class="dx-body"></div>';
+          '<span class="dx-scope"><button type="button" class="dx-btn dx-btn--on" data-view="changes" data-testid="aiondx-dx-vchanges">Changes since</button><button type="button" class="dx-btn" data-view="as">As it was</button></span>' +
+          '<button type="button" class="dx-btn dx-btn--primary" data-act="restore">Restore this version</button></div><div class="dx-vnote"></div><div class="dx-body" data-testid="aiondx-dx-vbody"></div>';
         m.querySelector('.dx-bar-title').textContent = 'Version of ' + row.textContent;
-        m.querySelector('.dx-body').innerHTML = window.__dxMd.toHtml(x.markdown);
-        dxPictures(m.querySelector('.dx-body'));
-        dxDiagrams(m.querySelector('.dx-body'));
-        dxMaths(m.querySelector('.dx-body'));
+        var draw = function (view) {
+          var vb = m.querySelector('.dx-body');
+          var d = view === 'changes' ? dxDiff(x.markdown, dx.md) : null;
+          vb.innerHTML = d ? d.html : window.__dxMd.toHtml(x.markdown);
+          m.querySelector('.dx-vnote').textContent = d ? (d.added || d.removed ? 'Since this version: ' + d.added + ' part' + (d.added === 1 ? '' : 's') + ' added or changed (green), ' + d.removed + ' removed or changed (struck, red).' : 'Nothing has changed since this version.') : 'This version as it was.';
+          m.querySelectorAll('[data-view]').forEach(function (b) { b.classList.toggle('dx-btn--on', b.getAttribute('data-view') === view); });
+          dxPictures(vb); dxDiagrams(vb); dxMaths(vb); dxCsvCharts(vb);
+        };
+        m.querySelector('.dx-scope').addEventListener('click', function (ev) { var b = ev.target.closest('[data-view]'); if (b) draw(b.getAttribute('data-view')); });
+        draw('changes');
         m.querySelector('[data-act="back"]').addEventListener('click', dxHistory);
         m.querySelector('[data-act="restore"]').addEventListener('click', async function () {
           var rr = await dxApi('restore', { id: dx.doc, version: v.version });
@@ -13474,7 +13481,39 @@
       list.appendChild(row);
     });
   }
-  var DX_PRINT_CSS = 'body{font:12pt/1.5 Segoe UI,Arial,sans-serif;color:#111;margin:0}h1{font-size:22pt;margin:0 0 12pt}h2{font-size:15pt;margin:16pt 0 6pt}' +
+  /** What changed between two versions of a doc, block by block (a block: a paragraph, a heading, a list, a table, a chart ...):
+   *  the newer one drawn, a block it added in green, a block the older one had and it lost drawn struck in red where it stood. */
+  function dxDiff(older, newer) {
+    var blocks = function (md) {
+      var lines = String(md || '').replace(/\r\n/g, '\n').split('\n'), out = [], cur = [], fence = null;
+      lines.forEach(function (l) {
+        var f = /^(```|~~~)/.exec(l);
+        if (fence) { cur.push(l); if (f && l.indexOf(fence) === 0) { out.push(cur.join('\n')); cur = []; fence = null; } return; }
+        if (f) { if (cur.length) out.push(cur.join('\n')); cur = [l]; fence = f[1]; return; }
+        if (!l.trim()) { if (cur.length) out.push(cur.join('\n')); cur = []; return; }
+        if (/^#{1,6}\s|^<!--/.test(l) && cur.length) { out.push(cur.join('\n')); cur = []; }
+        cur.push(l);
+      });
+      if (cur.length) out.push(cur.join('\n'));
+      return out;
+    };
+    var a = blocks(older), b = blocks(newer);
+    if (a.length * b.length > 4000000) return { html: '<div class="dx-empty">These versions are too long to compare here.</div>', added: 0, removed: 0 };
+    // the longest run of blocks both share, then the rest as added or removed
+    var n = a.length, m = b.length, L = [];
+    for (var i = 0; i <= n; i++) { L.push(new Uint16Array(m + 1)); }
+    for (i = n - 1; i >= 0; i--) for (var j = m - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    var html = [], added = 0, removed = 0;
+    var draw = function (md) { return window.__dxMd.toHtml(md, true); };
+    i = 0; j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && a[i] === b[j]) { html.push(draw(b[j])); i++; j++; }
+      else if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) { html.push('<div class="dx-diff-ins">' + draw(b[j]) + '</div>'); added++; j++; }
+      else { html.push('<div class="dx-diff-del">' + draw(a[i]) + '</div>'); removed++; i++; }
+    }
+    return { html: html.join('\n'), added: added, removed: removed };
+  }
+  var DX_PRINT_CSS ='body{font:12pt/1.5 Segoe UI,Arial,sans-serif;color:#111;margin:0}h1{font-size:22pt;margin:0 0 12pt}h2{font-size:15pt;margin:16pt 0 6pt}' +
     'h3{font-size:12.5pt}table{border-collapse:collapse;margin:8pt 0}td,th{border:1px solid #bbb;padding:4pt 7pt}pre{background:#f4f4f4;padding:8pt;white-space:pre-wrap}' +
     'code{font-family:Consolas,monospace}.dx-pending{color:#888;font-style:italic}blockquote{border-left:3px solid #ccc;margin:0;padding-left:10pt;color:#444}' +
     ':root{--dxc1:#2f6fdb;--dxc2:#e8743b;--dxc3:#19a979;--dxc4:#945ecf;--dxc5:#d64a7b;--dxc6:#13a4b4;--dxc7:#b88a12;--dxc8:#6e7b8b;--dxc-bg:#fff}' +
@@ -13549,6 +13588,10 @@
       '.dx-dr-pillar{fill:var(--color-fill-2,rgba(0,0,0,.05));stroke:var(--color-border-3,rgba(0,0,0,.18))}.dx-dr-base{fill:rgba(128,128,128,.14);stroke:var(--color-border-3,rgba(0,0,0,.18))}',
       '.dx-dr-ptitle{font:600 12.5px var(--font-family,inherit);fill:var(--color-text-1)}.dx-dr-point{font:11.5px var(--font-family,inherit);fill:var(--color-text-2)}.dx-dr-date{font:600 11px var(--font-family,inherit);fill:var(--dxc1)}',
       '.dx-chart-wait{padding:14px;font-size:12px;color:var(--color-text-3)}',
+      // what changed between versions (row 39)
+      '.dx-diff-ins{border-left:3px solid var(--color-success-6,#1a7f37);background:rgba(40,160,80,.08);padding-left:8px;margin-left:-11px}',
+      '.dx-diff-del{border-left:3px solid var(--color-danger-6,#c33);background:rgba(220,60,60,.07);padding-left:8px;margin-left:-11px;text-decoration:line-through;color:var(--color-text-3)}',
+      '.dx-vnote{flex:0 0 auto;padding:6px 14px;font-size:12px;color:var(--color-text-2);border-bottom:1px solid var(--color-border-1,rgba(0,0,0,.06))}',
       // words over marks keep a halo of the page's colour, so a label over a bar or a line still reads
       '.dx-ch-val,.dx-ch-target text,.dx-ch-note text{paint-order:stroke;stroke:var(--dxc-bg);stroke-width:3px;stroke-linejoin:round}',
       // the extras (DX Docs mirror): values on marks, a waterfall's joins, notes on points, a target line

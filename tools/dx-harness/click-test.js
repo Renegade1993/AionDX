@@ -3764,7 +3764,9 @@ async function pageTarget() {
             if (op === 'read') return d[a.id] != null ? ok({ id: a.id, title: M.splitTabs(d[a.id]).title, markdown: d[a.id], comments: JSON.parse(JSON.stringify(X.comments[a.id] || [])), suggestions: sgs(a.id) }) : Promise.resolve({ ok: false, error: 'no doc' });
             if (op === 'suggest') { if (d[a.id].split(a.find).length - 1 !== 1) return Promise.resolve({ ok: false, error: 'not once' }); const s = { id: 's' + ((X.sgs[a.id] = X.sgs[a.id] || []).length + 1), find: a.find, replace: a.replace, by: 'you', status: 'open' }; X.sgs[a.id].push(s); return ok({ suggestion: s }); }
             if (op === 'decide') { const s = (X.sgs[a.id] || []).find((x) => x.id === a.suggestion); if (!s) return Promise.resolve({ ok: false, error: 'no' }); s.status = a.verdict === 'accept' ? 'accepted' : 'rejected'; if (a.verdict === 'accept') d[a.id] = d[a.id].replace(s.find, s.replace); (X.comments[a.id] || []).forEach((c) => { if (c.sg === s.id) c.resolved = true; }); return ok(); }
-            if (op === 'save') { d[a.id] = a.markdown; return ok(); }
+            if (op === 'save') { ((X.hist = X.hist || {})[a.id] = X.hist[a.id] || []).push(d[a.id]); d[a.id] = a.markdown; return ok(); }
+            if (op === 'history') return ok({ versions: ((X.hist || {})[a.id] || []).map((x, i) => ({ version: 'v' + i, at: Date.now() - 60000 * (10 - i), by: 'you' })).reverse() });
+            if (op === 'version') return ok({ markdown: X.hist[a.id][+a.version.slice(1)] });
             if (op === 'rename') { const T = M.splitTabs(d[a.id]); T.title = a.title; d[a.id] = M.joinTabs(T); return ok(); }
             if (op === 'tabs') {
               const T = M.splitTabs(d[a.id]); let made = [];
@@ -4221,6 +4223,20 @@ async function pageTarget() {
       await sleep(2200);
       vmd = await js(`window.__dx.dirs['C:/ws/Docs'].viz`);
       const sp = (await calls('savepicture')).pop();
+      // what changed between versions (row 39): the oldest version, its changes since marked
+      await more('Earlier versions');
+      await sleep(500);
+      await js(`(() => { const rows = document.querySelectorAll('#tbox .dx-list .dx-row'); rows[rows.length - 1].click(); return 0; })()`);
+      await sleep(800);
+      const hv = await js(`(() => { const b = document.querySelector('#tbox [data-testid="aiondx-dx-vbody"]'); return { ins: b.querySelectorAll('.dx-diff-ins').length, del: b.querySelectorAll('.dx-diff-del').length, delText: [...b.querySelectorAll('.dx-diff-del')].map((x) => x.textContent).join(' | ').slice(0, 300), note: document.querySelector('#tbox .dx-vnote').textContent }; })()`);
+      check(sc, 'Earlier versions shows what changed since: the old chart title struck, the new one added, a line saying how much', hv.ins >= 1 && hv.del >= 1 && /Since this version: \d+ parts? added or changed/.test(hv.note), JSON.stringify(hv));
+      await js(`(() => { document.querySelector('#tbox [data-view="as"]').click(); return 0; })()`);
+      await sleep(400);
+      check(sc, 'and As it was shows that version plainly', (await js(`document.querySelectorAll('#tbox [data-testid="aiondx-dx-vbody"] .dx-diff-ins, #tbox [data-testid="aiondx-dx-vbody"] .dx-diff-del').length`)) === 0 && /as it was/.test(await js(`document.querySelector('#tbox .dx-vnote').textContent`)));
+      await humanClick('#tbox .dx-back');
+      await sleep(400);
+      await humanClick('#tbox .dx-back');
+      await sleep(700);
       check(sc, 'a picture pasted into the doc is saved beside it and goes in as a picture', sp && /^data:image\/png;base64,/.test(sp.data) && /!\[whiteboard\]\(pictures\/viz-1\.png\)/.test(vmd) &&
         (await js(`!!document.querySelector('#tbox .dx-body img[data-dx-src="pictures/viz-1.png"]')`)), vmd.slice(-200));
       await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.closed'); return 0; })()`);
