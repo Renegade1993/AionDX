@@ -224,6 +224,21 @@ check('undo: everything as it was', snapshot() === original && fs.existsSync(pat
   check('tidy: then Bring back takes it home, and nothing is left of the package', r.code === 0 && extraWs('c4') === ws.c4 && fs.existsSync(path.join(ws.c4, 'a.txt')) && !fs.existsSync(pA), r.raw);
 }
 
+// ---------------------------------------------------------------- 6d. a folder another chat also uses is not carried off (November 16th, 2026)
+{
+  const shared = path.join(BASE, 'shared-project');
+  fs.mkdirSync(shared, { recursive: true }); fs.writeFileSync(path.join(shared, 'plan.txt'), 'x');
+  const d = new DatabaseSync(dbFile);
+  const ins = d.prepare('INSERT INTO conversations (id, user_id, name, type, extra, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  ins.run('s1', 'u1', 'Shared one', 'acp', JSON.stringify({ backend: 'claude', workspace: shared }), 1, 1);
+  ins.run('s2', 'u1', 'Shared two', 'acp', JSON.stringify({ backend: 'claude', workspace: path.join(shared, 'sub') }), 1, 1);
+  d.close();
+  const before = snapshot();
+  r = run('move', { items: [{ kind: 'c', id: 's1' }], to: path.join(BASE, 'Shared place') });
+  check('shared: a chat whose folder another chat also uses is refused, naming it, nothing changed', r.code === 1 && /also used by "Shared two"/.test(r.out.error) && snapshot() === before && fs.existsSync(path.join(shared, 'plan.txt')), r.raw);
+  const d2 = new DatabaseSync(dbFile); d2.prepare("DELETE FROM conversations WHERE id IN ('s1', 's2')").run(); d2.close();
+}
+
 // ---------------------------------------------------------------- 6c. the sidebar group goes with the package (November 16th, 2026)
 {
   const placeG = path.join(BASE, 'Grouped');

@@ -403,6 +403,10 @@ function cmdMove(db, a, ctx) {
       const home = {};
       const pairs = [];
       const moved = new Set();
+      // a folder other chats or teams also work in is not carried off by this one (November 16th, 2026: five chats and a team share one
+      // project folder); refused, naming them
+      const sharers = sharersOf(db, info, layout.map((l) => l.old));
+      if (sharers.length) throw new Error('its folder is also used by ' + sharers.slice(0, 5).map((x) => '"' + x + '"').join(', ') + (sharers.length > 5 ? ' and ' + (sharers.length - 5) + ' more' : '') + '. Move it on its own and they would lose it.');
       for (const l of layout) {
         const key = l.old.toLowerCase();
         home[l.convId || '_team'] = l.old;
@@ -480,6 +484,25 @@ function cmdBack(db, a, ctx) {
     }
   }
   return { back: done };
+}
+/** Other chats and teams (not this item's own members) whose working folder is one of these folders, inside one, or holds one. */
+function sharersOf(db, info, folders) {
+  const mine = new Set(info.convIds);
+  const norm = (x) => path.resolve(String(x)).toLowerCase().replace(/[\\/]+$/, '');
+  const fs_ = folders.filter(Boolean).map(norm);
+  const touches = (ws) => { const w = norm(ws); return fs_.some((f) => w === f || w.startsWith(f + path.sep) || f.startsWith(w + path.sep)); };
+  const out = [];
+  for (const c of db.prepare('SELECT id, name, extra FROM conversations').all()) {
+    if (mine.has(c.id)) continue;
+    let e = {}; try { e = JSON.parse(c.extra || '{}'); } catch { /* none */ }
+    if (e.teamId && info.kind === 't' && e.teamId === info.id) continue;
+    if (typeof e.workspace === 'string' && e.workspace && touches(e.workspace)) out.push(c.name || c.id);
+  }
+  if (hasTable(db, 'teams')) for (const t of db.prepare('SELECT id, name, workspace FROM teams').all()) {
+    if (info.kind === 't' && t.id === info.id) continue;
+    if (t.workspace && touches(t.workspace)) out.push(t.name || t.id);
+  }
+  return [...new Set(out)];
 }
 /** The package an item is in now: the folder holding its working folder (workspace\ or members\<n>\) whose manifest is this item's. */
 function packageOf(db, info) {
