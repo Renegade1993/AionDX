@@ -3256,6 +3256,45 @@ async function pageTarget() {
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
 
+    // ---- a chat's project, from the bell (R-128, November 15th, 2026) ----
+    {
+      const sc = 'project';
+      await js("localStorage.removeItem('aionui.dx.bell.seen'); 0");
+      await load('theme=light');
+      await js(`(() => {
+        window.__pj = [];
+        const PN = { id: 'no-project:harness1', kind: 'project', conv: 'harness1', title: 'Which project is this chat for?', text: 'This chat has no project.', action: { op: 'project', label: 'Choose a project' } };
+        window.__pjList = [PN];
+        window.aiondxNotices = { check: (ids) => Promise.resolve({ ok: true, notices: window.__pjList.filter((n) => ids.indexOf(n.conv) >= 0) }) };
+        window.aiondxPlaces = { call: (op, a) => { window.__pj.push([op, a || {}]);
+          if (op === 'projects') return Promise.resolve({ ok: true, projects: [{ key: 'atlas', name: 'Atlas Game', root: 'C:\\\\x\\\\Atlas Game' }, { key: 'zed', name: 'Beacon', root: 'C:\\\\x\\\\Beacon' }], bindings: {} });
+          if (op === 'bind') { window.__pjList = []; return Promise.resolve({ ok: true, bindings: { ['conv:' + a.key.slice(2)]: a.project } }); }
+          if (op === 'status') return Promise.resolve({ ok: true, items: [], places: [], groups: {} });
+          if (op === 'sync') return Promise.resolve({ ok: true, exported: 0, changed: [], relink: [], incoming: [] });
+          return Promise.resolve({ ok: false }); } };
+        const h = document.createElement('header'); h.className = 'arco-layout-header'; h.id = 'th';
+        h.style.cssText = 'position:fixed;top:0;left:0;right:0;height:44px;display:flex;align-items:center;justify-content:space-between;z-index:50;background:#fff';
+        const t = document.createElement('span'); t.setAttribute('data-testid', 'chat-title-editor-trigger'); t.textContent = 'Harness';
+        const r = document.createElement('div'); r.className = 'shrink-0'; r.style.cssText = 'display:flex;align-items:center;gap:4px;padding-right:12px';
+        h.appendChild(t); h.appendChild(r); document.body.appendChild(h); return 0; })()`);
+      await sleep(2500);
+      await humanClick('#th [data-testid="aiondx-bell"]');
+      await sleep(500);
+      const title = await js(`(document.querySelector('.aiondx-bell-pop .aiondx-bell-title') || {}).textContent`);
+      check(sc, 'a chat with no project: the bell asks which project it is for', title === 'Which project is this chat for?', title);
+      await humanClick('.aiondx-bell-item .aiondx-bell-act');
+      await sleep(600);
+      const items = await js(`[...document.querySelectorAll('[data-testid="aiondx-project-picker"] button')].map((b) => b.textContent)`);
+      check(sc, 'Choose a project lists the projects by folder name, and No project', JSON.stringify(items) === JSON.stringify(['Atlas Game', 'Beacon', 'No project']), JSON.stringify(items));
+      await humanClick('[data-testid="aiondx-project-picker"] button');
+      await sleep(800);
+      const bind = await js('window.__pj.find((c) => c[0] === "bind")');
+      check(sc, 'picking one binds this chat to it', bind && JSON.stringify(bind[1]) === JSON.stringify({ key: 'c:harness1', project: 'atlas' }), JSON.stringify(bind));
+      const tn = await js('[...document.querySelectorAll(".aiondx-toasts .aiondx-toast")].map(t => [...t.querySelectorAll(".aiondx-toast-text, .aiondx-toast-sub")].map(e => e.textContent).join(""))');
+      check(sc, 'and says what happens next', (tn || []).some((t) => /^This chat is for Atlas Game now\.Its skills load when the agent next starts\.$/.test(t)), JSON.stringify(tn));
+      await js(`(() => { delete window.aiondxPlaces; delete window.aiondxNotices; const h = document.getElementById('th'); if (h) h.remove(); return 0; })()`);
+    }
+
     // ---- the chat's notification bell (R-112, 2026-11-13) ----
     {
       const sc = 'bell';

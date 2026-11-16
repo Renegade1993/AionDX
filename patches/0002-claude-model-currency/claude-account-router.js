@@ -557,7 +557,7 @@ function projectSetup(env, dbPath, convId, facts, label) {
     for (let i = args.indexOf('--strict-mcp-config'); i >= 0; i = args.indexOf('--strict-mcp-config')) { args.splice(i, 1); strictDropped = true; }
   }
   routerLog(`conv=${convId} project=${name || '-'}${how ? ' (' + how + ')' : ''} add-dir=${added.length} docs=${docs ? 'on' : 'off'} sign-in=${fullSignIn ? 'full' : 'token or none'}${strictDropped ? ' strict-mcp dropped' : ''}`);
-  if (isClaude && convId && dataDir) recordLaunch(dataDir, convId, { project: name || null, acct, accountKey: accountKey || null, docs, fullSignIn, signInDir: signInFolder });
+  if (isClaude && convId && dataDir) recordLaunch(dataDir, convId, { project: name || null, team: facts.teamId || null, acct, accountKey: accountKey || null, docs, fullSignIn, signInDir: signInFolder });
 }
 
 /** R-112: one small file per chat, <data folder>\aiondx-launches\<conversation id>.json, rewritten at each launch: when it started, the

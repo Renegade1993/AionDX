@@ -56,6 +56,8 @@ function install(electron, opts) {
     fs.writeFileSync(f + '.tmp', JSON.stringify(r, null, 1));
     fs.renameSync(f + '.tmp', f);
   }
+  const registryFile = () => path.join(userData(), 'aiondx-projects.json');
+  function readRegistry() { try { const r = JSON.parse(fs.readFileSync(registryFile(), 'utf8')); return r && typeof r === 'object' ? r : null; } catch { return null; } }
   function remember(r, place) {
     if (!place) return;
     r.places = [place].concat(r.places.filter((p) => p.toLowerCase() !== place.toLowerCase())).slice(0, 8);
@@ -234,6 +236,31 @@ function install(electron, opts) {
       rec.declined = Object.assign({}, rec.declined || {}, { [String(req.id || '')]: Date.now() });
       writeRec(rec);
       return { ok: true };
+    }
+    // R-128: a chat's project (its project's skills load into it). The registry, <userData>\aiondx-projects.json, is the one AionDX's
+    // Claude launcher and AionCore's skill mirror read. A binding "" means "no project, and do not ask".
+    if (op === 'projects') {
+      const reg = readRegistry();
+      if (!reg) return { ok: true, projects: [], bindings: {} };
+      const projects = Object.keys(reg.projects || {}).map((k) => { const p = reg.projects[k] || {}; return { key: k, name: p.root ? path.basename(String(p.root)) : k, root: p.root || '' }; })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return { ok: true, projects, bindings: reg.bindings || {} };
+    }
+    if (op === 'bind') {
+      const m = /^([ct]):([A-Za-z0-9_-]{1,80})$/.exec(String(req.key || ''));
+      if (!m) return { ok: false, error: 'Which chat?' };
+      const reg = readRegistry();
+      if (!reg) return { ok: false, error: 'AionDX has no projects list on this PC yet.' };
+      const project = req.project === null || req.project === undefined ? null : String(req.project);
+      if (project && !(reg.projects || {})[project]) return { ok: false, error: 'There is no project called ' + project + '.' };
+      reg.bindings = reg.bindings && typeof reg.bindings === 'object' ? reg.bindings : {};
+      const bkey = (m[1] === 'c' ? 'conv:' : 'team:') + m[2];
+      if (project === null) delete reg.bindings[bkey]; else reg.bindings[bkey] = project;
+      reg.updatedAt = new Date().toISOString();
+      const f = registryFile();
+      fs.writeFileSync(f + '.tmp', JSON.stringify(reg, null, 2));
+      fs.renameSync(f + '.tmp', f);
+      return { ok: true, bindings: reg.bindings };
     }
     if (op === 'groupPlace') {
       const rec = readRec();

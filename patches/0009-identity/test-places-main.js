@@ -132,6 +132,23 @@ process.env.AIONDX_PORTABLE_ROOTS = ROOT;
   await a.quit();
   const after = JSON.parse(fs.readFileSync(path.join(pkgX, 'aiondx-chat.json'), 'utf8')).exportedAt;
   { const d = new DatabaseSync(path.join(pkgX, 'aiondx-chat.db'), { readOnly: true }); const n = d.prepare('SELECT COUNT(*) AS n FROM messages').get().n; d.close(); check('closing AionDX writes PC1\'s change to the drive', after > before && n === 3, [before, after, n].join(' ')); }
+  // R-128: a chat's project
+  r = await a.call('projects');
+  check('projects: none on a PC without the registry', r.ok && r.projects.length === 0, JSON.stringify(r));
+  r = await a.call('bind', { key: 'c:c2', project: 'atlas' });
+  check('bind: refused with no registry', !r.ok, JSON.stringify(r));
+  fs.writeFileSync(path.join(pc1.userData, 'aiondx-projects.json'), JSON.stringify({ version: 1, skillRoots: ['C:/shared'], projects: { atlas: { root: 'C:/x/Atlas Game' }, zed: { root: 'C:/x/Beacon' } }, bindings: { 'team:t1': 'zed' }, accountDocs: { personal: 'on' } }, null, 2));
+  r = await a.call('projects');
+  check('projects: by folder name, sorted, with the bindings', r.ok && JSON.stringify(r.projects.map((p) => p.name)) === '["Atlas Game","Beacon"]' && r.bindings['team:t1'] === 'zed', JSON.stringify(r));
+  r = await a.call('bind', { key: 'c:c2', project: 'atlas' });
+  const reg1 = JSON.parse(fs.readFileSync(path.join(pc1.userData, 'aiondx-projects.json'), 'utf8'));
+  check('bind: the chat bound, everything else in the registry kept', r.ok && reg1.bindings['conv:c2'] === 'atlas' && reg1.bindings['team:t1'] === 'zed' && reg1.skillRoots[0] === 'C:/shared' && reg1.accountDocs.personal === 'on', JSON.stringify(reg1));
+  r = await a.call('bind', { key: 'c:c2', project: '' });
+  check('bind "No project": kept as an empty binding', r.ok && r.bindings['conv:c2'] === '', JSON.stringify(r));
+  r = await a.call('bind', { key: 't:t1', project: null });
+  check('unbind a team', r.ok && !('team:t1' in r.bindings), JSON.stringify(r));
+  r = await a.call('bind', { key: 'c:c2', project: 'nope' });
+  check('bind: an unknown project is refused', !r.ok && /no project called nope/.test(r.error), JSON.stringify(r));
   r = await a.call('decline', { id: 'zz' });
   check('decline: kept', r.ok);
   clearTimeout(deadline);

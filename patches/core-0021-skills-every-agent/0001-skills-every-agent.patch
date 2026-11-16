@@ -1,0 +1,315 @@
+diff --git a/crates/aionui-conversation/src/lib.rs b/crates/aionui-conversation/src/lib.rs
+index fcf2b645..a9f3d434 100644
+--- a/crates/aionui-conversation/src/lib.rs
++++ b/crates/aionui-conversation/src/lib.rs
+@@ -20,6 +20,7 @@ pub mod service;
+ mod service_ops;
+ pub(crate) mod session_context;
+ pub mod session_mentions;
++pub mod skill_layers;
+ pub mod skill_resolver;
+ pub mod skill_snapshot;
+ mod startup_recovery;
+diff --git a/crates/aionui-conversation/src/service.rs b/crates/aionui-conversation/src/service.rs
+index c137de10..3299d435 100644
+--- a/crates/aionui-conversation/src/service.rs
++++ b/crates/aionui-conversation/src/service.rs
+@@ -5784,6 +5784,26 @@ impl ConversationService {
+     /// lacks is added for this launch, and the conversation's skill view (layer 1, `--plugin-dir`) is rebuilt from the full list so the
+     /// CLI loads them. The stored snapshot is left as it is. A failure keeps the snapshot as it was: the session still starts.
+     async fn refresh_launch_skills(&self, options: &mut BuildTaskOptions) {
++        // AionDX core-0021: an agent that does not read Claude's skill folders gets the same layers in its working folder's .agents/skills
++        let needs_mirror = match &options.context.kind {
++            aionui_ai_agent::session_context::AgentSessionKind::Acp(acp) => {
++                !crate::skill_layers::reads_claude_folders(acp.config.backend.as_deref().unwrap_or_default())
++            }
++            aionui_ai_agent::session_context::AgentSessionKind::Antigravity(_) => true,
++            aionui_ai_agent::session_context::AgentSessionKind::Aionrs(_) => false,
++        };
++        {
++            if needs_mirror {
++                let team_id = options.context.team.as_ref().map(|t| t.team_id.clone());
++                crate::skill_layers::mirror_for_launch(
++                    &self.workspace_root,
++                    &options.context.workspace.path,
++                    &options.context.conversation.conversation_id,
++                    team_id.as_deref(),
++                    None,
++                );
++            }
++        }
+         let auto = self.skill_resolver.auto_inject_names().await;
+         let missing: Vec<String> = auto
+             .into_iter()
+diff --git a/crates/aionui-conversation/src/skill_layers.rs b/crates/aionui-conversation/src/skill_layers.rs
+new file mode 100644
+index 00000000..44ca31c2
+--- /dev/null
++++ b/crates/aionui-conversation/src/skill_layers.rs
+@@ -0,0 +1,266 @@
++//! AionDX core-0021: the same skills for every agent type (R-128, November 15th, 2026).
++//!
++//! A Claude chat gets the user's personal skills (`~/.claude/skills`), the shared skill folders AionDX's registry names (`skillRoots`
++//! in `<data>/aiondx-projects.json`) and its bound project's `.claude/skills` (AionDX's Claude launcher adds them with `--add-dir`).
++//! Codex, Gemini CLI and the other agents read none of those folders; they read `.agents/skills` in the folder they start in. So at
++//! every launch of a chat whose agent is not Claude, those layers are mirrored into `<working folder>/.agents/skills`: each skill folder
++//! copied where it is missing or older, and a mirrored skill whose source is gone removed (only folders this mirror made, marked with
++//! `.aiondx-mirror`). A skill of the same name in a nearer layer wins: the project's over the shared ones, the shared ones over personal.
++//! Any trouble is logged and the launch goes on.
++
++use std::collections::BTreeMap;
++use std::fs;
++use std::io;
++use std::path::{Path, PathBuf};
++
++use tracing::{info, warn};
++
++/// The marker a mirrored skill folder carries (its source folder inside), so only those are ever removed.
++const MARKER: &str = ".aiondx-mirror";
++/// Folders not copied with a skill (bulky or private, never part of what a skill needs to run).
++const SKIP: &[&str] = &["node_modules", ".git", "__pycache__", ".venv", "venv"];
++/// The registry's file name, beside the folder AionCore keeps its data in.
++const REGISTRY: &str = "aiondx-projects.json";
++
++/// The skill folders that apply to a chat, lowest precedence first: personal, then the shared roots in the registry's order, then the
++/// bound project's. A team member is matched by its team's binding, then by its team's name against each project's folder name (the
++/// same rule as AionDX's Claude launcher).
++pub fn layer_roots(work_dir: &Path, home: Option<&Path>, conversation_id: &str, team_id: Option<&str>, team_name: Option<&str>) -> Vec<PathBuf> {
++    let mut out: Vec<PathBuf> = Vec::new();
++    if let Some(h) = home {
++        out.push(h.join(".claude").join("skills"));
++    }
++    let registry = work_dir.parent().map(|p| p.join(REGISTRY));
++    let reg: serde_json::Value = registry
++        .as_deref()
++        .and_then(|p| fs::read_to_string(p).ok())
++        .and_then(|s| serde_json::from_str(&s).ok())
++        .unwrap_or(serde_json::Value::Null);
++    if let Some(roots) = reg.get("skillRoots").and_then(|v| v.as_array()) {
++        for r in roots.iter().filter_map(|v| v.as_str()) {
++            out.push(Path::new(r).join(".claude").join("skills"));
++        }
++    }
++    let bindings = reg.get("bindings");
++    let projects = reg.get("projects").and_then(|v| v.as_object());
++    let mut name: Option<String> = bindings
++        .and_then(|b| b.get(format!("conv:{conversation_id}")))
++        .and_then(|v| v.as_str())
++        .map(str::to_owned);
++    if name.is_none() {
++        if let Some(t) = team_id {
++            name = bindings.and_then(|b| b.get(format!("team:{t}"))).and_then(|v| v.as_str()).map(str::to_owned);
++        }
++    }
++    if name.is_none() {
++        if let (Some(tn), Some(projects)) = (team_name, projects) {
++            let words: Vec<String> = tn
++                .to_lowercase()
++                .split(|c: char| !c.is_ascii_alphanumeric())
++                .filter(|w| w.len() >= 3 && !matches!(*w, "team" | "dev" | "development"))
++                .map(str::to_owned)
++                .collect();
++            let (mut best, mut best_score, mut tie) = (None::<String>, 0usize, false);
++            for (key, p) in projects {
++                let hay = p
++                    .get("root")
++                    .and_then(|v| v.as_str())
++                    .and_then(|r| Path::new(r).file_name().map(|f| f.to_string_lossy().to_lowercase()))
++                    .unwrap_or_else(|| key.to_lowercase());
++                let score = words.iter().filter(|w| hay.contains(w.as_str())).count();
++                if score > best_score {
++                    best = Some(key.clone());
++                    best_score = score;
++                    tie = false;
++                } else if score > 0 && score == best_score {
++                    tie = true;
++                }
++            }
++            if !tie {
++                name = best;
++            }
++        }
++    }
++    if let Some(root) = name
++        .as_deref()
++        .and_then(|n| projects.and_then(|p| p.get(n)))
++        .and_then(|p| p.get("root"))
++        .and_then(|v| v.as_str())
++    {
++        out.push(Path::new(root).join(".claude").join("skills"));
++    }
++    out.retain(|p| p.is_dir());
++    out
++}
++
++/// Every skill in the layers by name (a folder holding SKILL.md), the nearest layer winning.
++fn skills_by_name(roots: &[PathBuf]) -> BTreeMap<String, PathBuf> {
++    let mut by: BTreeMap<String, PathBuf> = BTreeMap::new();
++    for root in roots {
++        let Ok(entries) = fs::read_dir(root) else { continue };
++        for e in entries.flatten() {
++            let p = e.path();
++            if p.is_dir() && p.join("SKILL.md").is_file() {
++                by.insert(e.file_name().to_string_lossy().into_owned(), p);
++            }
++        }
++    }
++    by
++}
++
++/// A folder copied file by file where the copy is missing, older or a different size. Returns the files written.
++fn sync_dir(from: &Path, to: &Path) -> io::Result<usize> {
++    fs::create_dir_all(to)?;
++    let mut n = 0;
++    for e in fs::read_dir(from)?.flatten() {
++        let name = e.file_name();
++        let name_s = name.to_string_lossy();
++        let a = e.path();
++        let b = to.join(&name);
++        let ft = e.file_type()?;
++        if ft.is_dir() {
++            if SKIP.contains(&name_s.as_ref()) {
++                continue;
++            }
++            n += sync_dir(&a, &b)?;
++        } else if ft.is_file() {
++            let ma = e.metadata()?;
++            let fresh = match fs::metadata(&b) {
++                Ok(mb) => mb.len() == ma.len() && mb.modified().ok() >= ma.modified().ok(),
++                Err(_) => false,
++            };
++            if !fresh {
++                fs::copy(&a, &b)?;
++                n += 1;
++            }
++        }
++    }
++    Ok(n)
++}
++
++/// The layers mirrored into `<workspace>/.agents/skills`. Returns (skills present, files written, mirrored skills removed).
++pub fn mirror(workspace: &Path, roots: &[PathBuf]) -> io::Result<(usize, usize, usize)> {
++    let into = workspace.join(".agents").join("skills");
++    let by = skills_by_name(roots);
++    if by.is_empty() && !into.is_dir() {
++        return Ok((0, 0, 0));
++    }
++    fs::create_dir_all(&into)?;
++    let mut written = 0;
++    for (name, src) in &by {
++        let dest = into.join(name);
++        // a skill the user or the agent put there by hand (no marker) is theirs: left alone
++        if dest.is_dir() && !dest.join(MARKER).is_file() {
++            continue;
++        }
++        written += sync_dir(src, &dest)?;
++        let mark = src.to_string_lossy().into_owned();
++        if fs::read_to_string(dest.join(MARKER)).ok().as_deref() != Some(mark.as_str()) {
++            fs::write(dest.join(MARKER), mark)?;
++        }
++    }
++    let mut removed = 0;
++    for e in fs::read_dir(&into)?.flatten() {
++        let p = e.path();
++        let name = e.file_name().to_string_lossy().into_owned();
++        if p.is_dir() && p.join(MARKER).is_file() && !by.contains_key(&name) {
++            fs::remove_dir_all(&p)?;
++            removed += 1;
++        }
++    }
++    Ok((by.len(), written, removed))
++}
++
++/// Whether an agent loads Claude's skill folders itself (so needs no mirror): Claude Code and CodeBuddy.
++pub fn reads_claude_folders(backend: &str) -> bool {
++    let b = backend.to_ascii_lowercase();
++    b == "claude" || b.starts_with("claude-") || b == "codebuddy"
++}
++
++/// The launch step: layers found and mirrored for a chat whose agent is not Claude. Never fails the launch.
++pub fn mirror_for_launch(work_dir: &Path, workspace: &str, conversation_id: &str, team_id: Option<&str>, team_name: Option<&str>) {
++    if workspace.trim().is_empty() {
++        return;
++    }
++    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from);
++    let roots = layer_roots(work_dir, home.as_deref(), conversation_id, team_id, team_name);
++    match mirror(Path::new(workspace), &roots) {
++        Ok((skills, files, removed)) => {
++            if files > 0 || removed > 0 {
++                info!(conversation_id, skills, files, removed, "skill layers mirrored into the working folder's .agents/skills");
++            }
++        }
++        Err(e) => warn!(conversation_id, error = %e, "skill layers could not be mirrored; the chat starts without them"),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn skill(root: &Path, name: &str, body: &str) {
++        let d = root.join(name);
++        fs::create_dir_all(d.join("scripts")).unwrap();
++        fs::write(d.join("SKILL.md"), body).unwrap();
++        fs::write(d.join("scripts").join("run.py"), "print(1)").unwrap();
++    }
++
++    #[test]
++    fn layers_come_from_home_registry_and_the_bound_project() {
++        let t = tempfile::tempdir().unwrap();
++        let data = t.path().join("AionDX");
++        let work = data.join("aionui");
++        fs::create_dir_all(&work).unwrap();
++        let home = t.path().join("home");
++        let shared = t.path().join("shared");
++        let proj = t.path().join("Atlas Game");
++        for p in [home.join(".claude/skills"), shared.join(".claude/skills"), proj.join(".claude/skills")] {
++            fs::create_dir_all(p).unwrap();
++        }
++        let reg = serde_json::json!({ "skillRoots": [shared.to_string_lossy()], "projects": { "atlas": { "root": proj.to_string_lossy() } }, "bindings": { "conv:c1": "atlas" } });
++        fs::write(data.join(REGISTRY), reg.to_string()).unwrap();
++        let bound = layer_roots(&work, Some(&home), "c1", None, None);
++        assert_eq!(bound, vec![home.join(".claude").join("skills"), shared.join(".claude").join("skills"), proj.join(".claude").join("skills")]);
++        let unbound = layer_roots(&work, Some(&home), "c2", None, None);
++        assert_eq!(unbound.len(), 2, "an unbound solo chat gets personal and shared only");
++        let by_team = layer_roots(&work, Some(&home), "m1", Some("t9"), Some("Atlas Team"));
++        assert_eq!(by_team.last().unwrap(), &proj.join(".claude").join("skills"), "a team member is matched by its team's name");
++    }
++
++    #[test]
++    fn mirror_copies_prefers_nearer_layers_and_removes_only_its_own() {
++        let t = tempfile::tempdir().unwrap();
++        let personal = t.path().join("p");
++        let project = t.path().join("j");
++        skill(&personal, "notes", "personal notes");
++        skill(&personal, "shared-name", "personal version");
++        skill(&project, "shared-name", "project version");
++        fs::create_dir_all(project.join("not-a-skill")).unwrap();
++        let ws = t.path().join("ws");
++        fs::create_dir_all(ws.join(".agents/skills/mine")).unwrap();
++        fs::write(ws.join(".agents/skills/mine/SKILL.md"), "the user's own").unwrap();
++        let (n, files, removed) = mirror(&ws, &[personal.clone(), project.clone()]).unwrap();
++        assert_eq!((n, removed), (2, 0));
++        assert_eq!(files, 4, "two skills, two files each");
++        let into = ws.join(".agents/skills");
++        assert_eq!(fs::read_to_string(into.join("shared-name/SKILL.md")).unwrap(), "project version");
++        assert!(into.join("notes/scripts/run.py").is_file());
++        assert!(!into.join("not-a-skill").exists());
++        // again: nothing to copy
++        assert_eq!(mirror(&ws, &[personal.clone(), project.clone()]).unwrap().1, 0);
++        // a skill removed at its source goes; the user's own stays
++        fs::remove_dir_all(personal.join("notes")).unwrap();
++        let (_, _, removed) = mirror(&ws, &[personal, project]).unwrap();
++        assert_eq!(removed, 1);
++        assert!(!into.join("notes").exists());
++        assert_eq!(fs::read_to_string(into.join("mine/SKILL.md")).unwrap(), "the user's own");
++    }
++
++    #[test]
++    fn claude_and_codebuddy_read_their_own_folders() {
++        assert!(reads_claude_folders("claude"));
++        assert!(reads_claude_folders("codebuddy"));
++        assert!(!reads_claude_folders("codex"));
++        assert!(!reads_claude_folders("gemini"));
++    }
++}

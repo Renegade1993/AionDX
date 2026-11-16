@@ -3117,6 +3117,50 @@
       if (places.el && !places.el.hidden) paintPlaces();
     }
   }
+  // ---- a chat's project (R-128): its project's skills load into it. The list is AionDX's projects registry (main: aiondx:places projects/bind).
+  var projMenu = null;
+  function projectsLoad() { var b = placesBridge(); return b ? b.call('projects').catch(function () { return null; }) : Promise.resolve(null); }
+  /** The projects under an anchor, a tick on the chat's own; a choice binds it. "No project" binds it to none (and the bell stops asking). */
+  function projectPicker(anchor, key, after) {
+    if (projMenu) { projMenu.remove(); projMenu = null; }
+    projectsLoad().then(function (r) {
+      if (!r || !r.ok) { toast('Could not read the projects list.', ''); return; }
+      var bkey = (key.charAt(0) === 'c' ? 'conv:' : 'team:') + key.slice(2);
+      var cur = r.bindings ? r.bindings[bkey] : undefined;
+      projMenu = gEl('div', 'aiondx-places-menu aiondx-proj-menu');
+      projMenu.setAttribute('role', 'menu');
+      projMenu.setAttribute('data-testid', 'aiondx-project-picker');
+      var pick = function (p) {
+        var b = placesBridge();
+        projMenu.remove(); projMenu = null;
+        b.call('bind', { key: key, project: p ? p.key : '' }).then(function (x) {
+          if (!x || !x.ok) { toast('Not changed: ' + ((x && x.error) || 'no answer'), ''); return; }
+          if (p) toast('This ' + (key.charAt(0) === 't' ? 'team' : 'chat') + ' is for ' + p.name + ' now.', 'Its skills load when the agent next starts.');
+          if (after) after(p ? p.name : '');
+        });
+      };
+      (r.projects || []).forEach(function (p) {
+        var it = gEl('button', 'aiondx-places-mi' + (cur === p.key ? ' aiondx-places-mi--on' : ''), (cur === p.key ? '✓ ' : '') + p.name);
+        it.type = 'button';
+        it.setAttribute('role', 'menuitemradio');
+        it.title = p.root;
+        it.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); pick(p); });
+        projMenu.appendChild(it);
+      });
+      var none = gEl('button', 'aiondx-places-mi', (cur === '' ? '✓ ' : '') + 'No project');
+      none.type = 'button';
+      none.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); pick(null); });
+      projMenu.appendChild(none);
+      var rc = anchor.getBoundingClientRect();
+      projMenu.style.left = Math.round(Math.min(rc.left, window.innerWidth - 280)) + 'px';
+      if (rc.bottom + 320 < window.innerHeight) projMenu.style.top = Math.round(rc.bottom + 4) + 'px'; else projMenu.style.bottom = Math.round(window.innerHeight - rc.top + 4) + 'px';
+      projMenu.style.maxHeight = '320px';
+      projMenu.style.overflowY = 'auto';
+      document.body.appendChild(projMenu);
+      var off = function (ev) { if (projMenu && !projMenu.contains(ev.target) && ev.target !== anchor) { projMenu.remove(); projMenu = null; document.removeEventListener('mousedown', off, true); } };
+      setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
+    });
+  }
   /** Yes or no on a card in the middle of the window (this app has no confirm window): resolves true on the button. */
   function placesAsk(text, yes) {
     return new Promise(function (resolve) {
@@ -9763,6 +9807,15 @@
       m.appendChild(it);
       groupLineText(it);
       it.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); toggleGroupChoices(m, it, key); });
+      // R-128: the chat's project (its project's skills)
+      if (placesBridge()) {
+        var pl = menuLine('aiondx-gitem aiondx-projline', SVG_G_FOLDER, 'aiondx-project-menu-item');
+        m.appendChild(pl);
+        var ptx = pl.querySelector('.aiondx-gitem-text');
+        ptx.textContent = 'Project...';
+        projectsLoad().then(function (r) { var b = r && r.bindings && r.bindings[(key.charAt(0) === 'c' ? 'conv:' : 'team:') + key.slice(2)]; var p = b && (r.projects || []).filter(function (x) { return x.key === b; })[0]; ptx.textContent = p ? 'Project: ' + p.name : 'Choose a project'; });
+        pl.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); projectPicker(pl, key, null); });
+      }
     }
     acts.forEach(function (a) { m.appendChild(actionLine('aiondx-xitem' + (a.danger ? ' aiondx-xitem--danger' : ''), a.icon, a.label, a.confirm, a.run, 'aiondx-menu-' + a.id)); });
   }
@@ -9985,6 +10038,11 @@
   async function bellAct(n, btn, st) {
     btn.disabled = true;
     try {
+      if (n.action.op === 'project') {
+        btn.disabled = false;
+        projectPicker(btn, 'c:' + n.conv, function (name) { st.textContent = name ? 'This chat is for ' + name + ' now; its skills load when the agent next starts.' : 'No project for this chat; it will not be asked again.'; setTimeout(function () { bellCheck(true); }, 1500); });
+        return;
+      }
       if (n.action.op === 'reconnect') {
         var c = await getJson('/api/conversations/' + encodeURIComponent(n.conv));
         if (c && c.data && c.data.status === 'running') { st.textContent = 'It is working right now. Reconnect when it finishes, so nothing it is doing is cut off.'; btn.disabled = false; return; }

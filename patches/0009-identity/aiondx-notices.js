@@ -67,11 +67,18 @@ function noticesFor(dataDir, convId, opts) {
   const rec = readJson(path.join(dataDir, 'aiondx-launches', convId + '.json'));
   if (!rec || rec.v !== 1) return [];
   const reg = readJson(path.join(dataDir, 'aiondx-projects.json'));
+  // R-128: a chat with no project gets no project's skills; asked once, until a project (or "No project") is chosen for it
+  const bound = reg && reg.bindings && Object.prototype.hasOwnProperty.call(reg.bindings, 'conv:' + convId);
+  const projectNotice = !rec.project && !rec.team && reg && reg.projects && Object.keys(reg.projects).length && !bound
+    ? [{ id: 'no-project:' + convId, kind: 'project', conv: convId, title: 'Which project is this chat for?',
+      text: 'This chat has no project, so it has your own and the shared skills but not a project\'s. Choose its project and its skills load when the agent next starts.',
+      action: { op: 'project', label: 'Choose a project' } }]
+    : [];
   const wanted = docsWanted(reg, rec.project, rec.acct, rec.accountKey);
-  if (!wanted) return [];
+  if (!wanted) return projectNotice;
   const alive = (o.pidAlive || pidAlive)(rec.pid);
   const full = (o.hasFullSignIn || hasFullSignIn)(rec.signInDir);
-  const out = [];
+  const out = projectNotice.slice();
   const who = acctName(rec.acct);
   if (!full) {
     const account = signInAccountFor(rec.signInDir);

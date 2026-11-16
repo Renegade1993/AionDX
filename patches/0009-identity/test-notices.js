@@ -60,6 +60,24 @@ try {
   check('no launch record, or an odd id: nothing', N.noticesFor(data, 'none', alive).length === 0 && N.noticesFor(data, '../x', alive).length === 0);
   check('this process counts as alive; pid 0 does not', N.pidAlive(process.pid) && !N.pidAlive(0));
 
+  // R-128: a chat with no project is asked for one, until it has one or "No project" was chosen
+  const projs = { atlas: { root: 'C:/x/Atlas', domain: 'personal' } };
+  reg({ personal: 'off', work: 'off' }, projs, {});
+  launch('p1', { project: null, acct: 'personal', docs: false, fullSignIn: true, signInDir: personal });
+  n = N.noticesFor(data, 'p1', alive);
+  check('a solo chat with no project: one notice asking which project, with Choose a project', n.length === 1 && n[0].kind === 'project' && n[0].id === 'no-project:p1' && n[0].action.op === 'project', JSON.stringify(n));
+  check('the same with no agent running (the choice is for its next start)', N.noticesFor(data, 'p1', dead).length === 1);
+  reg({ personal: 'off', work: 'off' }, projs, { 'conv:p1': '' });
+  check('"No project" chosen: not asked again', N.noticesFor(data, 'p1', alive).length === 0);
+  reg({ personal: 'off', work: 'off' }, projs, { 'conv:p1': 'atlas' });
+  launch('p1', { project: 'atlas', acct: 'personal', docs: false, fullSignIn: true, signInDir: personal });
+  check('bound and started with it: nothing', N.noticesFor(data, 'p1', alive).length === 0);
+  reg({ personal: 'off', work: 'off' }, projs, {});
+  launch('p2', { project: null, team: 't1', acct: 'personal', docs: false, fullSignIn: true, signInDir: personal });
+  check('a team member is not asked (its team decides)', N.noticesFor(data, 'p2', alive).length === 0);
+  reg({ personal: 'off', work: 'off' }, {}, {});
+  check('no projects on this PC: nothing to ask', N.noticesFor(data, 'p1', alive).length === 0);
+
   // the ipc handler: one sign-in notice per account across chats
   let handler = null;
   N.install({ ipcMain: { handle: (ch, f) => { if (ch === 'aiondx:notices') handler = f; } } }, () => data);
