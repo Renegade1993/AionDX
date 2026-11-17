@@ -2597,7 +2597,7 @@
     ['a2a', 'Agent-to-agent messages', 'What an agent sends into another chat: team messages and cross-chat sends.']
   ];
   var BUBBLE_START = { dark: '#3d4150', light: '#e5e7f0' };   // AionUi's own bubble colour, a starting point
-  var bubbleTeams = { at: 0, tried: 0, list: [], loading: null };   // [{id, name, members: [{slot, name, role}]}]
+  var bubbleTeams = { at: 0, tried: 0, list: [], loading: null, failed: false };   // [{id, name, members: [{slot, name, role}]}]
   var bubbleTeamPick = '';     // the team whose members the settings rows show
   var bubbleSig = '';          // what the rows were last built from
   var colourFocus = null;      // { key, at }: a right-click asked for this control
@@ -2745,6 +2745,7 @@
     if (bubbleTeams.loading || (bubbleTeams.tried && Date.now() - bubbleTeams.tried < 60000)) return;
     bubbleTeams.tried = Date.now();
     bubbleTeams.loading = getJson('/api/teams').then(function (g) {
+      bubbleTeams.failed = !!g.err;
       var raw = Array.isArray(g.data) ? g.data : (g.data && (g.data.teams || g.data.items)) || null;
       if (raw) {
         bubbleTeams.list = raw.filter(function (t) { return t && t.id; }).map(function (t) {
@@ -2755,7 +2756,7 @@
         });
         bubbleTeams.at = Date.now();
       }
-    }, function () {}).then(function () { bubbleTeams.loading = null; schedule(); });
+    }, function () { bubbleTeams.failed = true; }).then(function () { bubbleTeams.loading = null; schedule(); });
   }
   function bubbleRow(key, label, desc) {
     var row = document.createElement('div');
@@ -2818,7 +2819,7 @@
     var team = null;
     bubbleTeams.list.forEach(function (t) { if (t.id === bubbleTeamPick) team = t; });
     if (!team && bubbleTeams.at && bubbleTeams.list.length) { team = bubbleTeams.list[0]; bubbleTeamPick = team.id; }   // that team is gone
-    var sig = JSON.stringify([agents, bubbleTeams.list.map(function (t) { return [t.id, t.name, t.members.length]; }), bubbleTeamPick]);
+    var sig = JSON.stringify([agents, bubbleTeams.list.map(function (t) { return [t.id, t.name, t.members.length]; }), bubbleTeamPick, !!bubbleTeams.at, bubbleTeams.failed]);   // read or failed redraws too: with no teams the list is the same empty one before and after (November 17th, 2026)
     if (force || sig !== bubbleSig) {
       bubbleSig = sig;
       box.textContent = '';
@@ -2844,7 +2845,7 @@
           box.appendChild(bubbleRow('member:' + team.id + '/' + m.slot, m.name, m.role === 'lead' || m.role === 'leader' ? 'Lead' : ''));
         });
       } else {
-        box.appendChild(bubbleSub(bubbleTeams.at ? 'No teams yet.' : 'Loading your teams...'));
+        box.appendChild(bubbleSub(bubbleTeams.at ? 'No teams yet.' : bubbleTeams.failed ? 'Your teams could not be read just now; this page tries again within a minute.' : 'Loading your teams...'));
       }
     }
     Array.prototype.forEach.call(box.querySelectorAll('.aiondx-bubble-row'), paintBubbleRow);

@@ -6002,6 +6002,31 @@ async function pageTarget() {
       await js(`localStorage.removeItem('aionui.dx.biglinks'); delete window.electronAPI; 0`);
       await clogShot('0.28.5', 'Big files go in as links', '#solo .sendbox-panel');
     }
+    {
+      const sc = 'bubbleteams';
+      // Appearance > Chat colours with no teams said "Loading your teams..." for good (November 17th, 2026): the list was redrawn only when
+      // its teams changed, and none before the read is the same as none after it.
+      const teamsLine = async (route) => {
+        await load('theme=dark');
+        await sleep(500);
+        await js(`(() => { window.__stub.routes['GET /api/teams'] = ${JSON.stringify(route)}; location.hash = '#/settings/appearance';
+          const sec = document.createElement('section'); sec.id = 'fake-appearance'; const grid = document.createElement('div'); sec.appendChild(grid);
+          ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
+          document.body.appendChild(sec); return 0; })()`);
+        let line = null;
+        for (let i = 0; i < 16; i++) {
+          await js('window.__aionDx.repaint()');
+          await sleep(250);
+          line = await js(`(() => { const t = document.body.innerText; const m = t.match(/No teams yet\\.|Loading your teams\\.\\.\\.|Your teams could not be read[^\\n]*/); return m ? m[0] : null; })()`);
+          if (line && !/^Loading/.test(line)) break;
+        }
+        return line;
+      };
+      const none = await teamsLine({ success: true, data: [] });
+      check(sc, 'with no teams it says "No teams yet." once they are read', none === 'No teams yet.', String(none));
+      const failed = await teamsLine({ __status: 500, success: false });
+      check(sc, 'when the teams cannot be read it says so, not "Loading" for good', /^Your teams could not be read just now/.test(String(failed)), String(failed));
+    }
     clearTimeout(deadline);
     let failed = 0;
     for (const r of results) {
