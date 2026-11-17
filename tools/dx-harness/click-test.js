@@ -3840,22 +3840,23 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.4');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.5');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
+      const NEW285 = ['Big files go in as links'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.4' && JSON.stringify(c.names) === JSON.stringify(NEW284) &&
-        /^Every Settings page has one look/.test(c.hows[0]) && /Settings > About > Changelog/.test(c.hows[1]) && /colour/.test(c.hows[2]), JSON.stringify(c));
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.5' && JSON.stringify(c.names) === JSON.stringify(NEW285) &&
+        /^Drag or paste a file of 30 MB or more/.test(c.hows[0]) && /goes in as a link/.test(c.hows[0]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
       const c4 = await card();
-      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW284.concat(NEW283).concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
+      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW285.concat(NEW284).concat(NEW283).concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 360, JSON.stringify(box));
       // November 16th: with 0.28.0's list the card ran off the top of the window ("CAN'T EVEN SEE THE WHOLE THING"). The whole card must
@@ -3893,7 +3894,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.4 card (with 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 31, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.5 card (with 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 32, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -5778,7 +5779,7 @@ async function pageTarget() {
           date: c ? (c.querySelector('.aiondx-clog-date') || {}).textContent : '', hidAgents: getComputedStyle(document.getElementById('aionui-agents')).display }; })()`);
       check(sc, 'Settings > About > Changelog: the group renamed About, Changelog after About and marked, every release newest first with all its items, each asking for its picture',
         cl.group === 'About' && cl.next && cl.on && cl.page && JSON.stringify(cl.rels) === JSON.stringify(cl.want) && cl.items === cl.wantItems && cl.items >= 30 &&
-        cl.firstName === 'Settings, made over' && /^\.\/aiondx-changelog\/v0-28-4-settings-made-over-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
+        cl.firstName === 'Big files go in as links' && /^\.\/aiondx-changelog\/v0-28-5-big-files-go-in-as-links-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
       await shot('changelog-light');
       await clogShot("0.28.4", "The Changelog", '[data-testid="aiondx-setnav-changelog"]');
       await page('agents');
@@ -5953,6 +5954,53 @@ async function pageTarget() {
       await js(`document.querySelector('.aiondx-acct-menu .aiondx-acct-move').click(); 0`);
       const posted = await js(`window.__calls.filter(c => c.path.endsWith('/replace')).map(c => [c.method, c.path, c.body])`);
       check(sc, 'with the team idle, the swap is posted to that slot with the chosen assistant', posted.length === 1 && posted[0][0] === 'POST' && posted[0][1] === '/api/teams/team1/agents/slotB/replace' && posted[0][2].assistant_id === swaps[0].assistant, JSON.stringify(posted));
+    }
+    {
+      const sc = 'biglinks';
+      // Big files go in as links (November 17th, 2026): a file of 29 MB or more with a path on this PC is not uploaded (AionCore stops
+      // uploads at 30 MB); the upload is answered with its own path and the message sends it as a local attachment, like Add files.
+      await load('theme=light');
+      await sleep(600);
+      const bigToasts = () => js('[...document.querySelectorAll(".aiondx-toasts .aiondx-toast")].map(t => [...t.querySelectorAll(".aiondx-toast-text, .aiondx-toast-sub")].map(e => e.textContent).join(""))');
+      // the upload exactly as FileService.uploadFileViaHttp makes it; the paths the stub gives each file name
+      const upload = (name, mb, withPath) => js(`new Promise((done) => {
+        window.electronAPI = { getPathForFile: (f) => (${withPath ? 'true' : 'false'} ? 'W:\\\\Builds\\\\' + f.name : '') };
+        const f = new File([new Uint8Array(Math.round(${mb} * 1048576))], ${JSON.stringify(name)});
+        const fd = new FormData(); fd.append('file', f); fd.append('conversation_id', 'harness1');
+        const x = new XMLHttpRequest(); let pct = -1;
+        x.open('POST', 'http://127.0.0.1:9/api/fs/upload');
+        x.upload.addEventListener('progress', (e) => { if (e.lengthComputable) pct = Math.round(e.loaded / e.total * 100); });
+        x.addEventListener('load', () => done({ ev: 'load', status: x.status, text: x.responseText, pct }));
+        x.addEventListener('error', () => done({ ev: 'error', status: x.status, pct }));
+        x.send(fd);
+        setTimeout(() => done({ ev: 'timeout' }), 4000);
+      })`);
+      await js(`localStorage.removeItem('aionui.dx.biglinks'); 0`);
+      const big = await upload('AionDX-setup.exe', 40, true);
+      check(sc, 'a 40 MB file with a path is not uploaded: the upload answers at once with its own path, at 100 percent',
+        big && big.ev === 'load' && big.status === 200 && big.pct === 100 && JSON.parse(big.text).data === 'W:\\Builds\\AionDX-setup.exe', JSON.stringify(big));
+      check(sc, 'and AionDX remembers that path as a link', /W:\\\\Builds\\\\AionDX-setup\.exe/.test(await js(`localStorage.getItem('aionui.dx.biglinks') || ''`)));
+      const small = await upload('notes.txt', 1, true);
+      check(sc, 'a 1 MB file is still uploaded (here the upload has nowhere to go, so it errors)', small && small.ev === 'error', JSON.stringify(small));
+      const nopath = await upload('from-the-browser.bin', 40, false);
+      check(sc, 'a 40 MB file with no path on this PC (the browser) is uploaded as before', nopath && nopath.ev === 'error', JSON.stringify(nopath));
+      // over the limit without a path, AionCore answers 413: the box says why
+      await js(`(() => { window.electronAPI = { getPathForFile: () => '' }; const fd = new FormData(); fd.append('file', new File([new Uint8Array(30 * 1048576)], 'huge.iso'));
+        const x = new XMLHttpRequest(); x.open('POST', 'http://127.0.0.1:9/api/fs/upload'); x.addEventListener('error', () => {}); x.send(fd);
+        Object.defineProperty(x, 'status', { value: 413 }); x.dispatchEvent(new Event('load')); return 0; })()`);
+      await sleep(300);
+      check(sc, 'and over 30 MB it says the file is over the 30 MB upload limit', (await bigToasts()).some((t) => /huge\.iso is over the 30 MB upload limit/.test(t)), JSON.stringify(await bigToasts()));
+      // the message: the linked file goes as a local attachment, an ordinary upload stays an upload
+      await js(`window.__calls.length = 0; fetch('http://127.0.0.1:9/api/conversations/harness1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'see the installer', files: [{ kind: 'upload', path: 'w:/builds/aiondx-setup.exe' }, { kind: 'upload', path: 'C:\\\\Temp\\\\aionui\\\\notes.txt' }] }) }).then(() => 0)`);
+      const sent = await js(`(window.__calls.find((c) => c.method === 'POST' && c.path === '/api/conversations/harness1/messages') || {}).body`);
+      check(sc, 'the message sends the linked file as a local attachment (its path, any letter case or slash) and the copied one as an upload',
+        sent && sent.content === 'see the installer' && JSON.stringify(sent.files) === JSON.stringify([{ kind: 'local', path: 'w:/builds/aiondx-setup.exe' }, { kind: 'upload', path: 'C:\\Temp\\aionui\\notes.txt' }]), JSON.stringify(sent));
+      await js(`window.__calls.length = 0; fetch('http://127.0.0.1:9/api/conversations/harness1/messages', { method: 'POST', body: JSON.stringify({ content: 'no files' }) }).then(() => 0)`);
+      const plain = await js(`(window.__calls.find((c) => c.path === '/api/conversations/harness1/messages') || {}).body`);
+      check(sc, 'a message with no files goes out unchanged', plain && plain.content === 'no files' && !('files' in plain), JSON.stringify(plain));
+      await js(`localStorage.removeItem('aionui.dx.biglinks'); delete window.electronAPI; 0`);
+      await clogShot('0.28.5', 'Big files go in as links', '#solo .sendbox-panel');
     }
     clearTimeout(deadline);
     let failed = 0;

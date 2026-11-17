@@ -12731,6 +12731,11 @@
       var id;
       try {
         if (!disabled()) {
+          // a big file AionDX attached as a link goes with the message as a local attachment (its own path), not an upload
+          if (init && typeof init.body === 'string' && init.body.indexOf('"upload"') >= 0) {
+            var linkedBody = bigLinkRewrite(init.body);
+            if (linkedBody !== init.body) { init = Object.assign({}, init, { body: linkedBody }); args = [input, init]; }
+          }
           if (mentionPicked.length && init && !init.__dxMentions && typeof init.body === 'string' && callId(ANY_SEND_RE, input, init, ['POST'])) {
             var attached = mentionAttach(input, init);
             if (attached) return attached.then(function (a) { return window.fetch(a[0], a[1]); });
@@ -12782,6 +12787,103 @@
   }
   guardFetch();
   installLinkRouting();
+
+  // ---------------------------------------------------------------- big files go in as links (November 17th, 2026)
+
+  // Dragging or pasting a file into a message box uploads a copy to AionCore (POST /api/fs/upload, FileService.ts), and AionCore takes
+  // at most 30 MB (UPLOAD_MAX_SIZE); a bigger file got "Failed to process dropped files". Add files (the + button) already sends a file
+  // as a link: a local attachment with its own path, nothing copied, any size (ChatFileRef::Local, chat_files.rs). So here a file of
+  // 29 MB or more that has a real path on this PC is not uploaded: the upload is answered with that path at once, the path is remembered,
+  // and the message that carries it is sent with it as a local attachment (bigLinkRewrite, in guardFetch). Smaller files are copied as
+  // before. A file with no path (the browser, WebUI) is uploaded as before, and over the limit it says so plainly.
+  // A real symlink was not used: AionCore resolves links before checking an upload is in its folder, so one would be refused.
+  var BIGLINK_MIN = 29 * 1024 * 1024;          // the 30 MB cap counts the whole form, so stop a little short of it
+  var BIGLINK_KEY = KEY_PREFIX + 'biglinks';   // [{ p: path, t: when }], so a file attached on the new-chat page is still known in the chat
+  var bigLinkStore = null;
+  function bigLinkNorm(p) { return String(p || '').replace(/\//g, '\\').toLowerCase(); }
+  function bigLinkList() {
+    if (bigLinkStore) return bigLinkStore;
+    var a = [];
+    try { a = JSON.parse(localStorage.getItem(BIGLINK_KEY) || '[]'); } catch (e) { a = []; }
+    var old = Date.now() - 30 * 86400000;
+    bigLinkStore = (Array.isArray(a) ? a : []).filter(function (x) { return x && typeof x.p === 'string' && x.t > old; });
+    return bigLinkStore;
+  }
+  function bigLinkRemember(p) {
+    var n = bigLinkNorm(p);
+    var a = bigLinkList().filter(function (x) { return bigLinkNorm(x.p) !== n; });
+    a.push({ p: String(p), t: Date.now() });
+    bigLinkStore = a.slice(-200);
+    try { localStorage.setItem(BIGLINK_KEY, JSON.stringify(bigLinkStore)); } catch (e) {}
+  }
+  function bigLinkKnown(p) {
+    var n = bigLinkNorm(p);
+    return bigLinkList().some(function (x) { return bigLinkNorm(x.p) === n; });
+  }
+  // the file's own path: Electron's webUtils through the preload (window.electronAPI.getPathForFile); absolute paths only
+  function bigLinkPathOf(f) {
+    var p = '';
+    try { p = (window.electronAPI && typeof window.electronAPI.getPathForFile === 'function') ? window.electronAPI.getPathForFile(f) : ''; } catch (e) { p = ''; }
+    if (!p && f && typeof f.path === 'string') p = f.path;
+    return /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(p || '') ? p : '';
+  }
+  // the message's body with every remembered upload turned into a local attachment; unchanged when there is none
+  function bigLinkRewrite(body) {
+    if (!bigLinkList().length) return body;
+    var b;
+    try { b = JSON.parse(body); } catch (e) { return body; }
+    var changed = 0;
+    (function walk(v, depth) {
+      if (!v || typeof v !== 'object' || depth > 8) return;
+      if (Array.isArray(v)) { v.forEach(function (x) { walk(x, depth + 1); }); return; }
+      if (v.kind === 'upload' && typeof v.path === 'string' && bigLinkKnown(v.path)) { v.kind = 'local'; changed++; }
+      Object.keys(v).forEach(function (k) { walk(v[k], depth + 1); });
+    })(b, 0);
+    if (!changed) return body;
+    diagnose('big-file-linked', 'send', { files: changed });
+    return JSON.stringify(b);
+  }
+  // answer an upload request ourselves, as AionCore would: 200 with { success, data: <path> }
+  function bigLinkAnswer(xhr, p, size) {
+    var text = JSON.stringify({ success: true, data: p });
+    var own = { readyState: 4, status: 200, statusText: 'OK', responseText: text, response: text, responseURL: '' };
+    Object.keys(own).forEach(function (k) { try { Object.defineProperty(xhr, k, { value: own[k], configurable: true }); } catch (e) {} });
+    bigLinkRemember(p);
+    diagnose('big-file-linked', 'drop', { mb: Math.round(size / 1048576) });
+    setTimeout(function () {
+      try { xhr.upload.dispatchEvent(new window.ProgressEvent('progress', { lengthComputable: true, loaded: size, total: size })); } catch (e) {}
+      ['readystatechange', 'load', 'loadend'].forEach(function (t) {
+        try { xhr.dispatchEvent(t === 'readystatechange' ? new Event(t) : new window.ProgressEvent(t, { lengthComputable: true, loaded: size, total: size })); } catch (e) {}
+      });
+    }, 0);
+  }
+  function bigLinkInstall() {
+    var X = window.XMLHttpRequest;
+    if (!X || !X.prototype || X.prototype.__dxBigLink) return;
+    var open = X.prototype.open, send = X.prototype.send;
+    X.prototype.__dxBigLink = true;
+    X.prototype.open = function (method, url) {
+      try { this.__dxUpload = /^post$/i.test(String(method)) && /\/api\/fs\/upload(?:[?#]|$)/.test(String(url)); } catch (e) {}
+      return open.apply(this, arguments);
+    };
+    X.prototype.send = function (body) {
+      try {
+        if (this.__dxUpload && !disabled() && body && typeof body.get === 'function') {
+          var f = body.get('file');
+          if (f && typeof f === 'object' && f.size >= BIGLINK_MIN) {
+            var p = bigLinkPathOf(f);
+            if (p) { bigLinkAnswer(this, p, f.size); return; }
+            var name = String(f.name || 'The file');
+            this.addEventListener('load', function () {
+              if (this.status === 413) toast(name + ' is over the 30 MB upload limit.', 'Here it can only be copied, and copies stop at 30 MB. In the AionDX app a file this big goes in as a link to where it is.');
+            });
+          }
+        }
+      } catch (e) { /* the real upload, as stock */ }
+      return send.apply(this, arguments);
+    };
+  }
+  bigLinkInstall();
 
   // ---------------------------------------------------------------- Claude Docs inside AionDX (R-110)
 
@@ -12935,16 +13037,18 @@
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
     // the release being built: its date is set the day it is released (the Changelog shows it)
-    release: '0.28.4', date: '2026-11-17',
+    release: '0.28.5', date: '',
     items: [
+      ['Big files go in as links', 'Drag or paste a file of 30 MB or more into a message box and it goes in as a link to where it already is, so files of any size can go with a message. Smaller files are still copied in.'],
+    ],
+    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
+    earlier: [{ release: '0.28.4', date: '2026-11-17', items: [
       ['Settings, made over', 'Every Settings page has one look: a coloured header, cards with icons, the help under each setting, AionDX’s own switches, and your accent colour (Appearance) on what is on or chosen. Agents shows the agents on this PC first, each with its state in colour.'],
       ['The Changelog', 'Settings > About > Changelog lists everything new in AionDX, release by release, each with a picture of where it is. The What’s new card links to it.'],
       ['Tab colours in your docs', 'A doc’s tab can have a colour: choose one in the tab’s ▾ menu, or ask the agent to colour it.'],
       ['Pictures full screen', 'Click a picture in a DX Doc to see it full screen: the mouse wheel zooms, dragging moves it, Esc closes it.'],
       ['Fixes', 'The voice settings are on Typing, links and voice (they showed on other pages). AionDX’s settings sit above AI Core in the list. The Light theme previews are drawn light. An agent proposing a change to a skill can no longer lose the skill it is changing. A doc you left open in a chat, on its tab, is open again when you come back.'],
-    ],
-    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
-    earlier: [{ release: '0.28.3', date: '2026-11-16', items: [
+    ] }, { release: '0.28.3', date: '2026-11-16', items: [
       ['AionDX settings', 'Settings has AionDX pages of its own. Agents shows whether each agent is installed and answering, with Check, sign-in or Install Claude Code, its cache, Stop and the Loop. Chats and drives, and Typing, links and voice, have the rest; Appearance keeps the colours.'],
       ['Chats that share a folder move together', 'In Where your chats live, ticking a chat whose folder other chats or teams also use asks to move them together: the folder goes once, beside their own folders, and one Undo puts it all back. Brought back, the folder goes home with the last of them. A project’s folder follows it if you keep projects.'],
       ['Docs go where the chat goes', 'A chat you moved keeps its DX Docs in its own folder, so they travel with it, in a project or not. Opening the Docs panel no longer leaves an empty DX Docs folder behind.'],
