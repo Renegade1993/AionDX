@@ -383,33 +383,125 @@ function syncTree(from, to, pairs) {
 }
 
 // ---------------------------------------------------------------- commands
+/** The working folders of an item (a chat's, a team's and its members'), each once. */
+function foldersOf(db, info) {
+  const out = new Map();
+  for (const id of info.convIds) { const ws = workspaceOf(db, id); if (ws) out.set(normDir(ws), ws); }
+  if (info.kind === 't' && info.team.workspace) out.set(normDir(info.team.workspace), info.team.workspace);
+  return out;
+}
+const normDir = (x) => path.resolve(String(x)).toLowerCase().replace(/[\\/]+$/, '');
+/** Every id an item answers to (its own, its chats'), so items moved together do not count as each other's sharers. */
+function idsOf(infos) { const s = new Set(); for (const i of infos) { s.add(i.id); for (const c of i.convIds) s.add(c); } return s; }
+/** Folders worked in by two or more of the items moving together (R-130b, November 16th, 2026: the user, "for others you should make
+ *  sure they get moved with chats as needed"): moved once, in a journal of their own, before the items. Returns { journal, dest: Map } or
+ *  null when no folder is shared. A folder inside another item's folder is refused (one of them would carry the other off). */
+function moveSharedFolders(db, infos, place, ctx, destOf, all) {
+  const users = new Map();   // folder key -> { old, names: [] }
+  for (const info of infos) for (const [k, ws] of foldersOf(db, info)) { if (!users.has(k)) users.set(k, { old: ws, names: [] }); users.get(k).names.push(info.name); }
+  const keys = [...users.keys()];
+  // a folder inside another one moving goes with it (a chat working in a project's subfolder follows the project's folder)
+  const outerOf = (k) => keys.filter((j) => j !== k && k.startsWith(j + path.sep)).sort((x, y) => x.length - y.length)[0] || null;
+  const tops = keys.filter((k) => !outerOf(k));
+  const shared = tops.filter((k) => all || users.get(k).names.length > 1 || keys.some((j) => outerOf(j) === k || (outerOf(j) && j.startsWith(k + path.sep))));
+  if (!shared.length) return null;
+  const journal = newJournal(ctx.work, 'shared folders');
+  const dest = new Map();
+  try {
+    const pairs = [];
+    for (const k of shared) {
+      const old = users.get(k).old;
+      const to = destOf(old);
+      if (path.resolve(to).toLowerCase() === k) continue;   // already where it goes
+      if (inside(to, old)) throw new Error('The new place is inside ' + old + '.');
+      moveFolder(old, to, journal);
+      dest.set(k, to);
+      pairs.push([old, to]);
+      for (const j of keys) if (j.startsWith(k + path.sep)) dest.set(j, path.join(to, path.relative(old, users.get(j).old)));
+    }
+    journal.save();
+    // every folder whose path changed, the ones inside too (Claude Code keeps a history folder per working folder)
+    const allPairs = [...dest].map(([k, to]) => [users.get(k).old, to]);
+    const cdirs = claudeDirs(ctx.home, db);
+    for (const [o, n] of allPairs) moveClaudeHistory(cdirs, o, n, journal);
+    journal.save();
+    moveOtherHistory(ctx.home, allPairs, journal, 30000);
+    followProjects(ctx, pairs, journal);
+    journal.save();
+    return { journal, dest, pairs };
+  } catch (e) {
+    journal.state = 'failed'; journal.save();
+    const left = undoJournal(journal, db);
+    const err = new Error('The shared folder was not moved: ' + e.message + (left.length ? ' (not everything could be put back: ' + left.join('; ') + ')' : ' Nothing was changed.'));
+    err.code = left.length ? 2 : 1;
+    throw err;
+  }
+}
+/** A project whose folder moved (or one inside a folder that moved): its root in aiondx-projects.json follows (R-130b part 2; projects
+ *  are optional, so nothing here is needed for a chat to move). The file is saved in the journal first, for undo. Returns how many. */
+function followProjects(ctx, pairs, journal) {
+  const f = path.join(ctx.dataDir, 'aiondx-projects.json');
+  const j = readJson(f);
+  if (!j || !j.projects || !pairs.length) return 0;
+  let n = 0;
+  const follow = (v) => { if (typeof v !== 'string' || !v) return v; const r = normDir(v); for (const [o, to] of pairs) { const k = normDir(o); if (r === k) { n++; return to; } if (r.startsWith(k + path.sep)) { n++; return path.join(to, path.relative(o, v)); } } return v; };
+  for (const p of Object.values(j.projects)) if (p) p.root = follow(p.root);
+  if (Array.isArray(j.skillRoots)) j.skillRoots = j.skillRoots.map(follow);   // a skill folder inside a moved folder too
+  if (!n) return 0;
+  const saved = path.join(journal.dir, 'projects', 'aiondx-projects.json');
+  fs.mkdirSync(path.dirname(saved), { recursive: true });
+  fs.copyFileSync(f, saved);
+  journal.steps.push({ kind: 'saved', file: f, saved });
+  fs.writeFileSync(f + '.aiondx-tmp', JSON.stringify(j, null, 2));
+  fs.renameSync(f + '.aiondx-tmp', f);
+  return n;
+}
+/** Everything a call did, undone newest first (items moved together with a shared folder move or stay as one). */
+function undoAll(journals, db) {
+  const left = [];
+  for (const j of journals.slice().reverse()) { j.state = 'failed'; try { j.save(); } catch { /* the journal's folder is gone */ } left.push(...undoJournal(j, db)); }
+  return left;
+}
+function sharerText(sharers) {
+  return sharers.slice(0, 5).map((x) => '"' + x + '"').join(', ') + (sharers.length > 5 ? ' and ' + (sharers.length - 5) + ' more' : '');
+}
+
 function cmdMove(db, a, ctx) {
   const to = path.resolve(String(a.to || ''));
   if (!a.to || !path.isAbsolute(to)) throw new Error('Choose a folder to keep them in.');
   if (inside(to, ctx.dataDir) || path.resolve(to).toLowerCase() === path.resolve(ctx.dataDir).toLowerCase()) throw new Error('That folder is inside AionDX\'s own data folder, where they already are.');
   fs.mkdirSync(to, { recursive: true });
   const done = [];
-  for (const item of a.items || []) {
-    const info = itemInfo(db, item);
+  const infos = (a.items || []).map((item) => itemInfo(db, item));
+  const together = idsOf(infos);
+  // a folder other chats or teams also work in is not carried off by one (November 16th, 2026: five chats and a team share one project
+  // folder): when they are all moving it goes once, beside their packages under its own name; when some are not, refused, naming them
+  for (const info of infos) {
+    const sharers = sharersOf(db, info, [...foldersOf(db, info).values()], together);
+    if (sharers.length) throw new Error('"' + info.name + '" was not moved: its folder is also used by ' + sharerText(sharers) + '. Tick them too and they move together with it. Nothing was changed.');
+  }
+  const shared = moveSharedFolders(db, infos, to, ctx, (old) => path.join(to, path.basename(old)));
+  const journals = shared ? [shared.journal] : [];
+  for (const info of infos) {
     const pkg = path.join(to, safeName(info.name) + ' (' + info.id.slice(0, 8) + ')');
-    if (exists(pkg)) throw new Error('Something is already at ' + pkg + '.');
     const journal = newJournal(ctx.work, 'move ' + info.kind + ':' + info.id);
+    journals.push(journal);
     // moved again from a place it already has (November 16th, 2026: the first package's own files were left behind): that package
     const prev = packageOf(db, info);
     try {
+      if (exists(pkg)) throw new Error('Something is already at ' + pkg + '.');
       fs.mkdirSync(pkg, { recursive: true });
       journal.steps.push({ kind: 'mkdir', dir: pkg });
       const layout = packageLayout(db, info, pkg, prev && prev.m.home);
       const home = {};
-      const pairs = [];
+      const pairs = [];   // folders this item moved itself
+      const rowPairs = [];   // and shared ones, already moved: its rows follow both
       const moved = new Set();
-      // a folder other chats or teams also work in is not carried off by this one (November 16th, 2026: five chats and a team share one
-      // project folder); refused, naming them
-      const sharers = sharersOf(db, info, layout.map((l) => l.old));
-      if (sharers.length) throw new Error('its folder is also used by ' + sharers.slice(0, 5).map((x) => '"' + x + '"').join(', ') + (sharers.length > 5 ? ' and ' + (sharers.length - 5) + ' more' : '') + '. Move it on its own and they would lose it.');
       for (const l of layout) {
         const key = l.old.toLowerCase();
         home[l.convId || '_team'] = l.old;
+        const sh = shared && shared.dest.get(normDir(l.old));
+        if (sh) { l.rel = path.relative(pkg, sh); if (!rowPairs.some((p) => p[0] === l.old)) rowPairs.push([l.old, sh]); continue; }
         if (moved.has(key)) continue;
         moved.add(key);
         const dest = path.join(pkg, l.rel);
@@ -422,9 +514,10 @@ function cmdMove(db, a, ctx) {
       const cdirs = claudeDirs(ctx.home, db);
       for (const [o, n] of pairs) moveClaudeHistory(cdirs, o, n, journal);
       journal.save();
-      const changed = rewriteRows(db, info, pairs, journal);
+      const changed = rewriteRows(db, info, pairs.concat(rowPairs), journal);
       journal.save();
       const agents = moveOtherHistory(ctx.home, pairs, journal, 30000);
+      const projects = followProjects(ctx, pairs, journal);
       if (process.env.AIONDX_PLACE_FAIL_AFTER === 'rows') throw new Error('injected failure after rows');
       exportRows(db, info, pkg, layout.map((l) => Object.assign({}, l)), home, ctx.home, a.groupOf ? (a.groupOf[info.id] || null) : (prev ? prev.m.group : undefined));
       journal.steps.push({ kind: 'write', file: path.join(pkg, MANIFEST) }, { kind: 'write', file: path.join(pkg, ROWS) });
@@ -433,8 +526,14 @@ function cmdMove(db, a, ctx) {
       for (const old of journal.removeAfter) { try { fs.rmSync(old, { recursive: true, force: true }); } catch (e) { journal.notes.push('the old folder could not be removed: ' + old); } }
       if (prev && path.resolve(prev.dir).toLowerCase() !== path.resolve(pkg).toLowerCase()) dropPackageFiles(prev.dir, journal);
       journal.state = 'done'; journal.save();
-      done.push({ kind: info.kind, id: info.id, name: info.name, package: pkg, folders: pairs.length, rows: changed, agentFiles: agents.files, journal: journal.file });
+      done.push({ kind: info.kind, id: info.id, name: info.name, package: pkg, folders: pairs.length, shared: rowPairs.map((p) => p[1]), projects, rows: changed, agentFiles: agents.files, journal: journal.file });
     } catch (e) {
+      if (shared) {   // with a shared folder moved, the items go together or not at all
+        const left = undoAll(journals, db);
+        const err = new Error('"' + info.name + '" was not moved: ' + e.message + (left.length ? ' (not everything could be put back: ' + left.join('; ') + ')' : ' Nothing was changed; the chats moving with it stayed too.'));
+        err.partial = []; err.code = left.length ? 2 : 1;
+        throw err;
+      }
       journal.state = 'failed'; journal.save();
       const left = undoJournal(journal, db);
       const err = new Error('"' + info.name + '" was not moved: ' + e.message + (left.length ? ' (not everything could be put back: ' + left.join('; ') + ')' : ' Nothing was changed.'));
@@ -442,24 +541,59 @@ function cmdMove(db, a, ctx) {
       throw err;
     }
   }
-  return { moved: done };
+  if (shared) {
+    for (const old of shared.journal.removeAfter) { try { fs.rmSync(old, { recursive: true, force: true }); } catch (e) { shared.journal.notes.push('the old folder could not be removed: ' + old); } }
+    shared.journal.state = 'done'; shared.journal.save();
+  }
+  return { moved: done, shared: shared ? { folders: shared.pairs.map((p) => p[1]), journal: shared.journal.file } : null };
 }
 /** Back to where it was before it was first moved (the package's manifest remembers), or into AionDX's own folder when that is taken. */
 function cmdBack(db, a, ctx) {
   const done = [];
-  for (const item of a.items || []) {
-    const info = itemInfo(db, item);
+  const infos = (a.items || []).map((item) => itemInfo(db, item));
+  const ats = new Map();
+  for (const info of infos) {
     const at = packageOf(db, info);
-    const pkg = at ? at.dir : null, m = at ? at.m : null;
-    if (!m) throw new Error('"' + info.name + '" is not in a place of its own (it is in AionDX\'s folder already).');
+    if (!at) throw new Error('"' + info.name + '" is not in a place of its own (it is in AionDX\'s folder already).');
+    ats.set(info.id, at);
+  }
+  // a folder chats moved together share (outside each package): back with the last of them; while others still work in it, it stays
+  const together = idsOf(infos);
+  const outside = (at, w) => { const r = path.relative(at.dir, path.join(at.dir, w.rel)); return r.startsWith('..'); };
+  const sharedInfos = infos.filter((info) => { const at = ats.get(info.id); return at.m.workspaces.some((w) => outside(at, w)); });
+  const stays = new Map();   // folder key -> who still works in it
+  for (const info of sharedInfos) {
+    const at = ats.get(info.id);
+    for (const w of at.m.workspaces) if (outside(at, w)) { const cur = path.join(at.dir, w.rel); const s = sharersOf(db, info, [cur], together); if (s.length) stays.set(normDir(cur), s); }
+  }
+  const homeOfShared = new Map();
+  for (const info of sharedInfos) { const at = ats.get(info.id); for (const w of at.m.workspaces) if (outside(at, w)) { const k = normDir(path.join(at.dir, w.rel)); if (!homeOfShared.has(k)) homeOfShared.set(k, (at.m.home && at.m.home[w.convId || '_team']) || null); } }
+  const backable = sharedInfos.filter((info) => { const at = ats.get(info.id); return at.m.workspaces.some((w) => outside(at, w) && !stays.has(normDir(path.join(at.dir, w.rel)))); });
+  const shared = backable.length ? moveSharedFolders(db, backable.map((info) => {
+    // only the shared folders that go back: a view of each item with just those
+    const at = ats.get(info.id);
+    const keep = new Set(at.m.workspaces.filter((w) => outside(at, w) && !stays.has(normDir(path.join(at.dir, w.rel)))).map((w) => w.convId));
+    return Object.assign({}, info, { convIds: info.convIds.filter((c) => keep.has(c)), kind: keep.has(null) ? info.kind : 'c' });
+  }), null, ctx, (cur) => { const h = homeOfShared.get(normDir(cur)); return h && !exists(h) ? h : path.join(ctx.dataDir, 'aionui', 'conversations', 'placed-back', path.basename(cur)); }, true) : null;
+  const journals = shared ? [shared.journal] : [];
+  for (const info of infos) {
+    const at = ats.get(info.id);
+    const pkg = at.dir, m = at.m;
     const journal = newJournal(ctx.work, 'back ' + info.kind + ':' + info.id);
+    journals.push(journal);
     try {
       const pairs = [];
+      const rowPairs = [];
       const seen = new Set();
       for (const w of m.workspaces) {
         const cur = path.join(pkg, w.rel);
         if (seen.has(cur.toLowerCase())) continue;
         seen.add(cur.toLowerCase());
+        if (outside(at, w)) {   // shared: moved above, or staying where the others still use it
+          const sh = shared && shared.dest.get(normDir(cur));
+          if (sh) rowPairs.push([cur, sh]); else journal.notes.push('stays for ' + (stays.get(normDir(cur)) || []).join(', ') + ': ' + cur);
+          continue;
+        }
         let dest = m.home && m.home[w.convId || '_team'];
         if (!dest || exists(dest)) dest = path.join(ctx.dataDir, 'aionui', 'conversations', 'placed-back', safeName(info.name) + ' (' + info.id.slice(0, 8) + ')', w.rel);
         moveFolder(cur, dest, journal);
@@ -467,39 +601,44 @@ function cmdBack(db, a, ctx) {
       }
       journal.save();
       for (const [o, n] of pairs) moveClaudeHistory(claudeDirs(ctx.home, db), o, n, journal);
-      rewriteRows(db, info, pairs, journal);
+      rewriteRows(db, info, pairs.concat(rowPairs), journal);
       moveOtherHistory(ctx.home, pairs, journal, 30000);
+      followProjects(ctx, pairs, journal);
       indexOnDrive(pkg, info, true);
       journal.steps.push({ kind: 'index', pkg, id: info.id, ikind: info.kind, name: info.name, remove: true });
       for (const old of journal.removeAfter) { try { fs.rmSync(old, { recursive: true, force: true }); } catch { journal.notes.push('could not remove ' + old); } }
       dropPackageFiles(pkg, journal);
       journal.state = 'done'; journal.save();
-      done.push({ kind: info.kind, id: info.id, name: info.name, to: pairs.map((p) => p[1]), journal: journal.file });
+      done.push({ kind: info.kind, id: info.id, name: info.name, to: pairs.concat(rowPairs).map((p) => p[1]), stayed: journal.notes.filter((n) => /^stays for /.test(n)), journal: journal.file });
     } catch (e) {
-      journal.state = 'failed'; journal.save();
-      const left = undoJournal(journal, db);
-      const err = new Error('"' + info.name + '" was not moved back: ' + e.message + (left.length ? ' (not everything could be put back: ' + left.join('; ') + ')' : ''));
+      const left = shared ? undoAll(journals, db) : (journal.state = 'failed', journal.save(), undoJournal(journal, db));
+      const err = new Error('"' + info.name + '" was not moved back: ' + e.message + (left.length ? ' (not everything could be put back: ' + left.join('; ') + ')' : shared ? ' Nothing was changed; the chats coming back with it stayed too.' : ''));
       err.code = left.length ? 2 : 1;
       throw err;
     }
   }
-  return { back: done };
+  if (shared) {
+    for (const old of shared.journal.removeAfter) { try { fs.rmSync(old, { recursive: true, force: true }); } catch { shared.journal.notes.push('could not remove ' + old); } }
+    shared.journal.state = 'done'; shared.journal.save();
+  }
+  return { back: done, shared: shared ? { folders: shared.pairs.map((p) => p[1]), journal: shared.journal.file } : null };
 }
 /** Other chats and teams (not this item's own members) whose working folder is one of these folders, inside one, or holds one. */
-function sharersOf(db, info, folders) {
+function sharersOf(db, info, folders, together) {
   const mine = new Set(info.convIds);
-  const norm = (x) => path.resolve(String(x)).toLowerCase().replace(/[\\/]+$/, '');
+  const norm = normDir;
   const fs_ = folders.filter(Boolean).map(norm);
   const touches = (ws) => { const w = norm(ws); return fs_.some((f) => w === f || w.startsWith(f + path.sep) || f.startsWith(w + path.sep)); };
   const out = [];
-  for (const c of db.prepare('SELECT id, name, extra FROM conversations').all()) {
-    if (mine.has(c.id)) continue;
+  const arch = tableCols(db, 'conversations').some((c) => c.name === 'archived_at') ? ', archived_at' : ', NULL AS archived_at';
+  for (const c of db.prepare('SELECT id, name, extra' + arch + ' FROM conversations').all()) {
+    if (mine.has(c.id) || (together && together.has(c.id))) continue;
     let e = {}; try { e = JSON.parse(c.extra || '{}'); } catch { /* none */ }
-    if (e.teamId && info.kind === 't' && e.teamId === info.id) continue;
-    if (typeof e.workspace === 'string' && e.workspace && touches(e.workspace)) out.push(c.name || c.id);
+    if (e.teamId && ((info.kind === 't' && e.teamId === info.id) || (together && together.has(e.teamId)))) continue;
+    if (typeof e.workspace === 'string' && e.workspace && touches(e.workspace)) out.push((c.name || c.id) + (c.archived_at ? ' (archived)' : ''));
   }
   if (hasTable(db, 'teams')) for (const t of db.prepare('SELECT id, name, workspace FROM teams').all()) {
-    if (info.kind === 't' && t.id === info.id) continue;
+    if ((info.kind === 't' && t.id === info.id) || (together && together.has(t.id))) continue;
     if (t.workspace && touches(t.workspace)) out.push(t.name || t.id);
   }
   return [...new Set(out)];
@@ -510,9 +649,28 @@ function packageOf(db, info) {
   return firstWs ? pkgDirOf(firstWs, info.id) : null;
 }
 /** The package holding a working folder: its parent (workspace\ or the folder's own name), or two up (members\<n>\). */
+const DIR_CACHE = new Map();   // folder -> its package-named folders, read once per run (status asks for every chat)
 function pkgDirOf(ws, id) {
   const cands = [path.dirname(ws.replace(/[\\/]members[\\/][^\\/]+$/i, '').replace(/[\\/]workspace$/i, '') + path.sep + 'x'), path.dirname(ws), path.dirname(path.dirname(ws))];
   for (const d of cands) { const m = readJson(path.join(d, MANIFEST)); if (m && (!id || m.id === id)) return { dir: d, m }; }
+  // a folder several chats moved together share sits beside their packages ("<place>\<folder>", the packages "<place>\<name> (<id8>)")
+  // (a chat in a subfolder of it: a few levels up)
+  if (id) {
+    const tail = '(' + String(id).slice(0, 8) + ')';
+    let par = path.dirname(ws);
+    for (let up = 0; up < 6; up++) {
+      if (!DIR_CACHE.has(par)) { let es = []; try { es = fs.readdirSync(par, { withFileTypes: true }).filter((e) => e.isDirectory() && / \([0-9A-Za-z-]{1,8}\)$/.test(e.name)).map((e) => e.name); } catch { /* unreadable */ } DIR_CACHE.set(par, es); }
+      for (const name of DIR_CACHE.get(par)) {
+        const e = { name };
+        if (!e.name.endsWith(tail)) continue;
+        const d = path.join(par, e.name), m = readJson(path.join(d, MANIFEST));
+        if (m && m.id === id && (m.workspaces || []).some((w) => normDir(path.join(d, w.rel)) === normDir(ws))) return { dir: d, m };
+      }
+      const next = path.dirname(par);
+      if (next === par) break;
+      par = next;
+    }
+  }
   return null;
 }
 /** A working folder that was in a package (now missing or not): its folder is named for the package's shape, or its parent is

@@ -183,7 +183,7 @@ function install(electron, opts) {
       const rec = readRec();
       const done = (r.moved || (r.partial || [])).filter(Boolean);
       for (const d of done) { rec.placed[d.id] = { kind: d.kind, package: d.package, at: Date.now() }; delete rec.sync[d.id]; }
-      if (done.length) { remember(rec, to); rec.last = { op: 'move', at: Date.now(), names: done.map((d) => d.name), items: done.map((d) => ({ kind: d.kind, id: d.id })), journals: done.map((d) => d.journal) }; }
+      if (done.length) { remember(rec, to); rec.last = { op: 'move', at: Date.now(), names: done.map((d) => d.name), items: done.map((d) => ({ kind: d.kind, id: d.id })), journals: (r.shared ? [r.shared.journal] : []).concat(done.map((d) => d.journal)) }; }
       writeRec(rec);
       return r;
     }
@@ -191,7 +191,7 @@ function install(electron, opts) {
       const r = await run('back', { items: req.items || [] });
       const rec = readRec();
       for (const d of r.back || []) { delete rec.placed[d.id]; delete rec.sync[d.id]; }
-      if (r.back && r.back.length) rec.last = { op: 'back', at: Date.now(), names: r.back.map((d) => d.name), items: r.back.map((d) => ({ kind: d.kind, id: d.id })), journals: r.back.map((d) => d.journal) };
+      if (r.back && r.back.length) rec.last = { op: 'back', at: Date.now(), names: r.back.map((d) => d.name), items: r.back.map((d) => ({ kind: d.kind, id: d.id })), journals: (r.shared ? [r.shared.journal] : []).concat(r.back.map((d) => d.journal)) };
       writeRec(rec);
       return r;
     }

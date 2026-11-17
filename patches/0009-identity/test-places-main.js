@@ -103,6 +103,22 @@ process.env.AIONDX_PORTABLE_ROOTS = ROOT;
   r = await a.call('groupPlace', { group: 'g1', to: null });
   check('and cleared', r.ok && !r.groups.g1);
 
+  // two chats sharing one folder move together, and one Undo puts the folder and both chats back (R-130b, November 16th, 2026)
+  {
+    const pc3 = makePc('pc3', 'u3', [{ id: 'sa', name: 'Map work' }, { id: 'sb', name: 'Map notes' }]);
+    const wsA = path.join(pc3.userData, 'aionui', 'conversations', 'sa');
+    { const d = new DatabaseSync(pc3.dbFile); d.prepare("UPDATE conversations SET extra = ? WHERE id = 'sb'").run(JSON.stringify({ workspace: wsA })); d.close(); }
+    const c = install(pc3, []);
+    const place3 = path.join(BASE, 'Together');
+    r = await c.call('move', { items: [{ kind: 'c', id: 'sa' }, { kind: 'c', id: 'sb' }], to: place3 });
+    check('together: two chats sharing a folder move in one go, the folder beside their packages', r.ok && r.moved.length === 2 && r.shared && fs.existsSync(path.join(place3, 'sa', 'a.txt')) && !fs.existsSync(wsA), JSON.stringify(r));
+    r = await c.call('status');
+    check('together: both placed; one Undo names both', r.items.every((i) => i.placed) && r.last && r.last.names.length === 2, JSON.stringify(r));
+    r = await c.call('undo');
+    const d = new DatabaseSync(pc3.dbFile, { readOnly: true }); const wsNow = d.prepare("SELECT extra FROM conversations WHERE id = 'sb'").get(); d.close();
+    check('together: Undo puts the shared folder and both chats back', r.ok && fs.existsSync(path.join(wsA, 'a.txt')) && !fs.existsSync(path.join(place3, 'sa')) && JSON.parse(wsNow.extra).workspace === wsA, JSON.stringify(r));
+  }
+
   // the drive: PC2 moves its chat to the drive and lists it there (as indexOnDrive does on a real drive)
   const b = install(pc2, picks2);
   r = await b.call('move', { items: [{ kind: 'c', id: 'x1' }], to: path.join(ROOT, 'Chats') });

@@ -235,8 +235,73 @@ check('undo: everything as it was', snapshot() === original && fs.existsSync(pat
   d.close();
   const before = snapshot();
   r = run('move', { items: [{ kind: 'c', id: 's1' }], to: path.join(BASE, 'Shared place') });
-  check('shared: a chat whose folder another chat also uses is refused, naming it, nothing changed', r.code === 1 && /also used by "Shared two"/.test(r.out.error) && snapshot() === before && fs.existsSync(path.join(shared, 'plan.txt')), r.raw);
-  const d2 = new DatabaseSync(dbFile); d2.prepare("DELETE FROM conversations WHERE id IN ('s1', 's2')").run(); d2.close();
+  check('shared: a chat whose folder another chat also uses is refused, naming it, nothing changed', r.code === 1 && /also used by "Shared two"/.test(r.out.error) && /Tick them too/.test(r.out.error) && snapshot() === before && fs.existsSync(path.join(shared, 'plan.txt')), r.raw);
+
+  // ---------------------------------------------------------------- 6e. moved together: the shared folder once, beside the packages (R-130b)
+  const d3 = new DatabaseSync(dbFile);
+  d3.prepare('INSERT INTO conversations (id, user_id, name, type, extra, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run('s3', 'u1', 'Shared three', 'acp', JSON.stringify({ backend: 'claude', workspace: shared }), 1, 1);
+  const insM = d3.prepare('INSERT INTO messages (id, conversation_id, content, created_at) VALUES (?,?,?,?)');
+  insM.run('s1-m1', 's1', 'read ' + shared + '\\plan.txt', 5);
+  insM.run('s2-m1', 's2', 'wrote ' + path.join(shared, 'sub') + '\\n.txt', 5);
+  insM.run('s3-m1', 's3', JSON.stringify({ p: shared + '\\plan.txt' }), 5);
+  d3.close();
+  fs.mkdirSync(path.join(shared, 'sub'), { recursive: true }); fs.writeFileSync(path.join(shared, 'sub', 'n.txt'), 'n');
+  for (const d of [shared, path.join(shared, 'sub')]) { fs.mkdirSync(hist(d), { recursive: true }); fs.writeFileSync(path.join(hist(d), 'h.jsonl'), JSON.stringify({ cwd: d }) + '\n'); }
+  const projFile = path.join(data, 'aiondx-projects.json');
+  fs.writeFileSync(projFile, JSON.stringify({ version: 1, skillRoots: [path.join(shared, 'skills'), 'C:\\elsewhere'], projects: { maps: { root: shared }, other: { root: path.join(BASE, 'elsewhere') } }, bindings: {} }, null, 2));
+  const projBefore = fs.readFileSync(projFile, 'utf8');
+  const proj = () => JSON.parse(fs.readFileSync(projFile, 'utf8'));
+  const before3 = snapshot();
+  const placeS = path.join(BASE, 'Shared place');
+  const three = [{ kind: 'c', id: 's1' }, { kind: 'c', id: 's2' }, { kind: 'c', id: 's3' }];
+  const sharedNow = path.join(placeS, 'shared-project');
+  r = run('move', { items: three, to: placeS });
+  const pk = (id) => r.out && r.out.moved && (r.out.moved.find((x) => x.id === id) || {}).package;
+  check('together: three chats sharing a folder (one in its subfolder) move as one', r.code === 0 && r.out.moved.length === 3 && r.out.shared && r.out.shared.folders.length === 1, r.raw);
+  check('together: the folder goes once, under its own name beside the packages, the subfolder in it', fs.existsSync(path.join(sharedNow, 'plan.txt')) && fs.existsSync(path.join(sharedNow, 'sub', 'n.txt')) && !fs.existsSync(shared));
+  check('together: every chat works in it there', extraWs('s1') === sharedNow && extraWs('s3') === sharedNow && extraWs('s2') === path.join(sharedNow, 'sub'), [extraWs('s1'), extraWs('s2'), extraWs('s3')].join(' | '));
+  check('together: their messages name it there', q("SELECT content FROM messages WHERE id = 's1-m1'")[0].content === 'read ' + sharedNow + '\\plan.txt' &&
+    JSON.parse(q("SELECT content FROM messages WHERE id = 's3-m1'")[0].content).p === sharedNow + '\\plan.txt' && q("SELECT content FROM messages WHERE id = 's2-m1'")[0].content === 'wrote ' + path.join(sharedNow, 'sub') + '\\n.txt');
+  check('together: a project kept in that folder follows it (its root, a skill folder in it); another project stays', proj().projects.maps.root === sharedNow && proj().skillRoots[0] === path.join(sharedNow, 'skills') && proj().skillRoots[1] === 'C:\\elsewhere' && proj().projects.other.root === path.join(BASE, 'elsewhere'), JSON.stringify(proj()));
+  check('together: Claude history follows, the subfolder\'s too', fs.existsSync(path.join(hist(sharedNow), 'h.jsonl')) && fs.existsSync(path.join(hist(path.join(sharedNow, 'sub')), 'h.jsonl')) && !fs.existsSync(hist(shared)));
+  const pk1 = pk('s1'), pk2 = pk('s2');
+  const ms1 = pk1 && JSON.parse(fs.readFileSync(path.join(pk1, 'aiondx-chat.json'), 'utf8'));
+  check('together: each chat has its own package, its manifest pointing at the folder beside it', ms1 && ms1.workspaces[0].rel === path.join('..', 'shared-project') && path.join(pk1, ms1.workspaces[0].rel) === sharedNow && ms1.home.s1 === shared &&
+    JSON.parse(fs.readFileSync(path.join(pk2, 'aiondx-chat.json'), 'utf8')).workspaces[0].rel === path.join('..', 'shared-project', 'sub'), JSON.stringify(ms1));
+  {
+    const s = run('status', {});
+    const by = new Map(((s.out && s.out.items) || []).map((i) => [i.id, i]));
+    check('together: the list shows each as placed, with its package', by.get('s1') && by.get('s1').placed && by.get('s1').package === pk1 && by.get('s2').placed && by.get('s2').package === pk2, JSON.stringify([by.get('s1'), by.get('s2')]));
+  }
+  r = run('export', { items: three, force: true });
+  check('together: an export keeps the folder beside the package', r.code === 0 && r.out.exported.every((x) => x.exported) && JSON.parse(fs.readFileSync(path.join(pk1, 'aiondx-chat.json'), 'utf8')).workspaces[0].rel === path.join('..', 'shared-project'), r.raw);
+  {
+    const db2 = path.join(BASE, 'other-pc-s.db');
+    fs.copyFileSync(dbFile, db2);
+    const d = new DatabaseSync(db2); d.prepare("DELETE FROM messages WHERE conversation_id = 's1'").run(); d.prepare("DELETE FROM conversations WHERE id = 's1'").run(); d.close();
+    r = run('import', { package: pk1 }, null, db2);
+    check('together: another PC brings the chat in working in the shared folder', r.code === 0 && r.out.imported.mode === 'new' && extraWs('s1', db2) === sharedNow, r.raw);
+  }
+  {
+    const mv = run('move', { items: [{ kind: 'c', id: 's1' }], to: placeS });
+    check('together: once moved, moving one of them alone is still refused', mv.code === 1 && /Tick them too/.test(mv.out.error), mv.raw);
+  }
+  r = run('back', { items: three });
+  check('together: brought back together, the folder goes home once and every row is as it was', r.code === 0 && fs.existsSync(path.join(shared, 'sub', 'n.txt')) && !fs.existsSync(sharedNow) && snapshot() === before3 &&
+    fs.existsSync(path.join(hist(shared), 'h.jsonl')) && !fs.existsSync(pk1) && !fs.existsSync(pk2) && proj().projects.maps.root === shared, JSON.stringify([r.raw, fs.existsSync(placeS) && fs.readdirSync(placeS), proj()]));
+  r = run('move', { items: three, to: placeS });
+  const journals = r.out ? [r.out.shared.journal].concat(r.out.moved.map((x) => x.journal)) : [];
+  let undone = true;
+  for (const j of journals.slice().reverse()) { const u = run('undo', { journal: j }); undone = undone && u.code === 0 && u.out.undone; }
+  check('together: Undo puts all of it back (the chats\' journals, then the folder\'s)', r.code === 0 && undone && snapshot() === before3 && fs.existsSync(path.join(shared, 'plan.txt')) && !fs.existsSync(sharedNow) && fs.existsSync(path.join(hist(shared), 'h.jsonl')) && fs.readFileSync(projFile, 'utf8') === projBefore, r.raw);
+  r = run('move', { items: three, to: placeS }, { AIONDX_PLACE_FAIL_AFTER: 'rows' });
+  check('together: a failure in one leaves all of them and the folder where they were', r.code === 1 && /chats moving with it stayed too/.test(r.out.error) && snapshot() === before3 && fs.existsSync(path.join(shared, 'plan.txt')) && !fs.existsSync(sharedNow) && fs.existsSync(path.join(hist(shared), 'h.jsonl')), r.raw);
+  r = run('move', { items: three, to: placeS });
+  const pk3 = pk('s3');
+  r = run('back', { items: [{ kind: 'c', id: 's3' }] });
+  check('together: one brought back alone leaves the folder for the others, and keeps working in it', r.code === 0 && fs.existsSync(path.join(sharedNow, 'plan.txt')) && extraWs('s3') === sharedNow && !fs.existsSync(pk3) && r.out.back[0].stayed.length === 1, r.raw);
+  fs.rmSync(projFile, { force: true });
+  const d4 = new DatabaseSync(dbFile); d4.prepare("DELETE FROM messages WHERE conversation_id IN ('s1', 's2', 's3')").run(); d4.prepare("DELETE FROM conversations WHERE id IN ('s1', 's2', 's3')").run(); d4.close();
 }
 
 // ---------------------------------------------------------------- 6c. the sidebar group goes with the package (November 16th, 2026)

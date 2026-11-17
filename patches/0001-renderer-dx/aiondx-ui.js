@@ -4002,6 +4002,25 @@
     });
   }
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  /** The chats and teams in the list, not ticked, that work in a ticked one's folder (the same folder, one inside it, or one holding it). */
+  function placesSharers(items) {
+    var norm = function (p) { return String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase(); };
+    var touch = function (a, b) { return a === b || a.indexOf(b + '\\') === 0 || b.indexOf(a + '\\') === 0; };
+    var ticked = {}; items.forEach(function (i) { ticked[i.kind + ':' + i.id] = 1; });
+    var mine = items.map(function (i) { return norm(i.ws); }).filter(Boolean);
+    var others = [], folders = [];
+    (chatPlaces.items || []).forEach(function (o) {
+      if (ticked[o.kind + ':' + o.id] || !o.ws) return;
+      var w = norm(o.ws);
+      for (var k = 0; k < mine.length; k++) if (touch(w, mine[k])) {
+        others.push(o);
+        var f = items.filter(function (i) { return norm(i.ws) === mine[k]; })[0];
+        if (f && folders.indexOf(f.ws) < 0) folders.push(f.ws);
+        break;
+      }
+    });
+    return { others: others, folders: folders };
+  }
   function itemsWord(items) {
     var c = items.filter(function (i) { return i.kind === 'c'; }).length, t = items.length - c;
     return [c ? plural(c, 'chat', 'chats') : '', t ? plural(t, 'team', 'teams') : ''].filter(Boolean).join(' and ');
@@ -4010,10 +4029,21 @@
     if (!items.length) return;
     var b = placesBridge();
     if (!to) { var c = await b.call('choose', { title: 'Choose where to keep ' + itemsWord(items) }); if (!c || !c.ok) return; to = c.to; }
+    // a folder other chats or teams in the list also work in moves with all of them, never carried off by one (R-130b, November 16th, 2026)
+    var sh = placesSharers(items);
+    if (sh.others.length) {
+      var leaf = sh.folders[0].replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+      var more = await placesAsk('"' + sh.others.slice(0, 5).map(function (i) { return i.name; }).join('", "') + '"' + (sh.others.length > 5 ? ' and ' + (sh.others.length - 5) + ' more' : '') +
+        (sh.others.length === 1 ? ' also works' : ' also work') + ' in ' + sh.folders[0] + (sh.folders.length > 1 ? ' (and ' + plural(sh.folders.length - 1, 'other folder', 'other folders') + ')' : '') +
+        '.\n\nMove ' + (sh.others.length === 1 ? 'it' : 'them') + ' together? That folder goes to ' + to + '\\' + leaf + ' once, beside each chat\'s own folder, and every chat that works in it follows.', 'Move them together');
+      if (!more) return;
+      items = items.concat(sh.others);
+    }
     var ok = await placesAsk('Move ' + itemsWord(items) + ' to ' + to + '?\n\nEach goes into its own folder there, named after it: its files, its agent\'s history and a copy of its messages. ' +
+      (sh.others.length ? 'A folder they share goes beside them under its own name. ' : '') +
       'You can bring ' + (items.length === 1 ? 'it' : 'them') + ' back from this list.', 'Move');
     if (!ok) return;
-    var r = await placesDo('move', items, { items: items.map(function (i) { return { kind: i.kind, id: i.id }; }), to: to }, 'move');
+    var r = await placesDo('move', items, { items: items.map(function (i) { return { kind: i.kind, id: i.id }; }), to: to, groupOf: placesGroupOf() }, 'move');
     if (!r) return;
     if (r.ok) toast('Moved ' + itemsWord(items) + ' to ' + to + '.', 'Undo it from Settings > Where your chats live.');
     else placesStatus('Not moved: ' + (r.error || 'no answer') + (r.partial && r.partial.length ? ' (' + plural(r.partial.length, 'was', 'were') + ' moved before that)' : ''), true);

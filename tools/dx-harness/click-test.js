@@ -3222,7 +3222,7 @@ async function pageTarget() {
       check(sc, 'each chat held (the working one stopped on yes), then moved, then released', JSON.stringify(seq) === JSON.stringify(
         ['hold:convB', 'hold:m1', 'hold:m2', 'hold:convB:stop', 'move', 'release:m1', 'release:m2', 'release:convB']), JSON.stringify(seq));
       const mv = await js('window.__pl.calls.find((c) => c[0] === "move")');
-      check(sc, 'the move names the chat, the team and the place', mv && JSON.stringify(mv[1]) === JSON.stringify({ items: [{ kind: 'c', id: 'convB' }, { kind: 't', id: 'team1' }], to: 'H:\\Chats' }), JSON.stringify(mv));
+      check(sc, 'the move names the chat, the team, the place and their sidebar group', mv && JSON.stringify(mv[1]) === JSON.stringify({ items: [{ kind: 'c', id: 'convB' }, { kind: 't', id: 'team1' }], to: 'H:\\Chats', groupOf: { convB: 'Client work', team1: 'Client work' } }), JSON.stringify(mv));
       let tn = await toasts();
       check(sc, 'and says it is done', tn.some((t) => /^Moved 1 chat and 1 team to H:\\Chats\./.test(t)), JSON.stringify(tn));
       // Find it
@@ -3293,6 +3293,32 @@ async function pageTarget() {
       check(sc, 'a chat from a drive goes into the group its package names; a group missing here is made', gs.newc === 'Client work' && gs.newd === 'Brand new' && gs.groups.filter((n) => n === 'Client work').length === 1, JSON.stringify(gs));
       const sy = await js('window.__pl.calls.filter((c) => c[0] === "sync").pop()');
       check(sc, 'the sync sends each grouped chat\'s and team\'s group by name, for the packages', sy && sy[1].groupOf && sy[1].groupOf.convB === 'Client work' && sy[1].groupOf.team1 === 'Client work', JSON.stringify(sy));
+      // chats sharing a folder move together (R-130b, November 16th, 2026): ticking one asks to bring the others
+      await js(`(() => { const old = window.aiondxPlaces.call; window.aiondxPlaces.call = (op, a) => {
+        if (op === 'status') return old(op, a).then((s) => Object.assign({}, s, { items: s.items.concat([
+          { kind: 'c', id: 'sA', name: 'Map work', ws: 'C:\\\\Proj\\\\Maps', exists: true, placed: false, package: null, missing: false, convIds: ['sA'], updated: 5 },
+          { kind: 'c', id: 'sB', name: 'Map notes', ws: 'C:\\\\Proj\\\\Maps\\\\notes', exists: true, placed: false, package: null, missing: false, convIds: ['sB'], updated: 4 }]) }));
+        return old(op, a); };
+        ['sA', 'sB'].forEach((id) => { window.__stub.routes['POST /api/conversations/' + id + '/runtime/hold'] = (url, body) => ({ success: true, data: { held: !!body.hold } }); });
+        return 0; })()`);
+      await humanClick('.aiondx-places .aiondx-plugins-close');
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-places-open"]');
+      await sleep(900);
+      await humanClick('[data-testid="aiondx-places-row-c-sA"] input');
+      await sleep(200);
+      await humanClick('[data-testid="aiondx-places-move"]');
+      await sleep(300);
+      await humanClick('[data-testid="aiondx-places-menu"] button');
+      await sleep(400);
+      const at1 = await askYes(/^"Map notes" also works in C:\\Proj\\Maps\.\n\nMove it together\? That folder goes to H:\\Chats\\Maps once/);
+      check(sc, 'a chat whose folder another chat works in: asked to move them together, naming it and where the folder goes', at1.ok, at1.t);
+      await sleep(400);
+      const at2 = await askYes(/^Move 2 chats to H:\\Chats\?[\s\S]*A folder they share goes beside them under its own name\./);
+      check(sc, 'then the usual question, for both', at2.ok, at2.t);
+      await sleep(1200);
+      const mvT = await js('window.__pl.calls.filter((c) => c[0] === "move").pop()');
+      check(sc, 'and both go in one move', mvT && JSON.stringify(mvT[1].items) === '[{"kind":"c","id":"sA"},{"kind":"c","id":"sB"}]' && mvT[1].to === 'H:\\Chats', JSON.stringify(mvT));
       await js(`(() => { delete window.aiondxPlaces; location.hash = ''; return 0; })()`);
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
