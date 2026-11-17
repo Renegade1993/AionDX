@@ -414,3 +414,13 @@ launcher, router and usage tap in place.
   mode the agent does not list. `replace --member NAME --assistant ID [--name N] [--model ID]` uses core-0006's `POST .../replace` (any slot, the lead's included; the lead cannot replace itself from its own
   session). `assistants` lists what a slot can be given.
 - Tests: `test-loop-tool.js` 219 (about 30 new for config and member, against a stand-in API).
+
+## November 17th, 2026: skills propose no longer loses a live skill; tab colours
+
+- `skills propose NAME --from X`: X becomes a full path at once; X that is the live skill (`<root>\.claude\skills\NAME`) or inside it is
+  refused ("--from is the live skill itself ... Nothing was changed."); the source is copied to a staging folder before anything moves; when
+  the change goes in without review and anything fails after the live skill was moved to skills-history, it is put back. Before, a chat
+  with review off that named the live skill as its source had it moved to skills-history and was told "There is no SKILL.md" (reported by
+  a team lead, `! LLM Files\2026-11-17_skills-propose-moves-live-skill.md`). Written for C# 5 (the .NET Framework csc): no `when` filters.
+- `doc help` and the `dxdoc_update` description name `set_tab_color` and `color` on `add_tab`.
+- Tests: `test-loop-tool.js` 270 (three new: the live skill refused by folder, by SKILL.md and by a relative path; nothing moved).

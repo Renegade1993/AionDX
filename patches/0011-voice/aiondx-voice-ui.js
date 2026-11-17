@@ -1385,7 +1385,13 @@
   }
 
   function voiceAnchor() {
-    var acc = document.querySelector('.aiondx-accent');          // patch 0001's own panel, when present
+    // Settings > Typing, links and voice: the Voice card's slot (patch 0001, November 17th, 2026). The panel used to follow the first
+    // element with patch 0001's card class, which also matched the cards on Agents and Chats and drives, so it showed there and on
+    // Appearance, and not on the page named for voice.
+    var slot = document.querySelector('.aiondx-voice-slot');
+    if (slot) return slot;
+    if (window.__aionDxVoiceSlot) return null;                    // patch 0001 gives the panel its own slot: that is the only place
+    var acc = document.querySelector('[data-testid="aiondx-accent"]');   // an older patch 0001: beside its colours on Appearance
     if (acc) return acc;
     var card = document.querySelector('[data-testid^="theme-card-"]');
     return card ? card.parentElement : null;                     // the theme gallery itself, otherwise

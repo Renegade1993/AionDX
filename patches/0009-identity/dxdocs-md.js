@@ -271,6 +271,10 @@
   // that other Markdown readers hide:   <!-- dx:tab id="t2" title="Decisions" parent="t1" -->
   // A doc with no marker is one tab, "main" (implicit: nothing is written for it). Sub-tabs name their parent; order is the file's order.
   var TAB_RE = /^<!--\s*dx:tab\s+([\s\S]*?)\s*-->\s*$/;
+  // a tab's colour (November 17th, 2026: "agents and users should be allowed to change DX Doc tab colors"): one of these names, written in
+  // its marker as color="blue"; a tab with none has no colour
+  var TAB_COLORS = ['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink'];
+  function tabColor(v) { var c = String(v == null ? '' : v).trim().toLowerCase(); if (c === 'grey') c = 'gray'; return TAB_COLORS.indexOf(c) >= 0 ? c : ''; }
   function tabAttrs(s) {
     var o = {};
     String(s).replace(/([a-z]+)="((?:[^"\\]|\\.)*)"/g, function (m, k, v) { o[k] = v.replace(/\\(.)/g, '$1'); return ''; });
@@ -292,7 +296,7 @@
       var m = !fence && TAB_RE.exec(l);
       if (m) {
         var a = tabAttrs(m[1]);
-        cur = { id: a.id || 't' + (tabs.length + 1), title: a.title || 'Untitled tab', parent: a.parent || '', body: [] };
+        cur = { id: a.id || 't' + (tabs.length + 1), title: a.title || 'Untitled tab', parent: a.parent || '', color: tabColor(a.color), body: [] };
         tabs.push(cur);
         continue;
       }
@@ -312,7 +316,8 @@
     var tabs = doc.tabs || [];
     if (tabs.length === 1 && tabs[0].implicit) out += tabs[0].body ? tabs[0].body + '\n' : '';
     else tabs.forEach(function (t) {
-      out += '<!-- dx:tab id="' + tabAttr(t.id) + '" title="' + tabAttr(t.title) + '"' + (t.parent ? ' parent="' + tabAttr(t.parent) + '"' : '') + ' -->\n\n' + (t.body ? t.body + '\n\n' : '');
+      out += '<!-- dx:tab id="' + tabAttr(t.id) + '" title="' + tabAttr(t.title) + '"' + (t.parent ? ' parent="' + tabAttr(t.parent) + '"' : '') +
+        (tabColor(t.color) ? ' color="' + tabColor(t.color) + '"' : '') + ' -->\n\n' + (t.body ? t.body + '\n\n' : '');
     });
     return out.replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n');
   }
@@ -347,7 +352,7 @@
     if (d.tabs.length === 1 && d.tabs[0].implicit) return [];
     var byParent = {}, out = [];
     d.tabs.forEach(function (t) { (byParent[t.parent || ''] = byParent[t.parent || ''] || []).push(t); });
-    (function walk(p, depth) { (byParent[p] || []).forEach(function (t) { out.push({ id: t.id, title: t.title, parent: t.parent, depth: depth }); if (depth < 6) walk(t.id, depth + 1); }); })('', 0);
+    (function walk(p, depth) { (byParent[p] || []).forEach(function (t) { out.push({ id: t.id, title: t.title, parent: t.parent, color: t.color || '', depth: depth }); if (depth < 6) walk(t.id, depth + 1); }); })('', 0);
     return out;
   }
   /** A doc with tabs as one document (export, print): the title, then each tab under a heading of its own (a sub-tab's names its parent),
@@ -370,7 +375,7 @@
     return parts.join('\n');
   }
   var api = { blockSpec: blockSpec, chipOf: chipOf, dateText: dateText, CHIP_RE: CHIP_RE, CALLOUT_RE: CALLOUT_RE, CALLOUTS: CALLOUTS, slug: slug, csvRows: csvRows, cellAttrs: cellAttrs, tableModel: tableModel, splitRow: splitRow, CELL_COLOURS: CELL_COLOURS, MATH_INLINE_RE: MATH_INLINE_RE,
-    toHtml: toHtml, inline: inline, esc: esc, exportAll: exportAll, splitTabs: splitTabs, joinTabs: joinTabs, findTab: findTab, tabView: tabView, withTabView: withTabView, tabList: tabList, TAB_RE: TAB_RE };
+    toHtml: toHtml, inline: inline, esc: esc, exportAll: exportAll, splitTabs: splitTabs, joinTabs: joinTabs, findTab: findTab, tabView: tabView, withTabView: withTabView, tabList: tabList, TAB_RE: TAB_RE, TAB_COLORS: TAB_COLORS, tabColor: tabColor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.__dxMd = api;
 })(typeof window !== 'undefined' ? window : this);

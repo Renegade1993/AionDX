@@ -126,7 +126,7 @@ async function pageTarget() {
 
 (async () => {
   const results = [];
-  const check = (scenario, name, ok, detail) => results.push({ scenario, name, ok: !!ok, detail: detail === undefined ? '' : String(detail) });
+  const check = (scenario, name, ok, detail) => { results.push({ scenario, name, ok: !!ok, detail: detail === undefined ? '' : String(detail) }); if (process.env.AIONDX_CHANGELOG_SHOTS) console.log((ok ? 'PASS ' : 'FAIL ') + scenario + '  ' + name); };
   try {
     const target = await pageTarget();
     const ws = new WebSocket(target.webSocketDebuggerUrl);
@@ -171,6 +171,53 @@ async function pageTarget() {
     const shot = async (name) => {
       const s = await send('Page.captureScreenshot', { format: 'png' });
       if (s.result && s.result.data) fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(s.result.data, 'base64'));
+    };
+    // The Changelog's pictures (November 17th, 2026). With AIONDX_CHANGELOG_SHOTS=<folder> set (tools\dx-harness\changelog-shots.js),
+    // clogShot(release, title, sel) puts a tip's bubble with the What's new item's name and first line on the control it changed and saves
+    // a close-up of the two, light and dark, under the name the Changelog page asks for. Unset (every ordinary run), it does nothing.
+    const CLOG_OUT = process.env.AIONDX_CHANGELOG_SHOTS || '';
+    const clogShot = async (release, title, sel, opts = {}) => {
+      if (!CLOG_OUT) return;
+      const item = await js(`(() => { const r = (window.__aionDx.whatsNew() || []).find((x) => x.release === ${JSON.stringify(release)}); const it = r && r.items.find((i) => i.title === ${JSON.stringify(title)});
+        return it ? { pic: it.pic, how: it.how } : null; })()`);
+      if (!item) { console.log(`CLOG  no What's new item ${release} "${title}"`); return; }
+      const first = opts.text || (item.how.match(/^.*?[.!?](\s|$)/) || [item.how])[0].trim();
+      const was = await js(`document.body.getAttribute('arco-theme') || 'light'`);
+      for (const theme of [was, was === 'dark' ? 'light' : 'dark']) {
+        await js(`(() => { document.documentElement.setAttribute('data-theme', '${theme}'); document.body.setAttribute('arco-theme', '${theme}'); return 0; })()`);
+        await sleep(250);
+        await js(`(() => { let st = document.getElementById('clog-quiet'); if (!st) { st = document.createElement('style'); st.id = 'clog-quiet'; st.textContent = '.aiondx-toasts{display:none !important}'; document.head.appendChild(st); } return 0; })()`);
+        const box = await js(`window.__aionDx.clogBalloon(${JSON.stringify(sel)}, ${JSON.stringify(title)}, ${JSON.stringify(first)})`);
+        const seen = box && await js(`(() => { const b = document.querySelector('.aiondx-coach--clog'); if (!b) return false; const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + 14); return !!e && b.contains(e) && r.top >= 0 && r.bottom <= innerHeight; })()`);
+        if (box && !seen) console.log(`CLOG  HIDDEN bubble for ${item.pic} (${theme}): covered or off screen`);
+        if (!box) { console.log(`CLOG  no control at ${sel} for ${item.pic}`); break; }
+        await sleep(120);
+        const pad = opts.pad || 28, minW = opts.minW || 560, minH = opts.minH || 320;
+        let x0 = Math.min(box.target[0], box.balloon[0]) - pad, y0 = Math.min(box.target[1], box.balloon[1]) - pad;
+        let x1 = Math.max(box.target[2], box.balloon[2]) + pad, y1 = Math.max(box.target[3], box.balloon[3]) + pad;
+        if (x1 - x0 < minW) { const c = (x0 + x1) / 2; x0 = c - minW / 2; x1 = c + minW / 2; }
+        if (y1 - y0 < minH) { const c = (y0 + y1) / 2; y0 = c - minH / 2; y1 = c + minH / 2; }
+        // at most about 760 x 540 around the bubble (a wider picture shrinks to unreadable text in the Changelog's card)
+        const maxW = opts.maxW || 760, maxH = opts.maxH || 540;
+        const bx = (box.balloon[0] + box.balloon[2]) / 2, by = (box.balloon[1] + box.balloon[3]) / 2;
+        if (x1 - x0 > maxW) { x0 = Math.max(x0, Math.min(bx - maxW / 2, x1 - maxW)); x1 = x0 + maxW; }
+        if (y1 - y0 > maxH) { y0 = Math.max(y0, Math.min(by - maxH / 2, y1 - maxH)); y1 = y0 + maxH; }
+        x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(box.vw, x1); y1 = Math.min(box.vh, y1);
+        const s = await send('Page.captureScreenshot', { format: 'png', clip: { x: Math.round(x0), y: Math.round(y0), width: Math.round(x1 - x0), height: Math.round(y1 - y0), scale: 1.5 } });
+        if (s.result && s.result.data) fs.writeFileSync(path.join(CLOG_OUT, `${item.pic}-${theme}.png`), Buffer.from(s.result.data, 'base64'));
+        await js('window.__aionDx.clogBalloonClear(); 0');
+      }
+      await js(`(() => { const st = document.getElementById('clog-quiet'); if (st) st.remove(); document.documentElement.setAttribute('data-theme', '${was}'); document.body.setAttribute('arco-theme', '${was}'); return 0; })()`);
+      console.log(`CLOG  ${item.pic}`);
+    };
+    // a menu's picture: open it, take it, close it again (only in a pictures run)
+    const clogMenu = async (release, title, openSel, menuSel) => {
+      if (!CLOG_OUT) return;
+      await humanClick(openSel);
+      await sleep(300);
+      await clogShot(release, title, menuSel);
+      if (await js(`!!document.querySelector(${JSON.stringify(menuSel)})`)) { await humanClick(openSel); await sleep(250); }
+      await js(`(() => { const m = document.querySelector(${JSON.stringify(menuSel)}); if (m && m.offsetParent) m.remove(); return 0; })()`);
     };
     // The button has no text since 2026-09-23; on/off is its aria-pressed. Kept in the old
     // "Loop · On" form so the checks below read the same.
@@ -609,6 +656,9 @@ async function pageTarget() {
       const t = await tipInfo();
       check(sc, 'hover card names the mode', t && t.title === 'Permission: Bypass Permissions' && /without asking you first/.test(t.body) && t.foot === 'Click to change it.', t && JSON.stringify(t));
       await shot('permission-light');
+      await clogShot("0.28.3", "Ask-first chats are guarded", "[data-testid=\"mode-selector\"]");
+      if (CLOG_OUT) await unhover();
+      await clogShot("0.28.2", "Your messages go out as you type them", "[data-testid=\"sendbox-input\"]");
       await unhover();
       check(sc, 'closes when the mouse leaves', (await tipInfo()) === null);
     }
@@ -2135,13 +2185,16 @@ async function pageTarget() {
       await sleep(400);
       const placed = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-accent"]'); return p ? { after: p.previousElementSibling && p.previousElementSibling.className, swatches: p.querySelectorAll('.aiondx-swatch').length, text: p.textContent } : null; })()`);
       check(sc, 'an AionDX colours row appears right under the theme gallery', placed && placed.after === 'grid' && placed.swatches === 7 && /AionDX colours/.test(placed.text), JSON.stringify(placed));
-      await humanClick('[data-testid="aiondx-accent"] .aiondx-swatch[data-color="#a78bfa"]');
+      await js(`(() => { window.__dxErrs = []; window.addEventListener('error', (ev) => window.__dxErrs.push(String(ev.message))); return 0; })()`);
+      await js(`(() => { const e = document.querySelector(${JSON.stringify('[data-testid="aiondx-accent"] .aiondx-swatch[data-color="#a78bfa"]')}); if (e) e.scrollIntoView({ block: 'center' }); return 0; })()`); await sleep(150); await humanClick('[data-testid="aiondx-accent"] .aiondx-swatch[data-color="#a78bfa"]');
       const css1 = await js("(document.getElementById('aiondx-accent-vars') || {}).textContent || ''");
-      check(sc, 'a swatch sets --aiondx-accent and its RGB forms', /--aiondx-accent:#a78bfa !important/.test(css1) && /--aiondx-accent-rgb:167, 139, 250 !important/.test(css1), css1);
+      check(sc, 'a swatch sets --aiondx-accent and its RGB forms', /--aiondx-accent:#a78bfa !important/.test(css1) && /--aiondx-accent-rgb:167, 139, 250 !important/.test(css1),
+        css1 + ' | errors: ' + (await js(`JSON.stringify(window.__dxErrs || [])`)) + ' | at: ' + JSON.stringify(await centerOf('[data-testid="aiondx-accent"] .aiondx-swatch[data-color="#a78bfa"]')) +
+        ' | top: ' + (await js(`(() => { const e = document.querySelector('[data-testid="aiondx-accent"] .aiondx-swatch[data-color="#a78bfa"]'); const r = e.getBoundingClientRect(); const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return t ? t.tagName + '#' + t.id + ' ' + t.outerHTML.slice(0, 200) + ' parent ' + (t.parentElement ? t.parentElement.tagName + '#' + t.parentElement.id + '.' + t.parentElement.className : '') + ' | swatch ' + JSON.stringify([r.left, r.top, r.width, r.height]) : 'none'; })()`)));
       const stored = (await store())['aiondx.theme'];
       check(sc, 'the choice goes to the settings store', stored && stored.accent === '#a78bfa' && stored.dividers === true, JSON.stringify(stored));
       check(sc, 'the chosen swatch is marked', await js(`document.querySelector('.aiondx-swatch[data-color="#a78bfa"]').getAttribute('aria-checked') === 'true'`));
-      await humanClick('[data-testid="aiondx-accent"] .aiondx-accent-dividers');
+      await js(`(() => { const e = document.querySelector(${JSON.stringify('[data-testid="aiondx-accent"] .aiondx-accent-dividers')}); if (e) e.scrollIntoView({ block: 'center' }); return 0; })()`); await sleep(150); await humanClick('[data-testid="aiondx-accent"] .aiondx-accent-dividers');
       const css2 = await js("(document.getElementById('aiondx-accent-vars') || {}).textContent || ''");
       check(sc, 'switching accent dividers off points them at neutral grey', /--aiondx-divider:#252525 !important/.test(css2) && (await store())['aiondx.theme'].dividers === false, css2);
       await shot('click-test-accent');
@@ -2214,7 +2267,7 @@ async function pageTarget() {
       const css2 = await js(`(document.getElementById('aiondx-accent-vars') || {}).textContent || ''`);
       check(sc, "a light background steps toward black, and the dark one stays",
         /html:root\[data-theme='light'\]\{--bg-base:#f4efe6 !important;--bg-1:color-mix\(in srgb, #f4efe6 97%, #000000\)/.test(css2) && /#102030/.test(css2), css2.slice(0, 200));
-      await humanClick('.aiondx-bg-reset[data-mode="dark"]');
+      await js(`(() => { const e = document.querySelector(${JSON.stringify('.aiondx-bg-reset[data-mode="dark"]')}); if (e) e.scrollIntoView({ block: 'center' }); return 0; })()`); await sleep(150); await humanClick('.aiondx-bg-reset[data-mode="dark"]');
       await sleep(300);
       const css3 = await js(`(document.getElementById('aiondx-accent-vars') || {}).textContent || ''`);
       check(sc, 'Reset puts dark mode back on its theme', !/#102030/.test(css3) && /#f4efe6/.test(css3) && ((await store())['aiondx.theme'] || {}).bgDark === null, css3.slice(0, 200));
@@ -2255,7 +2308,7 @@ async function pageTarget() {
       const back = await js(`[...document.querySelectorAll('.aiondx-ctx-row .aiondx-ctx-from')].map(i => i.value)`);
       check(sc, 'a start that would pass the next zone is held below it', back[1] === '70' && Number(back[2]) > 70 && Number(back[3]) > Number(back[2]), JSON.stringify(back));
       await js('document.querySelector(".aiondx-ctx-reset").scrollIntoView({ block: "center" }); 0');
-      await humanClick('.aiondx-ctx-reset');
+      await js(`(() => { const e = document.querySelector(${JSON.stringify('.aiondx-ctx-reset')}); if (e) e.scrollIntoView({ block: 'center' }); return 0; })()`); await sleep(150); await humanClick('.aiondx-ctx-reset');
       await sleep(400);
       await fill(65); await sleep(450);
       check(sc, 'Reset puts the default zones back', (await ring()) === 'rgb(234, 179, 8)' && ((await store())['aiondx.theme'] || {}).ctx === null, await ring());
@@ -2886,6 +2939,7 @@ async function pageTarget() {
       let iv = await inst();
       check(sc, 'no Claude Code on this PC: it says so, offers Install Claude Code, and Sign in waits', iv.state === 'Claude Code is not on this PC yet. Install it here, then sign in.' && iv.install && iv.signinOff && !iv.restart && !iv.name && iv.inside, JSON.stringify(iv));
       await shot('signin-install');
+      await clogShot("0.28.2", "Install Claude Code from AionDX", "[data-testid=\"aiondx-acc-install\"]");
       await humanClick('[data-testid="aiondx-acc-install"]');
       await sleep(100);
       iv = await inst();
@@ -3200,6 +3254,7 @@ async function pageTarget() {
       check(sc, 'each row says where it is: its place, AionDX\'s folder, or missing with where it was', w1 === 'H:\\Chats' && w2 === 'AionDX\'s folder' && w3 === 'Missing: it was in E:\\Work\\c3', JSON.stringify([w1, w2, w3]));
       check(sc, 'with nothing ticked, Move and Bring back are off', await js(`document.querySelector('[data-testid="aiondx-places-move"]').disabled && document.querySelector('[data-testid="aiondx-places-back"]').disabled`));
       await shot('places-light');
+      await clogShot("0.28.0", "Chats where you choose", "[data-testid=\"aiondx-places-list\"]");
       await humanClick('[data-testid="aiondx-places-group-g1"] input');
       await sleep(300);
       const ticked = await js(`[...document.querySelectorAll('.aiondx-places-row input:checked')].map((i) => i.closest('.aiondx-places-row').getAttribute('data-key'))`);
@@ -3311,6 +3366,7 @@ async function pageTarget() {
       await sleep(300);
       await humanClick('[data-testid="aiondx-places-menu"] button');
       await sleep(400);
+      await clogShot("0.28.3", "Chats that share a folder move together", "[data-testid=\"aiondx-places-ask\"] .aiondx-places-asktext");
       const at1 = await askYes(/^"Map notes" also works in C:\\Proj\\Maps\.\n\nMove it together\? That folder goes to H:\\Chats\\Maps once/);
       check(sc, 'a chat whose folder another chat works in: asked to move them together, naming it and where the folder goes', at1.ok, at1.t);
       await sleep(400);
@@ -3374,6 +3430,9 @@ async function pageTarget() {
       const ask = await js('window.__sk.find((c) => c[0] === "list")');
       check(sc, 'it asked for this chat by id and working folder', ask && ask[1].conv === 'harness1' && ask[1].ws === 'C:\\chats\\harness1', JSON.stringify(ask));
       await shot('skills-light');
+      await clogShot("0.28.0", "Skills in every chat", "[data-testid=\"aiondx-skills\"]");
+      await clogShot("0.28.0", "One set of skills for every agent", "[data-testid=\"aiondx-skills\"] .aiondx-skill-layer");
+      await clogShot("0.28.3", "Fixes", "[data-testid=\"aiondx-skills\"]");
       await js(`(() => { const s = document.querySelector('[data-skill="review"] .aiondx-skill-state'); s.value = 'name-only'; s.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
       await sleep(300);
       const set = await js('window.__sk.find((c) => c[0] === "set")');
@@ -3473,6 +3532,7 @@ async function pageTarget() {
       check(sc, 'Did not fit marks it, and the button shows it', nmk && nmk[1].at === 1794799000000 && nmk[1].fit === false &&
         (await js(`document.querySelector('.aiondx-dxs-note[data-at="1794799000000"] button[data-act="miss"]').classList.contains('aiondx-skill-pin--on')`)), JSON.stringify(nmk));
       await shot('request-notes');
+      await clogShot("0.28.3", "Request notes you can check", "[data-testid=\"aiondx-dxs-notes\"]");
       await humanClick('[data-testid="aiondx-dxs-tab-layers"]');
       await sleep(300);
       check(sc, 'every layer, the store left to its own tab; the library read-only with its source and commit', first && JSON.stringify(first.layers) === JSON.stringify(['Global library (official, read-only)', 'Yours, on this PC (every Claude chat)', 'Atlas Game', 'AionDX\u2019s own (every chat)']) &&
@@ -3484,6 +3544,8 @@ async function pageTarget() {
       const rv = await js(`(document.querySelector('[data-layer="project:atlas"] .aiondx-dxs-review') || {}).textContent`);
       check(sc, 'Review says where it came from, the scripts, and each flagged line', /^From https:\/\/github\.com\/someone\/skills, November 15th\./.test(rv || '') && /scripts\/go\.ps1:1 downloads something and runs it/.test(rv || ''), rv);
       await shot('dxskills-light');
+      await clogShot("0.28.0", "DX Skills", ".aiondx-dxs-tabs");
+      await clogShot("0.28.2", "Skill changes your way", "[data-testid=\"aiondx-dxs-review\"]");
       await humanClick('[data-layer="project:atlas"] .aiondx-skill--pending button[data-act="approve"]');
       await sleep(400);
       const ask = await js(`(document.querySelector('[data-testid="aiondx-places-ask"] .aiondx-places-asktext') || {}).textContent`);
@@ -3594,6 +3656,7 @@ async function pageTarget() {
       await sleep(600);
       const items = await js(`[...document.querySelectorAll('[data-testid="aiondx-project-picker"] button')].map((b) => b.textContent)`);
       check(sc, 'the chat menu\'s Project lists the projects by folder name, and No project', JSON.stringify(items) === JSON.stringify(['Atlas Game', 'Beacon', 'No project']), JSON.stringify(items));
+      await clogShot("0.28.2", "Projects are optional", "[data-testid=\"aiondx-project-picker\"]");
       await humanClick('[data-testid="aiondx-project-picker"] button');
       await sleep(800);
       const bind = await js('window.__pj.find((c) => c[0] === "bind")');
@@ -3649,6 +3712,7 @@ async function pageTarget() {
       await sleep(500);
       const pop = await js(`[...document.querySelectorAll('.aiondx-bell-pop .aiondx-bell-title')].map((e) => e.textContent)`);
       check(sc, 'opening it lists both notices', JSON.stringify(pop) === JSON.stringify(['Reconnect to use Claude Docs', 'Sign in to use Claude Docs']), JSON.stringify(pop));
+      await clogShot("0.28.0", "Skills that improve themselves", ".aiondx-bell-pop");
       check(sc, 'and the bubble is gone once they are seen', (await js(`document.querySelector('#th .aiondx-bell-badge').style.display`)) === 'none');
       await humanClick('.aiondx-bell-item:nth-child(1) .aiondx-bell-act');
       await sleep(700);
@@ -3776,21 +3840,22 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.3');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.4');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
+      const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.3' && JSON.stringify(c.names) === JSON.stringify(NEW283) &&
-        /^Settings has AionDX pages of its own/.test(c.hows[0]) && /move them together/.test(c.hows[1]) && /travel with it/.test(c.hows[2]), JSON.stringify(c));
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.4' && JSON.stringify(c.names) === JSON.stringify(NEW284) &&
+        /^Every Settings page has one look/.test(c.hows[0]) && /Settings > About > Changelog/.test(c.hows[1]) && /colour/.test(c.hows[2]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
       const c4 = await card();
-      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW283.concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
+      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW284.concat(NEW283).concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 360, JSON.stringify(box));
       // November 16th: with 0.28.0's list the card ran off the top of the window ("CAN'T EVEN SEE THE WHOLE THING"). The whole card must
@@ -3809,6 +3874,7 @@ async function pageTarget() {
       f = await fit();
       check(sc, 'clicking an item opens how to use it', f.open === 2, JSON.stringify(f));
       await shot('whatsnew-light');
+      await clogShot("0.28.2", "Fixes", "[data-testid=\"aiondx-whatsnew\"]");
       await send('Emulation.setDeviceMetricsOverride', { width: 1076, height: 520, deviceScaleFactor: 1, mobile: false });
       await sleep(300);
       f = await fit();
@@ -3827,7 +3893,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.3 card (with 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 26, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.4 card (with 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 31, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -3925,6 +3991,7 @@ async function pageTarget() {
       await sleep(1600);
       const add = await js(`(() => { const r = document.getElementById('trow'); const a = r && r.querySelector('[data-testid="aiondx-add-account"]'); return a ? { last: r.lastElementChild === a, text: a.textContent, cls: a.className } : null; })()`);
       check(sc, 'the new-chat row ends with "+ Add account", in the row\'s own pill style', add && add.last && add.text === '+ Add account' && /\bpill-off\b/.test(add.cls), JSON.stringify(add));
+      await clogShot("0.27.5", "More Claude accounts", "[data-testid=\"aiondx-add-account\"]");
       await humanClick('[data-testid="aiondx-add-account"]');
       await sleep(400);
       check(sc, 'it opens the dialog, which asks for a name and what the account may do before any sign-in', await js(`!!document.querySelector('[data-testid="aiondx-accdlg"] .aiondx-accdlg-name')`) &&
@@ -4064,6 +4131,10 @@ async function pageTarget() {
       await sleep(600);
       p = await panel();
       check(sc, 'as the agent fills a section, the doc redraws in place: the list is there, one section still pending', /<ol><li>Ship<\/li><li>Sell<\/li><\/ol>/.test(p.body) && (p.body.match(/class="dx-pending"/g) || []).length === 1, p.body);
+      await clogShot("0.27.5", "DX Docs", "#tbox [data-testid=\"aiondx-dx-sider\"]");
+      await clogShot("0.27.8", "Ask for a DX Doc", "#tbox [data-testid=\"aiondx-dx-sider\"]");
+      await clogShot("0.28.3", "Docs go where the chat goes", "#tbox [data-testid=\"aiondx-dx-sider\"]");
+      await clogShot("0.28.2", "Docs stay as you left them", "#tbox [data-testid=\"aiondx-dx-open\"]");
       await js(`window.__dxAgent('plan', '# Launch plan\\n\\n## Goals\\n\\n<script>window.__pwned=1</script> **ok**\\n'); 0`);
       await sleep(600);
       check(sc, 'what an agent writes is shown, never run (no script, no raw HTML)', !(await js('window.__pwned')) && /&lt;script&gt;/.test((await panel()).body));
@@ -4225,6 +4296,30 @@ async function pageTarget() {
       const pics = await js(`[...document.querySelectorAll('#tbox .dx-body img')].map((i) => ({ src: (i.getAttribute('src') || '').slice(0, 22), alt: i.alt, missing: i.classList.contains('dx-img-missing') }))`);
       check(sc, 'a picture beside the doc shows (read by AionDX, not the page\'s address); a missing one says so', pics.length === 2 && pics[0].src.indexOf('data:image/gif;base64') === 0 && !pics[0].missing &&
         pics[1].missing && /No such picture: pictures\/gone\.png/.test(pics[1].alt), JSON.stringify(pics));
+      // a click on a picture opens it full screen (November 17th, 2026): fitted, the wheel zooms, Esc closes
+      await humanClick('#tbox .dx-body img:not(.dx-img-missing)');
+      await sleep(300);
+      const lb = await js(`(() => { const b = document.querySelector('[data-testid="aiondx-lightbox"]'); if (!b) return null; const r = b.getBoundingClientRect();
+        return { full: r.width === innerWidth && r.height === innerHeight, z: +b.getAttribute('data-zoom'), cap: b.querySelector('.aiondx-lightbox-cap').textContent }; })()`);
+      check(sc, 'a click on a picture opens it over the whole window, named', lb && lb.full && lb.z > 0 && lb.cap === 'Massif', JSON.stringify(lb));
+      if (CLOG_OUT) {
+        // the harness's picture is one pixel: for the Changelog's picture the lightbox shows a real one (the suite's own picture of a doc's chart)
+        await js(`(() => { const i = document.querySelector('[data-testid="aiondx-lightbox"] .aiondx-lightbox-img'); i.src = 'shots/dxdocs-viz-light-1.png'; return 0; })()`);
+        await sleep(500);
+        await js(`(() => { window.dispatchEvent(new Event('resize')); return 0; })()`);
+        await sleep(300);
+      }
+      await clogShot("0.28.4", "Pictures full screen", '[data-testid="aiondx-lightbox"] .aiondx-lightbox-bar', { minH: 540, minW: 760, maxW: 900, maxH: 600 });
+      const z1 = +(await js(`document.querySelector('[data-testid="aiondx-lightbox"]').getAttribute('data-zoom')`));
+      const lc = await centerOf('[data-testid="aiondx-lightbox"] .aiondx-lightbox-img');
+      await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: lc.x, y: lc.y, deltaX: 0, deltaY: -400 });
+      await sleep(250);
+      const z2 = +(await js(`document.querySelector('[data-testid="aiondx-lightbox"]').getAttribute('data-zoom')`));
+      check(sc, 'the wheel zooms in', z2 > z1, JSON.stringify([z1, z2]));
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await sleep(250);
+      check(sc, 'Esc closes it', await js(`!document.querySelector('[data-testid="aiondx-lightbox"]')`));
       // R-125: a chart (values on hover, a Data button), a diagram (the app's own Mermaid), a task to tick, a doc card in a reply
       await js(`window.__dxAgent('draw', '# Numbers\\n\\n## Sales\\n\\n\`\`\`chart\\n{"type":"bar","title":"Sales","unit":"$k","columns":["Quarter","2025","2026"],"rows":[["Q1",10,12],["Q2",14,18]]}\\n\`\`\`\\n\\n## Flow\\n\\n\`\`\`mermaid\\nflowchart LR\\n  A[Ask] --> B[Draft] --> C[Ship]\\n\`\`\`\\n\\n## To do\\n\\n- [ ] Call the bank\\n- [x] Send the plan\\n'); 0`);
       await sleep(900);
@@ -4279,6 +4374,23 @@ async function pageTarget() {
       check(sc, 'the same each time you come back (no flip-flop)', sd.w === 0, JSON.stringify(sd));
       const kept = await js(`Object.keys(JSON.parse(localStorage.getItem('aionui.dx.dx.openChats') || '{}'))`);
       check(sc, 'what is kept: the chats you left it open in, and only those', JSON.stringify(kept) === '["other1"]', JSON.stringify(kept));
+      // November 17th, 2026: "if i have a doc open to a certain tab on a page, that should stay as i had it when i come back to it"
+      await humanClick('#tbox [data-testid="aiondx-dx-open"]');
+      await sleep(500);
+      // the chat may already be back on the doc it showed last (this very feature); else a doc is opened from the list
+      if (!(await js(`!!document.querySelector('#tbox .dx-body')`)) && (await js(`!!document.querySelector('#tbox .dx-row[data-doc]')`))) {
+        await humanClick(`#tbox .dx-row[data-doc]`);
+        await sleep(700);
+      }
+      if (await js(`!!document.querySelector('#tbox .dx-body')`)) {
+        const docId = await js(`(JSON.parse(localStorage.getItem('aionui.dx.dx.views') || '{}').harness1 || {}).doc || ''`);
+        const barWas = await js(`(document.querySelector('#tbox .dx-bar-title') || {}).textContent || ''`);
+        sd = await goChat('other1');
+        sd = await goChat('harness1');
+        await sleep(900);
+        const back = await js(`(() => { const v = JSON.parse(localStorage.getItem('aionui.dx.dx.views') || '{}'); return { bar: (document.querySelector('#tbox .dx-bar-title') || {}).textContent || '', body: !!document.querySelector('#tbox .dx-body'), kept: v.harness1 && v.harness1.doc }; })()`);
+        check(sc, 'a doc left open in a chat is open again when you come back to that chat (kept on this PC, by chat)', barWas && back.body && back.bar === barWas && back.kept === docId, JSON.stringify([barWas, back]));
+      } else check(sc, 'a doc left open in a chat is open again when you come back to that chat', false, 'no doc open and none in the list');
       // a team page: the team's docs (its id and its lead's chat), the same panel
       await js(`(() => { window.__dx.calls.length = 0; location.hash = '#/team/team1'; return 0; })()`);
       await sleep(6000);
@@ -4330,6 +4442,7 @@ async function pageTarget() {
               for (const o of a.ops) {
                 if (o.op === 'add_tab') { if (T.tabs[0].implicit) T.tabs = [{ id: 't1', title: 'Overview', parent: '', body: T.tabs[0].body }]; const id = 't' + (T.tabs.length + 1); T.tabs.push({ id, title: o.title, parent: o.parent || '', body: '' }); made.push(id); }
                 if (o.op === 'rename_tab') M.findTab(T, o.tab).title = o.to;
+                if (o.op === 'set_tab_color') M.findTab(T, o.tab).color = o.color === 'none' ? '' : o.color;
                 if (o.op === 'delete_tab') T.tabs = T.tabs.filter((t) => t.id !== o.tab && t.parent !== o.tab);
                 if (o.op === 'move_tab') { const t = M.findTab(T, o.tab); T.tabs = T.tabs.filter((x) => x !== t); const r = T.tabs.indexOf(M.findTab(T, o.before || o.after)); T.tabs.splice(o.before ? r : r + 1, 0, t); }
               }
@@ -4404,7 +4517,23 @@ async function pageTarget() {
       await js(`(() => { [...document.querySelectorAll('[data-testid="aiondx-dx-tabmenu-list"] button')].find((x) => x.textContent === 'Move right').click(); return 0; })()`);
       await sleep(600);
       p = await P();
+      await clogShot("0.28.0", "Tabs in your docs", "#tbox .dx-tabstrip");
       check(sc, 'the tab menu moves a tab', JSON.stringify(p.tabs) === JSON.stringify(['Decisions', 'Overview*']), JSON.stringify(p));
+      // a tab's colour from its menu (November 17th, 2026): the swatch row, blue saved in the doc and drawn on the tab, none takes it away
+      await humanClick('#tbox [data-testid="aiondx-dx-tabmenu"]');
+      await sleep(250);
+      const sw = await js(`[...document.querySelectorAll('[data-testid="aiondx-dx-tabcolors"] .dx-tabcolor')].map((b) => b.getAttribute('data-color') + (b.classList.contains('dx-tabcolor--on') ? '*' : ''))`);
+      await humanClick('[data-testid="aiondx-dx-tabcolors"] .dx-tabcolor[data-color="blue"]');
+      await sleep(700);
+      const blue = await js(`(() => { const b = document.querySelector('#tbox [data-testid="aiondx-dx-tab"][data-color="blue"]'); return { tab: b ? b.textContent : null, edge: b ? getComputedStyle(b).boxShadow : '' }; })()`);
+      check(sc, 'the tab menu has a colour row (none and eight colours, none chosen); blue puts the colour on the open tab',
+        JSON.stringify(sw) === JSON.stringify(['*', 'gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink']) && blue.tab === 'Overview' && /59, 130, 246/.test(blue.edge), JSON.stringify([sw, blue]));
+      await clogShot("0.28.4", "Tab colours in your docs", '#tbox .dx-tabstrip');
+      await humanClick('#tbox [data-testid="aiondx-dx-tabmenu"]');
+      await sleep(250);
+      await humanClick('[data-testid="aiondx-dx-tabcolors"] .dx-tabcolor[data-color=""]');
+      await sleep(700);
+      check(sc, 'and No colour takes it away', await js(`!document.querySelector('#tbox [data-testid="aiondx-dx-tab"][data-color]')`));
       await js(`(() => { const b = [...document.querySelectorAll('#tbox [data-testid="aiondx-dx-tab"]')].find((x) => /Decisions/.test(x.textContent)); b.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return 0; })()`);
       await nameBox('Pricing');
       p = await P();
@@ -4459,6 +4588,7 @@ async function pageTarget() {
       await sleep(700);
       p = await P();
       const rr = (await calls('read')).pop();
+      await clogShot("0.28.0", "Docs you can find", "#tbox [data-testid=\"aiondx-dx-sider\"]");
       check(sc, 'and a doc from another project opens from its own folder, which is watched while it is open', p.bar === 'Atlas notes' && rr.docsDir === 'C:/atlas/DX Docs' &&
         (await calls('watch')).some((c) => c.docsDir === 'C:/atlas/DX Docs'), JSON.stringify([p, rr]));
       await humanClick('#tbox .dx-back');
@@ -4507,6 +4637,9 @@ async function pageTarget() {
       md = await js(`window.__dx.dirs['C:/ws/Docs'].rich`);
       check(sc, 'the table menu: a row moved up, a cell coloured, a column added, two cells merged, all saved as Markdown',
         /\| Name \{\.bg-blue w=200\} \| Cost \| Column \| Note \|\n\| :--- \| ---: \| --- \| --- \|\n\| a b \| << \|  \| c \{\.bg-yellow\} \|\n\| wide \| << \|  \| n1 \{\.bg-green\} \|/.test(md), JSON.stringify(md.slice(md.indexOf('| Name'), md.indexOf('| Name') + 260)));
+      await clogShot("0.28.0", "Richer writing and tables", "#tbox .dx-body table");
+      await clogShot("0.27.10", "Type in your docs", "#tbox .dx-body");
+      await clogMenu("0.27.10", "Export to Word", '#tbox [data-testid="aiondx-dx-more"]', '[data-testid="aiondx-dx-morelist"]');
       // H4, underline and a formula from the bar
       await newLine();
       await send('Input.insertText', { text: 'Small head' });
@@ -4559,6 +4692,8 @@ async function pageTarget() {
       // Insert: a note, a mention of the agent (which tells it)
       const insert = async (label) => { await humanClick('#tbox .dx-fmt-b[data-fmt="insert"]'); await sleep(250); await js(`(() => { [...document.querySelectorAll('[data-testid="aiondx-dx-insertmenu"] button')].find((b) => b.textContent === ${JSON.stringify(label)}).click(); return 0; })()`); await sleep(300); };
       await js(`(() => { const p = [...document.querySelectorAll('#tbox .dx-body p')].find((x) => /End\\./.test(x.textContent)); const r = document.createRange(); r.selectNodeContents(p); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); p.closest('.dx-body').focus(); return 0; })()`);
+      await clogShot("0.28.0", "Agents plan before they build", "#tbox .dx-approve");
+      await clogMenu("0.28.0", "Questions, approvals, dates and statuses", '#tbox .dx-fmt-b[data-fmt="insert"]', '[data-testid="aiondx-dx-insertmenu"]');
       await insert('A mention (@)');
       await js(`(() => { [...document.querySelectorAll('[data-testid="aiondx-dx-choose"] button')].find((b) => /The agent/.test(b.textContent)).click(); return 0; })()`);
       await sleep(1900);
@@ -4627,6 +4762,7 @@ async function pageTarget() {
       await js(`(() => { const m = document.querySelector('#tbox .dx-cmark[data-cid="k1"]'); m.scrollIntoView({ block: 'center' }); m.click(); return 0; })()`);
       await sleep(300);
       await shot('dxdocs-comments-light');
+      await clogShot("0.28.0", "Comments, the Claude Docs way", "#tbox .dx-cmark[data-cid=\"k1\"]");
       await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); return 0; })()`);
       await sleep(300);
       await shot('dxdocs-comments-dark');
@@ -4705,6 +4841,8 @@ async function pageTarget() {
       await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
       await sleep(400);
       await shot('dxdocs-suggest-light');
+      await clogShot("0.28.0", "Suggest edits yourself", "#tbox .dx-sg-ins");
+      await clogShot("0.27.10", "Suggestions", "#tbox .dx-sg-card");
       await send('Emulation.clearDeviceMetricsOverride', {});
       await sleep(300);
       check(sc, 'a second one', (await calls('suggest')).length === 2 && /2 suggestions/.test(await js(`document.querySelector('#tbox [data-testid="aiondx-dx-sgs"]').textContent`)));
@@ -4754,6 +4892,8 @@ async function pageTarget() {
         await js(`(() => { const all = document.querySelectorAll('#tbox .dx-body figure.dx-chart, #tbox .dx-body .dx-drawing'); const el = all[${({ 1: 0, 2: 3, 3: 6 })[k]}]; document.querySelector('#tbox .dx-body').scrollTop = el.offsetTop - 60; return 0; })()`);
         await sleep(300);
         await shot('dxdocs-viz-light-' + k);
+        if (k === '1') { await clogShot("0.27.9", "Charts and diagrams", '#tbox figure.dx-chart'); }
+        if (k === '3') { await clogShot("0.28.0", "More charts, and drawings", '#tbox .dx-drawing'); }
       }
       await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); const all = document.querySelectorAll('#tbox .dx-body figure.dx-chart, #tbox .dx-body .dx-drawing'); document.querySelector('#tbox .dx-body').scrollTop = all[7].offsetTop - 60; return 0; })()`);
       await sleep(300);
@@ -4910,6 +5050,7 @@ async function pageTarget() {
       const menu = await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (!m) return null;
         return { read: m.querySelector('.aiondx-ctxmenu-read').textContent, auto: m.querySelector('[data-act="auto"]').getAttribute('aria-checked'), now: !!m.querySelector('[data-act="now"]') }; })()`);
       check(sc, 'a click on the context ring opens its menu: the reading, compaction by itself (on), Compact now', menu && /context window used|tokens used|No context count/.test(menu.read) && menu.auto === 'true' && menu.now, JSON.stringify(menu));
+      await clogShot("0.27.7", "Compaction by itself", "[data-testid=\"aiondx-ctxmenu\"]");
       await humanClick('[data-testid="aiondx-ctxmenu"] [data-act="auto"]');
       await sleep(300);
       check(sc, 'its switch turns compaction by itself off (the option), and says so', (await js(`window.__aionDx.option('compact.auto')`)) === false && (await toasts()).some((t) => /^Compaction by itself is off\./.test(t)));
@@ -5109,6 +5250,7 @@ async function pageTarget() {
       await typeInto('[data-testid="sendbox-input"]', 'ask @@@map');
       await sleep(700);
       let mm = await menu();
+      await clogShot("0.28.0", "@@ and @@@ in every chat", "[data-testid=\"aiondx-mention-menu\"]");
       check(sc, 'in a solo chat, @@@ opens the list of every lane of every team, searched by what follows',
         mm && mm.head === 'One lane of a team (@@@)' && JSON.stringify(mm.items) === JSON.stringify(['Team: Atlas / Mapper', 'Team: Atlas / Builder']) &&
         (await listCalls()).some(u => /lanes=true/.test(u) && /q=map/.test(u) && /current_conversation_id=harness1/.test(u)), JSON.stringify([mm, await listCalls()]));
@@ -5520,11 +5662,11 @@ async function pageTarget() {
       await js("localStorage.removeItem('aionui.dx.options'); 0");
       await load('theme=light');
       // the options are on the AionDX page for what they do (November 16th, 2026); Appearance holds colours only
-      const onPage = async (pg) => { await js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w); const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; const ag = document.createElement('div'); ag.setAttribute('data-settings-id', 'agent'); ag.className = 'settings-sider__item'; ag.textContent = 'Agents'; sd.appendChild(ag); document.body.appendChild(sd); } location.hash = '#/settings/agent?aiondx=PG'; return 0; })()`.replace('PG', pg)); await sleep(800); return js(`[...document.querySelectorAll('[data-testid="aiondx-dxset-' + ${JSON.stringify(pg)} + '"] .aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`); };
+      const onPage = async (pg) => { await js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w); const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; const hd = document.createElement('div'); hd.className = 'settings-sider__group-header'; hd.textContent = 'AI Core'; sd.appendChild(hd); const ag = document.createElement('div'); ag.setAttribute('data-settings-id', 'agent'); ag.className = 'settings-sider__item'; ag.textContent = 'Agents'; sd.appendChild(ag); document.body.appendChild(sd); } location.hash = '#/settings/agent?aiondx=PG'; return 0; })()`.replace('PG', pg)); await sleep(800); return js(`[...document.querySelectorAll('[data-testid="aiondx-dxset-' + ${JSON.stringify(pg)} + '"] .aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`); };
       const pgAgents = await onPage('agents'), pgChats = await onPage('chats'), pgTyping = await onPage('typing');
       check(sc, 'each AionDX Settings page has its own options: Agents the Stop and Loop ones, Chats and drives the long-chat ones, Typing the rest',
-        JSON.stringify(pgAgents) === JSON.stringify(['loop.skillsLine', 'stop.show', 'stop.force']) && JSON.stringify(pgChats) === JSON.stringify(['compact.auto', 'lag.bigPage', 'lag.chainPages']) &&
-        JSON.stringify(pgTyping) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'spellcheck', 'draft.quote', 'voice.system']), JSON.stringify([pgAgents, pgChats, pgTyping]));
+        JSON.stringify(pgAgents) === JSON.stringify(['stop.show', 'stop.force', 'loop.skillsLine']) && JSON.stringify(pgChats) === JSON.stringify(['compact.auto', 'lag.bigPage', 'lag.chainPages']) &&
+        JSON.stringify(pgTyping) === JSON.stringify(['spellcheck', 'draft.quote', 'links.files', 'links.docs', 'voice.system', 'help.tips']), JSON.stringify([pgAgents, pgChats, pgTyping]));
       const optionIds = ['links.files', 'links.docs', 'help.tips', 'compact.auto', 'skills.atCompact', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages'];
       check(sc, 'every option of the one list is on one of them (Skills on DX Skills)', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'compact.auto', 'skills.atCompact', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
@@ -5553,7 +5695,7 @@ async function pageTarget() {
       const page = (pg, theme) => js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; w.style.cssText = 'position:fixed;left:200px;top:0;right:0;bottom:0;overflow:auto;z-index:900;background:var(--color-bg-1)';
         const c = document.createElement('div'); c.className = 'settings-page-content'; c.style.cssText = 'max-width:900px;padding:24px'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w);
         const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; sd.style.cssText = 'position:fixed;left:0;top:0;width:200px;bottom:0;z-index:900;background:var(--color-bg-2);display:flex;flex-direction:column;gap:2px;padding:8px';
-        ['model', 'agent', 'skills', 'appearance', 'system'].forEach((id) => { const it = document.createElement('div'); it.setAttribute('data-settings-id', id); it.className = 'settings-sider__item'; it.textContent = id; sd.appendChild(it); }); document.body.appendChild(sd); }
+        const hd = document.createElement('div'); hd.className = 'settings-sider__group-header'; hd.textContent = 'AI Core'; sd.appendChild(hd); ['model', 'agent', 'skills', 'appearance', 'system'].forEach((id) => { const it = document.createElement('div'); it.setAttribute('data-settings-id', id); it.className = 'settings-sider__item'; it.textContent = id; sd.appendChild(it); }); document.body.appendChild(sd); }
         location.hash = '#/settings/agent' + (${JSON.stringify(pg)} ? '?aiondx=' + ${JSON.stringify(pg)} : ''); return 0; })()`);
       await load('theme=light');
       await js(`(() => { window.__ag = [];
@@ -5569,15 +5711,24 @@ async function pageTarget() {
       await sleep(1500);
       const nav = await js(`(() => { const sd = document.getElementById('dxset-sider'); const theirs = sd.querySelector('[data-settings-id="agent"]');
         return { theirsHidden: getComputedStyle(theirs).display === 'none', ours: [...sd.querySelectorAll('.aiondx-setnav-item')].map((x) => x.textContent + (x.classList.contains('aiondx-setnav-item--on') ? '*' : '')),
-          after: (sd.querySelector('.aiondx-setnav') || {}).previousElementSibling === theirs }; })()`);
-      check(sc, 'the Settings list: AionUi\u2019s Agents entry hidden, an AionDX block in its place with Agents (open), Chats and drives, Typing, links and voice',
+          after: (sd.querySelector('.aiondx-setnav') || {}).nextElementSibling === sd.querySelector(':scope > .settings-sider__group-header') }; })()`);
+      check(sc, 'the Settings list: AionUi\u2019s Agents entry hidden, an AionDX block above the AI Core group (never inside it) with Agents (open), Chats and drives, Typing, links and voice',
         nav.theirsHidden && nav.after && JSON.stringify(nav.ours) === JSON.stringify(['Agents*', 'Chats and drives', 'Typing, links and voice']), JSON.stringify(nav));
+      await clogShot("0.28.3", "AionDX settings", "[data-testid=\"aiondx-setnav\"]");
       const ag = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-dxset-agents"]'); if (!p) return null;
         return { rows: [...p.querySelectorAll('.aiondx-dxset-agent')].map((r) => r.querySelector('.aiondx-skill-name').textContent + ' | ' + r.querySelector('.aiondx-dxset-status').textContent + ' | ' + [...r.querySelectorAll('button')].map((b) => b.textContent).join(',')),
           theirs: getComputedStyle(document.getElementById('aionui-agents')).display, cards: [...p.querySelectorAll('.aiondx-accent-title')].map((t) => t.textContent) }; })()`);
-      check(sc, 'Agents lists each agent: installed and answering or not, Sign in or Install for Claude Code, Check, Switch on or off', ag && JSON.stringify(ag.rows) === JSON.stringify([
-        'Claude Code | Installed and answering | Sign in,Check,Switch off', 'Codex | Not installed on this PC | Check,Switch off', 'Gemini CLI | Switched off | Check,Switch on']), JSON.stringify(ag));
-      check(sc, 'AionUi\u2019s own agent list is not shown; the page has Sign-in, AionDX setup, Stop and the Loop, Advanced', ag.theirs === 'none' && ['Your agents', 'Sign-in', 'AionDX setup', 'Stop and the Loop', 'Advanced'].every((t) => ag.cards.includes(t)), JSON.stringify(ag.cards));
+      check(sc, 'Agents lists each agent: the ones on this PC first (answering, then switched off), each with its state, Sign in for Claude Code, Check, Switch on or off', ag && JSON.stringify(ag.rows) === JSON.stringify([
+        'Claude Code | Installed and answering | Sign in,Check,Switch off', 'Gemini CLI | Switched off | Check,Switch on', 'Codex | Not installed on this PC | Check,Switch off']), JSON.stringify(ag));
+      check(sc, 'AionUi\u2019s own agent list is not shown; the page has Sign-in, AionDX setup, Stop, The Loop, Advanced', ag.theirs === 'none' && ['Your agents', 'Sign-in', 'AionDX setup', 'Stop', 'The Loop', 'Advanced'].every((t) => ag.cards.includes(t)), JSON.stringify(ag.cards));
+      // the Settings look (November 17th, 2026): each agent's state in its colour; agents not installed folded under one button
+      const fold = await js(`(() => { const t = document.querySelector('[data-testid="aiondx-dxset-missing-toggle"]'), g = document.querySelector('[data-testid="aiondx-dxset-missing"]');
+        return { t: t && t.textContent, hidden: !!(g && g.hidden), inFold: !!(g && g.querySelector('[data-agent="codex"]')), tones: [...document.querySelectorAll('.aiondx-dxset-agent')].map((r) => r.getAttribute('data-agent') + ':' + r.getAttribute('data-tone')) }; })()`);
+      check(sc, 'agents not installed are folded under "Show the 1 agent not installed on this PC"; each state has its tone (answering ok, off grey)',
+        fold.t === 'Show the 1 agent not installed on this PC' && fold.hidden && fold.inFold && JSON.stringify(fold.tones) === JSON.stringify(['claude:ok', 'gemini:off', 'codex:off']), JSON.stringify(fold));
+      await humanClick('[data-testid="aiondx-dxset-missing-toggle"]');
+      await sleep(300);
+      check(sc, 'the button opens the fold', (await js(`!document.querySelector('[data-testid="aiondx-dxset-missing"]').hidden && document.querySelector('[data-testid="aiondx-dxset-missing-toggle"]').textContent`)) === 'Hide the 1 agent not installed on this PC');
       await shot('dxsettings-agents-light');
       await humanClick('.aiondx-dxset-agent[data-agent="codex"] button[data-act="check"]');
       await sleep(600);
@@ -5598,6 +5749,38 @@ async function pageTarget() {
       await page('typing');
       await sleep(1200);
       await shot('dxsettings-typing-dark');
+      // the Settings look (November 17th, 2026): a header with the page's tile, a card per group in the page's order, the voice panel's
+      // slot in the Voice card and nowhere else, switches for on/off options
+      const look = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-dxset-typing"]'); if (!p) return null;
+        return { head: !!p.querySelector('[data-testid="aiondx-dxl-head-typing"] .aiondx-dxl-tile'), cards: [...p.querySelectorAll('.aiondx-opt-card .aiondx-dxl-card-title')].map((e) => e.textContent),
+          slot: !!p.querySelector('[data-group="Voice"] [data-testid="aiondx-voice-slot"]'), slots: document.querySelectorAll('[data-testid="aiondx-voice-slot"]').length,
+          sw: !!p.querySelector('.aiondx-switch input[data-testid="aiondx-opt-spellcheck"]'), help: (p.querySelector('[data-opt="spellcheck"] .aiondx-opt-help') || {}).textContent || '' }; })()`);
+      check(sc, 'Typing, links and voice: its header tile, the cards Typing, Links, Voice, Help, the voice slot in the Voice card only, a switch with its help under the name',
+        look && look.head && JSON.stringify(look.cards) === JSON.stringify(['Typing', 'Links', 'Voice', 'Help']) && look.slot && look.slots === 1 && look.sw && /^Underline misspelled words/.test(look.help), JSON.stringify(look));
+      await clogShot("0.28.4", "Settings, made over", '[data-testid="aiondx-dxset-typing"] [data-group="Typing"]');
+      await clogShot("0.28.4", "Fixes", '[data-testid="aiondx-dxset-typing"] [data-group="Voice"]');
+      await page('chats');
+      await sleep(900);
+      check(sc, 'Chats and drives has no voice panel or slot (the panel found the first AionDX card on any page)',
+        await js(`!document.querySelector('[data-testid="aiondx-dxset-chats"] [data-testid="aiondx-voice-slot"]') && !document.querySelector('[data-testid="aiondx-dxset-chats"] [data-testid="aiondx-voice-panel"]')`));
+      // the Changelog under About: the group AionUi calls Other renamed, the entry after About, every release's items in order
+      await js(`(() => { const sd = document.getElementById('dxset-sider'); const h = document.createElement('div'); h.className = 'settings-sider__group-header'; h.textContent = 'Other'; sd.appendChild(h);
+        const a = document.createElement('div'); a.setAttribute('data-settings-id', 'about'); a.className = 'settings-sider__item'; a.textContent = 'About'; sd.appendChild(a);
+        location.hash = '#/settings/about?aiondx=changelog'; return 0; })()`);
+      await sleep(1500);
+      const cl = await js(`(() => { const sd = document.getElementById('dxset-sider'); const c = document.querySelector('[data-testid="aiondx-changelog"]'); const want = window.__aionDx.whatsNew();
+        const a = sd.querySelector('[data-settings-id="about"]');
+        return { group: [...sd.querySelectorAll('.settings-sider__group-header')].map((h) => h.textContent).pop(), next: !!(a && a.nextElementSibling && a.nextElementSibling.getAttribute('data-testid') === 'aiondx-setnav-changelog'),
+          on: !!sd.querySelector('[data-testid="aiondx-setnav-changelog"].aiondx-setnav-item--on'), page: !!c,
+          rels: c ? [...c.querySelectorAll('.aiondx-clog-rel')].map((r) => r.getAttribute('data-release')) : [], want: want.map((r) => r.release),
+          items: c ? c.querySelectorAll('.aiondx-clog-item').length : 0, wantItems: want.reduce((n, r) => n + r.items.length, 0),
+          firstName: c ? (c.querySelector('.aiondx-clog-name') || {}).textContent : '', pic: c ? (c.querySelector('.aiondx-clog-img') || {}).getAttribute('src') : '',
+          date: c ? (c.querySelector('.aiondx-clog-date') || {}).textContent : '', hidAgents: getComputedStyle(document.getElementById('aionui-agents')).display }; })()`);
+      check(sc, 'Settings > About > Changelog: the group renamed About, Changelog after About and marked, every release newest first with all its items, each asking for its picture',
+        cl.group === 'About' && cl.next && cl.on && cl.page && JSON.stringify(cl.rels) === JSON.stringify(cl.want) && cl.items === cl.wantItems && cl.items >= 30 &&
+        cl.firstName === 'Settings, made over' && /^\.\/aiondx-changelog\/v0-28-4-settings-made-over-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
+      await shot('changelog-light');
+      await clogShot("0.28.4", "The Changelog", '[data-testid="aiondx-setnav-changelog"]');
       await page('agents');
       await sleep(1200);
       await shot('dxsettings-agents-dark');

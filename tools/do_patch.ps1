@@ -20,6 +20,12 @@ else {
 }
 Copy-Item $patchJs "$ext\out\renderer\aiondx-ui.js" -Force
 Write-Host 'aiondx-ui.js copied'
+# the Changelog's pictures, beside the page script
+if (Test-Path "$root\patches\0001-renderer-dx\changelog") {
+  New-Item -ItemType Directory -Force "$ext\out\renderer\aiondx-changelog" | Out-Null
+  Copy-Item "$root\patches\0001-renderer-dx\changelog\*.png" "$ext\out\renderer\aiondx-changelog" -Force
+  Write-Host 'changelog pictures copied'
+}
 
 # Patch 0003-local-account: no aionui.com sign-in. apply.js checks every anchor and writes nothing
 # unless all of them match, so a changed AionUi build stops the rebuild here instead of shipping.

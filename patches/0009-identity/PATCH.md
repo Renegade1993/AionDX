@@ -193,3 +193,11 @@ out of settings.json, the cache folders deleted). Test plugin changes only throu
   needs goes as arguments (`--pointer`, `--local`, `--home`, `--roaming`); a plain detached start is the fallback. WMI refuses
   CREATE_NO_WINDOW in CreateFlags ("invalid parameter", 21). `scan` and `adopt`: the background search for an AionDX drive after the start
   (each drive root given 1.5 s) and taking one up after the user says yes.
+
+## November 17th, 2026: DX Doc tab colours, and DX Docs follow the chat (November 16th)
+
+- A tab's colour (the user: "agents and users should be allowed to change DX Doc tab colors"): `color="blue"` in the tab's marker, one of
+  gray, red, orange, yellow, green, blue, purple, pink (`dxdocs-md.js` TAB_COLORS, tabColor; written by joinTabs, read by splitTabs and
+  tabList). `dxdocs.js`: the tab operation `set_tab_color {tab, color}` ("none" takes it away), `color` on `add_tab`, a colour not on the
+  list refused with the list; `read` gives each tab's colour. `aiondx-dxdocs-main.js` lets `set_tab_color` through from the panel.
+- Tests: `test-dxdocs.js` 73.

@@ -197,6 +197,18 @@ try {
   rd = D.read(td, p.id);
   check('move_tab takes its sub-tabs with it; rename_tab', JSON.stringify(rd.tabs.map((t) => t.id + ':' + t.title)) === JSON.stringify(['t2:Decisions', 't3:Pricing detail', 't1:Overview', 't4:Meeting notes']), JSON.stringify(rd.tabs));
   check('moving a tab under itself is refused', /No tab "t3" to move it under/.test(err(() => D.update(td, p.id, [{ op: 'move_tab', tab: 't2', parent: 't3' }]))));
+  // a tab's colour (November 17th, 2026): set by name, kept in its marker, read back, cleared with none; add_tab takes one too
+  D.update(td, p.id, [{ op: 'set_tab_color', tab: 'Decisions', color: 'Blue' }, { op: 'add_tab', title: 'Risks', color: 'red' }]);
+  let mdc = fs.readFileSync(path.join(td, p.id + '.md'), 'utf8');
+  rd = D.read(td, p.id);
+  check('set_tab_color and add_tab with a colour: written in the tab\'s marker, read back with the tab, any letter case',
+    /<!-- dx:tab id="t2" title="Decisions" color="blue" -->/.test(mdc) && /title="Risks" color="red" -->/.test(mdc) &&
+    rd.tabs.find((t) => t.id === 't2').color === 'blue' && rd.tabs.find((t) => t.title === 'Risks').color === 'red' && !('color' in rd.tabs.find((t) => t.id === 't1')), mdc);
+  check('a colour that is not one of the list is refused, naming the colours', /No tab colour "teal"\. Colours: gray, red, orange, yellow, green, blue, purple, pink, or none\./.test(err(() => D.update(td, p.id, [{ op: 'set_tab_color', tab: 't2', color: 'teal' }]))));
+  D.update(td, p.id, [{ op: 'set_tab_color', tab: 't2', color: 'none' }, { op: 'delete_tab', tab: 'Risks' }]);
+  mdc = fs.readFileSync(path.join(td, p.id + '.md'), 'utf8');
+  check('none takes the colour away', /<!-- dx:tab id="t2" title="Decisions" -->/.test(mdc) && !('color' in D.read(td, p.id).tabs.find((t) => t.id === 't2')), mdc);
+  check('the panel\'s tab list carries the colour', JSON.stringify(D.MD.tabList('# X\n\n<!-- dx:tab id="a" title="A" color="green" -->\n\nx\n\n<!-- dx:tab id="b" title="B" -->\n').map((t) => t.color)) === '["green",""]');
   D.update(td, p.id, [{ op: 'delete_tab', tab: 'Decisions' }]);
   rd = D.read(td, p.id);
   check('delete_tab takes its sub-tabs; the last tab cannot go', JSON.stringify(rd.tabs.map((t) => t.id)) === '["t1","t4"]' &&

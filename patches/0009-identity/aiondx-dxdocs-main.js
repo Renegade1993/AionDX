@@ -105,7 +105,7 @@ function create(o) {
     if (op === 'delete') return Object.assign({ ok: true }, D.remove(dir, req.id, 'you'));
     if (op === 'deleted') return { ok: true, deleted: D.recycled(dir) };
     if (op === 'undelete') return Object.assign({ ok: true }, D.undelete(dir, req.deleted));
-    if (op === 'tabs') return Object.assign({ ok: true }, D.update(dir, req.id, (Array.isArray(req.ops) ? req.ops : []).filter((o) => o && /^(add|rename|move|delete)_tab$/.test(o.op)).slice(0, 20), 'you'));
+    if (op === 'tabs') return Object.assign({ ok: true }, D.update(dir, req.id, (Array.isArray(req.ops) ? req.ops : []).filter((o) => o && /^((add|rename|move|delete)_tab|set_tab_color)$/.test(o.op)).slice(0, 20), 'you'));
     if (op === 'save') return Object.assign({ ok: true }, D.save(dir, req.id, req.markdown, req.by === 'you' ? 'you' : 'you'));
     if (op === 'history') return { ok: true, versions: D.history(dir, req.id) };
     if (op === 'version') return { ok: true, markdown: D.readVersion(dir, req.id, req.version) };

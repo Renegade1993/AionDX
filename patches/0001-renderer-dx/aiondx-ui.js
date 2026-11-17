@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-17.1';
+  var BUILD = '2026-11-17.2';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -786,6 +786,7 @@
   // Agents (in place of AionUi's, on its route), Chats and drives, Typing, links and voice. Each opens #/settings/agent?aiondx=<page>
   // and shows in the place of the route's own content; AionUi's agent list stays one click away under Agents (Advanced), for
   // environment variables, custom agents and repair.
+  window.__aionDxVoiceSlot = true;   // patch 0011 puts its voice panel in the slot on Typing, links and voice only
   var DX_PAGES = [
     { id: 'agents', label: 'Agents', title: 'Agents', desc: 'Your agents: whether each is installed and answering, signing in, its cache, and how AionDX stops and keeps them working.' },
     { id: 'chats', label: 'Chats and drives', title: 'Chats and drives', desc: 'Where your chats live, and how long chats are compacted and paged.' },
@@ -796,6 +797,128 @@
   var SVG_DXSET = { agents: '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="9" y="14" width="30" height="24" rx="5" stroke="currentColor" stroke-width="3"/><path d="M24 6v8M17 25h.01M31 25h.01M18 32h12" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
     chats: '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M6 12H42V34H26L16 42V34H6V12Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M15 21h18M15 27h10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
     typing: '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="5" y="12" width="38" height="24" rx="4" stroke="currentColor" stroke-width="3"/><path d="M12 20h.01M18 20h.01M24 20h.01M30 20h.01M36 20h.01M14 28h20" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>' };
+  // ---------------------------------------------------------------- the Settings look (November 17th, 2026)
+  // The user: "give the whole settings side of AionDX a makeover, and unify the aesthetic. Be sure to use color (like the accent color) as
+  // well as static or secondary accent colors"; "completely overhaul the settings ui ... Give everything a nice coat of paint". Every page,
+  // AionUi's and AionDX's: a header with a tile in the page's own fixed colour, cards with an icon chip in it, setting rows with their help
+  // under the name, AionDX's own switches, selects and number boxes. The accent colour (Appearance) marks what is live or chosen.
+  var DXL = {
+    agents: ['#8b5cf6', 'robot'], chats: ['#3b82f6', 'chat'], typing: ['#f59e0b', 'keys'], model: ['#06b6d4', 'chip'], skills: ['#10b981', 'bolt'],
+    tools: ['#f97316', 'wrench'], appearance: ['#ec4899', 'brush'], webui: ['#0ea5e9', 'globe'], mobile: ['#6366f1', 'phone'],
+    system: ['#64748b', 'grid'], archived: ['#a8a29e', 'box'], about: ['#14b8a6', 'info'], changelog: ['#f43f5e', 'list'], account: ['#14b8a6', 'user']
+  };
+  // the Settings list's own ids for AionUi's entries, to the keys above
+  var DXL_SIDER = { agent: 'agents', model: 'model', skills: 'skills', tools: 'tools', appearance: 'appearance', webui: 'webui', 'aiondx-mobile': 'mobile',
+    system: 'system', archived: 'archived', about: 'about', account: 'account' };
+  // a header for AionUi's pages that have no title of their own
+  var DXL_HEAD = {
+    appearance: ['Appearance', 'Themes and fonts, and AionDX’s colours: the accent, the backdrop, the context ring and the chat bubbles.'],
+    webui: ['Remote and mobile', 'Use AionDX from your phone or a browser on another device: pairing, the address it is reached at, and who may use it.'],
+    system: ['System', 'Language, start-up, timeouts, notifications, folders and the in-app browser.']
+  };
+  var DXL_SVG = {
+    robot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4M9.5 13h.01M14.5 13h.01M10 16.5h4"/>',
+    chat: '<path d="M4 6h16v10h-8l-4 3.5V16H4z"/><path d="M8 10h8M8 13h5"/>',
+    keys: '<rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/>',
+    chip: '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>',
+    bolt: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+    wrench: '<path d="M14.5 4.5a4.5 4.5 0 0 0 5 5.5L11 18.5a2.1 2.1 0 0 1-3-3L16.5 7a4.5 4.5 0 0 0-2-2.5z"/>',
+    brush: '<path d="M17.5 3.5l3 3-8.5 8.5-3-3z"/><path d="M9 12c-3 0-4.5 2-4.5 4.5 0 1.5-.8 2.5-1.5 2.5 3.5 1.5 8 .5 9-3"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3.2 3.2 3.2 14.8 0 18M12 3c-3.2 3.2-3.2 14.8 0 18"/>',
+    phone: '<rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 17.5h2"/>',
+    grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+    box: '<path d="M4 6h16v4H4zM5.5 10v9h13v-9M10 14h4"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+    list: '<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 4.5-5 8-5s6.5 1 8 5"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.2 1.2M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.2-1.2"/>',
+    help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.6M12 17h.01"/>',
+    mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>',
+    pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+    folder: '<path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16.5 6.5l3 3M14 9l2 2"/>',
+    spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
+    trash: '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/>',
+    stop: '<rect x="6" y="6" width="12" height="12" rx="2.5"/>',
+    loop: '<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>',
+    layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+    compact: '<path d="M4 6h16M7 12h10M10 18h4"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>'
+  };
+  function dxlIcon(name, size) {
+    return '<svg viewBox="0 0 24 24" width="' + (size || 18) + '" height="' + (size || 18) + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (DXL_SVG[name] || DXL_SVG.gear) + '</svg>';
+  }
+  function dxlColour(key) { return (DXL[key] || DXL.about)[0]; }
+  /** The page's tile: its icon in a rounded square of its own colour. */
+  function dxlTile(key) { var t = gEl('span', 'aiondx-dxl-tile'); t.style.setProperty('--dxl-c', dxlColour(key)); t.innerHTML = dxlIcon((DXL[key] || DXL.about)[1], 22); return t; }
+  /** A page's header: tile, title, the one line on what the page is for; `side` (an element) goes at the right. */
+  function dxlHead(key, title, desc, side) {
+    var h = gEl('div', 'aiondx-dxl-head');
+    h.setAttribute('data-testid', 'aiondx-dxl-head-' + key);
+    h.appendChild(dxlTile(key));
+    var t = gEl('div', 'aiondx-dxl-head-text');
+    t.appendChild(gEl('h2', 'aiondx-dxs-title', title));
+    if (desc) t.appendChild(gEl('p', 'aiondx-dxs-desc', desc));
+    h.appendChild(t);
+    if (side) h.appendChild(side);
+    return h;
+  }
+  /** A card: an icon chip in the page's colour, a name, one line on what it holds, then its body. Returns the card; its body is .__body. */
+  function dxlCard(icon, title, desc, cls) {
+    var c = gEl('div', 'aiondx-dxl-card' + (cls ? ' ' + cls : ''));
+    var h = gEl('div', 'aiondx-dxl-card-head');
+    var chip = gEl('span', 'aiondx-dxl-chip');
+    chip.innerHTML = dxlIcon(icon, 17);
+    h.appendChild(chip);
+    var t = gEl('div', 'aiondx-dxl-card-text');
+    t.appendChild(gEl('div', 'aiondx-dxl-card-title aiondx-accent-title', title));
+    if (desc) t.appendChild(gEl('div', 'aiondx-dxl-card-desc aiondx-accent-desc', desc));
+    h.appendChild(t);
+    c.appendChild(h);
+    var b = gEl('div', 'aiondx-dxl-card-body');
+    c.appendChild(b);
+    c.__body = b;
+    return c;
+  }
+  /** Which Settings page is on screen: an AionDX page's id, AionUi's route, or the Changelog. */
+  function dxlPageKey() {
+    var m = /^#\/settings\/([a-z-]+)\/?(?:\?(.*))?$/.exec(location.hash);
+    if (!m) return null;
+    var q = /(?:^|&)aiondx=([a-z]+)/.exec(m[2] || '');
+    if (q) return q[1];
+    if (m[1] === 'agent') return 'agents';
+    return m[1];
+  }
+  /** Each tick on a Settings page: the page's colour and key on its content (the style does the rest), a header on AionUi's pages that
+   *  have no title, the group names, the Changelog entry under About. */
+  function renderSettingsLook() {
+    var sider = document.querySelector('.settings-sider');
+    if (sider) {
+      Array.prototype.forEach.call(sider.querySelectorAll('.settings-sider__item[data-settings-id]'), function (it) {
+        var k = DXL_SIDER[it.getAttribute('data-settings-id')];
+        if (k && it.getAttribute('data-aiondx-c') !== k) { it.setAttribute('data-aiondx-c', k); it.style.setProperty('--dxl-c', dxlColour(k)); }
+      });
+      Array.prototype.forEach.call(sider.querySelectorAll('.settings-sider__group-header'), function (h) {
+        if (!h.classList.contains('aiondx-setnav-head') && h.textContent.trim() === 'Other') h.textContent = 'About';
+      });
+      renderChangelogNav(sider);
+    }
+    var host = document.querySelector('.settings-page-content');
+    if (!host) return;
+    var key = dxlPageKey() || '';
+    if (host.getAttribute('data-aiondx-page') !== key) { host.setAttribute('data-aiondx-page', key); host.style.setProperty('--dxl-c', dxlColour(key)); }
+    var head = host.querySelector(':scope > .aiondx-dxl-head--theirs');
+    var want = DXL_HEAD[key] && !host.querySelector('h1') ? DXL_HEAD[key] : null;
+    if (!want) { if (head) head.parentNode.removeChild(head); return; }
+    if (!head || head.getAttribute('data-for') !== key) {
+      if (head) head.parentNode.removeChild(head);
+      head = dxlHead(key, want[0], want[1]);
+      head.classList.add('aiondx-dxl-head--theirs');
+      head.setAttribute('data-for', key);
+    }
+    if (host.firstChild !== head) host.insertBefore(head, host.firstChild);
+  }
+
   /** The AionDX block in AionUi's Settings list; AionUi's own Agents entry hidden (ours takes its place). */
   function renderDxSettingsNav() {
     var sider = document.querySelector('.settings-sider');
@@ -812,17 +935,21 @@
         it.setAttribute('data-testid', 'aiondx-setnav-' + pg.id);
         it.setAttribute('data-page', pg.id);
         it.setAttribute('role', 'link');
+        it.style.setProperty('--dxl-c', dxlColour(pg.id));
         it.innerHTML = '<span class="aiondx-setnav-icon">' + SVG_DXSET[pg.id] + '</span><span class="settings-sider__item-label aiondx-setnav-label"></span>';
         it.querySelector('.aiondx-setnav-label').textContent = pg.label;
         it.addEventListener('click', function () { dxset.advanced = false; location.hash = '#/settings/agent?aiondx=' + pg.id; });
         block.appendChild(it);
       });
     }
-    var first = sider.firstElementChild;
-    if (block.parentNode !== sider || (theirs ? block.previousElementSibling !== (theirs.parentElement && theirs.parentElement !== sider ? theirs.parentElement : theirs) : block !== first)) {
-      var anchor = theirs ? (theirs.parentElement && theirs.parentElement !== sider ? theirs.parentElement : theirs) : null;
-      if (anchor) sider.insertBefore(block, anchor.nextSibling); else sider.insertBefore(block, first);
-    }
+    // above the group AionUi's Agents entry belongs to (AI Core), never inside it: put after that entry (November 16th), it split the group
+    // and left Model, Skills and Tools under the AionDX heading (November 17th)
+    var anchor = null;
+    var mine = theirs ? (theirs.parentElement && theirs.parentElement !== sider ? theirs.parentElement : theirs) : null;
+    for (var p = mine; p; p = p.previousElementSibling) if (p.classList && p.classList.contains('settings-sider__group-header')) { anchor = p; break; }
+    if (!anchor) anchor = sider.querySelector(':scope > .settings-sider__group-header');
+    if (!anchor) anchor = sider.firstElementChild;
+    if (anchor !== block && (block.parentNode !== sider || block.nextElementSibling !== anchor)) sider.insertBefore(block, anchor);
     var cur = dxSetRoute();
     Array.prototype.forEach.call(block.querySelectorAll('.aiondx-setnav-item'), function (it) { it.classList.toggle('aiondx-setnav-item--on', it.getAttribute('data-page') === cur); });
   }
@@ -839,20 +966,19 @@
     var showTheirs = pageId === 'agents' && dxset.advanced;
     Array.prototype.forEach.call(host.children, function (c) { if (c === el) return; var want = showTheirs ? '' : 'none'; if (c.style.display !== want) c.style.display = want; });
   }
-  function dxSetSection(title) { var d = gEl('div', 'aiondx-dxset-section'); d.appendChild(gEl('div', 'aiondx-accent-title', title)); return d; }
+  function dxSetSection(title) { var d = gEl('div', 'aiondx-dxset-section'); d.appendChild(gEl('div', 'aiondx-dxl-section-title aiondx-accent-title', title)); return d; }
   function buildDxSetPage(id) {
     var pg = DX_PAGES.filter(function (x) { return x.id === id; })[0];
-    var el = gEl('div', 'aiondx-dxset');
+    var el = gEl('div', 'aiondx-dxset aiondx-dxl-page');
     el.setAttribute('data-testid', 'aiondx-dxset-' + id);
-    el.appendChild(gEl('h2', 'aiondx-dxs-title', pg.title));
-    el.appendChild(gEl('p', 'aiondx-dxs-desc', pg.desc));
-    var addOpts = function (groups, title) {
-      var sec = dxSetSection(title);
+    el.style.setProperty('--dxl-c', dxlColour(id));
+    el.appendChild(dxlHead(id, pg.title, pg.desc));
+    var addOpts = function (groups) {
       var o = buildOptionsUi(groups);
       o.__dxKeep = true;
       optionsEls.push(o);
-      sec.appendChild(o);
-      el.appendChild(sec);
+      el.appendChild(o);
+      return o;
     };
     if (id === 'agents') {
       var list = dxSetSection('Your agents');
@@ -862,21 +988,24 @@
       el.appendChild(list);
       dxAgentsList(box);
       el.appendChild(buildDxCards(['signin', 'setup', 'caches']));
-      addOpts(['Stop', 'The Loop'], 'Stop and the Loop');
-      var adv = dxSetSection('Advanced');
-      adv.appendChild(gEl('div', 'aiondx-accent-desc', 'Environment variables (API keys), custom agents and repairs are in AionUi\u2019s own agent list.'));
-      var ab = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small aiondx-dxset-adv', 'Show the advanced agent list');
+      addOpts(['Stop', 'The Loop']);
+      var adv = dxlCard('gear', 'Advanced', 'Environment variables (API keys), custom agents and repairs are in AionUi\u2019s own agent list.', 'aiondx-dxset-advcard');
+      var ab = gEl('button', 'aiondx-dxl-btn aiondx-dxset-adv', 'Show the advanced agent list');
       ab.type = 'button';
       ab.setAttribute('data-testid', 'aiondx-dxset-advanced');
       ab.addEventListener('click', function () { dxset.advanced = !dxset.advanced; ab.textContent = dxset.advanced ? 'Hide the advanced agent list' : 'Show the advanced agent list'; renderDxSettings(); });
-      adv.appendChild(ab);
+      adv.__body.appendChild(ab);
       el.appendChild(adv);
     } else if (id === 'chats') {
       el.appendChild(buildDxCards(['places']));
-      addOpts(['Long chats'], 'Long chats');
+      addOpts(['Long chats']);
     } else if (id === 'typing') {
-      addOpts(['Typing', 'Links', 'Voice', 'Help'], 'Options');
+      var o = addOpts(['Typing', 'Links', 'Voice', 'Help']);
+      // the voice panel (patch 0011) goes in the Voice card, and only here (November 17th: it found the first AionDX card on any page)
+      var vc = o.querySelector('[data-group="Voice"] .aiondx-dxl-card-body');
+      if (vc) { var slot = gEl('div', 'aiondx-voice-slot'); slot.setAttribute('data-testid', 'aiondx-voice-slot'); vc.appendChild(slot); }
     }
+    el.appendChild(gEl('div', 'aiondx-opts-note', 'Each choice on these pages can also be read and changed by an agent: aiondx config list.'));
     refreshOptionsUi();
     return el;
   }
@@ -888,7 +1017,29 @@
       var list = Array.isArray(j && j.data) ? j.data : Array.isArray(j) ? j : [];
       box.textContent = '';
       if (!list.length) { box.appendChild(gEl('div', 'aiondx-skills-empty', 'No agents found.')); return; }
-      list.forEach(function (a) { box.appendChild(dxAgentRow(a)); });
+      // the agents on this PC first (answering, then not checked, then not answering, then switched off), as cards; the ones not
+      // installed (about thirty, November 17th) folded under one button, so they do not push the rest of the page off screen
+      var missing = function (a) { return a.status === 'missing' || a.installed === false; };
+      var rank = function (a) { return a.status === 'online' ? 0 : a.status === 'offline' ? 2 : 1; };
+      var here = list.filter(function (a) { return !missing(a) && a.enabled !== false; }), off = list.filter(function (a) { return !missing(a) && a.enabled === false; }), gone = list.filter(missing);
+      here.map(function (a, i) { return [a, i]; }).sort(function (x, y) { return rank(x[0]) - rank(y[0]) || x[1] - y[1]; }).concat(off.map(function (a) { return [a]; }))
+        .forEach(function (p) { box.appendChild(dxAgentRow(p[0])); });
+      if (!gone.length) return;
+      var more = gEl('div', 'aiondx-dxset-more');
+      var tg = gEl('button', 'aiondx-dxl-btn aiondx-dxl-btn--text aiondx-dxset-more-btn');
+      tg.type = 'button';
+      tg.setAttribute('data-testid', 'aiondx-dxset-missing-toggle');
+      tg.setAttribute('aria-expanded', 'false');
+      var grid = gEl('div', 'aiondx-dxset-agents aiondx-dxset-missing');
+      grid.setAttribute('data-testid', 'aiondx-dxset-missing');
+      grid.hidden = true;
+      var label = function () { tg.textContent = (grid.hidden ? 'Show the ' : 'Hide the ') + gone.length + (gone.length === 1 ? ' agent' : ' agents') + ' not installed on this PC'; };
+      tg.addEventListener('click', function () { grid.hidden = !grid.hidden; tg.setAttribute('aria-expanded', grid.hidden ? 'false' : 'true'); label(); });
+      label();
+      gone.forEach(function (a) { grid.appendChild(dxAgentRow(a)); });
+      more.appendChild(tg);
+      more.appendChild(grid);
+      box.appendChild(more);
     }, function () { box.textContent = ''; box.appendChild(gEl('div', 'aiondx-skills-empty', 'Could not read the agents.')); });
   }
   function dxAgentRow(a) {
@@ -897,6 +1048,9 @@
     var head = gEl('div', 'aiondx-skill-head');
     head.appendChild(gEl('span', 'aiondx-skill-name', a.name || a.id));
     var st = gEl('span', 'aiondx-skill-layer aiondx-dxset-status', a.enabled === false ? 'Switched off' : (DX_AGENT_STATUS[a.status] || DX_AGENT_STATUS[a.installed === false ? 'missing' : 'unchecked']));
+    var tone = function (status, enabled) { return enabled === false ? 'off' : status === 'online' ? 'ok' : status === 'offline' ? 'bad' : (status === 'missing' || a.installed === false) ? 'off' : 'warn'; };
+    st.setAttribute('data-tone', tone(a.status, a.enabled));
+    row.setAttribute('data-tone', st.getAttribute('data-tone'));
     head.appendChild(st);
     row.appendChild(head);
     if (a.description) row.appendChild(gEl('div', 'aiondx-skill-desc', a.description));
@@ -905,7 +1059,7 @@
     var ctl = gEl('span', 'aiondx-skill-ctl');
     var claude = /^claude/.test(String(a.backend || ''));
     if (claude && window.aiondxSignin) {
-      var si = dxsBtn(a.status === 'missing' || a.installed === false ? 'Install Claude Code' : 'Sign in', 'signin');
+      var si = dxsBtn(a.status === 'missing' || a.installed === false ? 'Install Claude Code' : 'Sign in', 'signin', 'aiondx-skill-pin--main');
       si.addEventListener('click', function () { welcome.opened = true; showWelcome('accounts'); });
       ctl.appendChild(si);
     }
@@ -915,7 +1069,8 @@
       sendJson('POST', '/api/agents/' + encodeURIComponent(a.id) + '/health-check', {}).then(function (r) { return r && r.json ? r.json() : r; }).then(function (j) {
         var d = (j && (j.data || j)) || {};
         st.textContent = DX_AGENT_STATUS[d.status] || 'Checked';
-      }, function () { st.textContent = 'The check did not go through'; }).then(function () { chk.disabled = false; });
+        if (d.status) { a.status = d.status; st.setAttribute('data-tone', tone(d.status, a.enabled)); row.setAttribute('data-tone', st.getAttribute('data-tone')); }
+      }, function () { st.textContent = 'The check did not go through'; st.setAttribute('data-tone', 'bad'); }).then(function () { chk.disabled = false; });
     });
     ctl.appendChild(chk);
     var hint = cacheBridge() ? cacheProfileHint(a.name || '') : '';
@@ -925,7 +1080,7 @@
       var want = a.enabled === false;
       on.disabled = true;
       sendJson('PATCH', '/api/agents/' + encodeURIComponent(a.id) + '/enabled', { enabled: want }).then(function (r) {
-        if (r && (r.ok === undefined || r.ok)) { a.enabled = want; on.textContent = want ? 'Switch off' : 'Switch on'; st.textContent = want ? (DX_AGENT_STATUS[a.status] || 'Switched on') : 'Switched off'; }
+        if (r && (r.ok === undefined || r.ok)) { a.enabled = want; on.textContent = want ? 'Switch off' : 'Switch on'; st.textContent = want ? (DX_AGENT_STATUS[a.status] || 'Switched on') : 'Switched off'; st.setAttribute('data-tone', tone(a.status, a.enabled)); row.setAttribute('data-tone', st.getAttribute('data-tone')); }
       }).then(function () { on.disabled = false; }, function () { on.disabled = false; });
     });
     ctl.appendChild(on);
@@ -936,34 +1091,36 @@
   /** The AionDX cards (setup, sign-in, where chats live, agent caches), built for the Settings page that shows them. */
   function buildDxCards(which) {
     var el = document.createElement('div');
-    el.className = 'aiondx-accent aiondx-dxcards';
+    // no .aiondx-accent here: the voice panel (patch 0011) looked for that class and landed on these pages (November 17th, 2026)
+    el.className = 'aiondx-dxcards';
+    var head = function (icon, cls, title, desc) {
+      return '<div class="aiondx-dxl-card-head"><span class="aiondx-dxl-chip">' + dxlIcon(icon, 17) + '</span><div class="aiondx-dxl-card-text">' +
+        '<div class="aiondx-dxl-card-title aiondx-accent-title ' + cls + '">' + title + '</div><div class="aiondx-dxl-card-desc aiondx-accent-desc">' + desc + '</div></div></div>';
+    };
     el.innerHTML =
-      '<div data-card="setup">' +
-      '<div class="aiondx-accent-title aiondx-setup-title">AionDX setup</div>' +
-      '<div class="aiondx-accent-desc">Bring your agents, instructions and tools over from the other AI apps on this PC, with Antigravity or an agent of your choice.</div>' +
-      '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-setup-open" data-testid="aiondx-setup-open">Open AionDX setup</button>' +
+      '<div data-card="setup" class="aiondx-dxl-card">' +
+      head('spark', 'aiondx-setup-title', 'AionDX setup', 'Bring your agents, instructions and tools over from the other AI apps on this PC, with Antigravity or an agent of your choice.') +
+      '<div class="aiondx-dxl-card-body aiondx-dxl-card-foot"><button type="button" class="aiondx-dxl-btn aiondx-setup-open" data-testid="aiondx-setup-open">Open AionDX setup</button></div>' +
       '</div>' +
-      '<div data-card="signin">' +
-      (window.aiondxSignin ? '<div class="aiondx-accent-title aiondx-signin-title">Sign-in</div>' +
-        '<div class="aiondx-accent-desc">Sign Claude Code in once, in your browser: model calls, Claude Docs, your claude.ai skills and connectors all come with it, and it renews itself.</div>' +
-        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-signin-open" data-testid="aiondx-signin-open">Sign in to your agents</button>' : '') +
-      '</div>' +
-      '<div data-card="places">' +
-      (portableBridge() || placesBridge() ? '<div class="aiondx-accent-title aiondx-drive-title">Where your chats live</div>' +
-        '<div class="aiondx-accent-desc">Your chats stay in AionDX\'s own folder unless you choose a place for them. Pick any chats, teams or groups and keep them in a folder of your own, ' +
-          'on this PC or on a drive that goes with you; AionDX on another PC opens the ones on a drive while it is plugged in.</div>' +
-        (placesBridge() ? '<div class="aiondx-accent-desc aiondx-places-state" data-testid="aiondx-places-state"></div>' : '') +
-        (portableBridge() ? '<div class="aiondx-accent-desc aiondx-drive-state" data-testid="aiondx-drive-state">Checking...</div>' : '') +
-        '<div class="aiondx-accent-row aiondx-drive-buttons">' +
-        (placesBridge() ? '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-places-open" data-testid="aiondx-places-open">Choose where chats live...</button>' : '') +
-        (portableBridge() ? '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-drive-move" data-testid="aiondx-drive-move">Move everything to a drive...</button>' : '') +
-        '</div>' : '') +
-      '</div>' +
-      '<div data-card="caches">' +
-      (cacheBridge() ? '<div class="aiondx-accent-title aiondx-cache-title">Agent caches</div>' +
-        '<div class="aiondx-accent-desc">See what Claude Code, Devin and AionDX keep on this PC, and clear the caches, or the history older than a week, a month or more.</div>' +
-        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-open" data-testid="aiondx-cache-open">Clear agent caches</button>' : '') +
-      '</div>' +
+      (window.aiondxSignin ? '<div data-card="signin" class="aiondx-dxl-card">' +
+        head('key', 'aiondx-signin-title', 'Sign-in', 'Sign Claude Code in once, in your browser: model calls, Claude Docs, your claude.ai skills and connectors all come with it, and it renews itself.') +
+        '<div class="aiondx-dxl-card-body aiondx-dxl-card-foot"><button type="button" class="aiondx-dxl-btn aiondx-dxl-btn--main aiondx-signin-open" data-testid="aiondx-signin-open">Sign in to your agents</button></div>' +
+        '</div>' : '<div data-card="signin"></div>') +
+      (portableBridge() || placesBridge() ? '<div data-card="places" class="aiondx-dxl-card">' +
+        head('folder', 'aiondx-drive-title', 'Where your chats live', 'Your chats stay in AionDX\'s own folder unless you choose a place for them. Pick any chats, teams or groups and keep them in a folder of your own, ' +
+          'on this PC or on a drive that goes with you; AionDX on another PC opens the ones on a drive while it is plugged in.') +
+        '<div class="aiondx-dxl-card-body">' +
+        (placesBridge() ? '<div class="aiondx-accent-desc aiondx-places-state aiondx-dxl-state" data-testid="aiondx-places-state"></div>' : '') +
+        (portableBridge() ? '<div class="aiondx-accent-desc aiondx-drive-state aiondx-dxl-state" data-testid="aiondx-drive-state">Checking...</div>' : '') +
+        '<div class="aiondx-accent-row aiondx-drive-buttons aiondx-dxl-card-foot">' +
+        (portableBridge() ? '<button type="button" class="aiondx-dxl-btn aiondx-dxl-btn--text aiondx-drive-move" data-testid="aiondx-drive-move">Move everything to a drive...</button>' : '') +
+        (placesBridge() ? '<button type="button" class="aiondx-dxl-btn aiondx-dxl-btn--main aiondx-places-open" data-testid="aiondx-places-open">Choose where chats live...</button>' : '') +
+        '</div></div>' +
+        '</div>' : '<div data-card="places"></div>') +
+      (cacheBridge() ? '<div data-card="caches" class="aiondx-dxl-card">' +
+        head('trash', 'aiondx-cache-title', 'Agent caches', 'See what Claude Code, Devin and AionDX keep on this PC, and clear the caches, or the history older than a week, a month or more.') +
+        '<div class="aiondx-dxl-card-body aiondx-dxl-card-foot"><button type="button" class="aiondx-dxl-btn aiondx-cache-open" data-testid="aiondx-cache-open">Clear agent caches</button></div>' +
+        '</div>' : '<div data-card="caches"></div>') +
       '';
     Array.prototype.forEach.call(el.querySelectorAll('[data-card]'), function (c) { if (which.indexOf(c.getAttribute('data-card')) < 0) c.parentNode.removeChild(c); });
     var setupOpen = el.querySelector('.aiondx-setup-open');
@@ -981,7 +1138,7 @@
         var placed = r.items.filter(function (i) { return i.placed; }).length, miss = r.items.filter(function (i) { return i.missing; }).length;
         pst.textContent = (placed ? plural(placed, 'chat or team has', 'chats and teams have') + ' a place of ' + (placed === 1 ? 'its' : 'their') + ' own' : 'All of them are in AionDX\'s folder') +
           (miss ? '; ' + plural(miss, 'is', 'are') + ' missing.' : '.');
-        pst.classList.toggle('aiondx-places-state--bad', miss > 0);
+        pst.classList.toggle('aiondx-places-state--bad', miss > 0); pst.setAttribute('data-tone', miss ? 'bad' : placed ? 'ok' : 'calm');
       });
     }
     var driveMove = el.querySelector('.aiondx-drive-move');
@@ -1007,21 +1164,25 @@
     Array.prototype.forEach.call(host.children, function (c) { if (c === dxs.el) return; var want = own ? '' : 'none'; if (c.style.display !== want) c.style.display = want; });
   }
   function buildDxSkills() {
-    var el = dxs.el = gEl('div', 'aiondx-dxskills');
+    var el = dxs.el = gEl('div', 'aiondx-dxskills aiondx-dxl-page');
     el.setAttribute('data-testid', 'aiondx-dxskills');
-    var head = gEl('div', 'aiondx-dxs-head');
-    head.appendChild(gEl('h2', 'aiondx-dxs-title', 'DX Skills'));
-    var nb = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small aiondx-dxs-new', 'New skill...');
+    el.style.setProperty('--dxl-c', dxlColour('skills'));
+    var nb = gEl('button', 'aiondx-dxl-btn aiondx-dxl-btn--main aiondx-dxs-new', 'New skill...');
     nb.type = 'button';
     nb.setAttribute('data-testid', 'aiondx-dxs-new');
     nb.addEventListener('click', function () { dxsNewSkill(); });
-    head.appendChild(nb);
+    var head = dxlHead('skills', 'DX Skills', 'Every skill your agents have, layer by layer. The global library holds only official skills and changes only through its own update, on your yes; ' +
+      'what you import or write goes into your own skills, or a project\'s if you keep projects, after you review it. Claude, Codex and Gemini chats all get the same ones.', nb);
+    head.classList.add('aiondx-dxs-head');
     el.appendChild(head);
-    el.appendChild(gEl('p', 'aiondx-dxs-desc', 'Every skill your agents have, layer by layer. The global library holds only official skills and changes only through its own update, on your yes; ' +
-      'what you import or write goes into your own skills, or a project\'s if you keep projects, after you review it. Claude, Codex and Gemini chats all get the same ones.'));
     // agents' skill changes: reviewed first or applied (November 16th, 2026); the loop tool's skills propose reads the saved choice
-    var rv = gEl('label', 'aiondx-dxs-review');
-    rv.appendChild(gEl('span', 'aiondx-dxs-review-label', 'Skill changes from agents'));
+    var how = dxlCard('pen', 'How agents change skills', 'Whether an agent’s change to a skill waits for you, and what a compaction keeps for skills.', 'aiondx-dxs-howcard');
+    var rv = gEl('div', 'aiondx-opt-row aiondx-dxs-review');
+    var rvt = gEl('div', 'aiondx-opt-text');
+    rvt.appendChild(gEl('label', 'aiondx-opt-label aiondx-dxs-review-label', 'Skill changes from agents'));
+    rvt.appendChild(gEl('div', 'aiondx-opt-help aiondx-dxs-review-note', 'A chat in yolo (bypassPermissions) does not ask before acting. A replaced skill is kept in .claude\\skills-history.'));
+    rv.appendChild(rvt);
+    var rsw = gEl('span', 'aiondx-select');
     var rsel = document.createElement('select');
     rsel.className = 'aiondx-skill-state aiondx-dxs-review-pick';
     rsel.setAttribute('data-testid', 'aiondx-dxs-review');
@@ -1029,11 +1190,18 @@
       var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; rsel.appendChild(op);
     });
     rsel.disabled = true;
-    rv.appendChild(rsel);
-    rv.appendChild(gEl('span', 'aiondx-dxs-review-note', 'A chat in yolo (bypassPermissions) does not ask before acting. A replaced skill is kept in .claude\\skills-history.'));
-    el.appendChild(rv);
-    // the Skills options (lessons through a compaction), here since November 16th, 2026 (Appearance holds colours only)
-    var sko = buildOptionsUi(['Skills']); sko.__dxKeep = true; optionsEls.push(sko); el.appendChild(sko); refreshOptionsUi();
+    rsw.appendChild(rsel);
+    var rin = gEl('span', 'aiondx-opt-input');
+    rin.appendChild(rsw);
+    rv.appendChild(rin);
+    how.__body.appendChild(rv);
+    // the Skills options (lessons through a compaction), here since November 16th, 2026 (Appearance holds colours only): their rows join this card
+    var sko = buildOptionsUi(['Skills']); sko.__dxKeep = true; optionsEls.push(sko);
+    Array.prototype.forEach.call(sko.querySelectorAll('.aiondx-opt-row'), function (r) { how.__body.appendChild(r); });
+    sko.textContent = '';
+    sko.appendChild(how);
+    el.appendChild(sko);
+    refreshOptionsUi();
     skillsBridge().call('reviewGet').then(function (r) { if (r && r.ok) rsel.value = r.review; rsel.disabled = false; }, function () { rsel.disabled = false; });
     rsel.addEventListener('change', function () {
       skillsBridge().call('reviewSet', { review: rsel.value }).then(function (r) { dxsStatus(r && r.ok ? '' : 'Not saved: ' + ((r && r.error) || 'no answer'), !(r && r.ok)); });
@@ -1664,43 +1832,84 @@
     }
   }
 
-  // The options on Settings > Appearance, drawn from the list.
+  // The options on AionDX's Settings pages, drawn from the list: a card per group, each row its name, the help under it, its control
+  // (the Settings look, November 17th, 2026: the help was a tooltip only, and the controls were the browser's own).
   var optionsEls = [];
+  var OPTION_GROUPS = {
+    'Typing': ['pen', 'Typing', 'How the message box checks and keeps what you write.'],
+    'Links': ['link', 'Links', 'Where links to files, folders and Claude Docs open.'],
+    'Voice': ['mic', 'Voice', 'Speaking to an agent, and hearing its replies read aloud.'],
+    'Help': ['help', 'Help', 'The tips that point at AionDX’s controls.'],
+    'Long chats': ['compact', 'Long chats', 'How a long chat is compacted and paged so it stays quick.'],
+    'Skills': ['layers', 'Skills and compaction', 'What a compaction keeps for your skills.'],
+    'Stop': ['stop', 'Stop', 'When AionDX offers its own Stop, and when it ends an agent that has not stopped.'],
+    'The Loop': ['loop', 'The Loop', 'What each Loop nudge says to an agent.']
+  };
   /** The options of these groups (all when none named), for the Settings page that holds them. */
   function buildOptionsUi(groups) {
     var el = document.createElement('div');
     el.className = 'aiondx-opts';
     el.setAttribute('data-testid', 'aiondx-options');
-    var html = '<div class="aiondx-accent-desc">Each choice here can also be read and changed by an agent: <code>aiondx config list</code>.</div>';
-    var group = '';
+    var cards = {};
     OPTIONS.forEach(function (d) {
       if (d.type === 'command') return;
       if (groups && groups.indexOf(d.group) < 0) return;
-      if (d.group !== group) { group = d.group; html += '<div class="aiondx-opt-group">' + group + '</div>'; }
-      html += '<div class="aiondx-opt-row" data-opt="' + d.id + '"><label class="aiondx-opt-label" title="' + d.desc.replace(/"/g, '&quot;') + '">' + d.label + '</label><span class="aiondx-opt-input"></span><button type="button" class="aiondx-bg-reset aiondx-opt-reset" aria-label="Reset ' + d.label + '">Reset</button></div>';
-    });
-    el.innerHTML = html;
-    Array.prototype.forEach.call(el.querySelectorAll('.aiondx-opt-row'), function (row) {
-      var d = optionDef(row.getAttribute('data-opt'));
-      var host = row.querySelector('.aiondx-opt-input');
+      var card = cards[d.group];
+      if (!card) {
+        var g = OPTION_GROUPS[d.group] || ['gear', d.group, ''];
+        card = cards[d.group] = dxlCard(g[0], g[1], g[2], 'aiondx-opt-card');
+        card.setAttribute('data-group', d.group);
+        el.appendChild(card);
+      }
+      var row = gEl('div', 'aiondx-opt-row');
+      row.setAttribute('data-opt', d.id);
+      var text = gEl('div', 'aiondx-opt-text');
+      var lab = gEl('label', 'aiondx-opt-label', d.label);
+      lab.htmlFor = 'aiondx-opt-in-' + d.id;
+      text.appendChild(lab);
+      text.appendChild(gEl('div', 'aiondx-opt-help', d.desc));
+      row.appendChild(text);
+      var host = gEl('span', 'aiondx-opt-input');
       var input;
-      if (d.type === 'bool') { input = document.createElement('input'); input.type = 'checkbox'; }
-      else if (d.type === 'choice') {
+      if (d.type === 'bool') {
+        var sw = gEl('label', 'aiondx-switch');
+        input = document.createElement('input'); input.type = 'checkbox'; input.setAttribute('role', 'switch');
+        sw.appendChild(input);
+        sw.appendChild(gEl('span', 'aiondx-switch-track'));
+        host.appendChild(sw);
+      } else if (d.type === 'choice') {
+        var sel = gEl('span', 'aiondx-select');
         input = document.createElement('select');
         d.choices.forEach(function (c) { var o = document.createElement('option'); o.value = c[0]; o.textContent = c[1]; input.appendChild(o); });
-      } else { input = document.createElement('input'); input.type = 'number'; input.min = d.min; input.max = d.max; input.className = 'aiondx-opt-number'; }
+        sel.appendChild(input);
+        host.appendChild(sel);
+      } else {
+        var num = gEl('span', 'aiondx-num');
+        input = document.createElement('input'); input.type = 'number'; input.min = d.min; input.max = d.max; input.className = 'aiondx-opt-number';
+        num.appendChild(input);
+        if (d.unit) num.appendChild(gEl('span', 'aiondx-opt-unit', d.unit));
+        host.appendChild(num);
+      }
+      input.id = 'aiondx-opt-in-' + d.id;
       input.setAttribute('data-testid', 'aiondx-opt-' + d.id);
       input.addEventListener('change', function () { setOption(d.id, d.type === 'bool' ? input.checked : input.value); });
-      host.appendChild(input);
-      if (d.unit) { var u = document.createElement('span'); u.className = 'aiondx-opt-unit'; u.textContent = d.unit; host.appendChild(u); }
-      row.querySelector('.aiondx-opt-reset').addEventListener('click', function (ev) { ev.preventDefault(); setOption(d.id, undefined); });
+      row.appendChild(host);
+      var reset = gEl('button', 'aiondx-bg-reset aiondx-opt-reset', 'Reset');
+      reset.type = 'button';
+      reset.setAttribute('aria-label', 'Reset ' + d.label);
+      reset.title = 'Back to the default';
+      reset.addEventListener('click', function (ev) { ev.preventDefault(); setOption(d.id, undefined); });
+      row.appendChild(reset);
+      card.__body.appendChild(row);
     });
+    // the cards in the order the page names its groups (the list's own order put Links before Typing)
+    if (groups) groups.forEach(function (g) { if (cards[g]) el.appendChild(cards[g]); });
     return el;
   }
   function refreshOptionsUi() {
     optionsEls = optionsEls.filter(function (x) { return document.body.contains(x) || x.__dxKeep; });
     optionsEls.forEach(function (optionsEl) {
-    Array.prototype.forEach.call(optionsEl.querySelectorAll('.aiondx-opt-row'), function (row) {
+    Array.prototype.forEach.call(optionsEl.querySelectorAll('.aiondx-opt-row[data-opt]'), function (row) {
       var d = optionDef(row.getAttribute('data-opt'));
       var input = row.querySelector('[data-testid^="aiondx-opt-"]');
       var v = opt(d.id);
@@ -2105,7 +2314,7 @@
     if (rgb) {
       var strong = rgb.map(function (c) { return Math.round(c * 0.7); });
       css += 'html:root{--aiondx-accent:' + p.accent.toLowerCase() + ' !important;--aiondx-accent-rgb:' + rgb.join(', ') +
-        ' !important;--aiondx-accent-strong-rgb:' + strong.join(', ') + ' !important}';
+        ' !important;--aiondx-accent-strong-rgb:' + strong.join(', ') + ' !important;--aiondx-accent-ink:' + onColour(p.accent) + ' !important}';
     }
     ['dark', 'light'].forEach(function (mode) {
       var hex = p && p[mode === 'dark' ? 'bgDark' : 'bgLight'];
@@ -2160,18 +2369,22 @@
     }
     var gallery = card.parentElement;
     if (!pickerEl) pickerEl = buildAccentPicker();
-    if (pickerEl.parentNode !== gallery.parentNode || pickerEl.previousElementSibling !== gallery) {
-      gallery.parentNode.insertBefore(pickerEl, gallery.nextSibling);
+    // a card of its own after AionUi's Theme card (the Settings look, November 17th, 2026: it sat inside it), else right after the gallery
+    var section = gallery.closest('.space-y-16px > div');
+    var after = section && section.parentNode ? section : gallery;
+    if (pickerEl.parentNode !== after.parentNode || pickerEl.previousElementSibling !== after) {
+      after.parentNode.insertBefore(pickerEl, after.nextSibling);
     }
     refreshAccentPicker();
   }
   function buildAccentPicker() {
     var el = document.createElement('div');
-    el.className = 'aiondx-accent';
+    el.className = 'aiondx-accent aiondx-dxl-card aiondx-accent-card';
     el.setAttribute('data-testid', 'aiondx-accent');
     el.innerHTML =
-      '<div class="aiondx-accent-title">AionDX colours</div>' +
-      '<div class="aiondx-accent-desc">Accent: dividing lines and highlights in the AionDX Dark and AionDX Light themes.</div>' +
+      '<div class="aiondx-dxl-card-head"><span class="aiondx-dxl-chip">' + dxlIcon('brush', 17) + '</span><div class="aiondx-dxl-card-text">' +
+      '<div class="aiondx-dxl-card-title aiondx-accent-title">AionDX colours</div>' +
+      '<div class="aiondx-dxl-card-desc aiondx-accent-desc">Accent: dividing lines and highlights in the AionDX Dark and AionDX Light themes, and what is live or chosen in Settings.</div></div></div>' +
       '<div class="aiondx-accent-row" role="radiogroup" aria-label="AionDX accent colour"></div>' +
       '<label class="aiondx-accent-toggle"><input type="checkbox" class="aiondx-accent-dividers"> Accent dividing lines</label>' +
       '<div class="aiondx-accent-desc aiondx-bg-desc">Background: the app\'s backdrop in dark and light mode, whichever theme is on.</div>' +
@@ -8051,7 +8264,7 @@
     '.aiondx-dxset-section{display:flex;flex-direction:column;gap:8px}',
     '.aiondx-dxset-agents{display:flex;flex-direction:column;gap:6px}',
     '.aiondx-dxcards{margin:0;display:flex;flex-direction:column;gap:18px}',
-    '.aiondx-dxcards > [data-card]{display:flex;flex-direction:column;gap:6px;align-items:flex-start}',
+    '.aiondx-dxcards > [data-card]:not(.aiondx-dxl-card){display:flex;flex-direction:column;gap:6px;align-items:flex-start}',
     '.aiondx-dxcards > [data-card]:empty{display:none}',
     // DX Skills (R-128 step 5)
     '.aiondx-dxskills{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}',
@@ -8247,6 +8460,141 @@
     '.aiondx-opt-input{display:inline-flex;align-items:center;gap:6px}',
     '.aiondx-opt-number{width:84px}',
     '.aiondx-opt-unit{font-size:12px;opacity:.7}',
+    // the Settings look (November 17th, 2026): one look for every Settings page, AionUi's and AionDX's. --dxl-c is the page's own fixed colour;
+    // --dxl-a the accent (Appearance), for what is live or chosen.
+    'body{--dxl-a:var(--aiondx-accent,rgb(var(--primary-6,45,212,191)));--dxl-a-rgb:var(--aiondx-accent-rgb,var(--primary-6,45,212,191))}',
+    '.aiondx-dxl-page{display:flex;flex-direction:column;gap:18px;margin-bottom:28px}',
+    '.aiondx-dxl-head{display:flex;align-items:center;gap:16px;padding:2px 0 18px;background:linear-gradient(90deg,var(--dxl-a),rgba(var(--dxl-a-rgb),.35) 35%,transparent 75%) left bottom/100% 2px no-repeat}',
+    '.aiondx-dxl-head-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
+    '.aiondx-dxl-head .aiondx-dxs-title{margin:0;font-size:22px;font-weight:650;line-height:1.25;color:var(--color-text-1)}',
+    '.aiondx-dxl-head .aiondx-dxs-desc{margin:0;font-size:13px;line-height:1.55;color:var(--color-text-2);max-width:820px}',
+    '.aiondx-dxl-head > button{flex:0 0 auto}',
+    '.aiondx-dxl-head--theirs{margin-bottom:18px}',
+    '.aiondx-dxl-tile{flex:0 0 auto;width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(140deg,color-mix(in srgb,var(--dxl-c) 88%,#fff),color-mix(in srgb,var(--dxl-c) 72%,#000));box-shadow:0 6px 18px color-mix(in srgb,var(--dxl-c) 32%,transparent)}',
+    '.aiondx-dxl-card{background:var(--color-bg-2);border:1px solid var(--color-border-2);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}',
+    '.aiondx-dxl-card-head{display:flex;align-items:flex-start;gap:12px}',
+    '.aiondx-dxl-chip{flex:0 0 auto;width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--dxl-c);background:color-mix(in srgb,var(--dxl-c) 15%,transparent)}',
+    '.aiondx-dxl-card-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding-top:1px}',
+    '.aiondx-dxl-card .aiondx-dxl-card-title{margin:0;font-size:15px;font-weight:600;line-height:1.35;color:var(--color-text-1)}',
+    '.aiondx-dxl-card .aiondx-dxl-card-desc{margin:0;font-size:12.5px;line-height:1.5;color:var(--color-text-3)}',
+    '.aiondx-dxl-card-body{display:flex;flex-direction:column;gap:8px}',
+    '.aiondx-dxl-card-body:empty{display:none}',
+    '.aiondx-dxl-card-foot{flex-direction:row;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px}',
+    '.aiondx-dxcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}',
+    '.aiondx-dxcards > [data-card]:empty{display:none}',
+    '.aiondx-dxcards > .aiondx-dxl-card{justify-content:space-between}',
+    '.aiondx-dxl-section-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.01em;color:var(--color-text-2)}',
+    '.aiondx-dxl-section-title::before{content:"";width:3px;height:14px;border-radius:2px;background:var(--dxl-a)}',
+    '.aiondx-dxl-page .aiondx-dxset-section{gap:10px}',
+    '.aiondx-dxl-page .aiondx-dxset-agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px}',
+    '.aiondx-dxl-page .aiondx-dxset-more{grid-column:1 / -1;display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-top:4px}',
+    '.aiondx-dxl-page .aiondx-dxset-more > .aiondx-dxset-missing{width:100%}',
+    '.aiondx-dxl-page .aiondx-dxset-missing[hidden]{display:none}',
+    '.aiondx-dxl-page .aiondx-dxset-agent{background:var(--color-bg-2);border:1px solid var(--color-border-2);border-radius:12px;padding:12px 14px 12px 16px;box-shadow:inset 3px 0 0 var(--t,transparent);display:flex;flex-direction:column;gap:2px}',
+    '.aiondx-dxl-page .aiondx-dxset-agent .aiondx-skill-name{font-size:14px;font-weight:600;color:var(--color-text-1)}',
+    '.aiondx-dxl-page .aiondx-dxset-agent .aiondx-skill-meta{justify-content:space-between;margin-top:8px}',
+    '.aiondx-dxl-page .aiondx-dxset-agent .aiondx-skill-ctl{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}',
+    '.aiondx-dxl-page .aiondx-dxset-status{margin-left:auto;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:18px;color:var(--t,var(--color-text-2));background:color-mix(in srgb,var(--t,#888) 15%,transparent)}',
+    '.aiondx-dxl-page [data-tone="ok"]{--t:#15803d}.aiondx-dxl-page [data-tone="warn"]{--t:#b45309}.aiondx-dxl-page [data-tone="bad"]{--t:#b91c1c}.aiondx-dxl-page [data-tone="off"],.aiondx-dxl-page [data-tone="calm"]{--t:#64748b}',
+    'body[arco-theme="dark"] .aiondx-dxl-page [data-tone="ok"]{--t:#4ade80}body[arco-theme="dark"] .aiondx-dxl-page [data-tone="warn"]{--t:#fbbf24}body[arco-theme="dark"] .aiondx-dxl-page [data-tone="bad"]{--t:#f87171}body[arco-theme="dark"] .aiondx-dxl-page [data-tone="off"],body[arco-theme="dark"] .aiondx-dxl-page [data-tone="calm"]{--t:#94a3b8}',
+    '.aiondx-dxl-page .aiondx-dxl-state{font-size:13px;font-weight:500;line-height:1.5;color:var(--t,var(--color-text-2));margin:0}',
+    '.aiondx-dxl-page .aiondx-dxl-state[data-tone]::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;background:var(--t);vertical-align:1px}',
+    '.aiondx-opts{display:flex;flex-direction:column;gap:16px}',
+    '.aiondx-dxl-card .aiondx-opt-row{display:grid;grid-template-columns:minmax(0,1fr) auto 56px;align-items:center;gap:6px 16px;padding:12px 10px;margin:0 -10px;border-radius:10px}',
+    '.aiondx-dxl-card .aiondx-opt-row + .aiondx-opt-row{border-top:1px solid var(--color-border-1);border-top-left-radius:0;border-top-right-radius:0}',
+    '.aiondx-dxl-card .aiondx-opt-row:hover{background:var(--color-fill-1)}',
+    '.aiondx-opt-text{min-width:0;display:flex;flex-direction:column;gap:3px}',
+    '.aiondx-dxl-card .aiondx-opt-label{flex:none;font-size:14px;font-weight:500;line-height:1.4;color:var(--color-text-1);cursor:pointer}',
+    '.aiondx-opt-help{font-size:12.5px;line-height:1.5;color:var(--color-text-3);max-width:700px}',
+    '.aiondx-dxl-card .aiondx-opt-input{justify-self:end;display:inline-flex;align-items:center;gap:6px}',
+    '.aiondx-dxl-card .aiondx-opt-reset{justify-self:end;border:0;background:none;padding:3px 6px;border-radius:6px;font-size:12px;color:var(--color-text-3);cursor:pointer}',
+    '.aiondx-dxl-card .aiondx-opt-reset:hover{color:var(--dxl-a);background:rgba(var(--dxl-a-rgb),.1)}',
+    '.aiondx-dxs-howcard .aiondx-opt-row{grid-template-columns:minmax(0,1fr) auto 56px}',
+    '.aiondx-dxs-howcard .aiondx-dxs-review > .aiondx-opt-input{grid-column:2 / 4}',
+    '.aiondx-switch{position:relative;display:inline-flex;width:40px;height:22px;flex:0 0 auto;cursor:pointer}',
+    '.aiondx-switch input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:1}',
+    '.aiondx-switch-track{position:absolute;inset:0;border-radius:11px;background:var(--color-fill-4,rgba(128,128,128,.4));transition:background .15s}',
+    '.aiondx-switch-track::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .15s}',
+    '.aiondx-switch input:checked + .aiondx-switch-track{background:var(--dxl-a)}',
+    '.aiondx-switch input:checked + .aiondx-switch-track::after{transform:translateX(18px)}',
+    '.aiondx-switch input:focus-visible + .aiondx-switch-track{outline:2px solid rgba(var(--dxl-a-rgb),.6);outline-offset:2px}',
+    '.aiondx-select{position:relative;display:inline-flex;max-width:400px}',
+    '.aiondx-select select{-webkit-appearance:none;appearance:none;height:34px;max-width:400px;padding:0 34px 0 12px;border:1px solid var(--color-border-2);border-radius:9px;background:var(--color-bg-1);color:var(--color-text-1);font:inherit;font-size:13px;cursor:pointer;text-overflow:ellipsis}',
+    '.aiondx-select::after{content:"";position:absolute;right:14px;top:50%;width:7px;height:7px;margin-top:-6px;border-right:1.6px solid var(--color-text-3);border-bottom:1.6px solid var(--color-text-3);transform:rotate(45deg);pointer-events:none}',
+    '.aiondx-select select:hover{border-color:var(--color-text-4,var(--color-border-3))}',
+    '.aiondx-select select:focus{outline:none;border-color:var(--dxl-a);box-shadow:0 0 0 3px rgba(var(--dxl-a-rgb),.18)}',
+    '.aiondx-select select:disabled{opacity:.6;cursor:default}',
+    '.aiondx-select option{background:var(--color-bg-popup,var(--color-bg-2));color:var(--color-text-1)}',
+    '.aiondx-num{display:inline-flex;align-items:center;height:34px;border:1px solid var(--color-border-2);border-radius:9px;background:var(--color-bg-1)}',
+    '.aiondx-num:focus-within{border-color:var(--dxl-a);box-shadow:0 0 0 3px rgba(var(--dxl-a-rgb),.18)}',
+    '.aiondx-num input{width:72px;height:100%;border:0;outline:0;background:transparent;color:var(--color-text-1);font:inherit;font-size:13px;text-align:right;padding:0 6px 0 10px}',
+    '.aiondx-num .aiondx-opt-unit{opacity:1;font-size:12.5px;color:var(--color-text-3);padding:0 11px 0 2px}',
+    '.aiondx-dxl-btn{height:32px;padding:0 14px;border:1px solid var(--color-border-2);border-radius:9px;background:var(--color-bg-1);color:var(--color-text-1);font:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;transition:border-color .12s,color .12s,background .12s,filter .12s}',
+    '.aiondx-dxl-btn:hover{border-color:var(--dxl-a);color:var(--dxl-a)}',
+    '.aiondx-dxl-btn--main,.aiondx-dxl-btn--main:hover{background:var(--dxl-a);border-color:var(--dxl-a);color:var(--aiondx-accent-ink,#fff)}',
+    '.aiondx-dxl-btn--main:hover{filter:brightness(1.08)}',
+    '.aiondx-dxl-btn--text{border-color:transparent;background:none;color:var(--dxl-a)}',
+    '.aiondx-dxl-btn--text:hover{border-color:transparent;background:rgba(var(--dxl-a-rgb),.1)}',
+    '.aiondx-dxl-btn:disabled{opacity:.5;cursor:default;filter:none}',
+    '.aiondx-dxl-page .aiondx-skill-pin{height:28px;padding:0 11px;border:1px solid var(--color-border-2);border-radius:8px;background:var(--color-bg-1);color:var(--color-text-1);font-size:12.5px}',
+    '.aiondx-dxl-page .aiondx-skill-pin:hover{border-color:var(--dxl-a);color:var(--dxl-a)}',
+    '.aiondx-dxl-page .aiondx-skill-pin--main,.aiondx-dxl-page .aiondx-skill-pin--main:hover{background:var(--dxl-a);border-color:var(--dxl-a);color:var(--aiondx-accent-ink,#fff)}',
+    '.aiondx-opts-note{font-size:12px;color:var(--color-text-3)}',
+    '.aiondx-dxl-page .aiondx-dxs-tabs{display:flex;gap:4px;width:max-content;max-width:100%;padding:4px;border:1px solid var(--color-border-2);border-radius:12px;background:var(--color-bg-2);flex-wrap:wrap}',
+    '.aiondx-dxl-page .aiondx-dxs-tab{height:30px;padding:0 14px;border:0;border-radius:9px;font-weight:500;color:var(--color-text-2)}',
+    '.aiondx-dxl-page .aiondx-dxs-tab:hover{background:var(--color-fill-2);color:var(--color-text-1)}',
+    '.aiondx-dxl-page .aiondx-dxs-tab--on,.aiondx-dxl-page .aiondx-dxs-tab--on:hover{background:var(--dxl-a);color:var(--aiondx-accent-ink,#fff)}',
+    '.aiondx-dxl-page .aiondx-dxs-layer{background:var(--color-bg-2);border:1px solid var(--color-border-2);border-radius:12px;padding:6px 14px 10px 16px;box-shadow:inset 3px 0 0 var(--dxl-c)}',
+    '.aiondx-dxl-page .aiondx-dxs-body input[type="text"],.aiondx-dxl-page .aiondx-dxs-body input[type="search"],.aiondx-dxl-page .aiondx-dxs-body input:not([type]){height:34px;border:1px solid var(--color-border-2);border-radius:9px;background:var(--color-bg-1);color:var(--color-text-1);padding:0 12px}',
+    '.aiondx-dxl-card .aiondx-voice-panel{margin:6px 0 0;padding:14px 0 0;border:0;border-top:1px solid var(--color-border-1);border-radius:0;background:none;box-shadow:none}',
+    '.aiondx-dxl-card .aiondx-voice-panel .aiondx-voice-title{display:none}',
+    '.aiondx-dxl-card .aiondx-voice-panel select,.aiondx-dxl-card .aiondx-voice-panel input[type="text"],.aiondx-dxl-card .aiondx-voice-panel input[type="password"]{height:34px;border:1px solid var(--color-border-2);border-radius:9px;background:var(--color-bg-1);color:var(--color-text-1);padding:0 10px}',
+    '.aiondx-dxl-card .aiondx-voice-panel input[type="checkbox"]{accent-color:var(--dxl-a)}',
+    '.aiondx-clog-rel{display:flex;flex-direction:column;gap:12px;margin-top:8px}',
+    '.aiondx-clog-relhead{display:flex;align-items:baseline;gap:12px;padding:0 2px 10px;border-bottom:1px solid var(--color-border-2)}',
+    '.aiondx-clog-ver{font-size:18px;font-weight:700;color:var(--color-text-1)}',
+    '.aiondx-clog-date{font-size:13px;color:var(--color-text-3)}',
+    '.aiondx-clog-new{align-self:center;padding:1px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.03em;background:var(--dxl-a);color:var(--aiondx-accent-ink,#fff)}',
+    '.aiondx-clog-count{margin-left:auto;font-size:12px;color:var(--color-text-3)}',
+    '.aiondx-clog-item{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:20px;align-items:start;padding:14px;background:var(--color-bg-2);border:1px solid var(--color-border-2);border-radius:14px}',
+    '.aiondx-clog-item--nopic{grid-template-columns:minmax(0,1fr)}',
+    '.aiondx-clog-item--nopic .aiondx-clog-fig{display:none}',
+    '.aiondx-clog-fig{margin:0;border-radius:10px;overflow:hidden;border:1px solid var(--color-border-2);background:var(--color-bg-1);line-height:0}',
+    '.aiondx-clog-img{width:100%;height:auto;display:block;cursor:zoom-in}',
+    '.aiondx-clog-text{display:flex;flex-direction:column;gap:6px;padding-top:2px}',
+    '.aiondx-clog-name{font-size:15px;font-weight:600;color:var(--color-text-1)}',
+    '.aiondx-clog-name::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:9px;background:var(--dxl-a);vertical-align:1px}',
+    '.aiondx-clog-how{font-size:13px;line-height:1.6;color:var(--color-text-2)}',
+    '@media (max-width:1180px){.aiondx-clog-item{grid-template-columns:minmax(0,1fr)}}',
+    '.settings-sider .settings-sider__item[data-aiondx-c] svg,.settings-sider .aiondx-setnav-item .aiondx-setnav-icon{color:var(--dxl-c)}',
+    '.settings-sider .settings-sider__item[class~="!bg-fill-3"],.settings-sider .aiondx-setnav-item--on{background:rgba(var(--dxl-a-rgb),.14) !important;box-shadow:inset 3px 0 0 var(--dxl-a)}',
+    '.settings-sider .settings-sider__item[class~="!bg-fill-3"] .settings-sider__item-label,.settings-sider .aiondx-setnav-item--on .aiondx-setnav-label{font-weight:600}',
+    '.settings-sider.aiondx-on-changelog .settings-sider__item[data-settings-id="about"]{background:transparent !important;box-shadow:none}',
+    '.settings-sider.aiondx-on-changelog .settings-sider__item[data-settings-id="about"] .settings-sider__item-label{font-weight:inherit}',
+    '.settings-sider .settings-sider__group-header,.settings-sider .aiondx-setnav-head{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--color-text-3)}',
+    '.settings-page-content[data-aiondx-page] h1{display:flex;align-items:center;font-weight:650}',
+    '.settings-page-content[data-aiondx-page] h1::before{content:"";flex:0 0 auto;width:44px;height:44px;margin-right:16px;border-radius:12px;box-shadow:0 6px 18px color-mix(in srgb,var(--dxl-c) 32%,transparent)}',
+    '.settings-page-content[data-aiondx-page] .bg-1.sticky{padding-bottom:16px;background-image:linear-gradient(90deg,var(--dxl-a),rgba(var(--dxl-a-rgb),.35) 35%,transparent 75%);background-size:100% 2px;background-position:left bottom;background-repeat:no-repeat}',
+    '.settings-page-content[data-aiondx-page] .bg-2.rd-12px,.settings-page-content[data-aiondx-page] .bg-2.rd-16px{border:1px solid var(--color-border-2);box-shadow:inset 3px 0 0 var(--dxl-c),0 1px 2px rgba(0,0,0,.05)}',
+    '.settings-page-content[data-aiondx-page="appearance"] .space-y-16px > div:not(.aiondx-dxl-card){background:var(--color-bg-2);border:1px solid var(--color-border-2);border-radius:14px;box-shadow:inset 3px 0 0 var(--dxl-c)}',
+    '.settings-page-content[data-aiondx-page] .arco-switch-checked{background-color:var(--dxl-a) !important}',
+    '.settings-page-content[data-aiondx-page] .arco-btn-primary:not(.arco-btn-disabled):not(.arco-btn-status-danger){background-color:var(--dxl-a);border-color:var(--dxl-a);color:var(--aiondx-accent-ink,#fff)}',
+    '.settings-page-content[data-aiondx-page] input[type="checkbox"]{accent-color:var(--dxl-a)}',
+    '.settings-page-content[data-aiondx-page] [data-testid="aiondx-accent"]{border-radius:14px;padding:16px 18px;box-shadow:inset 3px 0 0 var(--dxl-c)}',
+    // theme previews (November 17th, 2026): AionUi's Light carries a cover picture with AionUi's name, and AionDX Light's preview came out in
+    // dark colours (the gallery could not read its tokens and fell back to the current mode's). Both are drawn here in their own light colours.
+    '[data-testid="theme-card-light"],[data-testid="theme-card-aiondx-light"]{background-image:none !important;position:relative}',
+    '[data-testid="theme-card-light"]{background-color:#f7f8fa !important}',
+    '[data-testid="theme-card-aiondx-light"]{background-color:#eef1f5 !important}',
+    '[data-testid="theme-card-aiondx-light"] > .pointer-events-none.inset-0{display:none}',
+    '[data-testid="theme-card-light"]::before,[data-testid="theme-card-aiondx-light"]::before{content:"";pointer-events:none;position:absolute;left:8px;right:8px;top:8px;bottom:8px;border-radius:8px;border:1px solid #d9dde5}',
+    '[data-testid="theme-card-light"]::before{background:linear-gradient(#3b82f6,#3b82f6) 7px 5px/5px 5px no-repeat,linear-gradient(#d9dde5,#d9dde5) 17px 6px/22px 3px no-repeat,linear-gradient(#eef1f5,#eef1f5) 0 0/100% 14px no-repeat,linear-gradient(#d9dde5,#d9dde5) 8px 24px/34px 4px no-repeat,linear-gradient(#d9dde5,#d9dde5) 8px 34px/26px 4px no-repeat,linear-gradient(#d9dde5,#d9dde5) 8px 44px/30px 4px no-repeat,linear-gradient(#eef1f5,#eef1f5) 0 14px/30% 100% no-repeat,linear-gradient(#d9dde5,#d9dde5) 38% 30px/40% 4px no-repeat,linear-gradient(#3b82f6,#3b82f6) 46% 46px/30% 5px no-repeat,linear-gradient(#d9dde5,#d9dde5) 38% 60px/50% 4px no-repeat,#ffffff}',
+    '[data-testid="theme-card-aiondx-light"]::before{background:linear-gradient(var(--dxl-a),var(--dxl-a)) 7px 5px/5px 5px no-repeat,linear-gradient(#c9d1dc,#c9d1dc) 17px 6px/22px 3px no-repeat,linear-gradient(#e6eaf0,#e6eaf0) 0 0/100% 14px no-repeat,linear-gradient(#c9d1dc,#c9d1dc) 8px 24px/34px 4px no-repeat,linear-gradient(#c9d1dc,#c9d1dc) 8px 34px/26px 4px no-repeat,linear-gradient(#c9d1dc,#c9d1dc) 8px 44px/30px 4px no-repeat,linear-gradient(#e6eaf0,#e6eaf0) 0 14px/30% 100% no-repeat,linear-gradient(#c9d1dc,#c9d1dc) 38% 30px/40% 4px no-repeat,linear-gradient(var(--dxl-a),var(--dxl-a)) 46% 46px/30% 5px no-repeat,linear-gradient(#c9d1dc,#c9d1dc) 38% 60px/50% 4px no-repeat,#eef1f5;border-color:color-mix(in srgb,var(--dxl-a) 45%,#d5dce6)}',
+    '.settings-page-content[data-aiondx-page="agents"] h1::before{background:url(\'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%225%22%20y%3D%228%22%20width%3D%2214%22%20height%3D%2211%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22M12%204v4M9.5%2013h.01M14.5%2013h.01M10%2016.5h4%22%2F%3E%3C%2Fsvg%3E\') center/22px no-repeat,linear-gradient(140deg,color-mix(in srgb,#8b5cf6 88%,#fff),color-mix(in srgb,#8b5cf6 72%,#000))}',
+    '.settings-page-content[data-aiondx-page="model"] h1::before{background:url(\'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%227%22%20y%3D%227%22%20width%3D%2210%22%20height%3D%2210%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M10%203v4M14%203v4M10%2017v4M14%2017v4M3%2010h4M3%2014h4M17%2010h4M17%2014h4%22%2F%3E%3C%2Fsvg%3E\') center/22px no-repeat,linear-gradient(140deg,color-mix(in srgb,#06b6d4 88%,#fff),color-mix(in srgb,#06b6d4 72%,#000))}',
+    '.settings-page-content[data-aiondx-page="skills"] h1::before{background:url(\'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M13%203L5%2014h6l-1%207%208-11h-6z%22%2F%3E%3C%2Fsvg%3E\') center/22px no-repeat,linear-gradient(140deg,color-mix(in srgb,#10b981 88%,#fff),color-mix(in srgb,#10b981 72%,#000))}',
+    '.settings-page-content[data-aiondx-page="tools"] h1::before{background:url(\'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M14.5%204.5a4.5%204.5%200%200%200%205%205.5L11%2018.5a2.1%202.1%200%200%201-3-3L16.5%207a4.5%204.5%200%200%200-2-2.5z%22%2F%3E%3C%2Fsvg%3E\') center/22px no-repeat,linear-gradient(140deg,color-mix(in srgb,#f97316 88%,#fff),color-mix(in srgb,#f97316 72%,#000))}',
+    '.settings-page-content[data-aiondx-page="archived"] h1::before{background:url(\'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M4%206h16v4H4zM5.5%2010v9h13v-9M10%2014h4%22%2F%3E%3C%2Fsvg%3E\') center/22px no-repeat,linear-gradient(140deg,color-mix(in srgb,#a8a29e 88%,#fff),color-mix(in srgb,#a8a29e 72%,#000))}',
     '.aiondx-agent-cache{flex-shrink:0}',
     '.aiondx-acct-menu{max-height:70vh;overflow-y:auto}',
     '.aiondx-cache-row--focus{outline:2px solid rgba(var(--aiondx-accent-rgb,45,212,191),.8);outline-offset:3px;border-radius:10px}',
@@ -8884,7 +9232,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel, renderDxSkills, renderDxSettings].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel, renderDxSkills, renderDxSettings, renderChangelog, renderSettingsLook].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -12586,24 +12934,31 @@
   // done by the update. Shown once per release (aionui.dx.whatsnew.seen); Got it or the close button puts it away. A brand-new install, which
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
-    release: '0.28.3',
+    // the release being built: its date is set the day it is released (the Changelog shows it)
+    release: '0.28.4', date: '2026-11-17',
     items: [
+      ['Settings, made over', 'Every Settings page has one look: a coloured header, cards with icons, the help under each setting, AionDX’s own switches, and your accent colour (Appearance) on what is on or chosen. Agents shows the agents on this PC first, each with its state in colour.'],
+      ['The Changelog', 'Settings > About > Changelog lists everything new in AionDX, release by release, each with a picture of where it is. The What’s new card links to it.'],
+      ['Tab colours in your docs', 'A doc’s tab can have a colour: choose one in the tab’s ▾ menu, or ask the agent to colour it.'],
+      ['Pictures full screen', 'Click a picture in a DX Doc to see it full screen: the mouse wheel zooms, dragging moves it, Esc closes it.'],
+      ['Fixes', 'The voice settings are on Typing, links and voice (they showed on other pages). AionDX’s settings sit above AI Core in the list. The Light theme previews are drawn light. An agent proposing a change to a skill can no longer lose the skill it is changing. A doc you left open in a chat, on its tab, is open again when you come back.'],
+    ],
+    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
+    earlier: [{ release: '0.28.3', date: '2026-11-16', items: [
       ['AionDX settings', 'Settings has AionDX pages of its own. Agents shows whether each agent is installed and answering, with Check, sign-in or Install Claude Code, its cache, Stop and the Loop. Chats and drives, and Typing, links and voice, have the rest; Appearance keeps the colours.'],
       ['Chats that share a folder move together', 'In Where your chats live, ticking a chat whose folder other chats or teams also use asks to move them together: the folder goes once, beside their own folders, and one Undo puts it all back. Brought back, the folder goes home with the last of them. A project’s folder follows it if you keep projects.'],
       ['Docs go where the chat goes', 'A chat you moved keeps its DX Docs in its own folder, so they travel with it, in a project or not. Opening the Docs panel no longer leaves an empty DX Docs folder behind.'],
       ['Request notes you can check', 'Settings > Skills > Request notes lists what AionDX made of your requests in Claude chats, with the first words of each, on this PC only. Mark each Fit or Did not fit.'],
       ['Ask-first chats are guarded', 'A chat that asks before acting starts with Windows’ folder-link guard on, so its agent cannot be led through a folder link to somewhere else. Chats with full access run without it.'],
       ['Fixes', 'Every chat now gets AionDX’s own skills (the Loop, setup, scheduled tasks and the rest); they came through folder links that could not be opened when the installer had started AionDX. Chats on a drive keep their sidebar group on another PC.'],
-    ],
-    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
-    earlier: [{ release: '0.28.2', items: [
+    ] }, { release: '0.28.2', date: '2026-11-16', items: [
       ['Install Claude Code from AionDX', 'On a PC without Claude Code, Sign in to your agents (Settings > Appearance) has an Install Claude Code button: it runs Anthropic\u2019s own installer, then you sign in in your browser. Add another Claude account now asks for its name in the panel.'],
       ['Docs stay as you left them', 'The Docs panel opens in a chat only if you left it open there; every other chat opens with it closed. An agent\u2019s new doc waits in the panel, and the Docs button counts it.'],
       ['Skill changes your way', 'Settings > Skills: agents’ skill changes ask you first only in chats that ask before acting (the default), always, or never. A skill they replace is kept in .claude\\skills-history.'],
       ['Projects are optional', 'Nothing asks a chat for a project. DX Skills imports, writes and links skills into your own skills when you keep no projects, and agents propose skill changes there too.'],
       ['Your messages go out as you type them', 'AionDX no longer adds a line to a message it took for a correction, and the bell no longer says an agent had to be corrected.'],
       ['Fixes', 'Chats you keep on a drive come in on another PC whole; moving them again leaves nothing behind, and they no longer show under Projects. The What\u2019s new card fits on screen; a team member\u2019s agent menu no longer lists the same account twice.'],
-    ] }, { release: '0.28.0', items: [
+    ] }, { release: '0.28.0', date: '2026-11-15', items: [
       ['Tabs in your docs', 'A DX Doc can hold several tabs, and sub-tabs under a tab: + beside the tabs adds one, a double-click renames it, its \u25be menu moves or deletes it. Agents write into any tab. Export one tab or all of them to Word, PDF or a Markdown file.'],
       ['Comments, the Claude Docs way', 'Commented words are highlighted; click them to open the thread beside them, reply or resolve it there. Comments opens the list at its own height (drag its top edge) with its own scroll bar; resolved ones are a click away. Comment on a chart or a drawing with its Comment button.'],
       ['Suggest edits yourself', 'Switch on Suggesting in a doc: what you type is proposed, not made, and the agent is told. Talk on any suggestion, and Accept all or Reject all in one go.'],
@@ -12618,21 +12973,126 @@
       ['DX Skills', 'Settings > Skills: every skill, layer by layer. Import a ZIP, a folder or a GitHub link into your skills or a project’s after reviewing what its scripts do; ask an agent to write a new one as a DX Doc; browse Anthropic’s and OpenAI’s official skills; update the global library on your yes.'],
       ['Skills that improve themselves', 'A compaction keeps its lessons for skills (it can be switched off in Options). Agents propose skill changes, and the bell tells you when one waits for you in DX Skills.'],
       ['Agents plan before they build', 'Every agent keeps a ledger of your asks in your words; Claude chats get a plan-first note on a build request and are sent back when they say done with asks still open. Switch a project to build from approved plans only in its Project menu: code waits for your Approve in the plan doc.'],
-    ] }, { release: '0.27.10', items: [
+    ] }, { release: '0.27.10', date: '2026-11-13', items: [
       ['Type in your docs', 'Click into a DX Doc and type, as in Claude Docs. The bar above it has headings, bold, italic, lists, tasks, tables and links. It saves by itself a moment after you stop, and every save keeps the version before: \u22ef > Earlier versions says who wrote each one.'],
       ['Suggestions', 'Ask an agent to suggest changes to a doc (\u201csuggest edits to the plan\u201d): each shows in the doc, the old words struck and the new ones beside them, with a card to Accept or Reject. The doc changes only when you accept.'],
       ['Export to Word', 'In a doc\u2019s \u22ef menu: Export as Word (charts and diagrams come as pictures), Export as PDF, or Copy as Markdown.'],
-    ] }, { release: '0.27.9', items: [
+    ] }, { release: '0.27.9', date: '2026-11-13', items: [
       ['Charts and diagrams', 'Ask any agent for a chart or a diagram in a DX Doc (\u201cput the numbers in a chart\u201d, \u201cdraw the steps as a flowchart\u201d): the panel draws it. Hover a bar or a point for its value; Data shows the numbers. Tasks in a doc can be ticked, and a doc\u2019s link in a reply is a card that opens it.'],
-    ] }, { release: '0.27.8', items: [
+    ] }, { release: '0.27.8', date: '2026-11-13', items: [
       ['Ask for a DX Doc', 'Type \u201cmake a DX Doc about \u2026\u201d in any chat: it opens in a wide panel beside the chat and fills in while you watch. The Docs button at the top opens and closes it. Say \u201cDX Doc\u201d by name: a Claude chat may otherwise use Anthropic\u2019s Claude Docs, which needs a claude.ai sign-in. Select text in it to comment; the agent is told.'],
-    ] }, { release: '0.27.7', items: [
+    ] }, { release: '0.27.7', date: '2026-11-13', items: [
       ['Compaction by itself', 'A chat over half full is compacted just before its prompt cache runs out, timed by the cache length measured for its account, while its Loop is off. Click the context ring (next to the send button) to switch it off or on, or to compact now.'],
-    ] }, { release: '0.27.5', items: [
+    ] }, { release: '0.27.5', date: '2026-11-13', items: [
       ['DX Docs', 'Ask your agent for a document, report or plan: it appears in the right-hand sidebar and fills in as you watch. Select text in it to comment; the agent is told. Edit, earlier versions and PDF are in its bar.'],
       ['More Claude accounts', 'On the new-chat page, click + Add account at the end of the agent row. Name the account, choose what it may do, and sign in on the page that opens; AionDX checks the key and adds a pill for it.'],
     ] }],
   };
+  // ---------------------------------------------------------------- the Changelog (November 17th, 2026)
+  // The user: "turn your \"What's new\" messages into our official running changelog ... A screenshot (close up, showing the balloon popup and the
+  // ui being affected) should accompany each changelog entry, split out like you have them when the ui first loads after a patch, but in a
+  // continuous list in the settings under \"Changelog\" under the \"About\" group in settings". Settings > About > Changelog: every release's What's
+  // new items, newest first, each with its picture. tools\dx-harness\changelog-shots.js makes the pictures (light and dark) from the harness;
+  // they ship in out\renderer\aiondx-changelog (patches\0001-renderer-dx\changelog).
+  var CLOG_DIR = './aiondx-changelog/';
+  var clog = { el: null, theme: null };
+  var whatsNewPrev = null;   // the release seen before this start, for the New marks
+  function clogReleases() { return [{ release: WHATS_NEW.release, date: WHATS_NEW.date, items: WHATS_NEW.items }].concat(WHATS_NEW.earlier || []); }
+  function clogSlug(t) { return String(t).toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, ''); }
+  /** An item's picture name, without the theme and .png: v0-28-3-docs-go-where-the-chat-goes. */
+  function clogPicture(release, title) { return 'v' + String(release).replace(/\./g, '-') + '-' + clogSlug(title); }
+  function clogDate(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+    if (!m) return '';
+    var d = +m[3], suf = d % 100 >= 11 && d % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][d % 10] || 'th';
+    return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][+m[2] - 1] + ' ' + d + suf + ', ' + m[1];
+  }
+  function clogTheme() { return (document.body.getAttribute('arco-theme') || document.documentElement.getAttribute('data-theme')) === 'dark' ? 'dark' : 'light'; }
+  function clogRoute() { return /^#\/settings\/about\/?\?(?:.*&)?aiondx=changelog(?:&|$)/.test(location.hash); }
+  /** Changelog, under About in the Settings list (whose group AionUi calls Other; renamed About). */
+  function renderChangelogNav(sider) {
+    var about = sider.querySelector('.settings-sider__item[data-settings-id="about"]');
+    var item = sider.querySelector('[data-testid="aiondx-setnav-changelog"]');
+    if (!about) { if (item) item.parentNode.removeChild(item); return; }
+    if (!item) {
+      item = gEl('div', 'settings-sider__item aiondx-setnav-item aiondx-clog-nav');
+      item.setAttribute('data-testid', 'aiondx-setnav-changelog');
+      item.setAttribute('data-page', 'changelog');
+      item.setAttribute('role', 'link');
+      item.style.setProperty('--dxl-c', dxlColour('changelog'));
+      item.innerHTML = '<span class="aiondx-setnav-icon">' + dxlIcon('list', 16) + '</span><span class="settings-sider__item-label aiondx-setnav-label">Changelog</span>';
+      item.addEventListener('click', function () { location.hash = '#/settings/about?aiondx=changelog'; });
+    }
+    if (about.nextElementSibling !== item) about.parentNode.insertBefore(item, about.nextSibling);
+    var on = clogRoute();
+    item.classList.toggle('aiondx-setnav-item--on', on);
+    sider.classList.toggle('aiondx-on-changelog', on);
+  }
+  function renderChangelog() {
+    var host = clogRoute() ? document.querySelector('.settings-page-content') : null;
+    if (!host) {
+      if (clog.el && clog.el.parentNode) {
+        var was = clog.el.parentNode;
+        was.removeChild(clog.el);
+        Array.prototype.forEach.call(was.children, function (c) { if (c.style.display === 'none' && c.getAttribute('data-aiondx-hid') === 'clog') { c.style.display = ''; c.removeAttribute('data-aiondx-hid'); } });
+      }
+      return;
+    }
+    if (!clog.el) clog.el = buildChangelog();
+    if (clog.el.parentNode !== host || host.firstChild !== clog.el) host.insertBefore(clog.el, host.firstChild);
+    Array.prototype.forEach.call(host.children, function (c) {
+      if (c === clog.el || c.style.display === 'none') return;
+      c.style.display = 'none'; c.setAttribute('data-aiondx-hid', 'clog');
+    });
+    var th = clogTheme();
+    if (clog.theme !== th) {
+      clog.theme = th;
+      Array.prototype.forEach.call(clog.el.querySelectorAll('img.aiondx-clog-img'), function (im) { im.src = CLOG_DIR + im.getAttribute('data-pic') + '-' + th + '.png'; });
+    }
+  }
+  function buildChangelog() {
+    var el = gEl('div', 'aiondx-clog aiondx-dxl-page');
+    el.setAttribute('data-testid', 'aiondx-changelog');
+    el.style.setProperty('--dxl-c', dxlColour('changelog'));
+    el.appendChild(dxlHead('changelog', 'Changelog', 'Everything new in AionDX, release by release, newest first: the same items the What’s new card shows after an update, each with a picture of where it is.'));
+    var th = clogTheme();
+    clog.theme = th;
+    clogReleases().forEach(function (r) {
+      var sec = gEl('section', 'aiondx-clog-rel');
+      sec.setAttribute('data-release', r.release);
+      var h = gEl('div', 'aiondx-clog-relhead');
+      h.appendChild(gEl('span', 'aiondx-clog-ver', 'AionDX ' + r.release));
+      if (r.date) h.appendChild(gEl('span', 'aiondx-clog-date', clogDate(r.date)));
+      if (whatsNewPrev && verNum(r.release) > verNum(whatsNewPrev)) h.appendChild(gEl('span', 'aiondx-clog-new', 'New'));
+      h.appendChild(gEl('span', 'aiondx-clog-count', r.items.length + (r.items.length === 1 ? ' item' : ' items')));
+      sec.appendChild(h);
+      r.items.forEach(function (it) {
+        var card = gEl('article', 'aiondx-clog-item');
+        var pic = clogPicture(r.release, it[0]);
+        card.setAttribute('data-pic', pic);
+        var fig = gEl('figure', 'aiondx-clog-fig');
+        var im = document.createElement('img');
+        im.className = 'aiondx-clog-img';
+        im.alt = it[0];
+        im.loading = 'lazy';
+        im.setAttribute('data-pic', pic);
+        im.addEventListener('error', function () { card.classList.add('aiondx-clog-item--nopic'); });
+        im.addEventListener('load', function () { card.classList.remove('aiondx-clog-item--nopic'); });
+        im.src = CLOG_DIR + pic + '-' + th + '.png';
+        im.title = 'Click to see it full size';
+        im.addEventListener('click', function () { dxLightbox(im); });   // the same full-screen view as a doc's picture
+        fig.appendChild(im);
+        card.appendChild(fig);
+        var t = gEl('div', 'aiondx-clog-text');
+        t.appendChild(gEl('div', 'aiondx-clog-name', it[0]));
+        t.appendChild(gEl('div', 'aiondx-clog-how', it[1]));
+        card.appendChild(t);
+        sec.appendChild(card);
+      });
+      el.appendChild(sec);
+    });
+    return el;
+  }
   var WHATS_NEW_KEY = KEY_PREFIX + 'whatsnew.seen';
   // Decided at load (so a reload inside the delay cannot show it twice); shown 3 seconds later.
   function verNum(v) { var p = String(v || '').split('.').map(function (x) { return parseInt(x, 10) || 0; }); return (p[0] || 0) * 1e6 + (p[1] || 0) * 1e3 + (p[2] || 0); }
@@ -12640,6 +13100,7 @@
   function whatsNewDue() {
     var seen = null;
     try { seen = localStorage.getItem(WHATS_NEW_KEY); } catch (e) { return false; }
+    whatsNewPrev = seen;
     if (seen === WHATS_NEW.release || disabled()) return false;
     var fresh = !seen && !Object.keys(localStorage).some(function (k) { return k.indexOf(KEY_PREFIX) === 0 && k !== WHATS_NEW_KEY; });
     try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW.release); } catch (e) {}
@@ -12682,10 +13143,18 @@
       list.appendChild(row);
     });
     card.appendChild(list);
+    var foot = gEl('div', 'aiondx-whatsnew-foot');
     var ok = gEl('button', 'arco-btn arco-btn-primary arco-btn-size-small aiondx-whatsnew-ok', 'Got it');
     ok.type = 'button';
-    card.appendChild(ok);
+    foot.appendChild(ok);
+    // the same items, with a picture each, in Settings > About > Changelog (November 17th, 2026)
+    var all = gEl('button', 'aiondx-whatsnew-all', 'See the whole changelog');
+    all.type = 'button';
+    all.setAttribute('data-testid', 'aiondx-whatsnew-all');
+    foot.appendChild(all);
+    card.appendChild(foot);
     var close = function () { if (card.parentNode) card.parentNode.removeChild(card); };
+    all.addEventListener('click', function () { close(); location.hash = '#/settings/about?aiondx=changelog'; });
     x.addEventListener('click', close);
     ok.addEventListener('click', close);
     var st = document.getElementById('aiondx-whatsnew-style') || document.createElement('style');
@@ -12709,6 +13178,9 @@
       '.aiondx-whatsnew-how{font-size:12.5px;line-height:1.45;color:var(--color-text-2);padding:0 2px 9px 18px}',
       '.aiondx-whatsnew-how[hidden]{display:none}',
       '.aiondx-whatsnew-ok{flex:0 0 auto;align-self:flex-start}',
+      '.aiondx-whatsnew-foot{flex:0 0 auto;display:flex;align-items:center;gap:12px}',
+      '.aiondx-whatsnew-all{border:0;background:none;padding:0;cursor:pointer;font-size:12px;color:rgb(var(--primary-6))}',
+      '.aiondx-whatsnew-all:hover{text-decoration:underline}',
     ].join('\n');
     if (!st.parentNode) document.head.appendChild(st);
     document.body.appendChild(card);
@@ -12855,6 +13327,55 @@
     target.classList.add('aiondx-coach-target');
     coachShown = { tip: tip, el: el, target: target };
     coachPlace();
+  }
+  /** The Changelog's pictures (tools\dx-harness\changelog-shots.js, November 17th, 2026): a tip's own bubble on any control, carrying a What's
+   *  new item's name and lines, outside the tips' run (nothing is marked seen). Returns the control's and the bubble's boxes for the crop. */
+  var clogShown = null;
+  function clogBalloonClear() {
+    if (!clogShown) return;
+    if (clogShown.el.parentNode) clogShown.el.parentNode.removeChild(clogShown.el);
+    clogShown.target.classList.remove('aiondx-coach-target');
+    clogShown = null;
+  }
+  function clogBalloon(sel, title, text) {
+    clogBalloonClear();
+    var target = typeof sel === 'string' ? document.querySelector(sel) : sel;
+    if (!target) return null;
+    var el = gEl('div', 'aiondx-coach aiondx-coach--clog');
+    el.style.zIndex = '2147483000';   // above any dialog the picture shows
+    el.appendChild(gEl('span', 'aiondx-coach-arrow'));
+    var head = gEl('div', 'aiondx-coach-head');
+    head.appendChild(gEl('span', 'aiondx-coach-title', title));
+    head.appendChild(gEl('button', 'aiondx-coach-x', '✕'));
+    el.appendChild(head);
+    if (text) el.appendChild(gEl('div', 'aiondx-coach-text', text));
+    el.appendChild(gEl('button', 'arco-btn arco-btn-primary arco-btn-size-mini aiondx-coach-ok', 'Got it'));
+    document.body.appendChild(el);
+    target.classList.add('aiondx-coach-target');
+    clogShown = { el: el, target: target };
+    var full = target.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+    // a control taller than half the window (a whole panel): point at its top strip, so the bubble stays on screen beside it
+    var r = full.height > vh * 0.5 ? { left: full.left, right: full.right, width: full.width, top: full.top, bottom: full.top + 44, height: 44 } : full;
+    // beside a tall control (a menu, a panel, a card) when there is room, so the bubble does not cover what it points at; else below or above
+    // (the whole control is measured for this, before a very tall one is narrowed to its top strip)
+    var side = full.height > 110 ? (vw - full.right >= w + 24 ? 'right' : full.left >= w + 24 ? 'left' : '') : '';
+    if (side) r = full;
+    var top, left, below = true;
+    if (side) {
+      top = Math.max(8, Math.min(r.top + Math.min(24, r.height / 4), vh - h - 8));
+      left = side === 'right' ? r.right + 14 : r.left - 14 - w;
+      el.querySelector('.aiondx-coach-arrow').style.display = 'none';
+    } else {
+      below = r.bottom + 10 + h <= vh - 8 || r.top - 10 - h < 8;
+      top = Math.max(8, Math.min(below ? r.bottom + 10 : r.top - 10 - h, vh - h - 8));
+      left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, vw - w - 8));
+      el.querySelector('.aiondx-coach-arrow').style.left = Math.round(Math.max(12, Math.min(r.left + r.width / 2 - left - 6, w - 24))) + 'px';
+    }
+    el.style.top = Math.round(top) + 'px';
+    el.style.left = Math.round(left) + 'px';
+    el.classList.toggle('aiondx-coach--above', !below);
+    var b = el.getBoundingClientRect();
+    return { target: [r.left, r.top, r.right, r.bottom], balloon: [b.left, b.top, b.right, b.bottom], vw: vw, vh: vh };
   }
   function coachScreenKey() {
     var s = location.hash || '';
@@ -13245,6 +13766,15 @@
     if (!dx.listening) {
       dx.listening = true;
       window.aiondxDx.onEvent(function (e) { if (e && e.kind === 'changed' && e.docsDir === dx.docsDir) dxChanged(e.id); });
+      // a picture in a doc opens full screen (November 17th, 2026, the user through the Landfall lead: "any way you can make the images with
+      // questions clickable to be fullscreen?"). Before anything else sees the click, so a picture inside a link opens here too.
+      dx.main.addEventListener('click', function (ev) {
+        var pic = ev.target && ev.target.closest && ev.target.closest('.dx-body img');
+        if (!pic || ev.button !== 0 || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        dxLightbox(pic);
+      }, true);
       dx.main.addEventListener('click', function (ev) {
         // a link to a heading in this doc ([text](#anchor)) scrolls there
         var jump = ev.target.closest && ev.target.closest('.dx-body a[href^="#"]');
@@ -13312,6 +13842,8 @@
         if (card && dx.view === 'doc') dxAnswer(card);
       });
       document.addEventListener('selectionchange', dxSelection);
+      // how far down the open doc is, kept for when the user comes back to this chat (scroll does not bubble: caught on the way down)
+      dx.main.addEventListener('scroll', function (ev) { if (dx.view === 'doc' && ev.target && ev.target.classList && ev.target.classList.contains('dx-body')) dxSaveView(); }, true);
     }
   }
   async function dxOpenChat(conv) {
@@ -13345,6 +13877,50 @@
     window.aiondxDx.call('watch', { docsDir: dx.docsDir });
     await dxList();
     if (dx.conv === conv) dxSider();
+    // back where the user left it in this chat: the doc, its tab, how far down (November 17th, 2026: "if i have a doc open to a certain
+    // tab on a page, that should stay as i had it when i come back to it")
+    var was = dxViews()[conv];
+    if (dx.conv === conv && was && was.doc && was.docsDir === dx.docsDir && dx.docs.some(function (d) { return d.id === was.doc; })) {
+      if (was.tab) dxTabFor()[dx.docsDir + '|' + was.doc] = was.tab;
+      await dxOpen(was.doc);
+      var bd = dx.conv === conv && dx.main.querySelector('.dx-body');
+      if (bd && was.scroll > 0) requestAnimationFrame(function () { bd.scrollTop = was.scroll * Math.max(0, bd.scrollHeight - bd.clientHeight); });
+    }
+  }
+  /** Where each chat's docs panel was left: { conv: { docsDir, doc, tab, scroll (0 to 1), at } }, on this PC (localStorage), the last 200. */
+  var DX_VIEWS_KEY = KEY_PREFIX + 'dx.views', DX_TABS_KEY = KEY_PREFIX + 'dx.tabs';
+  /** Each doc's open tab ({ docsDir|doc: tab }), read from this PC's store the first time. */
+  function dxTabFor() { if (!dx.tabFor) { try { dx.tabFor = JSON.parse(localStorage.getItem(DX_TABS_KEY)) || {}; } catch (e) { dx.tabFor = {}; } } return dx.tabFor; }
+  function dxViews() {
+    var v = {}; try { v = JSON.parse(localStorage.getItem(DX_VIEWS_KEY)) || {}; } catch (e) { v = {}; }
+    if (typeof dxViewPending === 'object') Object.keys(dxViewPending).forEach(function (k) { if (dxViewPending[k]) v[k] = dxViewPending[k]; else delete v[k]; });   // not written yet
+    return v;
+  }
+  var dxViewTimer = null, dxViewPending = {};
+  function dxSaveView() {
+    // what is on screen now, for this chat (taken at once: the write waits a moment, and the chat may change in between)
+    if (!dx.conv || dx.docsDir !== dx.home) return;
+    if (dx.view === 'doc' && dx.doc) {
+      var bd = dx.main && dx.main.querySelector('.dx-body');
+      var sc = bd && bd.scrollHeight > bd.clientHeight ? Math.round(bd.scrollTop / (bd.scrollHeight - bd.clientHeight) * 1000) / 1000 : 0;
+      dxViewPending[dx.conv] = { docsDir: dx.docsDir, doc: dx.doc, tab: dx.tab || '', scroll: sc, at: Date.now() };
+    } else if (dx.view === 'list') dxViewPending[dx.conv] = null;
+    if (dxViewTimer) clearTimeout(dxViewTimer);
+    dxViewTimer = setTimeout(function () {
+      dxViewTimer = null;
+      var all = dxViews();
+      Object.keys(dxViewPending).forEach(function (k) { if (dxViewPending[k]) all[k] = dxViewPending[k]; else delete all[k]; });
+      dxViewPending = {};
+      var keys = Object.keys(all).sort(function (a, b) { return (all[b].at || 0) - (all[a].at || 0); });
+      keys.slice(200).forEach(function (k) { delete all[k]; });
+      try { localStorage.setItem(DX_VIEWS_KEY, JSON.stringify(all)); } catch (e) {}
+      // each doc's open tab, so it outlives a restart too (the last 500)
+      try {
+        var t = dx.tabFor || {}, tk = Object.keys(t);
+        if (tk.length > 500) tk.slice(0, tk.length - 500).forEach(function (k) { delete t[k]; });
+        localStorage.setItem(DX_TABS_KEY, JSON.stringify(t));
+      } catch (e) {}
+    }, 250);
   }
   function dxWhen(ms) { var d = new Date(ms); return d.toDateString() === new Date().toDateString() ? hhmm(ms) : longDate(ms); }
   /** Back to this chat's own folder after a doc from All docs (another project's folder). */
@@ -13505,12 +14081,13 @@
     var nb = dx.main.querySelector('.dx-body');
     if (nb && atEnd) nb.scrollTop = nb.scrollHeight;
     else if (nb && ratio !== null) nb.scrollTop = ratio * (nb.scrollHeight - nb.clientHeight);
+    if (!keepScroll) dxSaveView();
   }
   // ---- tabs (DX Docs mirror): the doc's tabs above its text; the open tab is drawn and typed in, the rest of the file kept as it is
   /** The tab to show: the one last open on this doc, else the first. Sets dx.tabs and dx.tab ('' for a doc with no tabs). */
   function dxPickTab() {
     dx.tabs = window.__dxMd.tabList(dx.md);
-    dx.tabFor = dx.tabFor || {};
+    dxTabFor();
     var want = dx.tabFor[dx.docsDir + '|' + dx.doc];
     dx.tab = dx.tabs.some(function (t) { return t.id === want; }) ? want : dx.tabs[0] ? dx.tabs[0].id : '';
     if (dx.tab) dx.tabFor[dx.docsDir + '|' + dx.doc] = dx.tab;
@@ -13528,6 +14105,7 @@
       b.type = 'button';
       b.className = 'dx-tabbtn' + (t.id === dx.tab ? ' dx-tabbtn--on' : '') + (t.depth ? ' dx-tabbtn--sub' : '');
       b.setAttribute('data-tabid', t.id);
+      if (t.color) b.setAttribute('data-color', t.color);   // a tab's colour (November 17th, 2026), set from its menu or by an agent
       b.setAttribute('role', 'tab');
       b.setAttribute('aria-selected', String(t.id === dx.tab));
       b.setAttribute('data-testid', 'aiondx-dx-tab');
@@ -13549,7 +14127,8 @@
     if (id === dx.tab) return;
     await dxFlush();
     dx.tab = id;
-    dx.tabFor[dx.docsDir + '|' + dx.doc] = id;
+    dxTabFor()[dx.docsDir + '|' + dx.doc] = id;
+    dxSaveView();
     dxDrawDoc();
   }
   /** Tab changes from the panel (add, rename, move, delete): saved by the main side, then the doc read again. */
@@ -13561,7 +14140,7 @@
     if (!x || !x.ok) return r;
     dx.md = x.markdown; dx.comments = x.comments || []; dx.suggestions = x.suggestions || []; dx.typed = false;
     var made = r.tabs_added && r.tabs_added[r.tabs_added.length - 1];
-    if (show || made) dx.tabFor[dx.docsDir + '|' + dx.doc] = show || made;
+    if (show || made) dxTabFor()[dx.docsDir + '|' + dx.doc] = show || made;
     dxPickTab();
     dxDrawDoc();
     return r;
@@ -13601,6 +14180,11 @@
     m.innerHTML = '<button type="button" data-act="rename">Rename tab</button><button type="button" data-act="sub">Add a sub-tab</button>' +
       (at > 0 ? '<button type="button" data-act="left">Move left</button>' : '') + (at >= 0 && at < sibs.length - 1 ? '<button type="button" data-act="right">Move right</button>' : '') +
       (t.parent ? '<button type="button" data-act="up">Out of its parent</button>' : '') +
+      // the tab's colour: a row of swatches, and none (November 17th, 2026)
+      '<div class="dx-tabcolors" role="group" aria-label="Tab colour" data-testid="aiondx-dx-tabcolors"><span class="dx-tabcolors-label">Colour</span>' +
+      ['', 'gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink'].map(function (c) {
+        return '<button type="button" class="dx-tabcolor' + ((t.color || '') === c ? ' dx-tabcolor--on' : '') + '" data-act="color" data-color="' + c + '" title="' + (c || 'No colour') + '" aria-label="' + (c || 'No colour') + '"></button>';
+      }).join('') + '</div>' +
       (dx.tabs.length > 1 ? '<button type="button" data-act="delete">Delete tab</button>' : '');
     var rc = anchor.getBoundingClientRect();
     m.style.top = Math.round(rc.bottom + 4) + 'px';
@@ -13618,6 +14202,7 @@
       else if (a === 'left') dxTabOps([{ op: 'move_tab', tab: t.id, before: sibs[at - 1].id }], t.id);
       else if (a === 'right') dxTabOps([{ op: 'move_tab', tab: t.id, after: sibs[at + 1].id }], t.id);
       else if (a === 'up') dxTabOps([{ op: 'move_tab', tab: t.id, after: t.parent }], t.id);
+      else if (a === 'color') { var col = b.getAttribute('data-color') || ''; if (col !== (t.color || '')) dxTabOps([{ op: 'set_tab_color', tab: t.id, color: col || 'none' }], t.id); }
       else if (a === 'delete') {
         var kids = dx.tabs.filter(function (x) { return x.parent === t.id; }).length;
         if (!(await dxConfirm(anchor, 'Delete the tab "' + t.title + '"' + (kids ? ' and its ' + kids + ' sub-tab' + (kids > 1 ? 's' : '') : '') + '? Earlier versions keep it.', 'Delete'))) return;
@@ -13714,7 +14299,7 @@
       var b = ev.target.closest('[data-act]');
       if (!b) return;
       var a = b.getAttribute('data-act');
-      if (a === 'back') { dxFlush().then(function () { dx.view = 'list'; dx.doc = null; dxList(); }); }
+      if (a === 'back') { dxFlush().then(function () { dx.view = 'list'; dx.doc = null; dxSaveView(); dxList(); }); }
       else if (a === 'rename') dxRenameDoc(b);
       else if (a === 'edit') dxEdit();
       else if (a === 'comments') dxComments(!dx.cpaneOpen);
@@ -14730,6 +15315,74 @@
       }, function () {});
     });
   }
+  /** A doc's picture over the whole app: fitted to the screen; the wheel zooms where the pointer is, dragging pans, a double-click switches
+   *  between fitted and actual size; Esc, the close button or a click beside the picture closes it. */
+  function dxLightbox(img) {
+    var old = document.querySelector('.aiondx-lightbox');
+    if (old) old.remove();
+    var box = gEl('div', 'aiondx-lightbox');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', img.alt || 'Picture');
+    box.setAttribute('data-testid', 'aiondx-lightbox');
+    var pic = document.createElement('img');
+    pic.className = 'aiondx-lightbox-img';
+    pic.src = img.currentSrc || img.src;
+    pic.alt = img.alt || '';
+    pic.draggable = false;
+    box.appendChild(pic);
+    var bar = gEl('div', 'aiondx-lightbox-bar');
+    var cap = gEl('span', 'aiondx-lightbox-cap', img.alt || '');
+    var zoomTxt = gEl('span', 'aiondx-lightbox-zoom');
+    var fitB = gEl('button', 'aiondx-lightbox-btn', 'Fit');
+    var oneB = gEl('button', 'aiondx-lightbox-btn', '100%');
+    var x = gEl('button', 'aiondx-lightbox-btn aiondx-lightbox-x', '✕');
+    [fitB, oneB, x].forEach(function (b) { b.type = 'button'; });
+    x.setAttribute('aria-label', 'Close');
+    x.setAttribute('data-testid', 'aiondx-lightbox-close');
+    bar.appendChild(cap); bar.appendChild(zoomTxt); bar.appendChild(fitB); bar.appendChild(oneB); bar.appendChild(x);
+    box.appendChild(bar);
+    document.body.appendChild(box);
+    var v = { s: 1, x: 0, y: 0, fit: 1 };
+    var paint = function () { pic.style.transform = 'translate(' + v.x + 'px,' + v.y + 'px) scale(' + v.s + ')'; zoomTxt.textContent = Math.round(v.s * 100) + '%'; box.setAttribute('data-zoom', String(Math.round(v.s * 100))); };
+    var fit = function () {
+      var w = pic.naturalWidth || 1, h = pic.naturalHeight || 1, W = window.innerWidth - 48, H = window.innerHeight - 96;
+      v.fit = Math.min(1, W / w, H / h);
+      v.s = v.fit;
+      v.x = (window.innerWidth - w * v.s) / 2; v.y = (window.innerHeight - 48 - h * v.s) / 2;
+      paint();
+    };
+    var zoomAt = function (s, cx, cy) {
+      s = Math.max(Math.min(v.fit, 1) * 0.5, Math.min(8, s));
+      v.x = cx - (cx - v.x) * (s / v.s); v.y = cy - (cy - v.y) * (s / v.s); v.s = s;
+      paint();
+    };
+    fit();                                   // at once (a picture not yet decoded is fitted again when it is)
+    pic.addEventListener('load', fit);
+    var close = function () { box.remove(); document.removeEventListener('keydown', onKey, true); window.removeEventListener('resize', fit); };
+    var onKey = function (ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); }
+      else if (ev.key === '+' || ev.key === '=') zoomAt(v.s * 1.25, window.innerWidth / 2, window.innerHeight / 2);
+      else if (ev.key === '-') zoomAt(v.s / 1.25, window.innerWidth / 2, window.innerHeight / 2);
+      else if (ev.key === '0') fit();
+    };
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('resize', fit);
+    x.addEventListener('click', close);
+    fitB.addEventListener('click', fit);
+    oneB.addEventListener('click', function () { zoomAt(1, window.innerWidth / 2, window.innerHeight / 2); });
+    box.addEventListener('wheel', function (ev) { ev.preventDefault(); zoomAt(v.s * Math.pow(1.0015, -ev.deltaY), ev.clientX, ev.clientY); }, { passive: false });
+    pic.addEventListener('dblclick', function (ev) { if (Math.abs(v.s - v.fit) < 0.01 && v.fit < 1) zoomAt(1, ev.clientX, ev.clientY); else fit(); });
+    var drag = null, moved = false;
+    pic.addEventListener('mousedown', function (ev) { if (ev.button !== 0) return; ev.preventDefault(); drag = { x: ev.clientX - v.x, y: ev.clientY - v.y }; moved = false; box.classList.add('aiondx-lightbox--drag'); });
+    var onMove = function (ev) { if (!drag) return; v.x = ev.clientX - drag.x; v.y = ev.clientY - drag.y; moved = true; paint(); };
+    var onUp = function () { drag = null; box.classList.remove('aiondx-lightbox--drag'); };
+    box.addEventListener('mousemove', onMove);
+    box.addEventListener('mouseup', onUp);
+    box.addEventListener('mouseleave', onUp);
+    // a click beside the picture (not on it, not on the bar) closes it
+    box.addEventListener('click', function (ev) { if (ev.target === box) close(); });
+    return box;
+  }
   async function dxChanged(id) {
     // a doc an agent made or changed: shown in the panel (open or closed is the user's: a closed one stays closed, and opens on it);
     // the one on screen redraws in place
@@ -15420,6 +16073,33 @@
       '.dx-tabbtn:hover{background:var(--color-fill-2,rgba(0,0,0,.05));color:var(--color-text-1)}',
       '.dx-tabbtn--on{background:var(--color-fill-2,rgba(0,0,0,.07));color:var(--color-text-1);font-weight:600}',
       '.dx-tabbtn--sub{font-size:12px}.dx-tabmenu,.dx-tabadd{color:var(--color-text-3);padding:4px 8px}',
+      // a tab's colour: a tint and a coloured edge under it, stronger on the open tab; the menu's swatches
+      '.dx-tabbtn[data-color]{box-shadow:inset 0 -2px 0 var(--dx-tc);background:color-mix(in srgb,var(--dx-tc) 10%,transparent);color:var(--color-text-1)}',
+      '.dx-tabbtn[data-color]:hover{background:color-mix(in srgb,var(--dx-tc) 18%,transparent)}',
+      '.dx-tabbtn--on[data-color]{background:color-mix(in srgb,var(--dx-tc) 22%,transparent);box-shadow:inset 0 -3px 0 var(--dx-tc)}',
+      '.dx-tabbtn[data-color="gray"],.dx-tabcolor[data-color="gray"]{--dx-tc:#94a3b8}',
+      '.dx-tabbtn[data-color="red"],.dx-tabcolor[data-color="red"]{--dx-tc:#ef4444}',
+      '.dx-tabbtn[data-color="orange"],.dx-tabcolor[data-color="orange"]{--dx-tc:#f97316}',
+      '.dx-tabbtn[data-color="yellow"],.dx-tabcolor[data-color="yellow"]{--dx-tc:#eab308}',
+      '.dx-tabbtn[data-color="green"],.dx-tabcolor[data-color="green"]{--dx-tc:#22c55e}',
+      '.dx-tabbtn[data-color="blue"],.dx-tabcolor[data-color="blue"]{--dx-tc:#3b82f6}',
+      '.dx-tabbtn[data-color="purple"],.dx-tabcolor[data-color="purple"]{--dx-tc:#a855f7}',
+      '.dx-tabbtn[data-color="pink"],.dx-tabcolor[data-color="pink"]{--dx-tc:#ec4899}',
+      '.dx-tabcolors{display:flex;align-items:center;gap:5px;padding:6px 10px;border-top:1px solid var(--color-border-1);border-bottom:1px solid var(--color-border-1);margin:4px 0}',
+      '.dx-tabcolors-label{font-size:12px;color:var(--color-text-3);margin-right:4px}',
+      // a doc's picture full screen (November 17th, 2026)
+      '.dx-body img{cursor:zoom-in}',
+      '.aiondx-lightbox{position:fixed;inset:0;z-index:3000;background:rgba(8,10,14,.88);overflow:hidden;user-select:none}',
+      '.aiondx-lightbox-img{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none;max-height:none;cursor:grab;box-shadow:0 10px 40px rgba(0,0,0,.5);border-radius:4px;background:#fff}',
+      '.aiondx-lightbox--drag .aiondx-lightbox-img{cursor:grabbing}',
+      '.aiondx-lightbox-bar{position:absolute;left:0;right:0;bottom:0;height:48px;display:flex;align-items:center;gap:8px;padding:0 14px;background:rgba(0,0,0,.55);color:#e5e7eb;font-size:13px}',
+      '.aiondx-lightbox-cap{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.aiondx-lightbox-zoom{min-width:48px;text-align:right;color:#9ca3af}',
+      '.aiondx-lightbox-btn{height:30px;min-width:30px;padding:0 10px;border:1px solid rgba(255,255,255,.25);border-radius:7px;background:rgba(255,255,255,.08);color:#f3f4f6;cursor:pointer;font-size:13px}',
+      '.aiondx-lightbox-btn:hover{background:rgba(255,255,255,.18)}',
+      '.dx-menu .dx-tabcolor{width:18px;height:18px;min-width:0;padding:0;border-radius:50%;border:2px solid transparent;background:var(--dx-tc,transparent);box-shadow:0 0 0 1px var(--color-border-2);cursor:pointer}',
+      '.dx-menu .dx-tabcolor[data-color=""]{background:linear-gradient(135deg,transparent 45%,var(--color-text-3) 45%,var(--color-text-3) 55%,transparent 55%)}',
+      '.dx-menu .dx-tabcolor--on{border-color:var(--color-bg-popup,#fff);box-shadow:0 0 0 2px var(--color-text-1)}',
       '.dx-tabmark{margin:18px 0 8px;padding:4px 10px;border-radius:6px;background:var(--color-fill-2,rgba(0,0,0,.05));font-size:12px;font-weight:600;color:var(--color-text-2)}',
       '.dx-btn--danger{background:var(--color-danger-6,#d33);color:#fff}.dx-btn--danger:hover{background:var(--color-danger-5,#e55);color:#fff}',
       // writing and tables (DX Docs mirror)
@@ -15962,6 +16642,9 @@
 
   function firstTarget() { var l = targets(); return l.length ? l[0] : null; }
   window.__aionDx = {
+    clogBalloon: function (sel, title, text) { return clogBalloon(sel, title, text); },
+    clogBalloonClear: function () { clogBalloonClear(); },
+    whatsNew: function () { return clogReleases().map(function (r) { return { release: r.release, date: r.date, items: r.items.map(function (it) { return { title: it[0], how: it[1], pic: clogPicture(r.release, it[0]) }; }) }; }); },
     placesSyncNow: function () { return placesSync(); },
     projectPicker: function (sel, key) { var el = document.querySelector(sel); if (el) projectPicker(el, key, null); return !!el; },
     targets: function () { return targets().map(function (t) { return { key: t.key, on: state(t).on }; }); },

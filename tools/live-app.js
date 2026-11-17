@@ -122,26 +122,48 @@ async function launch(opts) {
   };
   const type = (text) => send('Input.insertText', { text });
   // Serve a file in place of the app's own copy of a script (by the end of its URL), then reload the page: the real app, running the
-  // edited page script without a rebuild. Other requests go on untouched.
+  // edited page script without a rebuild. A folder can stand in for one of the app's own (overrideFolder: pictures the build has not copied
+  // in yet). Other requests go on untouched.
   const overrides = [];
-  const overrideScript = async (urlEnd, file) => {
-    overrides.push({ urlEnd, file });
-    if (overrides.length === 1) {
+  let wired = false;
+  const wire = async () => {
+    if (!wired) {
+      wired = true;
       ws.addEventListener('message', async (ev) => {
         const m = JSON.parse(ev.data);
         if (m.method !== 'Fetch.requestPaused') return;
-        const hit = overrides.find((o) => m.params.request.url.endsWith(o.urlEnd));
-        if (hit) {
+        const url = m.params.request.url.split('?')[0];
+        const hit = overrides.find((o) => (o.dir ? url.indexOf(o.urlEnd) >= 0 : url.endsWith(o.urlEnd)));
+        if (hit && hit.dir) {
+          // a file the folder does not have is a 404
+          const name = decodeURIComponent(url.slice(url.indexOf(hit.urlEnd) + hit.urlEnd.length));
+          const file = path.join(hit.dir, name);
+          if (name && !/\.\.|[\\/]/.test(name) && fs.existsSync(file)) {
+            await send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200,
+              responseHeaders: [{ name: 'Content-Type', value: /\.png$/i.test(name) ? 'image/png' : 'application/octet-stream' }, { name: 'Cache-Control', value: 'no-store' }],
+              body: fs.readFileSync(file).toString('base64') });
+          } else await send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 404, responseHeaders: [], body: '' });
+        } else if (hit) {
           await send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200,
             responseHeaders: [{ name: 'Content-Type', value: 'application/javascript; charset=utf-8' }, { name: 'Cache-Control', value: 'no-store' }],
             body: fs.readFileSync(hit.file).toString('base64') });
         } else await send('Fetch.continueRequest', { requestId: m.params.requestId });
       });
-      await send('Fetch.enable', { patterns: [{ urlPattern: '*' + urlEnd, requestStage: 'Request' }] });
     }
+    // every override asked for so far (a second call used to be served by the first one's pattern only, so its file was never replaced)
+    await send('Fetch.enable', { patterns: overrides.map((o) => ({ urlPattern: '*' + o.urlEnd + (o.dir ? '*' : ''), requestStage: 'Request' })) });
+  };
+  const overrideScript = async (urlEnd, file) => {
+    overrides.push({ urlEnd, file });
+    await wire();
     await send('Page.reload', { ignoreCache: true });
   };
-  return { js, send, key, type, events, close, port, profile, page, sleep, overrideScript, pid: child.pid };
+  // every request whose path holds urlPart is answered from that folder (the rest of the path is the file name); the page is not reloaded
+  const overrideFolder = async (urlPart, dir) => {
+    overrides.push({ urlEnd: urlPart, dir });
+    await wire();
+  };
+  return { js, send, key, type, events, close, port, profile, page, sleep, overrideScript, overrideFolder, pid: child.pid };
 }
 
 module.exports = { launch, sleep };

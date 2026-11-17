@@ -1056,3 +1056,26 @@ Anthropic's cache length for an AionDX chat changed on its side on October 12th,
 - The Loop's continue nudges end with a line about the project's skills (R-100; option `loop.skillsLine`, on by default).
 - Tests: click-test.js (cases `keep-warm-measured` 8 to 10, `cache-length-notice`, the redraw bolt case, the meter after a compaction,
   `drive`).
+
+## November 17th, 2026: the Settings look, the Changelog, tab colours, pictures full screen
+
+- The Settings look (the user: "completely overhaul the settings ui ... Give everything a nice coat of paint, and colors"): every Settings
+  page has a header with a tile in the page's own fixed colour (`DXL`), cards with an icon chip (`dxlCard`), option rows with their help
+  under the name and AionDX's own switch, select and number box (`buildOptionsUi`, one card per group, in the page's order); the accent
+  (`--dxl-a`, from Appearance) marks what is live or chosen. AionUi's own pages get it by style alone, keyed on `data-aiondx-page` that
+  `renderSettingsLook` puts on `.settings-page-content`; those without a title (Appearance, Remote, System) get AionDX's header. Agents:
+  the agents on this PC first with a status pill in its tone, the ones not installed folded under one button.
+- Fixes on the way: the AionDX block sits above AI Core (it split that group); the voice panel (patch 0011) goes in the Voice card of
+  Typing, links and voice only (`.aiondx-voice-slot`, `window.__aionDxVoiceSlot`; it found the first AionDX card on any page); option rows
+  readable in dark mode; theme previews (AionUi's Light cover picture with its old name, AionDX Light drawn dark) drawn in their own light
+  colours; AionDX colours a card of its own after the Theme card; `refreshOptionsUi` reads only rows with an option.
+- The Changelog (Settings, in the group AionUi calls Other, renamed About): every release's What's new items newest first (`WHATS_NEW`
+  now carries each release's date), each with its picture `./aiondx-changelog/v<release>-<item>-<light|dark>.png`. The pictures are made
+  by `tools\dx-harness\changelog-shots.js` (`clogShot` / `clogMenu` in the click sections that show each item; `__aionDx.clogBalloon` draws
+  a tip's own bubble beside or under the control) into `patches\0001-renderer-dx\changelog`, copied to `out\renderer\aiondx-changelog` by
+  build-release and do_patch. The What's new card links to it. A new release's items need a `clogShot` call in their section.
+- DX Doc tab colours: a tab's menu has a colour row (none and eight colours); the colour is in the tab's marker (patch 0009).
+- A picture in a DX Doc opens full screen on a click (`dxLightbox`: fitted, wheel zoom at the pointer, drag to pan, double-click fitted or
+  actual size, Esc or a click beside it closes).
+- Tests: click sections options, dxsettings (the look, the voice slot, the Changelog), dxtabs (tab colours), dxdocs (the lightbox).
+  `tools\shoot-settings.js` photographs every Settings page of the built app, light and dark, with `--script` running edited scripts.

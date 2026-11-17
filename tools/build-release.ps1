@@ -119,6 +119,14 @@ if ($idx -notmatch 'aiondx-ui\.js') {
 # A name declared twice as a function silently replaces the first (2026-11-10: the Loop menu stopped opening): refused here.
 Run $node @("$root\tools\check-page-script.js", "$root\patches\0001-renderer-dx\aiondx-ui.js", "$root\patches\0011-voice\aiondx-voice-ui.js", "$root\patches\0020-mobile-settings\aiondx-mobile-settings.js") 'page script check'
 Copy-Item "$root\patches\0001-renderer-dx\aiondx-ui.js" "$ext\out\renderer\aiondx-ui.js" -Force
+# the Changelog's pictures (Settings > About > Changelog; made by tools\dx-harness\changelog-shots.js), beside the page script
+$clogSrc = "$root\patches\0001-renderer-dx\changelog"
+if (Test-Path $clogSrc) {
+  $clogDst = "$ext\out\renderer\aiondx-changelog"
+  New-Item -ItemType Directory -Force $clogDst | Out-Null
+  Copy-Item "$clogSrc\*.png" $clogDst -Force
+  Say ("patch 0001: " + (Get-ChildItem $clogDst -Filter *.png).Count + " changelog pictures")
+}
 Say "patch 0001: aiondx-ui.js ($rendererBuild) and its script tag"
 # Patch 0011: aiondx-voice.js (the provider-agnostic TTS/STT module, window.AionDxVoice) loads
 # before aiondx-voice-ui.js (the composer's mic button, playback control and settings panel,

@@ -193,19 +193,27 @@ function makeExplicit(T, firstTitle) {
   if (T.tabs.length === 1 && T.tabs[0].implicit) T.tabs = [{ id: 't1', title: String(firstTitle || 'Overview').trim() || 'Overview', parent: '', body: T.tabs[0].body }];
 }
 function subtreeIds(T, id) { const ids = [id]; for (let k = 0; k < ids.length; k++) for (const t of T.tabs) if (t.parent === ids[k]) ids.push(t.id); return ids; }
-const TAB_OPS = ['add_tab', 'rename_tab', 'move_tab', 'delete_tab'];
+const TAB_OPS = ['add_tab', 'rename_tab', 'move_tab', 'delete_tab', 'set_tab_color'];
+/** A tab colour asked for: one of MD.TAB_COLORS, or '' (none, "none" or empty). Anything else is refused with the list. */
+function askedColor(v) {
+  if (v === undefined || v === null || v === '' || String(v).toLowerCase() === 'none') return '';
+  const c = MD.tabColor(v);
+  if (!c) throw new Error('No tab colour "' + v + '". Colours: ' + MD.TAB_COLORS.join(', ') + ', or none.');
+  return c;
+}
 function tabOp(T, op) {
   const k = op.op;
   if (k === 'add_tab') {
     const title = String(op.title || '').trim();
     if (!title) throw new Error('add_tab needs a "title".');
+    const color = askedColor(op.color);
     makeExplicit(T, op.first_tab_title);
     const parent = op.parent ? MD.findTab(T, op.parent) : null;
     if (op.parent && !parent) throw new Error('No tab "' + op.parent + '" to put it under. Tabs: ' + tabNames(T) + '.');
     let body = op.body != null ? String(op.body).trim() : '';
     if (!body && Array.isArray(op.sections)) body = bodyOf({ lead: '', sections: op.sections.filter((s) => s && String(s.heading || '').trim()).map((s) => ({ heading: String(s.heading).trim(), level: s.level || 2,
       body: s.body ? String(s.body) : '<!-- aiondx:pending ' + String(s.intent || 'this section').replace(/-->/g, '- ->').trim() + ' -->' })) });
-    const t = { id: newTabId(T), title, parent: parent ? parent.id : '', body };
+    const t = { id: newTabId(T), title, parent: parent ? parent.id : '', color, body };
     // after: a tab; else at the end of its parent's tabs (or the end of the doc)
     let at = T.tabs.length;
     const after = op.after ? MD.findTab(T, op.after) : null;
@@ -219,6 +227,7 @@ function tabOp(T, op) {
   const t = MD.findTab(T, op.tab);
   if (!t) throw new Error('No tab "' + (op.tab || '') + '". Tabs: ' + tabNames(T) + '.');
   if (k === 'rename_tab') { t.title = String(op.to || '').trim() || t.title; return t.id; }
+  if (k === 'set_tab_color') { t.color = askedColor(op.color); return t.id; }
   if (k === 'delete_tab') {
     const ids = subtreeIds(T, t.id);
     if (ids.length >= T.tabs.length) throw new Error('That would delete every tab; a doc keeps at least one.');
@@ -382,7 +391,7 @@ function read(docsDir, id, o) {
   const T = MD.splitTabs(markdown);
   const secs = (t) => parseTab(T, t).sections.map((s) => ({ heading: s.heading, level: s.level, pending: pendingOf(s.body), chars: s.body.length }));
   const out = { id, path: f, title: T.title, markdown, sections: allSections(markdown).map((s) => Object.assign({ heading: s.heading, level: s.level, pending: pendingOf(s.body), chars: s.body.length }, s.tab ? { tab: s.tab } : {})) };
-  if (!T.tabs[0].implicit) out.tabs = T.tabs.map((t) => ({ id: t.id, title: t.title, parent: t.parent || '', sections: secs(t) }));
+  if (!T.tabs[0].implicit) out.tabs = T.tabs.map((t) => Object.assign({ id: t.id, title: t.title, parent: t.parent || '' }, t.color ? { color: t.color } : {}, { sections: secs(t) }));
   if (o && o.tab != null && String(o.tab).trim()) {
     const t = MD.findTab(T, o.tab);
     if (!t) throw new Error('No tab "' + o.tab + '". Tabs: ' + (T.tabs[0].implicit ? 'none' : tabNames(T)) + '.');
@@ -416,7 +425,7 @@ function update(docsDir, id, ops, by) {
     }
     if (['replace_section', 'append_section', 'insert_after', 'append_to_section', 'rename_section', 'delete_section', 'replace_text', 'set_lead', 'write'].indexOf(k) < 0) {
       throw new Error('Unknown operation "' + k + '". Use replace_section, append_to_section, append_section, insert_after, rename_section, delete_section, replace_text, set_title, set_lead or write; ' +
-        'for tabs add_tab, rename_tab, move_tab, delete_tab, and "tab" (an id or title) on any section operation.');
+        'for tabs add_tab, rename_tab, move_tab, delete_tab, set_tab_color, and "tab" (an id or title) on any section operation.');
     }
     const tab = pickTab(T, op);
     const doc = parseTab(T, tab);
@@ -458,7 +467,7 @@ function update(docsDir, id, ops, by) {
       body = v.tabs.map((x) => x.body).filter(Boolean).join('\n\n');
     } else {
       throw new Error('Unknown operation "' + k + '". Use replace_section, append_to_section, append_section, insert_after, rename_section, delete_section, replace_text, set_title, set_lead or write; ' +
-        'for tabs add_tab, rename_tab, move_tab, delete_tab, and "tab" on any section operation.');
+        'for tabs add_tab, rename_tab, move_tab, delete_tab, set_tab_color, and "tab" on any section operation.');
     }
     tab.body = body !== null ? body.trim() : bodyOf(doc);
     done.push(k);

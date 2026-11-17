@@ -514,7 +514,7 @@ namespace AionDx
                 new Dictionary<string, object> {
                     { "name", "dxdoc_update" },
                     { "title", "Edit a DX Doc" },
-                    { "description", "Edits a DX Doc by section. Operations, applied in order, all or nothing: {op:\"replace_section\", heading, body} (fills a pending section or replaces one), {op:\"append_to_section\", heading, body}, {op:\"append_section\", heading, body, level}, {op:\"insert_after\", after, heading, body}, {op:\"rename_section\", heading, to}, {op:\"delete_section\", heading}, {op:\"replace_text\", find, replace, all}, {op:\"set_title\", title}, {op:\"set_lead\", body}, {op:\"write\", markdown}. Tabs: {op:\"add_tab\", title, parent, after, sections}, {op:\"rename_tab\", tab, to}, {op:\"move_tab\", tab, before|after|parent}, {op:\"delete_tab\", tab}; on a doc with tabs each section operation names its \"tab\" (an id like t2, or the title). Headings match without case. The version before is kept; the user sees the change at once. A body can hold a ```chart block of JSON ({\"type\":\"bar|stacked|hbar|line|area|pie|scatter\", \"title\", \"unit\", \"columns\":[x label, series names...], \"rows\":[[x, values...]]}, or \"x\" with \"series\":[{\"name\", \"values\"}]) for numbers with a shape, and a ```mermaid block (flowchart, sequenceDiagram, gantt, timeline, quadrantChart, mindmap and the rest of Mermaid 11) for structure; the panel draws both. A block that cannot be drawn is refused with its line and the fix." },
+                    { "description", "Edits a DX Doc by section. Operations, applied in order, all or nothing: {op:\"replace_section\", heading, body} (fills a pending section or replaces one), {op:\"append_to_section\", heading, body}, {op:\"append_section\", heading, body, level}, {op:\"insert_after\", after, heading, body}, {op:\"rename_section\", heading, to}, {op:\"delete_section\", heading}, {op:\"replace_text\", find, replace, all}, {op:\"set_title\", title}, {op:\"set_lead\", body}, {op:\"write\", markdown}. Tabs: {op:\"add_tab\", title, parent, after, sections, color}, {op:\"rename_tab\", tab, to}, {op:\"move_tab\", tab, before|after|parent}, {op:\"delete_tab\", tab}, {op:\"set_tab_color\", tab, color} (gray, red, orange, yellow, green, blue, purple, pink, or none); on a doc with tabs each section operation names its \"tab\" (an id like t2, or the title). Headings match without case. The version before is kept; the user sees the change at once. A body can hold a ```chart block of JSON ({\"type\":\"bar|stacked|hbar|line|area|pie|scatter\", \"title\", \"unit\", \"columns\":[x label, series names...], \"rows\":[[x, values...]]}, or \"x\" with \"series\":[{\"name\", \"values\"}]) for numbers with a shape, and a ```mermaid block (flowchart, sequenceDiagram, gantt, timeline, quadrantChart, mindmap and the rest of Mermaid 11) for structure; the panel draws both. A block that cannot be drawn is refused with its line and the fix." },
                     { "inputSchema", new Dictionary<string, object> {
                         { "type", "object" },
                         { "properties", new Dictionary<string, object> {
@@ -1655,6 +1655,8 @@ namespace AionDx
             "    tabs gets them: what it had becomes the first tab, \"first_tab_title\" names it, else Overview)\n" +
             "  {\"op\":\"rename_tab\",\"tab\":\"<tab>\",\"to\":\"...\"}  {\"op\":\"move_tab\",\"tab\":\"<tab>\",\"before\"|\"after\":\"<tab>\"}  or \"parent\":\"<tab>\" (\"\" = top)\n" +
             "  {\"op\":\"delete_tab\",\"tab\":\"<tab>\"}  (takes its sub-tabs; the last tab stays)\n" +
+            "  {\"op\":\"set_tab_color\",\"tab\":\"<tab>\",\"color\":\"blue\"}  a tab's colour: gray, red, orange, yellow, green, blue, purple, pink, or none\n" +
+            "    (add_tab takes \"color\" too; the user sets it from the tab's menu)\n" +
             "  On a doc with tabs every section operation names its tab: {\"op\":\"replace_section\",\"tab\":\"Decisions\",\"heading\":\"...\",\"body\":\"...\"}\n" +
             "  (<tab> is a tab's id, like t2, or its title). read lists the tabs with their sections; read with \"tab\" gives that tab's own Markdown.\n" +
             "  create can make a doc with tabs: {\"title\":\"...\",\"tabs\":[{\"title\":\"Plan\",\"sections\":[...]},{\"title\":\"Detail\",\"parent\":\"Plan\"}]}\n" +
@@ -4157,10 +4159,13 @@ namespace AionDx
         static string SkillsPropose(string name, string from, string project)
         {
             if (!System.Text.RegularExpressions.Regex.IsMatch(name ?? "", "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")) throw new ToolError("Name the skill: aiondx skills propose NAME --from FOLDER|SKILL.md");
-            if (string.IsNullOrEmpty(from) || !(Directory.Exists(from) || File.Exists(from))) throw new ToolError("--from is the folder holding the skill's SKILL.md, or the SKILL.md itself.");
-            string src = Directory.Exists(from) ? from : Path.GetDirectoryName(Path.GetFullPath(from));
+            if (string.IsNullOrEmpty(from) || !(Directory.Exists(from) || File.Exists(from))) throw new ToolError("--from is the folder holding the skill's SKILL.md, or the SKILL.md itself" +
+                (string.IsNullOrEmpty(from) ? "." : ": nothing is at " + Path.GetFullPath(from) + ". Nothing was changed."));
+            // the full path, once (November 17th, 2026: a relative path was read after the live skill it named had been moved away)
+            from = Path.GetFullPath(from);
+            string src = Directory.Exists(from) ? from : Path.GetDirectoryName(from);
             string md = Directory.Exists(from) ? Path.Combine(from, "SKILL.md") : from;
-            if (!File.Exists(md)) throw new ToolError("There is no SKILL.md in " + from + ".");
+            if (!File.Exists(md)) throw new ToolError("There is no SKILL.md in " + from + ". Nothing was changed.");
             var reg = File.Exists(Path.Combine(DxDataDir(), "aiondx-projects.json")) ? Json.DeserializeObject(File.ReadAllText(Path.Combine(DxDataDir(), "aiondx-projects.json"))) as Dictionary<string, object> : null;
             var projects = reg != null && reg.ContainsKey("projects") ? reg["projects"] as Dictionary<string, object> : null;
             var bindings = reg != null && reg.ContainsKey("bindings") ? reg["bindings"] as Dictionary<string, object> : null;
@@ -4192,33 +4197,55 @@ namespace AionDx
             // Whether the user reviews it first (November 16th, 2026): <data>\aiondx-skills.json "review" is "auto" (the default: only a
             // chat that asks before acting waits for approval; one in a no-ask mode such as bypassPermissions or yolo applies it), "always"
             // or "off". Applied directly, the version it replaces is kept in .claude\skills-history\NAME\<time> so it can be put back.
-            if (!SkillsNeedReview())
+            // The live skill may not be its own source: applying it moves the live folder away first, and the source went
+            // with it (November 17th, 2026: a project's live skill ended in skills-history, the agent told "There is no SKILL.md", nothing
+            // proposed). The change is made in a copy elsewhere and proposed from there.
+            string liveDir = Path.GetFullPath(Path.Combine(root, ".claude", "skills", name)).TrimEnd('\\') + "\\";
+            string srcDir = src.TrimEnd('\\') + "\\";
+            if (srcDir.StartsWith(liveDir, StringComparison.OrdinalIgnoreCase))
+                throw new ToolError("--from is the live skill itself (" + src + "). Copy it to a folder of your own, make the change there, and propose that copy. Nothing was changed.");
+            // the source, copied aside before anything is moved
+            string stage = Path.Combine(Path.GetTempPath(), "aiondx-skill-" + Guid.NewGuid().ToString("N").Substring(0, 10));
+            try
             {
-                string live = Path.Combine(root, ".claude", "skills", name);
-                bool had = Directory.Exists(live);
-                if (had)
+                if (Directory.Exists(from)) CopySkillTree(src, stage); else { Directory.CreateDirectory(stage); File.Copy(md, Path.Combine(stage, "SKILL.md")); }
+                if (!SkillsNeedReview())
                 {
+                    string live = Path.Combine(root, ".claude", "skills", name);
+                    bool had = Directory.Exists(live);
                     string hist = Path.Combine(root, ".claude", "skills-history", name, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
-                    Directory.CreateDirectory(Path.GetDirectoryName(hist));
-                    CopySkillTree(live, hist);
-                    Directory.Delete(live, true);
+                    try
+                    {
+                        if (had)
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(hist));
+                            CopySkillTree(live, hist);
+                            Directory.Delete(live, true);
+                        }
+                        CopySkillTree(stage, live);
+                        var applied = new Dictionary<string, object> { { "source", "proposed by " + who }, { "at", DateTime.UtcNow.ToString("o") }, { "approved", true }, { "proposal", true }, { "applied", "without review (the user's setting)" } };
+                        File.WriteAllText(Path.Combine(live, ".aiondx-review.json"), Json.Serialize(applied), new UTF8Encoding(false));
+                    }
+                    catch (Exception e)
+                    {
+                        if (e is ToolError) throw;
+                        // anything that fails after the live skill was moved: it goes back as it was
+                        try { if (Directory.Exists(live)) Directory.Delete(live, true); if (had && Directory.Exists(hist)) CopySkillTree(hist, live); } catch (Exception) { }
+                        throw new ToolError("The change was not put in (" + e.Message + ")." + (had ? " The skill is as it was." : "") );
+                    }
+                    return (had ? "Your change to " : "Your new skill ") + name + " is in place in " + where + "'s skills; agents have it from their next start." +
+                        (had ? " The version it replaced is kept in .claude\\skills-history\\" + name + "." : "");
                 }
-                Directory.CreateDirectory(live);
-                if (Directory.Exists(from)) CopySkillTree(src, live); else File.Copy(md, Path.Combine(live, "SKILL.md"));
-                var applied = new Dictionary<string, object> { { "source", "proposed by " + who }, { "at", DateTime.UtcNow.ToString("o") }, { "approved", true }, { "proposal", true }, { "applied", "without review (the user's setting)" } };
-                File.WriteAllText(Path.Combine(live, ".aiondx-review.json"), Json.Serialize(applied), new UTF8Encoding(false));
-                return (had ? "Your change to " : "Your new skill ") + name + " is in place in " + where + "'s skills; agents have it from their next start." +
-                    (had ? " The version it replaced is kept in .claude\\skills-history\\" + name + "." : "");
+                string dest = Path.Combine(root, ".claude", "skills-pending", name);
+                if (Directory.Exists(dest)) Directory.Delete(dest, true);
+                CopySkillTree(stage, dest);
+                var review = new Dictionary<string, object> { { "source", "proposed by " + who }, { "at", DateTime.UtcNow.ToString("o") }, { "approved", false }, { "proposal", true } };
+                File.WriteAllText(Path.Combine(dest, ".aiondx-review.json"), Json.Serialize(review), new UTF8Encoding(false));
+                bool change = File.Exists(Path.Combine(root, ".claude", "skills", name, "SKILL.md"));
+                return (change ? "Your change to " : "Your new skill ") + name + " is waiting for the user's approval in DX Skills (Settings > Skills, " + where + "). " +
+                    "It is not used until they approve it; tell them it is there.";
             }
-            string dest = Path.Combine(root, ".claude", "skills-pending", name);
-            if (Directory.Exists(dest)) Directory.Delete(dest, true);
-            Directory.CreateDirectory(dest);
-            if (Directory.Exists(from)) CopySkillTree(src, dest); else File.Copy(md, Path.Combine(dest, "SKILL.md"));
-            var review = new Dictionary<string, object> { { "source", "proposed by " + who }, { "at", DateTime.UtcNow.ToString("o") }, { "approved", false }, { "proposal", true } };
-            File.WriteAllText(Path.Combine(dest, ".aiondx-review.json"), Json.Serialize(review), new UTF8Encoding(false));
-            bool change = File.Exists(Path.Combine(root, ".claude", "skills", name, "SKILL.md"));
-            return (change ? "Your change to " : "Your new skill ") + name + " is waiting for the user's approval in DX Skills (Settings > Skills, " + where + "). " +
-                "It is not used until they approve it; tell them it is there.";
+            finally { try { if (Directory.Exists(stage)) Directory.Delete(stage, true); } catch (Exception) { } }
         }
         /** The user's review setting for agents' skill changes, and this chat's mode: false means apply without asking. Any doubt asks. */
         static bool SkillsNeedReview()

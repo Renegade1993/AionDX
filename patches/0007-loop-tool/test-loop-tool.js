@@ -664,7 +664,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     AIONDX_BASE_URL: `http://127.0.0.1:${server.address().port}`, AIONDX_RUNTIME_TOKEN: TOKEN, AIONDX_USER_ID: 'u1', AIONDX_CONVERSATION_ID: convId });
   // Async on purpose: spawnSync would block this process, and with it the stand-in API the program calls.
   const run = (cmd, argv, env) => new Promise((resolve) => {
-    const ch = spawn(cmd, argv, { env, windowsHide: true });
+    const ch = spawn(cmd, argv, { env, windowsHide: true, cwd: (env && env.__cwd) || undefined });   // __cwd: where the agent stands, for relative paths
     children.push(ch);
     let out = '', err = '';
     ch.stdout.on('data', (d) => { out += d; });
@@ -1021,6 +1021,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       fs.readdirSync(path.join(projRoot, '.claude', 'skills-history', 'build')).length === 1 && JSON.parse(fs.readFileSync(path.join(live, '.aiondx-review.json'), 'utf8')).approved === true, pr.stdout);
     const histDir = path.join(projRoot, '.claude', 'skills-history', 'build');
     check('...and the kept version is the one it replaced', fs.readFileSync(path.join(histDir, fs.readdirSync(histDir)[0], 'SKILL.md'), 'utf8').endsWith('old'));
+    // November 17th, 2026: proposing from the live skill itself moved it into skills-history and then found no SKILL.md to put back. The
+    // live skill as its own source is refused, by folder, by its SKILL.md, and by a path relative to where the agent stands; nothing moves.
+    const liveBefore = fs.readFileSync(path.join(live, 'SKILL.md'), 'utf8'), histBefore = fs.readdirSync(histDir).length;
+    for (const [what, from, cwd] of [['its folder', live, null], ['its SKILL.md', path.join(live, 'SKILL.md'), null], ['a relative path', path.join('.claude', 'skills', 'build', 'SKILL.md'), projRoot]]) {
+      pr = await run(CLI, ['skills', 'propose', 'build', '--from', from], Object.assign(penv('convW'), cwd ? { __cwd: cwd } : {}));
+      check('the live skill as its own source (' + what + ') is refused and stays where it is, nothing added to its history',
+        pr.status === 1 && /--from is the live skill itself .*Nothing was changed\./.test(pr.stdout + pr.stderr) && fs.readFileSync(path.join(live, 'SKILL.md'), 'utf8') === liveBefore &&
+        fs.readdirSync(histDir).length === histBefore, pr.stdout + pr.stderr);
+    }
     fs.writeFileSync(path.join(pd, 'aiondx-skills.json'), JSON.stringify({ review: 'always' }));
     pr = await run(CLI, ['skills', 'propose', 'build', '--from', draft], penv('convW'));
     check('always: even a bypassPermissions chat\'s change waits for approval', pr.status === 0 && /waiting for the user's approval/.test(pr.stdout) && fs.existsSync(path.join(projRoot, '.claude', 'skills-pending', 'build', 'SKILL.md')), pr.stdout);
