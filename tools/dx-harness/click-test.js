@@ -3776,20 +3776,21 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.2');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.3');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.2' && JSON.stringify(c.names) === JSON.stringify(NEW281) &&
-        /^On a PC without Claude Code/.test(c.hows[0]) && /only if you left it open there/.test(c.hows[1]) && /ask you first only in chats that ask before acting/.test(c.hows[2]), JSON.stringify(c));
+      const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.3' && JSON.stringify(c.names) === JSON.stringify(NEW283) &&
+        /^Settings has AionDX pages of its own/.test(c.hows[0]) && /move them together/.test(c.hows[1]) && /travel with it/.test(c.hows[2]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
       const c4 = await card();
-      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW281.concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
+      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW283.concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 360, JSON.stringify(box));
       // November 16th: with 0.28.0's list the card ran off the top of the window ("CAN'T EVEN SEE THE WHOLE THING"). The whole card must
@@ -3826,7 +3827,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.2 card (with 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 20, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.3 card (with 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 26, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
