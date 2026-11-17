@@ -30,7 +30,10 @@ param(
   [switch]$StageOnly,
   # The words asking for this installer. An installer is cut only when the owner asks for one (November 16th, 2026: "please do not
   # cut a new installer until I ask you to"); a stage-only build for tests needs none.
-  [string]$AskedFor = ''
+  [string]$AskedFor = '',
+  # An installer whose renderer BUILD stamp is the same as the last released one is refused (0.28.3 shipped 0.28.2's stamp, November
+  # 16th, 2026: agents read it to know which AionDX they run). -SameBuild allows it when the renderer did not change.
+  [switch]$SameBuild
 )
 $ErrorActionPreference = 'Stop'
 if (-not $StageOnly -and $AskedFor.Trim().Length -lt 3) {
@@ -76,6 +79,15 @@ $utf8 = New-Object Text.UTF8Encoding $false
 
 $built = (Get-Date).ToUniversalTime()
 $rendererBuild = ([regex]::Match((Get-Content "$root\patches\0001-renderer-dx\aiondx-ui.js" -Raw), "var BUILD = '([^']+)'")).Groups[1].Value
+if (-not $StageOnly -and -not $SameBuild) {
+  $lastTag = (& git -C $root tag --list 'v*' --sort=-creatordate | Select-Object -First 1)
+  if ($lastTag) {
+    $before = ([regex]::Match(((& git -C $root show "${lastTag}:patches/0001-renderer-dx/aiondx-ui.js") -join "`n"), "var BUILD = '([^']+)'")).Groups[1].Value
+    if ($before -and $before -eq $rendererBuild) {
+      throw "The renderer's BUILD stamp ($rendererBuild) is the same as in $lastTag. Give this release its own (var BUILD in aiondx-ui.js, the date and a number), or pass -SameBuild when the renderer did not change."
+    }
+  }
+}
 $buildId = $built.ToString('yyyyMMdd.HHmm') + '-r' + $rendererBuild
 $coreManifest = Get-Content (Join-Path $AionUiDir 'resources\bundled-aioncore\win32-x64\manifest.json') -Raw | ConvertFrom-Json
 $aioncoreVer = [string]$coreManifest.version
