@@ -51,6 +51,20 @@ try {
   check('--dangerously-skip-permissions: without it', o.guard === null, JSON.stringify(o));
   o = run(['--permission-mode', 'default'], { AIONDX_GUARD: 'off' });
   check('AIONDX_GUARD=off: without it', o.guard === null, JSON.stringify(o));
+  {
+    // what a guarded agent can read of a chat's skill view (core-0022): a junction to a skill is refused, the same skill as real files
+    // (hard links, as the view now holds them) is read. A test run itself under the guard sees the junction refused too.
+    const src = path.join(root, 'skills-src', 'cron'), view = path.join(root, 'view');
+    fs.mkdirSync(src, { recursive: true }); fs.mkdirSync(path.join(view, 'files', 'cron'), { recursive: true });
+    fs.writeFileSync(path.join(src, 'SKILL.md'), 'SKILLTOKEN');
+    fs.symlinkSync(src, path.join(view, 'junction'), 'junction');
+    fs.linkSync(path.join(src, 'SKILL.md'), path.join(view, 'files', 'cron', 'SKILL.md'));
+    const read = (p) => spawnSync(path.join(cat, 'aiondx-guard.exe'), [process.execPath, '-e', 'try{process.stdout.write(require("fs").readFileSync(process.argv[1],"utf8"))}catch(e){process.stdout.write("ERR "+e.code)}', p], { windowsHide: true, encoding: 'utf8', timeout: 30000 }).stdout;
+    const viaJunction = read(path.join(view, 'junction', 'SKILL.md'));
+    check('under the guard, a skill reached through a junction cannot be read', viaJunction !== 'SKILLTOKEN', viaJunction);
+    const viaFiles = read(path.join(view, 'files', 'cron', 'SKILL.md'));
+    check('under the guard, the same skill as files in the view is read', viaFiles === 'SKILLTOKEN', viaFiles);
+  }
   fs.rmSync(path.join(cat, 'aiondx-guard.exe'));
   o = run(['--permission-mode', 'default']);
   check('no helper beside the launcher: the chat starts as before', o.guard === null && o.mode === 'default', JSON.stringify(o));

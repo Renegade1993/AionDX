@@ -1,0 +1,244 @@
+diff --git a/crates/aionui-extension/src/skill_view.rs b/crates/aionui-extension/src/skill_view.rs
+index 4ba464a7..1ed46370 100644
+--- a/crates/aionui-extension/src/skill_view.rs
++++ b/crates/aionui-extension/src/skill_view.rs
+@@ -25,6 +25,14 @@
+ //! path degraded to a recursive copy of real files, which this refactor removes:
+ //! a failed link is skipped with a `warn`, because materializing user files into
+ //! a directory we then treat as disposable is worse than the skill being absent.
++//!
++//! AionDX (core-0022, November 16th, 2026): on Windows the view holds each skill's FILES, never a junction to its
++//! folder. A process under Windows' RedirectionGuard (ProcessRedirectionTrustPolicy) cannot follow a junction an
++//! ordinary user made, and AionDX starts the agents of chats that ask before acting with that guard on (an app
++//! started by Inno Setup carried it too, for every agent): through junctions the agent saw an empty plugin and
++//! not one of its skills. Each file is a hard link to its source where the volume allows (no copy, the same
++//! bytes, not a redirection), else a copy carrying the source's modified time. A view no longer matching its
++//! sources (a file added, removed or replaced) is rebuilt; an old junction view is replaced by files.
+ 
+ use std::collections::{HashMap, HashSet};
+ use std::path::{Path, PathBuf};
+@@ -34,7 +42,135 @@ use tokio::sync::Mutex;
+ use tracing::{debug, info, warn};
+ 
+ use crate::error::ExtensionError;
+-use crate::skill_service::{ResolvedAgentSkill, create_symlink};
++use crate::skill_service::ResolvedAgentSkill;
++#[cfg(not(windows))]
++use crate::skill_service::create_symlink;
++
++/// Folders a skill may carry that an agent never reads as part of it, left out of a file view.
++#[cfg(windows)]
++const VIEW_SKIP: &[&str] = &["node_modules", ".git", "__pycache__", ".venv", "venv"];
++/// How deep a skill's folders are followed into, so a loop of links in a source cannot run away.
++#[cfg(windows)]
++const VIEW_MAX_DEPTH: usize = 16;
++
++/// Put one skill into the view: its files (Windows) or a link to its folder (elsewhere).
++#[cfg(windows)]
++async fn place_skill(src: &Path, dst: &Path) -> Result<(), ExtensionError> {
++    let (src, dst) = (src.to_path_buf(), dst.to_path_buf());
++    tokio::task::spawn_blocking(move || {
++        let r = mirror_dir(&src, &dst, 0);
++        if r.is_err() {
++            let _ = std::fs::remove_dir_all(&dst);
++        }
++        r
++    })
++    .await
++    .map_err(|e| ExtensionError::Io(std::io::Error::other(format!("skill view join error: {e}"))))?
++    .map_err(ExtensionError::Io)
++}
++#[cfg(not(windows))]
++async fn place_skill(src: &Path, dst: &Path) -> Result<(), ExtensionError> {
++    create_symlink(src, dst).await
++}
++
++#[cfg(windows)]
++fn is_reparse(meta: &std::fs::Metadata) -> bool {
++    use std::os::windows::fs::MetadataExt;
++    meta.file_attributes() & 0x400 != 0 // FILE_ATTRIBUTE_REPARSE_POINT
++}
++
++#[cfg(windows)]
++fn skipped(name: &std::ffi::OsStr) -> bool {
++    VIEW_SKIP.iter().any(|s| name.eq_ignore_ascii_case(s))
++}
++
++/// `dst` as a real folder holding `src`'s files: each a hard link, else a copy with the source's modified time.
++#[cfg(windows)]
++fn mirror_dir(src: &Path, dst: &Path, depth: usize) -> std::io::Result<()> {
++    std::fs::create_dir_all(dst)?;
++    if depth > VIEW_MAX_DEPTH {
++        return Ok(());
++    }
++    for entry in std::fs::read_dir(src)? {
++        let entry = entry?;
++        let name = entry.file_name();
++        if skipped(&name) {
++            continue;
++        }
++        let (from, to) = (entry.path(), dst.join(&name));
++        let meta = std::fs::metadata(&from)?;
++        if meta.is_dir() {
++            mirror_dir(&from, &to, depth + 1)?;
++        } else if meta.is_file() && std::fs::hard_link(&from, &to).is_err() {
++            std::fs::copy(&from, &to)?;
++            if let Ok(when) = meta.modified() {
++                if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&to) {
++                    let _ = f.set_modified(when);
++                }
++            }
++        }
++    }
++    Ok(())
++}
++
++/// Every file under `dir` (relative path, lower case) with its size and modified time; `None` when `dir` is not a
++/// real folder (a junction left by an earlier view) or cannot be read.
++#[cfg(windows)]
++fn file_list(dir: &Path) -> Option<HashMap<String, (u64, Option<std::time::SystemTime>)>> {
++    fn walk(
++        root: &Path,
++        dir: &Path,
++        depth: usize,
++        out: &mut HashMap<String, (u64, Option<std::time::SystemTime>)>,
++    ) -> std::io::Result<()> {
++        if depth > VIEW_MAX_DEPTH {
++            return Ok(());
++        }
++        for entry in std::fs::read_dir(dir)? {
++            let entry = entry?;
++            if skipped(&entry.file_name()) {
++                continue;
++            }
++            let path = entry.path();
++            let meta = std::fs::metadata(&path)?;
++            if meta.is_dir() {
++                walk(root, &path, depth + 1, out)?;
++            } else if meta.is_file() {
++                let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_lowercase();
++                out.insert(rel, (meta.len(), meta.modified().ok()));
++            }
++        }
++        Ok(())
++    }
++    let top = std::fs::symlink_metadata(dir).ok()?;
++    if !top.is_dir() || is_reparse(&top) {
++        return None;
++    }
++    let mut out = HashMap::new();
++    walk(dir, dir, 0, &mut out).ok()?;
++    Some(out)
++}
++
++/// Whether every skill's view folder still holds exactly its source's files (same sizes and modified times).
++#[cfg(windows)]
++async fn view_is_current(skills: &[&ResolvedAgentSkill], skills_dir: &Path) -> bool {
++    let pairs: Vec<(PathBuf, PathBuf)> = skills
++        .iter()
++        .map(|s| (s.source_path.clone(), skills_dir.join(&s.name)))
++        .collect();
++    tokio::task::spawn_blocking(move || {
++        pairs.iter().all(|(src, dst)| match (file_list(src), file_list(dst)) {
++            (Some(a), Some(b)) => a == b,
++            _ => false,
++        })
++    })
++    .await
++    .unwrap_or(false)
++}
++#[cfg(not(windows))]
++async fn view_is_current(_skills: &[&ResolvedAgentSkill], _skills_dir: &Path) -> bool {
++    true
++}
+ 
+ const VIEW_ROOT_DIR_NAME: &str = "session-skills";
+ const SKILLS_SUBDIR: &str = "skills";
+@@ -175,7 +311,7 @@ pub async fn rebuild_view(
+     // one just linked -- and skipping them is not merely an optimization: a wipe
+     // and relink would briefly empty a directory a CLI may be reading, and would
+     // re-derive an "added" count against a snapshot of our own making.
+-    if previously_linked == desired {
++    if previously_linked == desired && view_is_current(&linkable, &skills_dir).await {
+         debug!(
+             user_id = %user_id,
+             conversation_id = %conversation_id,
+@@ -201,7 +337,7 @@ pub async fn rebuild_view(
+     let mut created = 0usize;
+     for skill in &linkable {
+         let target = skills_dir.join(&skill.name);
+-        match create_symlink(&skill.source_path, &target).await {
++        match place_skill(&skill.source_path, &target).await {
+             Ok(()) => created += 1,
+             Err(e) => warn!(
+                 skill = %skill.name,
+@@ -654,4 +790,69 @@ mod tests {
+             "a dropped skill must actually disappear"
+         );
+     }
++
++    // ---- AionDX core-0022: on Windows the view holds files, so an agent under RedirectionGuard can read it
++
++    #[cfg(windows)]
++    fn reparse(p: &Path) -> bool {
++        super::is_reparse(&std::fs::symlink_metadata(p).unwrap())
++    }
++
++    #[cfg(windows)]
++    #[tokio::test]
++    async fn the_view_holds_real_folders_and_files_never_a_junction() {
++        let tmp = tempfile::TempDir::new().unwrap();
++        let data_dir = tmp.path().join("data");
++        let sources = tmp.path().join("sources");
++        let cron = write_source_skill(&sources, "cron");
++        std::fs::create_dir_all(sources.join("cron").join("node_modules").join("x")).unwrap();
++        std::fs::write(sources.join("cron").join("node_modules").join("x").join("big.js"), "x").unwrap();
++        assert_eq!(rebuild_view(&data_dir, "user_a", "conv_1", &[cron]).await.unwrap(), 1);
++        let skill = view_skills_dir(&data_dir, "user_a", "conv_1").unwrap().join("cron");
++        assert!(!reparse(&skill), "the skill's folder in the view must not be a junction");
++        assert!(!reparse(&skill.join("references")));
++        assert!(!reparse(&skill.join("SKILL.md")));
++        assert_eq!(std::fs::read_to_string(skill.join("references").join("notes.md")).unwrap(), "REFTOKEN");
++        assert!(!skill.join("node_modules").exists(), "node_modules is not part of a skill's view");
++        // removing the view leaves the source's files
++        assert!(remove_view(&data_dir, "user_a", "conv_1").await.unwrap());
++        assert_eq!(std::fs::read_to_string(sources.join("cron").join("references").join("notes.md")).unwrap(), "REFTOKEN");
++    }
++
++    #[cfg(windows)]
++    #[tokio::test]
++    async fn a_source_file_replaced_added_or_removed_refreshes_the_view() {
++        let tmp = tempfile::TempDir::new().unwrap();
++        let data_dir = tmp.path().join("data");
++        let sources = tmp.path().join("sources");
++        let cron = write_source_skill(&sources, "cron");
++        rebuild_view(&data_dir, "user_a", "conv_1", std::slice::from_ref(&cron)).await.unwrap();
++        let skill = view_skills_dir(&data_dir, "user_a", "conv_1").unwrap().join("cron");
++        // an installer writes a new SKILL.md beside the old and renames it over (a hard link would keep the old bytes)
++        let src_md = sources.join("cron").join("SKILL.md");
++        std::fs::write(src_md.with_extension("new"), "---\nname: cron\ndescription: d\n---\nnew body, longer").unwrap();
++        std::fs::rename(src_md.with_extension("new"), &src_md).unwrap();
++        std::fs::write(sources.join("cron").join("added.md"), "ADDED").unwrap();
++        std::fs::remove_file(sources.join("cron").join("references").join("notes.md")).unwrap();
++        rebuild_view(&data_dir, "user_a", "conv_1", std::slice::from_ref(&cron)).await.unwrap();
++        assert!(std::fs::read_to_string(skill.join("SKILL.md")).unwrap().contains("new body"));
++        assert_eq!(std::fs::read_to_string(skill.join("added.md")).unwrap(), "ADDED");
++        assert!(!skill.join("references").join("notes.md").exists(), "a file gone from the source leaves the view");
++    }
++
++    #[cfg(windows)]
++    #[tokio::test]
++    async fn an_earlier_junction_view_is_replaced_by_files() {
++        let tmp = tempfile::TempDir::new().unwrap();
++        let data_dir = tmp.path().join("data");
++        let sources = tmp.path().join("sources");
++        let cron = write_source_skill(&sources, "cron");
++        let skills_dir = view_skills_dir(&data_dir, "user_a", "conv_1").unwrap();
++        std::fs::create_dir_all(&skills_dir).unwrap();
++        junction::create(sources.join("cron"), skills_dir.join("cron")).unwrap();
++        assert!(reparse(&skills_dir.join("cron")));
++        assert_eq!(rebuild_view(&data_dir, "user_a", "conv_1", &[cron]).await.unwrap(), 1);
++        assert!(!reparse(&skills_dir.join("cron")), "the same names over a junction must still be rebuilt as files");
++        assert!(sources.join("cron").join("SKILL.md").exists(), "replacing the junction must not touch its target");
++    }
+ }
