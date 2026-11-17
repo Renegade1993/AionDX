@@ -70,6 +70,30 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-skills-'));
     fs.writeFileSync(path.join(userData, 'aiondx-projects.json'), JSON.stringify({ skillRoots: [], projects: { atlas: { root: proj } }, bindings: {} }));
     r = S.list({ conv: 'm1', ws, team: 't9', teamName: 'Atlas Team', home, userData, builtinDir: builtin });
     check('a team member with no binding: its team\'s name finds the project', r.skills.some((s) => s.layer.kind === 'project'), JSON.stringify(r.skills.map((s) => s.layer.kind)));
+    // November 17th, 2026: skills in the chat's own folder and the folders above it (Claude Code reads them; the list did not)
+    {
+      const client = path.join(root, 'Clients'), cws = path.join(client, 'Chats', 'Policy (b2)', 'chat-b2');
+      fs.mkdirSync(cws, { recursive: true });
+      skill(path.join(client, '.claude', 'skills'), 'client-writing', 'name: client-writing\ndescription: The client\'s writing rules.');
+      skill(path.join(client, '.claude', 'skills'), 'notes', 'name: notes\ndescription: The client\'s notes.');
+      skill(path.join(cws, '.claude', 'skills'), 'client-writing', 'name: client-writing\ndescription: This chat\'s own copy.');
+      const ctd = path.join(home, '.claude', 'projects', cws.replace(/[^A-Za-z0-9]/g, '-'));
+      fs.mkdirSync(ctd, { recursive: true });
+      fs.writeFileSync(path.join(ctd, 'r.jsonl'), JSON.stringify({ timestamp: '2026-11-17T12:00:00Z', message: { content: [{ type: 'tool_use', id: 'r1', name: 'Read',
+        input: { file_path: path.join(client, '.claude', 'skills', 'client-writing', 'SKILL.md') } }] } }));
+      r = S.list({ conv: 'c2', ws: cws, home, userData, builtinDir: builtin });
+      const bf = Object.fromEntries(r.skills.map((s) => [s.name, s]));
+      check('skills in a folder above the chat are listed, labelled with that folder', bf['client-writing'] && bf['client-writing'].layer.kind === 'folder' && bf.notes.layer.kind === 'folder' && bf.notes.layer.label === 'Clients' && bf.notes.shadows === 'Yours',
+        JSON.stringify(r.skills.map((s) => [s.name, s.layer.kind, s.layer.label, s.shadows])));
+      check('the chat\'s own folder is nearest and wins a name', bf['client-writing'].layer.label === 'chat-b2' && bf['client-writing'].description === 'This chat\'s own copy.' && bf['client-writing'].shadows === 'Clients', JSON.stringify(bf['client-writing']));
+      check('a SKILL.md the agent opened with Read counts as a use', bf['client-writing'].uses === 1 && bf['client-writing'].lastUsed === '2026-11-17T12:00:00Z', JSON.stringify(bf['client-writing']));
+      // the transcript grows: only what was added is read, nothing counted twice (a long chat's transcript runs to hundreds of MB)
+      fs.appendFileSync(path.join(ctd, 'r.jsonl'), '\n' + JSON.stringify({ timestamp: '2026-11-17T13:00:00Z', message: { content: [{ type: 'tool_use', id: 'r2', name: 'Skill', input: { skill: 'client-writing' } }] } }) + '\n');
+      const once = S.usesFor(home, cws)['client-writing'], twice = S.usesFor(home, cws)['client-writing'];
+      check('a growing transcript: the new use is counted once, read again it stays the same', once.n === 2 && twice.n === 2 && once.last === '2026-11-17T13:00:00Z', JSON.stringify([once, twice]));
+      const L = S.layersFor({ conv: 'c2', ws: cws, home, userData, builtinDir: builtin });
+      check('your home folder is not listed twice', L.filter((l) => l.dir.toLowerCase() === path.join(home, '.claude', 'skills').toLowerCase()).length === 1, JSON.stringify(L.map((l) => l.dir)));
+    }
     // the ipc handler
     let handler = null;
     S.install({ app: { getPath: () => userData }, ipcMain: { handle: (ch, f) => { handler = f; } } });

@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { StringDecoder } = require('string_decoder');
 
 const STATES = ['on', 'name-only', 'user-invocable-only', 'off'];
 const mangle = (p) => String(p).replace(/[^A-Za-z0-9]/g, '-');
@@ -82,7 +83,80 @@ function layersFor(ctx) {
   }
   const proj = name && reg.projects && reg.projects[name];
   if (proj && proj.root) L.push({ dir: path.join(proj.root, '.claude', 'skills'), layer: { kind: 'project', label: path.basename(proj.root), project: name } });
+  // The chat's own folder and every folder above it: Claude Code reads .claude\skills in each, so the agent has those skills too (November
+  // 17th, 2026: chats kept under a client's folder had its 13 skills and used them, and this list showed none). The farthest first, so the
+  // nearest wins a name; your home folder is the Yours layer already.
+  if (ctx.ws && path.isAbsolute(ctx.ws)) {
+    const key = (d) => path.resolve(d).toLowerCase();
+    const seen = new Set(L.map((l) => key(l.dir)));
+    const homes = new Set([key(ctx.home), key(os.homedir())]);
+    const ups = [];
+    let d = path.resolve(ctx.ws);
+    for (let i = 0; i < 40; i++) { ups.push(d); const p = path.dirname(d); if (p === d) break; d = p; }
+    for (const a of ups.reverse()) {
+      const dir = path.join(a, '.claude', 'skills');
+      if (homes.has(key(a)) || seen.has(key(dir))) continue;
+      let isDir = false;
+      try { isDir = fs.statSync(dir).isDirectory(); } catch { /* none here */ }
+      if (!isDir) continue;
+      seen.add(key(dir));
+      L.push({ dir, layer: { kind: 'folder', label: path.basename(a) || a } });
+    }
+  }
   return L;
+}
+
+const USE_RE = /"name":"Skill","input":\{"skill":"([^"]+)"|<command-name>\/([A-Za-z0-9:_-]+)<\/command-name>|"name":"Read","input":\{"file_path":"[^"]*?[\\/]skills[\\/]+([^"\\/]+)[\\/]+SKILL\.md"/g;
+function countUses(line, counts) {
+  if (line.indexOf('"Skill"') < 0 && line.indexOf('<command-name>') < 0 && line.indexOf('SKILL.md') < 0) return;
+  USE_RE.lastIndex = 0;
+  let m;
+  while ((m = USE_RE.exec(line))) {
+    const name = String(m[1] || m[2] || m[3]).replace(/^[a-z0-9-]+:/i, '');
+    const ts = (/"timestamp":"([^"]+)"/.exec(line) || [])[1];
+    const u = counts[name] || (counts[name] = { n: 0, last: null });
+    u.n++;
+    if (ts && (!u.last || ts > u.last)) u.last = ts;
+  }
+}
+// Each transcript is read once and then only what was added to it: a long chat's transcript runs to hundreds of MB (November 17th, 2026:
+// 457 MB, and files over 60 MB used to be skipped, so its skills showed no uses). A first read that runs out of time goes on next time.
+const useScans = new Map();   // file -> { offset, tail, dec, counts }
+function scanUses(file, deadline) {
+  let st;
+  try { st = fs.statSync(file); } catch { return null; }
+  let c = useScans.get(file);
+  if (!c || st.size < c.offset) { c = { offset: 0, tail: '', dec: new StringDecoder('utf8'), counts: {} }; useScans.set(file, c); }
+  if (c.offset >= st.size) return withTail(c);
+  let fd;
+  try { fd = fs.openSync(file, 'r'); } catch { return c.counts; }
+  try {
+    const buf = Buffer.alloc(8 * 1048576);
+    while (c.offset < st.size && Date.now() < deadline) {
+      const n = fs.readSync(fd, buf, 0, Math.min(buf.length, st.size - c.offset), c.offset);
+      if (n <= 0) break;
+      c.offset += n;
+      const lines = (c.tail + c.dec.write(buf.subarray(0, n))).split('\n');
+      c.tail = lines.pop();
+      for (const line of lines) countUses(line, c.counts);
+    }
+  } catch { /* what was read so far stands */ } finally { try { fs.closeSync(fd); } catch { /* closed */ } }
+  return withTail(c);
+}
+/** The counts with the file's last line too, which has no newline yet: counted for this answer only, so it is not counted twice once it ends. */
+function withTail(c) {
+  if (!c.tail) return c.counts;
+  const t = {};
+  countUses(c.tail, t);
+  if (!Object.keys(t).length) return c.counts;
+  const out = {};
+  for (const [k, v] of Object.entries(c.counts)) out[k] = { n: v.n, last: v.last };
+  for (const [k, v] of Object.entries(t)) {
+    const u = out[k] || (out[k] = { n: 0, last: null });
+    u.n += v.n;
+    if (v.last && (!u.last || v.last > u.last)) u.last = v.last;
+  }
+  return out;
 }
 
 /** This chat's uses of each skill, from Claude Code's transcripts of its working folder (every Claude config folder). Bounded. */
@@ -91,27 +165,17 @@ function usesFor(home, ws) {
   if (!ws) return uses;
   let cfgs = [];
   try { cfgs = fs.readdirSync(home).filter((n) => /^\.claude(-[A-Za-z0-9_]+)?$/.test(n)); } catch { return uses; }
-  const t0 = Date.now();
-  const RE = /"name":"Skill","input":\{"skill":"([^"]+)"|<command-name>\/([A-Za-z0-9:_-]+)<\/command-name>/g;
+  const deadline = Date.now() + 4000;
   for (const c of cfgs) {
     const dir = path.join(home, c, 'projects', mangle(ws));
     let files = [];
     try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl')); } catch { continue; }
     for (const f of files) {
-      if (Date.now() - t0 > 4000) return uses;
-      let text = '';
-      try { const st = fs.statSync(path.join(dir, f)); if (st.size > 60 * 1048576) continue; text = fs.readFileSync(path.join(dir, f), 'utf8'); } catch { continue; }
-      for (const line of text.split('\n')) {
-        if (line.indexOf('"Skill"') < 0 && line.indexOf('<command-name>') < 0) continue;
-        RE.lastIndex = 0;
-        let m;
-        while ((m = RE.exec(line))) {
-          const name = String(m[1] || m[2]).replace(/^[a-z0-9-]+:/i, '');
-          const ts = (/"timestamp":"([^"]+)"/.exec(line) || [])[1];
-          const u = uses[name] || (uses[name] = { n: 0, last: null });
-          u.n++;
-          if (ts && (!u.last || ts > u.last)) u.last = ts;
-        }
+      const counts = scanUses(path.join(dir, f), deadline);
+      for (const [name, v] of Object.entries(counts || {})) {
+        const u = uses[name] || (uses[name] = { n: 0, last: null });
+        u.n += v.n;
+        if (v.last && (!u.last || v.last > u.last)) u.last = v.last;
       }
     }
   }
