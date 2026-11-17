@@ -50,7 +50,7 @@ AppName=AionDX
 AppVersion={#AppVer}
 AppVerName=AionDX {#AppVer}
 AppPublisher=AionDX
-AppComments=AionDX {#AppVer}: AionUi {#AionUiVer} with the AionDX patches. Build {#BuildId}.
+AppComments=AionDX {#AppVer}, build {#BuildId} (based on AionUi {#AionUiVer}).
 VersionInfoVersion={#AppVerNumeric}
 VersionInfoDescription=AionDX {#AppVer} setup
 DefaultDirName={localappdata}\Programs\AionDX
@@ -79,7 +79,7 @@ WizardStyle=modern
 ChangesEnvironment=yes
 
 [Messages]
-WelcomeLabel2=This installs AionDX {#AppVer}: one app for Claude Code, Codex, Gemini, Antigravity and every other agent AionUi supports, with the Loop, Respond now, drafts that survive a restart, and a first screen that brings your settings over from the other AI apps you use.%n%nNo account or sign-in is needed. It installs for you only, so Windows will not ask for an administrator. If AionUi is on this PC, Setup offers to move your chats and settings over and remove it.
+WelcomeLabel2=This installs AionDX {#AppVer}: one app for Claude Code, Codex, Gemini, Antigravity and every other agent AionDX supports, with the Loop, Respond now, drafts that survive a restart, and a first screen that brings your settings over from the other AI apps you use.%n%nNo account or sign-in is needed. It installs for you only, so Windows will not ask for an administrator. If AionUi is on this PC, Setup offers to move your chats and settings over and remove it.
 
 [Tasks]
 Name: "desktopicon"; Description: "Put an AionDX shortcut on the desktop"; GroupDescription: "Shortcuts:"
