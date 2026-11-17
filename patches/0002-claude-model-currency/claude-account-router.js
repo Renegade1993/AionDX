@@ -360,8 +360,77 @@ function guardFor(argv) {
   return fs.existsSync(exe) ? exe : null;
 }
 
+/** Linked skills for a guarded chat (November 16th, 2026). Under the guard Claude cannot open a skill reached through a folder link (a
+ *  junction, as DX Skills' link and the global library's updater make them, or a skills folder that is itself a link). Before a guarded
+ *  start, every skill in the folders Claude reads (the personal <config>\skills, and <root>\.claude\skills of each --add-dir root) that
+ *  is a link, or sits behind one, is given to it as real files in <data>\guard-skills\<chat>\.claude\skills: hard links to the skill's own
+ *  files (the same bytes; an edit there is an edit of the skill), copies where a hard link cannot be made. That folder goes in with one
+ *  more --add-dir. It is made again at every guarded start. A name already given (a nearer layer) wins. */
+let SKILL_PLAN = null;   // { dataDir, convId } for a Claude agent session (projectSetup)
+const GUARD_SKIP = new Set(['node_modules', '.git', '__pycache__', '.venv', 'venv']);
+function isLink(p) { try { return fs.lstatSync(p).isSymbolicLink(); } catch { return false; } }
+/** The real folder behind a path, each link on the way read from its own record (readlink), never followed: this works when the launcher
+ *  itself runs under the guard (an AionDX started by an earlier installer). */
+function realOf(p) {
+  const parts = path.resolve(p).split(path.sep);
+  let cur = parts[0] + path.sep;
+  for (let i = 1; i < parts.length; i++) {
+    let next = path.join(cur, parts[i]);
+    for (let k = 0; k < 8 && isLink(next); k++) {
+      const t = String(fs.readlinkSync(next)).replace(/^\\\\\?\\/, '');
+      next = path.isAbsolute(t) ? t : path.resolve(path.dirname(next), t);
+    }
+    cur = next;
+  }
+  return cur;
+}
+function filesOf(src, dst, depth) {
+  fs.mkdirSync(dst, { recursive: true });
+  if (depth > 16) return;
+  for (const e of fs.readdirSync(src)) {
+    if (GUARD_SKIP.has(e.toLowerCase())) continue;
+    const from = path.join(src, e), to = path.join(dst, e);
+    const st = fs.statSync(from);
+    if (st.isDirectory()) filesOf(from, to, depth + 1);
+    else if (st.isFile()) { try { fs.linkSync(from, to); } catch { fs.copyFileSync(from, to); try { fs.utimesSync(to, st.atime, st.mtime); } catch { /* time only */ } } }
+  }
+}
+function guardSkills(env) {
+  if (!SKILL_PLAN || !SKILL_PLAN.dataDir) return 0;
+  const e = env || process.env;
+  const folders = [path.join(e.CLAUDE_CONFIG_DIR || path.join(realProfileDir(), '.claude'), 'skills')];
+  for (let i = 0; i < args.length - 1; i++) if (args[i] === '--add-dir') folders.push(path.join(args[i + 1], '.claude', 'skills'));
+  const mirror = path.join(SKILL_PLAN.dataDir, 'guard-skills', String(SKILL_PLAN.convId || 'chat').replace(/[^\w.-]/g, '_'));
+  const into = path.join(mirror, '.claude', 'skills');
+  try { fs.rmSync(mirror, { recursive: true, force: true }); } catch { /* in use: written over */ }
+  let n = 0;
+  const failed = [];
+  for (const folder of folders) {
+    let behind = false;
+    for (let p = folder, k = 0; k < 4; k++, p = path.dirname(p)) if (isLink(p)) behind = true;
+    let names = [];
+    try { names = fs.readdirSync(folder); } catch { continue; }
+    for (const name of names) {
+      const at = path.join(folder, name);
+      if (!behind && !isLink(at)) continue;
+      const to = path.join(into, name);
+      if (fs.existsSync(to)) continue;
+      try {
+        const real = realOf(at);
+        if (!fs.existsSync(path.join(real, 'SKILL.md'))) continue;
+        filesOf(real, to, 0);
+        n++;
+      } catch (err) { failed.push(name + ': ' + err.message); try { fs.rmSync(to, { recursive: true, force: true }); } catch { /* left */ } }
+    }
+  }
+  if (n) args.push('--add-dir', mirror);
+  routerLog(`guard: ${n} linked skill(s) given as files${failed.length ? '; not given: ' + failed.join('; ') : ''}`);
+  return n;
+}
+
 function handOff(env) {
   const guard = guardFor(args);
+  if (guard) { try { guardSkills(env); } catch (e) { routerLog('guard skills: ' + e.message); } }
   const r = guard ? spawnSync(guard, [RESOLVED.exe].concat(args), { stdio: 'inherit', env: env || process.env, windowsHide: true }) : spawnSync(RESOLVED.exe, args, {
     stdio: 'inherit',
     env: env || process.env,
@@ -556,6 +625,7 @@ function projectSetup(env, dbPath, convId, facts, label) {
   for (let i = 0; i < args.length - 1; i++) if (args[i] === '--add-dir') have.add(String(args[i + 1]).toLowerCase());
   const added = [];
   for (const d of dirs) { if (!have.has(d.toLowerCase())) { args.push('--add-dir', d); have.add(d.toLowerCase()); added.push(d); } }
+  if (isClaude && dataDir) SKILL_PLAN = { dataDir, convId };
   if (isClaude) pinnedSkills(dataDir, convId, facts.teamId, roots, proj);
   if (isClaude) planHooks(env, dataDir, convId, facts.teamId);
   // which account this is, by its label, against the project's domain and allowed accounts

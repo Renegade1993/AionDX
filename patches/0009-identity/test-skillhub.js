@@ -89,9 +89,15 @@ const TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.
     // link a library skill into the project, then take the link out
     r = H.link(ctx, 'atlas', 'pdf');
     const at = path.join(proj, '.claude', 'skills', 'pdf');
-    check('link: the project opts into a global library skill by a junction', r.ok && fs.existsSync(path.join(at, 'SKILL.md')) && fs.realpathSync(at).toLowerCase() === path.join(lib, 'anthropic', 'skills', 'pdf').toLowerCase(), JSON.stringify(r));
+    // A shell under Windows' RedirectionGuard (one started by an earlier AionDX installer) cannot read through the junction: the link is
+    // then checked by its own record, and the reads through it are skipped, saying so. AionDX's main process runs without the guard.
+    const guarded = (() => { const p = path.join(root, 'probe-link'); try { fs.symlinkSync(path.join(lib, 'anthropic'), p, 'junction'); return !fs.existsSync(path.join(p, 'skills')); } catch { return false; } finally { try { fs.rmdirSync(p); } catch { /* none */ } } })();
+    const want = path.join(lib, 'anthropic', 'skills', 'pdf').toLowerCase();
+    check('link: the project opts into a global library skill by a junction', r.ok && fs.lstatSync(at).isSymbolicLink() &&
+      (guarded ? String(fs.readlinkSync(at)).replace(/^\\\\\?\\/, '').replace(/[\\/]+$/, '').toLowerCase() === want : fs.existsSync(path.join(at, 'SKILL.md')) && fs.realpathSync(at).toLowerCase() === want), JSON.stringify(r));
     h = H.hub(ctx);
-    check('the hub shows it as a link', !!h.layers.find((l) => l.kind === 'project').skills.find((s) => s.folder === 'pdf').linked);
+    const pdfRow = h.layers.find((l) => l.kind === 'project').skills.find((s) => s.folder === 'pdf');
+    check('the hub shows it as a link' + (guarded ? ' (read from the link\'s record: this shell is under RedirectionGuard)' : ''), !!(pdfRow && pdfRow.linked) && pdfRow.linked.toLowerCase() === want, JSON.stringify(pdfRow));
     r = H.remove(ctx, at);
     check('removing the link leaves the library\'s skill alone', r.ok && !fs.existsSync(at) && fs.existsSync(path.join(lib, 'anthropic', 'skills', 'pdf', 'SKILL.md')));
     threw = null; try { H.remove(ctx, path.join(lib, 'anthropic', 'skills', 'pdf')); } catch (e) { threw = e.message; }

@@ -29,7 +29,15 @@ try {
   db.close();
   fs.writeFileSync(path.join(data, 'aiondx-projects.json'), JSON.stringify({ version: 1, skillRoots: [], projects: {}, bindings: {}, accountDocs: { personal: 'off' } }));
   const fake = path.join(cat, 'fake-claude.js');
-  fs.writeFileSync(fake, "process.stdout.write(JSON.stringify({ guard: process.env.AIONDX_GUARDED || null, mode: process.argv[process.argv.indexOf('--permission-mode') + 1] || null }));");
+  // the stand-in reports whether it was guarded, its mode, and each skill it can read in the folders Claude would (every --add-dir's
+  // .claude\skills): name -> the first line of its SKILL.md, or ERR
+  fs.writeFileSync(fake, [
+    "const fs = require('fs'), path = require('path'); const a = process.argv; const skills = {}; const dirs = [];",
+    "for (let i = 0; i < a.length - 1; i++) if (a[i] === '--add-dir') dirs.push(a[i + 1]);",
+    "for (const d of dirs) { const s = path.join(d, '.claude', 'skills'); let n = []; try { n = fs.readdirSync(s); } catch (e) { continue; }",
+    "  for (const k of n) { let v; try { v = fs.readFileSync(path.join(s, k, 'SKILL.md'), 'utf8').split('\\n')[0]; } catch (e) { v = 'ERR'; } if (!skills[k] || skills[k] === 'ERR') skills[k] = v; } }",
+    "process.stdout.write(JSON.stringify({ guard: process.env.AIONDX_GUARDED || null, mode: a[a.indexOf('--permission-mode') + 1] || null, dirs, skills }));",
+  ].join('\n'));
   const profile = path.join(root, 'profile');
   const cfgDir = path.join(profile, '.claude');
   fs.mkdirSync(cfgDir, { recursive: true });
@@ -64,6 +72,24 @@ try {
     check('under the guard, a skill reached through a junction cannot be read', viaJunction !== 'SKILLTOKEN', viaJunction);
     const viaFiles = read(path.join(view, 'files', 'cron', 'SKILL.md'));
     check('under the guard, the same skill as files in the view is read', viaFiles === 'SKILLTOKEN', viaFiles);
+  }
+  {
+    // a skill linked into a shared skill root by a junction (DX Skills' link, the library updater): a guarded chat gets it as files
+    const lib = path.join(root, 'library', 'pdf'), shared = path.join(root, 'Shared'), sk = path.join(shared, '.claude', 'skills');
+    fs.mkdirSync(lib, { recursive: true }); fs.mkdirSync(path.join(sk, 'plain'), { recursive: true });
+    fs.writeFileSync(path.join(lib, 'SKILL.md'), 'LIBTOKEN\nbody');
+    fs.writeFileSync(path.join(sk, 'plain', 'SKILL.md'), 'PLAINTOKEN');
+    fs.symlinkSync(lib, path.join(sk, 'pdf'), 'junction');
+    fs.writeFileSync(path.join(data, 'aiondx-projects.json'), JSON.stringify({ version: 1, skillRoots: [shared], projects: {}, bindings: {}, accountDocs: { personal: 'off' } }));
+    o = run(['--permission-mode', 'default']);
+    const mirror = path.join(data, 'guard-skills', 'solo1');
+    check('a guarded chat reads a skill linked by a junction, given to it as files', o.guard === '1' && o.skills && o.skills.pdf === 'LIBTOKEN' && o.skills.plain === 'PLAINTOKEN' && o.dirs.indexOf(mirror) >= 0, JSON.stringify(o));
+    check('the given copy is not a link, and the library\'s own file is the same file (a hard link)', !fs.lstatSync(path.join(mirror, '.claude', 'skills', 'pdf')).isSymbolicLink() &&
+      fs.statSync(path.join(mirror, '.claude', 'skills', 'pdf', 'SKILL.md')).ino === fs.statSync(path.join(lib, 'SKILL.md')).ino, '');
+    check('a skill that is not a link is not copied', !fs.existsSync(path.join(mirror, '.claude', 'skills', 'plain')));
+    o = run(['--permission-mode', 'bypassPermissions']);
+    check('a yolo chat gets no extra folder (it reads the link itself)', o.guard === null && o.dirs.indexOf(mirror) < 0, JSON.stringify(o));
+    fs.writeFileSync(path.join(data, 'aiondx-projects.json'), JSON.stringify({ version: 1, skillRoots: [], projects: {}, bindings: {}, accountDocs: { personal: 'off' } }));
   }
   fs.rmSync(path.join(cat, 'aiondx-guard.exe'));
   o = run(['--permission-mode', 'default']);

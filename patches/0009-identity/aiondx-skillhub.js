@@ -35,17 +35,33 @@ function frontMatter(text) {
   }
   return out;
 }
+/** The folder a link points at, read from the link's own record (readlink), never followed: a process under Windows' RedirectionGuard
+ *  (an AionDX started by an earlier installer) cannot read through a junction, but it can read where one points. */
+function linkTarget(d) {
+  try { if (!fs.lstatSync(d).isSymbolicLink()) return null; } catch { return null; }
+  let t = d;
+  for (let k = 0; k < 8; k++) {
+    let st; try { st = fs.lstatSync(t); } catch { break; }
+    if (!st.isSymbolicLink()) break;
+    const r = String(fs.readlinkSync(t)).replace(/^\\\\\?\\/, '');
+    t = path.isAbsolute(r) ? r : path.resolve(path.dirname(t), r);
+  }
+  return t.replace(/[\\/]+$/, '');
+}
 function skillsIn(dir) {
   const out = [];
   let es = [];
   try { es = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of es) {
     const d = path.join(dir, e.name);
+    const target = linkTarget(d);
     let text;
-    try { text = fs.readFileSync(path.join(d, 'SKILL.md'), 'utf8'); } catch { continue; }
+    try { text = fs.readFileSync(path.join(d, 'SKILL.md'), 'utf8'); } catch {
+      try { if (!target) continue; text = fs.readFileSync(path.join(target, 'SKILL.md'), 'utf8'); } catch { continue; }
+    }
     const fm = frontMatter(text);
-    let linked = null;
-    try { const st = fs.lstatSync(d); if (st.isSymbolicLink()) linked = fs.realpathSync(d); else { const real = fs.realpathSync(d); if (real.toLowerCase() !== path.resolve(d).toLowerCase()) linked = real; } } catch { /* plain */ }
+    let linked = target;
+    if (!linked) { try { const real = fs.realpathSync(d); if (real.toLowerCase() !== path.resolve(d).toLowerCase()) linked = real; } catch { /* plain */ } }
     out.push({ name: fm.name || e.name, folder: e.name, description: String(fm.description || '').slice(0, 400), dir: d, linked });
   }
   return out.sort((a, b) => a.folder.localeCompare(b.folder));
