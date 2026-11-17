@@ -225,6 +225,7 @@ $bin = Join-Path $payload 'bin'
 New-Item -ItemType Directory -Force $bin, "$payload\skills", "$payload\icons" | Out-Null
 Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', '/r:System.Web.Extensions.dll', "/out:$bin\aiondx.exe", "$root\patches\0007-loop-tool\aiondx-loop.cs") 'build aiondx.exe'
 Run $csc @('/nologo', '/optimize+', '/target:winexe', '/platform:x64', '/r:System.Web.Extensions.dll', "/out:$bin\aiondx-loop.exe", "$root\patches\0007-loop-tool\aiondx-loop.cs") 'build aiondx-loop.exe'
+Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\aiondx-guard.exe", "$root\patches\0002-claude-model-currency\aiondx-guard.cs") 'csc aiondx-guard'   # the guard for chats that ask before acting
 Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\agy.exe", "$root\patches\0008-agy-signin\agy-shim.cs") 'build agy.exe'
 Run $csc @('/nologo', '/optimize+', '/target:exe', '/platform:x64', "/out:$bin\claude.exe", "$root\patches\0005-claude-exe-shim\claude-shim.cs") 'build claude.exe'
 Copy-Item "$root\patches\0002-claude-model-currency\claude-account-router.js" $bin

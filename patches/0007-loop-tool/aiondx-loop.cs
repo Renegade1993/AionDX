@@ -3036,7 +3036,7 @@ namespace AionDx
         // Each run stops at 60 s (a deadline checked between steps; AionUi's start call also kills it at 90).
         const string ManifestSchema = "aiondx.manifest/1";
         static readonly string[] ClaudeParts = { "claude.exe", "claude-account-router.js", "claude-stream-proxy.js", "claude-model-catalog.js", "aiondx-model-refresh.js" };
-        static readonly string[] OwnPrograms = { "aiondx.exe", "aiondx-loop.exe", "agy.exe", "claude.exe", "claude-account-router.js", "claude-stream-proxy.js", "claude-model-catalog.js", "aiondx-model-refresh.js",
+        static readonly string[] OwnPrograms = { "aiondx.exe", "aiondx-loop.exe", "aiondx-guard.exe", "agy.exe", "claude.exe", "claude-account-router.js", "claude-stream-proxy.js", "claude-model-catalog.js", "aiondx-model-refresh.js",
             "claude-account-router.log", "claude-account-router.exe-cache.json", "claude-account-router.config.json" };
         static StreamWriter ActLog;
         static bool ActQuiet;

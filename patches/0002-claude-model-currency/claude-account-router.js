@@ -343,8 +343,26 @@ function claudeDirs(cfg, facts) {
   return dirs;
 }
 
+/** Windows' RedirectionGuard by the chat's mode (November 16th, 2026; the user: not for agents in yolo mode, "otherwise, integrate it
+ *  with one of the other safety levels"). AionCore always passes --permission-mode; a chat in any mode but bypassPermissions (and not
+ *  started with --dangerously-skip-permissions) is started through aiondx-guard.exe, beside this launcher, so it cannot follow a folder
+ *  link an ordinary user made. AIONDX_GUARD=off turns it off; a missing helper starts the chat as before. */
+function guardFor(argv) {
+  if (process.platform !== 'win32' || String(process.env.AIONDX_GUARD || '').toLowerCase() === 'off') return null;
+  let mode = null;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--permission-mode') mode = argv[i + 1] || null;
+    else if (/^--permission-mode=/.test(argv[i])) mode = argv[i].slice('--permission-mode='.length);
+    if (argv[i] === '--dangerously-skip-permissions') return null;
+  }
+  if (!mode || mode === 'bypassPermissions') return null;
+  const exe = path.join(HERE, 'aiondx-guard.exe');
+  return fs.existsSync(exe) ? exe : null;
+}
+
 function handOff(env) {
-  const r = spawnSync(RESOLVED.exe, args, {
+  const guard = guardFor(args);
+  const r = guard ? spawnSync(guard, [RESOLVED.exe].concat(args), { stdio: 'inherit', env: env || process.env, windowsHide: true }) : spawnSync(RESOLVED.exe, args, {
     stdio: 'inherit',
     env: env || process.env,
     windowsHide: true,
