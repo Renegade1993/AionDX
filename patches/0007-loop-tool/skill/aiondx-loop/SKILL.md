@@ -319,7 +319,7 @@ Every agent here, Claude or not. The user's words, November 13th, 2026: "SLOW DO
 
 ## DX Docs: documents the user watches you write
 
-DX Docs are AionDX's own living documents: Markdown files in the `DX Docs` folder of the chat's project (else its working folder), shown to
+DX Docs are AionDX's own living documents: Markdown files in the chat's `DX Docs` folder (`doc where` names it: the chat's own folder once it was moved or has docs there, else its project's), shown to
 the user live in the chat's right-hand panel. No sign-in to anyone; every agent type can use them, through the `dxdoc_*` tools when this
 chat has them and always through `"{{AIONDX}}" doc ...` (`"{{AIONDX}}" doc help` lists every command and everything a doc can hold).
 When the user asks for a document, report, plan, proposal, guide or anything to keep, make a DX Doc, and make it FIRST:

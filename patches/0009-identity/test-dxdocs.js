@@ -19,6 +19,36 @@ try {
   check('a team member finds its team\'s project', D.resolveRoot({ dataDir: data, convId: 'm9', teamId: 't1', workspace: ws }).project === 'atlas');
   w = D.resolveRoot({ dataDir: data, convId: 'c2', workspace: ws });
   check('an unbound chat keeps them in its working folder', w && w.project === null && w.docsDir === path.join(ws, 'DX Docs'), JSON.stringify(w));
+  check('looking for them makes no folder', !fs.existsSync(path.join(ws, 'DX Docs')) && !fs.existsSync(path.join(proj, 'DX Docs')));
+  {
+    // docs go wherever the chat goes: a chat moved to a place of the user's (patch 0016) keeps them in its own folder, project or not
+    const place = path.join(root, 'Work', 'AionDX Chats'), pkg = path.join(place, 'Survey Team (t1abcdef)'), tws = path.join(pkg, 'team-ws');
+    fs.mkdirSync(tws, { recursive: true });
+    fs.writeFileSync(path.join(pkg, 'aiondx-chat.json'), '{}');
+    fs.writeFileSync(path.join(data, 'aiondx-projects.json'), JSON.stringify({ version: 1, projects: { atlas: { root: proj } }, bindings: { 'conv:c1': 'atlas', 'team:t1abcdef-0000': 'atlas', 'conv:c5': 'atlas' } }));
+    w = D.resolveRoot({ dataDir: data, convId: 'm1', teamId: 't1abcdef-0000', workspace: tws });
+    check('a placed team in a project keeps its docs in its own folder, inside its package', w.docsDir === path.join(tws, 'DX Docs') && w.project === 'atlas' && w.placed === pkg, JSON.stringify(w));
+    const deep = path.join(tws, 'sub', 'deeper');
+    fs.mkdirSync(deep, { recursive: true });
+    check('a working folder further inside the package counts too', D.resolveRoot({ dataDir: data, teamId: 't1abcdef-0000', workspace: deep }).docsDir === path.join(deep, 'DX Docs'));
+    // a folder several chats share moves beside their packages under its own name
+    const shared = path.join(place, 'shared-project'), cpkg = path.join(place, 'Notes (c5c5c5c5)');
+    fs.mkdirSync(shared, { recursive: true }); fs.mkdirSync(cpkg, { recursive: true });
+    fs.writeFileSync(path.join(cpkg, 'aiondx-chat.json'), '{}');
+    w = D.resolveRoot({ dataDir: data, convId: 'c5c5c5c5-1111', workspace: shared });
+    check('a shared folder beside the chat\'s package counts as placed', w.docsDir === path.join(shared, 'DX Docs') && w.placed === cpkg, JSON.stringify(w));
+    w = D.resolveRoot({ dataDir: data, convId: 'c1', workspace: shared });
+    check('but not for a chat whose package is not there (its project\'s folder)', w.docsDir === path.join(proj, 'DX Docs') && !w.placed, JSON.stringify(w));
+    // a chat brought back home with its docs, or docs an agent wrote into the working folder: they stay where they are
+    const home = path.join(root, 'home-ws');
+    fs.mkdirSync(path.join(home, 'DX Docs'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'DX Docs', 'notes.md'), '# Decided\n');
+    w = D.resolveRoot({ dataDir: data, convId: 'c5', workspace: home });
+    check('a project chat whose own folder already has docs keeps showing them', w.docsDir === path.join(home, 'DX Docs') && w.project === 'atlas', JSON.stringify(w));
+    fs.mkdirSync(path.join(root, 'empty-ws', 'DX Docs', '.comments'), { recursive: true });
+    check('an empty DX Docs folder there does not count', D.resolveRoot({ dataDir: data, convId: 'c5', workspace: path.join(root, 'empty-ws') }).docsDir === path.join(proj, 'DX Docs'));
+    fs.writeFileSync(path.join(data, 'aiondx-projects.json'), JSON.stringify({ version: 1, projects: { atlas: { root: proj } }, bindings: { 'conv:c1': 'atlas', 'team:t1': 'atlas' } }));
+  }
   const dir = path.join(proj, 'DX Docs');
 
   const c = D.create(dir, { title: 'Launch plan', sections: [{ heading: 'Goals', intent: 'the three outcomes this quarter commits to' }, { heading: 'Risks', intent: 'what could stop it' }] });

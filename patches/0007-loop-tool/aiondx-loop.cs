@@ -502,7 +502,7 @@ namespace AionDx
                 new Dictionary<string, object> {
                     { "name", "dxdoc_create" },
                     { "title", "Create a DX Doc" },
-                    { "description", "DX Docs are AionDX's own living documents: Markdown in the DX Docs folder of the chat's project (else its working folder), shown to the user live in the chat's right-hand sidebar. No sign-in to anyone. When the user asks for a document, report, plan, proposal, guide or anything to keep, create a DX Doc FIRST: its title and a section per part, each with the intent it will hold, before any research or file reading; then fill each section with dxdoc_update. Keep findings in the doc and a short line in chat. Use Claude Docs (claude.ai) only when the user asks for it by name." },
+                    { "description", "DX Docs are AionDX's own living documents: Markdown in the chat's DX Docs folder (the chat's own folder once it was moved or has docs there, else its project's), shown to the user live in the chat's right-hand sidebar. No sign-in to anyone. When the user asks for a document, report, plan, proposal, guide or anything to keep, create a DX Doc FIRST: its title and a section per part, each with the intent it will hold, before any research or file reading; then fill each section with dxdoc_update. Keep findings in the doc and a short line in chat. Use Claude Docs (claude.ai) only when the user asks for it by name." },
                     { "inputSchema", new Dictionary<string, object> {
                         { "type", "object" },
                         { "properties", new Dictionary<string, object> {
@@ -1646,7 +1646,7 @@ namespace AionDx
             "  aiondx doc suggestions --json '{\"doc\":\"<id>\"}' | withdraw --json '{\"doc\":\"<id>\",\"suggestion\":\"s1\"}'\n" +
             "  aiondx doc decide --json '{\"doc\":\"<id>\",\"suggestion\":\"s1\",\"verdict\":\"accept|reject\"}'   on one of the user's own suggestions\n" +
             "  (--json-file FILE instead of --json; in PowerShell 5.1 double quotes inside an argument are lost, so use a file there)\n" +
-            "A DX Doc is a Markdown file in the DX Docs folder of the chat's project (else its working folder). The user watches it in the chat's\n" +
+            "A DX Doc is a Markdown file in the chat's DX Docs folder (its own folder once moved or holding docs, else its project's). The user watches it in the chat's\n" +
             "right-hand panel, live, types in it, comments on it and suggests changes. Operations: replace_section, append_to_section,\n" +
             "append_section, insert_after, rename_section, delete_section, replace_text (find, replace, all), set_title, set_lead, write (markdown).\n" +
             "Every change keeps the version before it.\n" +

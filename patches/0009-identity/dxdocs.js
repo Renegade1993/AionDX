@@ -6,8 +6,9 @@
 // user comments on a passage and the agent is told; every change keeps the version before it. No sign-in to anyone.
 //
 // A doc is <root>\DX Docs\<id>.md (Markdown). A pending section's body is the line <!-- aiondx:pending <intent> -->. Comments are in
-// <root>\DX Docs\.comments\<id>.json; earlier versions in <root>\DX Docs\.history\<id>\<stamp>.md (the last 50). <root> is the project the chat is
-// bound to in aiondx-projects.json, otherwise the chat's working folder.
+// <root>\DX Docs\.comments\<id>.json; earlier versions in <root>\DX Docs\.history\<id>\<stamp>.md (the last 50). <root> is the chat's working
+// folder when it was moved to a place of the user's (patch 0016) or already has docs, else the project the chat is bound to in
+// aiondx-projects.json, else the working folder (resolveRoot). The folder is made by the first write, never by looking.
 //
 // One library for both sides: the app's main process (aiondx-dxdocs-main.js) and the agents' commands and tools (the aiondx Loop tool runs
 // this file as a command line: node dxdocs.js <command> --json <args>). Writes are atomic (a .tmp file renamed over the doc).
@@ -90,20 +91,46 @@ function slugOf(title) {
   return String(title || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '') || 'doc';
 }
 
-/** Where a chat's docs live: its bound project's root, else its working folder. */
+/** The package (patch 0016's "<name> (<id8>)" folder with aiondx-chat.json) a chat's working folder was placed in: the folder itself or
+ *  one a few levels up, or, for a folder several chats share (it moves beside their packages), a package for one of `ids` beside it. */
+function placedIn(ws, ids) {
+  let d = path.resolve(ws);
+  const tags = (ids || []).filter(Boolean).map((id) => '(' + String(id).slice(0, 8).toLowerCase() + ')');
+  for (let i = 0; i < 6; i++) {
+    if (fs.existsSync(path.join(d, 'aiondx-chat.json'))) return d;
+    const up = path.dirname(d);
+    if (up === d) break;
+    if (tags.length) {
+      let names = [];
+      try { names = fs.readdirSync(up); } catch { /* unreadable */ }
+      const n = names.find((x) => tags.some((t) => x.toLowerCase().endsWith(t)) && fs.existsSync(path.join(up, x, 'aiondx-chat.json')));
+      if (n) return path.join(up, n);
+    }
+    d = up;
+  }
+  return null;
+}
+const hasDocs = (dir) => { try { return fs.readdirSync(dir).some((f) => f.endsWith('.md') && ID_RE.test(f.slice(0, -3))); } catch { return false; } };
+
+/** Where a chat's docs live. Its own working folder when docs are already there, or when the chat was moved to a place of the user's
+ *  choosing (the docs go wherever the chat goes, and travel with it); otherwise its bound project's root; otherwise its working folder.
+ *  The project's docs still show under All docs. */
 function resolveRoot(o) {
   const opts = o || {};
   let project = null, root = null;
+  const ws = opts.workspace && fs.existsSync(opts.workspace) ? path.resolve(opts.workspace) : null;
+  const placed = ws ? placedIn(ws, [opts.teamId, opts.convId]) : null;
+  if (ws && (placed || hasDocs(path.join(ws, DOCS_FOLDER)))) root = ws;
   const reg = opts.dataDir ? readJson(path.join(opts.dataDir, 'aiondx-projects.json')) : null;
   if (reg) {
     const b = reg.bindings || {};
     const key = (opts.convId && b['conv:' + opts.convId]) || (opts.teamId && b['team:' + opts.teamId]) || null;
     const p = key && reg.projects && reg.projects[key];
-    if (p && p.root && fs.existsSync(p.root)) { project = key; root = p.root; }
+    if (p && p.root && fs.existsSync(p.root)) { project = key; if (!root) root = p.root; }
   }
-  if (!root && opts.workspace && fs.existsSync(opts.workspace)) root = opts.workspace;
+  if (!root && ws) root = ws;
   if (!root) return null;
-  return { root, project, docsDir: path.join(root, DOCS_FOLDER) };
+  return { root, project, placed: placed || null, docsDir: path.join(root, DOCS_FOLDER) };
 }
 
 // ---------------------------------------------------------------- the Markdown, as a title and sections

@@ -31,9 +31,8 @@ function create(o) {
   function watch(dir, wc) {
     let w = watchers.get(dir);
     if (!w) {
-      fs.mkdirSync(dir, { recursive: true });
       const pending = new Set();
-      w = { subs: new Set(), timer: null, w: null };
+      w = { subs: new Set(), timer: null, w: null, wait: null };
       const onName = (_ev, name) => {
         const n = String(name || '').replace(/\\/g, '/');
         const m = /^(?:\.(?:comments|suggestions)\/)?([^/]+)\.(md|json)$/.exec(n);
@@ -42,10 +41,26 @@ function create(o) {
         clearTimeout(w.timer);
         w.timer = setTimeout(() => { for (const id of pending) emit(dir, { kind: 'changed', docsDir: dir, id }); pending.clear(); }, 120);
       };
-      for (const sub of ['.comments', '.suggestions']) { try { fs.mkdirSync(path.join(dir, sub), { recursive: true }); } catch { /* read-only */ } }
-      try { w.w = fs.watch(dir, { persistent: false, recursive: true }, onName); } catch { w.w = fs.watch(dir, { persistent: false }, onName); }
-      w.w.on('error', () => { /* the folder went: the page's next list says so */ });
+      const start = () => {
+        try { w.w = fs.watch(dir, { persistent: false, recursive: true }, onName); } catch { w.w = fs.watch(dir, { persistent: false }, onName); }
+        w.w.on('error', () => { /* the folder went: the page's next list says so */ });
+      };
       watchers.set(dir, w);
+      if (fs.existsSync(dir)) start();
+      else {
+        // no docs here yet: the folder is not made just because the panel looked (the first doc makes it); the folder above is watched
+        // until it appears, and whatever is in it by then is announced
+        try {
+          w.wait = fs.watch(path.dirname(dir), { persistent: false }, (_ev, name) => {
+            if (String(name || '').toLowerCase() !== path.basename(dir).toLowerCase() || !fs.existsSync(dir) || w.w) return;
+            try { w.wait.close(); } catch { /* closed */ }
+            w.wait = null;
+            start();
+            setTimeout(() => { for (const d of D.list(dir)) emit(dir, { kind: 'changed', docsDir: dir, id: d.id }); }, 120);
+          });
+          w.wait.on('error', () => { /* the folder above went */ });
+        } catch { /* the folder above is gone too: the page's next list says so */ }
+      }
     }
     if (wc) {
       w.subs.add(wc);
@@ -56,7 +71,7 @@ function create(o) {
     const w = watchers.get(dir);
     if (!w) return;
     if (wc) w.subs.delete(wc); else w.subs.clear();
-    if (!w.subs.size) { try { w.w.close(); } catch { /* closed */ } clearTimeout(w.timer); watchers.delete(dir); }
+    if (!w.subs.size) { for (const x of [w.w, w.wait]) { try { if (x) x.close(); } catch { /* closed */ } } clearTimeout(w.timer); watchers.delete(dir); }
   }
   async function handle(req, sender) {
     const op = req && req.op;

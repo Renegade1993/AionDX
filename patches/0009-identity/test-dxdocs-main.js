@@ -25,7 +25,8 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-dxdocs-main-'));
     const dir = r.docsDir;
     check('where: the chat\'s Docs folder (its working folder here)', r.ok && dir === path.join(ws, 'DX Docs'), JSON.stringify(r));
     await svc.handle({ op: 'watch', docsDir: dir }, wc);
-    const c = D.create(dir, { title: 'Plan', sections: [{ heading: 'Goals', intent: 'goals' }] });
+    check('watching does not make the folder (no empty DX Docs left in a project folder)', !fs.existsSync(dir));
+    const c = D.create(dir,{ title: 'Plan', sections: [{ heading: 'Goals', intent: 'goals' }] });
     await sleep(500);
     check('an agent creating a doc is told to the page', sent.some(([ch, p]) => ch === 'aiondx:dxdocs-event' && p.kind === 'changed' && p.id === 'plan' && p.docsDir === dir), JSON.stringify(sent));
     sent.length = 0;
@@ -102,6 +103,12 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-dxdocs-main-'));
     check('with AionDX not drawing, the asker is told it needs AionDX open', /needs AionDX open/.test(off), off);
     await svc.handle({ op: 'unwatch', docsDir: dir }, wc);
     check('unwatch closes the watcher when nobody watches', svc.watchers.size === 0);
+    await svc.handle({ op: 'watch', docsDir: dir }, wc);
+    sent.length = 0;
+    D.create(dir, { title: 'Later' });
+    await sleep(500);
+    check('a folder already there is watched straight away', sent.some(([, p]) => p.kind === 'changed' && p.id === 'later'), JSON.stringify(sent));
+    await svc.handle({ op: 'unwatch', docsDir: dir }, wc);
   } catch (e) {
     check('no exception', false, e.stack);
   } finally {
