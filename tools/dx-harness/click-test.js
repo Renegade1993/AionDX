@@ -3062,10 +3062,8 @@ async function pageTarget() {
       await sleep(3800);
       await humanClick('.aiondx-w-later');
       check(sc, 'Not now closes it and it stays closed', !(await w()) && ((await store())['aiondx.welcome'] || {}).mode === 'later');
-      await js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
-        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
-        sec.appendChild(grid); document.body.appendChild(sec); return 0; })()`);
-      await sleep(500);
+      await js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w); const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; const ag = document.createElement('div'); ag.setAttribute('data-settings-id', 'agent'); ag.className = 'settings-sider__item'; ag.textContent = 'Agents'; sd.appendChild(ag); document.body.appendChild(sd); } location.hash = '#/settings/agent?aiondx=agents'; return 0; })()`);
+      await sleep(900);
       await humanClick('[data-testid="aiondx-setup-open"]');
       v = await w();
       check(sc, 'Settings > Appearance has Open AionDX setup, which brings it back', v && v.title === 'Welcome to AionDX', JSON.stringify(v));
@@ -3074,9 +3072,7 @@ async function pageTarget() {
     // ---- chats on a drive (R-102, 2026-11-12) and the sign-in button (R-106) ----
     {
       const sc = 'drive';
-      const addSection = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
-        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
-        sec.appendChild(grid); document.body.appendChild(sec); return 0; })()`);
+      const addSection = () => js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w); const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; const ag = document.createElement('div'); ag.setAttribute('data-settings-id', 'agent'); ag.className = 'settings-sider__item'; ag.textContent = 'Agents'; sd.appendChild(ag); document.body.appendChild(sd); } location.hash = '#/settings/agent?aiondx=chats'; return 0; })()`);
       const bridge = (start, last, found) => js(`(() => {
         window.__pd = { calls: [] };
         window.confirm = (q) => { window.__pd.calls.push(['confirm', q]); return true; };
@@ -3100,13 +3096,15 @@ async function pageTarget() {
       await sleep(900);
       const stText = await js(`(document.querySelector('[data-testid="aiondx-drive-state"]') || {}).textContent`);
       check(sc, 'with the bridge, Settings says where the chats are', /^Your chats are on this PC, in C:\\Users\\me\\AppData\\Roaming\\AionDX\.$/.test(stText || ''), stText);
-      check(sc, 'and has the sign-in button beside it', await js(`!!document.querySelector('[data-testid="aiondx-signin-open"]')`));
       await humanClick('[data-testid="aiondx-drive-move"]');
       await sleep(500);
       const calls = await js('window.__pd.calls');
       check(sc, 'Move: the folder picker, a plain confirmation of what happens, then the move to the chosen place', calls.length === 3 && calls[0][0] === 'choose' &&
         calls[1][0] === 'confirm' && /^Move your chats to H:\\Work\\AionDX-Data\?/.test(calls[1][1]) && /kept, renamed/.test(calls[1][1]) &&
         JSON.stringify(calls[2]) === JSON.stringify(['move', 'H:\\Work\\AionDX-Data']), JSON.stringify(calls));
+      await js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w); const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; const ag = document.createElement('div'); ag.setAttribute('data-settings-id', 'agent'); ag.className = 'settings-sider__item'; ag.textContent = 'Agents'; sd.appendChild(ag); document.body.appendChild(sd); } location.hash = '#/settings/agent?aiondx=agents'; return 0; })()`);
+      await sleep(900);
+      check(sc, 'Settings > Agents has the sign-in button', await js(`!!document.querySelector('[data-testid="aiondx-signin-open"]')`));
       await humanClick('[data-testid="aiondx-signin-open"]');
       await sleep(500);
       check(sc, 'Sign in to your agents opens the sign-in screen', await js(`!!document.querySelector('[data-testid="aiondx-acc-claude"]')`));
@@ -3141,9 +3139,7 @@ async function pageTarget() {
     // ---- where your chats live (R-130, November 15th, 2026) ----
     {
       const sc = 'places';
-      const addCards = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
-        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
-        sec.appendChild(grid); document.body.appendChild(sec);
+      const addCards = () => js(`(() => { (() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w); const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; const ag = document.createElement('div'); ag.setAttribute('data-settings-id', 'agent'); ag.className = 'settings-sider__item'; ag.textContent = 'Agents'; sd.appendChild(ag); document.body.appendChild(sd); } location.hash = '#/settings/agent?aiondx=chats'; })();
         const row = document.createElement('div'); row.className = 'chat-history__item'; row.id = 'c-c3'; row.style.cssText = 'position:fixed;left:8px;top:220px;width:240px;height:34px';
         row.innerHTML = '<span></span><span class="chat-history__item-name">Old notes</span>'; document.body.appendChild(row);
         return 0; })()`);
@@ -4953,9 +4949,7 @@ async function pageTarget() {
     // ---- clearing agent caches (2026-10-13, a request) ----
     {
       const sc = 'caches';
-      const addSection = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
-        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
-        sec.appendChild(grid); document.body.appendChild(sec); return 0; })()`);
+      const addSection = () => js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w); const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; const ag = document.createElement('div'); ag.setAttribute('data-settings-id', 'agent'); ag.className = 'settings-sider__item'; ag.textContent = 'Agents'; sd.appendChild(ag); document.body.appendChild(sd); } location.hash = '#/settings/agent?aiondx=agents'; return 0; })()`);
       await load('theme=light');
       await addSection();
       await sleep(600);
@@ -4976,7 +4970,7 @@ async function pageTarget() {
         return 0; })()`);
       await addSection();
       await sleep(600);
-      check(sc, 'with the bridge, Settings > Appearance has Clear agent caches', await js(`!!document.querySelector('[data-testid="aiondx-cache-open"]')`));
+      check(sc, 'with the bridge, Settings > Agents has Clear agent caches', await js(`!!document.querySelector('[data-testid="aiondx-cache-open"]')`));
       await humanClick('[data-testid="aiondx-cache-open"]');
       await sleep(900);
       const panel = () => js(`(() => { const p = document.querySelector('[data-testid="aiondx-cache"]'); if (!p || p.hidden) return null;
@@ -5043,7 +5037,7 @@ async function pageTarget() {
       await sleep(1600);
       await js('window.__aionDx.repaint()');
       let b = await stopBtn();
-      check(sc, 'a chat working for a while with no Stop button of AionUi on screen gets AionDX\'s own', b && /^Stop: AionUi shows no Stop button/.test(b.title) && !b.force, JSON.stringify(b));
+      check(sc, 'a chat working for a while with no Stop button of its own on screen gets AionDX\'s own', b && /^Stop: this chat is still working, and its own Stop button is not showing/.test(b.title) && !b.force, JSON.stringify(b));
       await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); 0');
       await humanClick('#solo [data-testid="aiondx-stop-btn"]');
       await sleep(700);
@@ -5054,7 +5048,7 @@ async function pageTarget() {
       await sleep(2400);
       await js('window.__aionDx.repaint()');
       b = await stopBtn();
-      check(sc, 'a chat still working after a Stop keeps a plain Stop button, no Force stop', b && !b.force && /^Stop: AionUi shows no Stop button/.test(b.title), JSON.stringify(b));
+      check(sc, 'a chat still working after a Stop keeps a plain Stop button, no Force stop', b && !b.force && /^Stop: this chat is still working, and its own Stop button is not showing/.test(b.title), JSON.stringify(b));
       check(sc, 'and its agent is ended and started again once, with no click', (await posts2('/api/conversations/harness1/runtime/restart')).length === 1, JSON.stringify(await posts2('/api/conversations/harness1/runtime/restart')));
       // It stops: the button goes.
       await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; delete r.data.runtime; window.__aionDx.setLive('conv:harness1', 'idle'); return 0; })()`);
@@ -5497,14 +5491,15 @@ async function pageTarget() {
     {
       const sc = 'options';
       await js("localStorage.removeItem('aionui.dx.options'); 0");
-      const addSection = () => js(`(() => { const sec = document.createElement('section'); const grid = document.createElement('div');
-        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
-        sec.appendChild(grid); document.body.appendChild(sec); return 0; })()`);
       await load('theme=light');
-      await addSection();
-      await sleep(700);
-      const optionIds = await js(`[...document.querySelectorAll('.aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`);
-      check(sc, 'Settings > Appearance lists every option, from the one list', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'compact.auto', 'skills.atCompact', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
+      // the options are on the AionDX page for what they do (November 16th, 2026); Appearance holds colours only
+      const onPage = async (pg) => { await js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w); const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; const ag = document.createElement('div'); ag.setAttribute('data-settings-id', 'agent'); ag.className = 'settings-sider__item'; ag.textContent = 'Agents'; sd.appendChild(ag); document.body.appendChild(sd); } location.hash = '#/settings/agent?aiondx=PG'; return 0; })()`.replace('PG', pg)); await sleep(800); return js(`[...document.querySelectorAll('[data-testid="aiondx-dxset-' + ${JSON.stringify(pg)} + '"] .aiondx-opt-row')].map(r => r.getAttribute('data-opt'))`); };
+      const pgAgents = await onPage('agents'), pgChats = await onPage('chats'), pgTyping = await onPage('typing');
+      check(sc, 'each AionDX Settings page has its own options: Agents the Stop and Loop ones, Chats and drives the long-chat ones, Typing the rest',
+        JSON.stringify(pgAgents) === JSON.stringify(['loop.skillsLine', 'stop.show', 'stop.force']) && JSON.stringify(pgChats) === JSON.stringify(['compact.auto', 'lag.bigPage', 'lag.chainPages']) &&
+        JSON.stringify(pgTyping) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'spellcheck', 'draft.quote', 'voice.system']), JSON.stringify([pgAgents, pgChats, pgTyping]));
+      const optionIds = ['links.files', 'links.docs', 'help.tips', 'compact.auto', 'skills.atCompact', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages'];
+      check(sc, 'every option of the one list is on one of them (Skills on DX Skills)', JSON.stringify(optionIds) === JSON.stringify(['links.files', 'links.docs', 'help.tips', 'compact.auto', 'skills.atCompact', 'loop.skillsLine', 'spellcheck', 'draft.quote', 'voice.system', 'stop.show', 'stop.force', 'lag.bigPage', 'lag.chainPages']), JSON.stringify(optionIds));
       const schema = ((await store())['aiondx.options.schema'] || {});
       check(sc, 'the list is published to the settings store for the command line', schema.build && Array.isArray(schema.options) && schema.options.some((o) => o.id === 'links.files' && o.default === 'outside' && o.choices.length === 2) && !schema.options.some((o) => o.id === 'links.external') &&
         schema.options.some((o) => o.id === 'via.loop' && o.type === 'command' && /aiondx loop/.test(o.via)), JSON.stringify(schema).slice(0, 160));
@@ -5525,6 +5520,63 @@ async function pageTarget() {
         (await js(`document.querySelector('[data-testid="aiondx-opt-links.files"]').value`)) === 'preview');
       check(sc, 'a value the list does not know is ignored', !('nonsense' in (await js(`window.__aionDx.options().values`))));
     }
+    // ---- AionDX's own Settings pages; our Agents page in place of AionUi's (November 16th, 2026) ----
+    {
+      const sc = 'dxsettings';
+      const page = (pg, theme) => js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; w.style.cssText = 'position:fixed;left:200px;top:0;right:0;bottom:0;overflow:auto;z-index:900;background:var(--color-bg-1)';
+        const c = document.createElement('div'); c.className = 'settings-page-content'; c.style.cssText = 'max-width:900px;padding:24px'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w);
+        const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; sd.style.cssText = 'position:fixed;left:0;top:0;width:200px;bottom:0;z-index:900;background:var(--color-bg-2);display:flex;flex-direction:column;gap:2px;padding:8px';
+        ['model', 'agent', 'skills', 'appearance', 'system'].forEach((id) => { const it = document.createElement('div'); it.setAttribute('data-settings-id', id); it.className = 'settings-sider__item'; it.textContent = id; sd.appendChild(it); }); document.body.appendChild(sd); }
+        location.hash = '#/settings/agent' + (${JSON.stringify(pg)} ? '?aiondx=' + ${JSON.stringify(pg)} : ''); return 0; })()`);
+      await load('theme=light');
+      await js(`(() => { window.__ag = [];
+        window.aiondxSignin = { status: () => Promise.resolve({ ok: true, installed: true, loggedIn: true }), start: () => Promise.resolve({ ok: true }), poll: () => Promise.resolve({ ok: true, state: 'none' }), code: () => Promise.resolve({ ok: true }), cancel: () => Promise.resolve({ ok: true }), register: () => Promise.resolve({ ok: true }) };
+        window.__stub.routes['GET /api/agents/management'] = { success: true, data: [
+          { id: 'claude', name: 'Claude Code', backend: 'claude', agent_type: 'acp', enabled: true, installed: true, status: 'online', description: 'Anthropic\u2019s coding agent.' },
+          { id: 'codex', name: 'Codex', backend: 'codex', agent_type: 'acp', enabled: true, installed: false, status: 'missing' },
+          { id: 'gemini', name: 'Gemini CLI', backend: 'gemini', agent_type: 'acp', enabled: false, installed: true, status: 'unchecked' } ] };
+        window.__stub.routes['POST /api/agents/codex/health-check'] = (u, b) => { window.__ag.push(['check', 'codex']); return { success: true, data: { id: 'codex', status: 'offline' } }; };
+        window.__stub.routes['PATCH /api/agents/gemini/enabled'] = (u, b) => { window.__ag.push(['enabled', 'gemini', b.enabled]); return { success: true, data: { id: 'gemini', enabled: b.enabled } }; };
+        return 0; })()`);
+      await page('');
+      await sleep(1500);
+      const nav = await js(`(() => { const sd = document.getElementById('dxset-sider'); const theirs = sd.querySelector('[data-settings-id="agent"]');
+        return { theirsHidden: getComputedStyle(theirs).display === 'none', ours: [...sd.querySelectorAll('.aiondx-setnav-item')].map((x) => x.textContent + (x.classList.contains('aiondx-setnav-item--on') ? '*' : '')),
+          after: (sd.querySelector('.aiondx-setnav') || {}).previousElementSibling === theirs }; })()`);
+      check(sc, 'the Settings list: AionUi\u2019s Agents entry hidden, an AionDX block in its place with Agents (open), Chats and drives, Typing, links and voice',
+        nav.theirsHidden && nav.after && JSON.stringify(nav.ours) === JSON.stringify(['Agents*', 'Chats and drives', 'Typing, links and voice']), JSON.stringify(nav));
+      const ag = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-dxset-agents"]'); if (!p) return null;
+        return { rows: [...p.querySelectorAll('.aiondx-dxset-agent')].map((r) => r.querySelector('.aiondx-skill-name').textContent + ' | ' + r.querySelector('.aiondx-dxset-status').textContent + ' | ' + [...r.querySelectorAll('button')].map((b) => b.textContent).join(',')),
+          theirs: getComputedStyle(document.getElementById('aionui-agents')).display, cards: [...p.querySelectorAll('.aiondx-accent-title')].map((t) => t.textContent) }; })()`);
+      check(sc, 'Agents lists each agent: installed and answering or not, Sign in or Install for Claude Code, Check, Switch on or off', ag && JSON.stringify(ag.rows) === JSON.stringify([
+        'Claude Code | Installed and answering | Sign in,Check,Switch off', 'Codex | Not installed on this PC | Check,Switch off', 'Gemini CLI | Switched off | Check,Switch on']), JSON.stringify(ag));
+      check(sc, 'AionUi\u2019s own agent list is not shown; the page has Sign-in, AionDX setup, Stop and the Loop, Advanced', ag.theirs === 'none' && ['Your agents', 'Sign-in', 'AionDX setup', 'Stop and the Loop', 'Advanced'].every((t) => ag.cards.includes(t)), JSON.stringify(ag.cards));
+      await shot('dxsettings-agents-light');
+      await humanClick('.aiondx-dxset-agent[data-agent="codex"] button[data-act="check"]');
+      await sleep(600);
+      check(sc, 'Check asks AionCore and shows what it found', JSON.stringify(await js('window.__ag')) === '[["check","codex"]]' && (await js(`document.querySelector('.aiondx-dxset-agent[data-agent="codex"] .aiondx-dxset-status').textContent`)) === 'Installed, not answering');
+      await humanClick('.aiondx-dxset-agent[data-agent="gemini"] button[data-act="enabled"]');
+      await sleep(600);
+      check(sc, 'Switch on turns it on', JSON.stringify((await js('window.__ag'))[1]) === '["enabled","gemini",true]' && (await js(`document.querySelector('.aiondx-dxset-agent[data-agent="gemini"] button[data-act="enabled"]').textContent`)) === 'Switch off');
+      await js(`(() => { document.querySelector('[data-testid="aiondx-dxset-advanced"]').click(); return 0; })()`);
+      await sleep(500);
+      check(sc, 'Advanced shows AionUi\u2019s own agent list (environment variables, custom agents, repairs) below', (await js(`getComputedStyle(document.getElementById('aionui-agents')).display`)) !== 'none');
+      await humanClick('[data-testid="aiondx-setnav-chats"]');
+      await sleep(900);
+      const ch = await js(`(() => ({ hash: location.hash, page: !!document.querySelector('[data-testid="aiondx-dxset-chats"]'), agentsGone: !document.querySelector('[data-testid="aiondx-dxset-agents"]'), theirs: getComputedStyle(document.getElementById('aionui-agents')).display,
+        on: [...document.querySelectorAll('.aiondx-setnav-item--on')].map((x) => x.textContent) }))()`);
+      check(sc, 'Chats and drives opens its own page, AionUi\u2019s list hidden again, the entry marked', ch.hash === '#/settings/agent?aiondx=chats' && ch.page && ch.agentsGone && ch.theirs === 'none' && JSON.stringify(ch.on) === '["Chats and drives"]', JSON.stringify(ch));
+      await load('theme=dark');
+      await js(`(() => { window.__stub.routes['GET /api/agents/management'] = { success: true, data: [{ id: 'claude', name: 'Claude Code', backend: 'claude', enabled: true, installed: true, status: 'online' }] }; return 0; })()`);
+      await page('typing');
+      await sleep(1200);
+      await shot('dxsettings-typing-dark');
+      await page('agents');
+      await sleep(1200);
+      await shot('dxsettings-agents-dark');
+      await js(`(() => { ['dxset-host', 'dxset-sider'].forEach((id) => { const e = document.getElementById(id); if (e) e.remove(); }); location.hash = ''; return 0; })()`);
+    }
+
     {
       const sc = 'links';
       await js("localStorage.removeItem('aionui.dx.options'); 0");

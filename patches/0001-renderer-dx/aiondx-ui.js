@@ -779,6 +779,218 @@
     paint();
     refresh.addEventListener('click', function () { refreshSkills(chat, st, refresh); });
   }
+
+  // ---------------------------------------------------------------- AionDX's own Settings pages (November 16th, 2026)
+  // The user: "Probably into new AionDX Pages, and i encourage you to remove the old "Agents" page....it's useless for end-users.
+  // Integrate a replacement for any critical functions in our new agents page (replace it)". The Settings list gets an AionDX block:
+  // Agents (in place of AionUi's, on its route), Chats and drives, Typing, links and voice. Each opens #/settings/agent?aiondx=<page>
+  // and shows in the place of the route's own content; AionUi's agent list stays one click away under Agents (Advanced), for
+  // environment variables, custom agents and repair.
+  var DX_PAGES = [
+    { id: 'agents', label: 'Agents', title: 'Agents', desc: 'Your agents: whether each is installed and answering, signing in, its cache, and how AionDX stops and keeps them working.' },
+    { id: 'chats', label: 'Chats and drives', title: 'Chats and drives', desc: 'Where your chats live, and how long chats are compacted and paged.' },
+    { id: 'typing', label: 'Typing, links and voice', title: 'Typing, links and voice', desc: 'Spelling, reply quotes, where links open, the reading voice and the tips.' },
+  ];
+  var dxset = { page: null, el: {}, advanced: false };
+  function dxSetRoute() { var m = /^#\/settings\/agent\/?(?:\?(.*))?$/.exec(location.hash); if (!m) return null; var q = /(?:^|&)aiondx=([a-z]+)/.exec(m[1] || ''); return q && DX_PAGES.some(function (x) { return x.id === q[1]; }) ? q[1] : 'agents'; }
+  var SVG_DXSET = { agents: '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="9" y="14" width="30" height="24" rx="5" stroke="currentColor" stroke-width="3"/><path d="M24 6v8M17 25h.01M31 25h.01M18 32h12" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
+    chats: '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M6 12H42V34H26L16 42V34H6V12Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M15 21h18M15 27h10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
+    typing: '<svg width="16" height="16" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="5" y="12" width="38" height="24" rx="4" stroke="currentColor" stroke-width="3"/><path d="M12 20h.01M18 20h.01M24 20h.01M30 20h.01M36 20h.01M14 28h20" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>' };
+  /** The AionDX block in AionUi's Settings list; AionUi's own Agents entry hidden (ours takes its place). */
+  function renderDxSettingsNav() {
+    var sider = document.querySelector('.settings-sider');
+    if (!sider) return;
+    var theirs = sider.querySelector('[data-settings-id="agent"]');
+    if (theirs) { var tip = theirs.parentElement && theirs.parentElement !== sider ? theirs.parentElement : theirs; if (tip.style.display !== 'none') tip.style.display = 'none'; }
+    var block = sider.querySelector('.aiondx-setnav');
+    if (!block) {
+      block = gEl('div', 'aiondx-setnav');
+      block.setAttribute('data-testid', 'aiondx-setnav');
+      block.appendChild(gEl('div', 'settings-sider__group-header aiondx-setnav-head', 'AionDX'));
+      DX_PAGES.forEach(function (pg) {
+        var it = gEl('div', 'settings-sider__item aiondx-setnav-item');
+        it.setAttribute('data-testid', 'aiondx-setnav-' + pg.id);
+        it.setAttribute('data-page', pg.id);
+        it.setAttribute('role', 'link');
+        it.innerHTML = '<span class="aiondx-setnav-icon">' + SVG_DXSET[pg.id] + '</span><span class="settings-sider__item-label aiondx-setnav-label"></span>';
+        it.querySelector('.aiondx-setnav-label').textContent = pg.label;
+        it.addEventListener('click', function () { dxset.advanced = false; location.hash = '#/settings/agent?aiondx=' + pg.id; });
+        block.appendChild(it);
+      });
+    }
+    var first = sider.firstElementChild;
+    if (block.parentNode !== sider || (theirs ? block.previousElementSibling !== (theirs.parentElement && theirs.parentElement !== sider ? theirs.parentElement : theirs) : block !== first)) {
+      var anchor = theirs ? (theirs.parentElement && theirs.parentElement !== sider ? theirs.parentElement : theirs) : null;
+      if (anchor) sider.insertBefore(block, anchor.nextSibling); else sider.insertBefore(block, first);
+    }
+    var cur = dxSetRoute();
+    Array.prototype.forEach.call(block.querySelectorAll('.aiondx-setnav-item'), function (it) { it.classList.toggle('aiondx-setnav-item--on', it.getAttribute('data-page') === cur); });
+  }
+  function renderDxSettings() {
+    renderDxSettingsNav();
+    var pageId = dxSetRoute();
+    var host = pageId ? document.querySelector('.settings-page-content') : null;
+    Object.keys(dxset.el).forEach(function (k) { var e = dxset.el[k]; if (e && e.parentNode && (!host || k !== pageId)) e.parentNode.removeChild(e); });
+    if (!host) return;
+    if (!dxset.el[pageId]) dxset.el[pageId] = buildDxSetPage(pageId);
+    var el = dxset.el[pageId];
+    if (el.parentNode !== host || host.firstChild !== el) host.insertBefore(el, host.firstChild);
+    // AionUi's own agent list shows only under Agents > Advanced
+    var showTheirs = pageId === 'agents' && dxset.advanced;
+    Array.prototype.forEach.call(host.children, function (c) { if (c === el) return; var want = showTheirs ? '' : 'none'; if (c.style.display !== want) c.style.display = want; });
+  }
+  function dxSetSection(title) { var d = gEl('div', 'aiondx-dxset-section'); d.appendChild(gEl('div', 'aiondx-accent-title', title)); return d; }
+  function buildDxSetPage(id) {
+    var pg = DX_PAGES.filter(function (x) { return x.id === id; })[0];
+    var el = gEl('div', 'aiondx-dxset');
+    el.setAttribute('data-testid', 'aiondx-dxset-' + id);
+    el.appendChild(gEl('h2', 'aiondx-dxs-title', pg.title));
+    el.appendChild(gEl('p', 'aiondx-dxs-desc', pg.desc));
+    var addOpts = function (groups, title) {
+      var sec = dxSetSection(title);
+      var o = buildOptionsUi(groups);
+      o.__dxKeep = true;
+      optionsEls.push(o);
+      sec.appendChild(o);
+      el.appendChild(sec);
+    };
+    if (id === 'agents') {
+      var list = dxSetSection('Your agents');
+      var box = gEl('div', 'aiondx-dxset-agents');
+      box.setAttribute('data-testid', 'aiondx-dxset-agentlist');
+      list.appendChild(box);
+      el.appendChild(list);
+      dxAgentsList(box);
+      el.appendChild(buildDxCards(['signin', 'setup', 'caches']));
+      addOpts(['Stop', 'The Loop'], 'Stop and the Loop');
+      var adv = dxSetSection('Advanced');
+      adv.appendChild(gEl('div', 'aiondx-accent-desc', 'Environment variables (API keys), custom agents and repairs are in AionUi\u2019s own agent list.'));
+      var ab = gEl('button', 'arco-btn arco-btn-secondary arco-btn-size-small aiondx-dxset-adv', 'Show the advanced agent list');
+      ab.type = 'button';
+      ab.setAttribute('data-testid', 'aiondx-dxset-advanced');
+      ab.addEventListener('click', function () { dxset.advanced = !dxset.advanced; ab.textContent = dxset.advanced ? 'Hide the advanced agent list' : 'Show the advanced agent list'; renderDxSettings(); });
+      adv.appendChild(ab);
+      el.appendChild(adv);
+    } else if (id === 'chats') {
+      el.appendChild(buildDxCards(['places']));
+      addOpts(['Long chats'], 'Long chats');
+    } else if (id === 'typing') {
+      addOpts(['Typing', 'Links', 'Voice', 'Help'], 'Options');
+    }
+    refreshOptionsUi();
+    return el;
+  }
+  var DX_AGENT_STATUS = { online: 'Installed and answering', offline: 'Installed, not answering', missing: 'Not installed on this PC', unchecked: 'Installed, not checked yet' };
+  function dxAgentsList(box) {
+    box.textContent = '';
+    box.appendChild(gEl('div', 'aiondx-skills-empty', 'Reading...'));
+    getJson('/api/agents/management').then(function (j) {
+      var list = Array.isArray(j && j.data) ? j.data : Array.isArray(j) ? j : [];
+      box.textContent = '';
+      if (!list.length) { box.appendChild(gEl('div', 'aiondx-skills-empty', 'No agents found.')); return; }
+      list.forEach(function (a) { box.appendChild(dxAgentRow(a)); });
+    }, function () { box.textContent = ''; box.appendChild(gEl('div', 'aiondx-skills-empty', 'Could not read the agents.')); });
+  }
+  function dxAgentRow(a) {
+    var row = gEl('div', 'aiondx-skill aiondx-dxset-agent');
+    row.setAttribute('data-agent', String(a.id));
+    var head = gEl('div', 'aiondx-skill-head');
+    head.appendChild(gEl('span', 'aiondx-skill-name', a.name || a.id));
+    var st = gEl('span', 'aiondx-skill-layer aiondx-dxset-status', a.enabled === false ? 'Switched off' : (DX_AGENT_STATUS[a.status] || DX_AGENT_STATUS[a.installed === false ? 'missing' : 'unchecked']));
+    head.appendChild(st);
+    row.appendChild(head);
+    if (a.description) row.appendChild(gEl('div', 'aiondx-skill-desc', a.description));
+    var meta = gEl('div', 'aiondx-skill-meta');
+    meta.appendChild(gEl('span', 'aiondx-dxs-dir', a.backend || a.agent_type || ''));
+    var ctl = gEl('span', 'aiondx-skill-ctl');
+    var claude = /^claude/.test(String(a.backend || ''));
+    if (claude && window.aiondxSignin) {
+      var si = dxsBtn(a.status === 'missing' || a.installed === false ? 'Install Claude Code' : 'Sign in', 'signin');
+      si.addEventListener('click', function () { welcome.opened = true; showWelcome('accounts'); });
+      ctl.appendChild(si);
+    }
+    var chk = dxsBtn('Check', 'check');
+    chk.addEventListener('click', function () {
+      chk.disabled = true; st.textContent = 'Checking...';
+      sendJson('POST', '/api/agents/' + encodeURIComponent(a.id) + '/health-check', {}).then(function (r) { return r && r.json ? r.json() : r; }).then(function (j) {
+        var d = (j && (j.data || j)) || {};
+        st.textContent = DX_AGENT_STATUS[d.status] || 'Checked';
+      }, function () { st.textContent = 'The check did not go through'; }).then(function () { chk.disabled = false; });
+    });
+    ctl.appendChild(chk);
+    var hint = cacheBridge() ? cacheProfileHint(a.name || '') : '';
+    if (hint) { var cc = dxsBtn('Clear cache', 'cache'); cc.addEventListener('click', function () { openCaches(hint); }); ctl.appendChild(cc); }
+    var on = dxsBtn(a.enabled === false ? 'Switch on' : 'Switch off', 'enabled');
+    on.addEventListener('click', function () {
+      var want = a.enabled === false;
+      on.disabled = true;
+      sendJson('PATCH', '/api/agents/' + encodeURIComponent(a.id) + '/enabled', { enabled: want }).then(function (r) {
+        if (r && (r.ok === undefined || r.ok)) { a.enabled = want; on.textContent = want ? 'Switch off' : 'Switch on'; st.textContent = want ? (DX_AGENT_STATUS[a.status] || 'Switched on') : 'Switched off'; }
+      }).then(function () { on.disabled = false; }, function () { on.disabled = false; });
+    });
+    ctl.appendChild(on);
+    meta.appendChild(ctl);
+    row.appendChild(meta);
+    return row;
+  }
+  /** The AionDX cards (setup, sign-in, where chats live, agent caches), built for the Settings page that shows them. */
+  function buildDxCards(which) {
+    var el = document.createElement('div');
+    el.className = 'aiondx-accent aiondx-dxcards';
+    el.innerHTML =
+      '<div data-card="setup">' +
+      '<div class="aiondx-accent-title aiondx-setup-title">AionDX setup</div>' +
+      '<div class="aiondx-accent-desc">Bring your agents, instructions and tools over from the other AI apps on this PC, with Antigravity or an agent of your choice.</div>' +
+      '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-setup-open" data-testid="aiondx-setup-open">Open AionDX setup</button>' +
+      '</div>' +
+      '<div data-card="signin">' +
+      (window.aiondxSignin ? '<div class="aiondx-accent-title aiondx-signin-title">Sign-in</div>' +
+        '<div class="aiondx-accent-desc">Sign Claude Code in once, in your browser: model calls, Claude Docs, your claude.ai skills and connectors all come with it, and it renews itself.</div>' +
+        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-signin-open" data-testid="aiondx-signin-open">Sign in to your agents</button>' : '') +
+      '</div>' +
+      '<div data-card="places">' +
+      (portableBridge() || placesBridge() ? '<div class="aiondx-accent-title aiondx-drive-title">Where your chats live</div>' +
+        '<div class="aiondx-accent-desc">Your chats stay in AionDX\'s own folder unless you choose a place for them. Pick any chats, teams or groups and keep them in a folder of your own, ' +
+          'on this PC or on a drive that goes with you; AionDX on another PC opens the ones on a drive while it is plugged in.</div>' +
+        (placesBridge() ? '<div class="aiondx-accent-desc aiondx-places-state" data-testid="aiondx-places-state"></div>' : '') +
+        (portableBridge() ? '<div class="aiondx-accent-desc aiondx-drive-state" data-testid="aiondx-drive-state">Checking...</div>' : '') +
+        '<div class="aiondx-accent-row aiondx-drive-buttons">' +
+        (placesBridge() ? '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-places-open" data-testid="aiondx-places-open">Choose where chats live...</button>' : '') +
+        (portableBridge() ? '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-drive-move" data-testid="aiondx-drive-move">Move everything to a drive...</button>' : '') +
+        '</div>' : '') +
+      '</div>' +
+      '<div data-card="caches">' +
+      (cacheBridge() ? '<div class="aiondx-accent-title aiondx-cache-title">Agent caches</div>' +
+        '<div class="aiondx-accent-desc">See what Claude Code, Devin and AionDX keep on this PC, and clear the caches, or the history older than a week, a month or more.</div>' +
+        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-open" data-testid="aiondx-cache-open">Clear agent caches</button>' : '') +
+      '</div>' +
+      '';
+    Array.prototype.forEach.call(el.querySelectorAll('[data-card]'), function (c) { if (which.indexOf(c.getAttribute('data-card')) < 0) c.parentNode.removeChild(c); });
+    var setupOpen = el.querySelector('.aiondx-setup-open');
+    if (setupOpen) setupOpen.addEventListener('click', function (ev) { ev.preventDefault(); welcome.opened = true; showWelcome(1); });
+    var cacheOpen = el.querySelector('.aiondx-cache-open');
+    if (cacheOpen) cacheOpen.addEventListener('click', function (ev) { ev.preventDefault(); openCaches(); });
+    var signinOpen = el.querySelector('.aiondx-signin-open');
+    if (signinOpen) signinOpen.addEventListener('click', function (ev) { ev.preventDefault(); welcome.opened = true; showWelcome('accounts'); });
+    var placesOpen = el.querySelector('.aiondx-places-open');
+    if (placesOpen) {
+      placesOpen.addEventListener('click', function (ev) { ev.preventDefault(); openPlaces(); });
+      var pst = el.querySelector('.aiondx-places-state');
+      placesLoad().then(function (r) {
+        if (!pst || !r || !r.ok) return;
+        var placed = r.items.filter(function (i) { return i.placed; }).length, miss = r.items.filter(function (i) { return i.missing; }).length;
+        pst.textContent = (placed ? plural(placed, 'chat or team has', 'chats and teams have') + ' a place of ' + (placed === 1 ? 'its' : 'their') + ' own' : 'All of them are in AionDX\'s folder') +
+          (miss ? '; ' + plural(miss, 'is', 'are') + ' missing.' : '.');
+        pst.classList.toggle('aiondx-places-state--bad', miss > 0);
+      });
+    }
+    var driveMove = el.querySelector('.aiondx-drive-move');
+    if (driveMove) {
+      driveMove.addEventListener('click', function (ev) { ev.preventDefault(); moveToDrive(); });
+      paintDriveState(el);
+    }
+    return el;
+  }
   // ---------------------------------------------------------------- DX Skills: AionUi's Skills Hub remade (R-128 step 5)
   // The user, November 14th: "just remake AionUI's skills hub with our own DX Skills hub and they shouldn't really have to move at all",
   // "PUT THEM WHERE THEY SHOULD BE". Settings > Skills shows DX Skills in place of AionUi's hub, whose own view (its store and the
@@ -820,6 +1032,8 @@
     rv.appendChild(rsel);
     rv.appendChild(gEl('span', 'aiondx-dxs-review-note', 'A chat in yolo (bypassPermissions) does not ask before acting. A replaced skill is kept in .claude\\skills-history.'));
     el.appendChild(rv);
+    // the Skills options (lessons through a compaction), here since November 16th, 2026 (Appearance holds colours only)
+    var sko = buildOptionsUi(['Skills']); sko.__dxKeep = true; optionsEls.push(sko); el.appendChild(sko); refreshOptionsUi();
     skillsBridge().call('reviewGet').then(function (r) { if (r && r.ok) rsel.value = r.review; rsel.disabled = false; }, function () { rsel.disabled = false; });
     rsel.addEventListener('change', function () {
       skillsBridge().call('reviewSet', { review: rsel.value }).then(function (r) { dxsStatus(r && r.ok ? '' : 'Not saved: ' + ((r && r.error) || 'no answer'), !(r && r.ok)); });
@@ -1451,16 +1665,17 @@
   }
 
   // The options on Settings > Appearance, drawn from the list.
-  var optionsEl = null;
-  function buildOptionsUi() {
+  var optionsEls = [];
+  /** The options of these groups (all when none named), for the Settings page that holds them. */
+  function buildOptionsUi(groups) {
     var el = document.createElement('div');
     el.className = 'aiondx-opts';
     el.setAttribute('data-testid', 'aiondx-options');
-    var html = '<div class="aiondx-accent-title">AionDX options</div>' +
-      '<div class="aiondx-accent-desc">Every choice below can also be read and changed by an agent: <code>aiondx config list</code>.</div>';
+    var html = '<div class="aiondx-accent-desc">Each choice here can also be read and changed by an agent: <code>aiondx config list</code>.</div>';
     var group = '';
     OPTIONS.forEach(function (d) {
       if (d.type === 'command') return;
+      if (groups && groups.indexOf(d.group) < 0) return;
       if (d.group !== group) { group = d.group; html += '<div class="aiondx-opt-group">' + group + '</div>'; }
       html += '<div class="aiondx-opt-row" data-opt="' + d.id + '"><label class="aiondx-opt-label" title="' + d.desc.replace(/"/g, '&quot;') + '">' + d.label + '</label><span class="aiondx-opt-input"></span><button type="button" class="aiondx-bg-reset aiondx-opt-reset" aria-label="Reset ' + d.label + '">Reset</button></div>';
     });
@@ -1483,7 +1698,8 @@
     return el;
   }
   function refreshOptionsUi() {
-    if (!optionsEl) return;
+    optionsEls = optionsEls.filter(function (x) { return document.body.contains(x) || x.__dxKeep; });
+    optionsEls.forEach(function (optionsEl) {
     Array.prototype.forEach.call(optionsEl.querySelectorAll('.aiondx-opt-row'), function (row) {
       var d = optionDef(row.getAttribute('data-opt'));
       var input = row.querySelector('[data-testid^="aiondx-opt-"]');
@@ -1492,6 +1708,7 @@
       else if (document.activeElement !== input && String(input.value) !== String(v)) input.value = String(v);
       var reset = row.querySelector('.aiondx-opt-reset');
       reset.style.visibility = Object.prototype.hasOwnProperty.call(optionValues, d.id) ? 'visible' : 'hidden';
+    });
     });
   }
 
@@ -1964,24 +2181,6 @@
         '<label class="aiondx-swatch-custom aiondx-bg-pick" data-mode="light"><input type="color" class="aiondx-bg-input" aria-label="Light mode background"><span>Light</span></label>' +
         '<button type="button" class="aiondx-bg-reset" data-mode="light">Reset</button>' +
       '</div>' +
-      '<div class="aiondx-accent-title aiondx-setup-title">AionDX setup</div>' +
-      '<div class="aiondx-accent-desc">Bring your agents, instructions and tools over from the other AI apps on this PC, with Antigravity or an agent of your choice.</div>' +
-      '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-setup-open" data-testid="aiondx-setup-open">Open AionDX setup</button>' +
-      (window.aiondxSignin ? '<div class="aiondx-accent-title aiondx-signin-title">Sign-in</div>' +
-        '<div class="aiondx-accent-desc">Sign Claude Code in once, in your browser: model calls, Claude Docs, your claude.ai skills and connectors all come with it, and it renews itself.</div>' +
-        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-signin-open" data-testid="aiondx-signin-open">Sign in to your agents</button>' : '') +
-      (portableBridge() || placesBridge() ? '<div class="aiondx-accent-title aiondx-drive-title">Where your chats live</div>' +
-        '<div class="aiondx-accent-desc">Your chats stay in AionDX\'s own folder unless you choose a place for them. Pick any chats, teams or groups and keep them in a folder of your own, ' +
-          'on this PC or on a drive that goes with you; AionDX on another PC opens the ones on a drive while it is plugged in.</div>' +
-        (placesBridge() ? '<div class="aiondx-accent-desc aiondx-places-state" data-testid="aiondx-places-state"></div>' : '') +
-        (portableBridge() ? '<div class="aiondx-accent-desc aiondx-drive-state" data-testid="aiondx-drive-state">Checking...</div>' : '') +
-        '<div class="aiondx-accent-row aiondx-drive-buttons">' +
-        (placesBridge() ? '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-places-open" data-testid="aiondx-places-open">Choose where chats live...</button>' : '') +
-        (portableBridge() ? '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-drive-move" data-testid="aiondx-drive-move">Move everything to a drive...</button>' : '') +
-        '</div>' : '') +
-      (cacheBridge() ? '<div class="aiondx-accent-title aiondx-cache-title">Agent caches</div>' +
-        '<div class="aiondx-accent-desc">See what Claude Code, Devin and AionDX keep on this PC, and clear the caches, or the history older than a week, a month or more.</div>' +
-        '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-cache-open" data-testid="aiondx-cache-open">Clear agent caches</button>' : '') +
       '<div class="aiondx-accent-title aiondx-ctx-title">Context ring</div>' +
       '<div class="aiondx-accent-desc">The ring beside the message box fills as the context window does, and changes colour as it goes. ' +
         'Each colour starts at the percentage in its box.</div>' +
@@ -1990,32 +2189,6 @@
       '<div class="aiondx-accent-title aiondx-bubbles-title">Chat colours</div>' +
       '<div class="aiondx-accent-desc">Message bubbles, separately for dark and light mode. Right-click any message to come straight here.</div>' +
       '<div class="aiondx-bubbles" data-testid="aiondx-bubbles"></div>';
-    el.querySelector('.aiondx-setup-open').addEventListener('click', function (ev) {
-      ev.preventDefault();
-      welcome.opened = true;
-      showWelcome(1);
-    });
-    var cacheOpen = el.querySelector('.aiondx-cache-open');
-    if (cacheOpen) cacheOpen.addEventListener('click', function (ev) { ev.preventDefault(); openCaches(); });
-    var signinOpen = el.querySelector('.aiondx-signin-open');
-    if (signinOpen) signinOpen.addEventListener('click', function (ev) { ev.preventDefault(); welcome.opened = true; showWelcome('accounts'); });
-    var placesOpen = el.querySelector('.aiondx-places-open');
-    if (placesOpen) {
-      placesOpen.addEventListener('click', function (ev) { ev.preventDefault(); openPlaces(); });
-      var pst = el.querySelector('.aiondx-places-state');
-      placesLoad().then(function (r) {
-        if (!pst || !r || !r.ok) return;
-        var placed = r.items.filter(function (i) { return i.placed; }).length, miss = r.items.filter(function (i) { return i.missing; }).length;
-        pst.textContent = (placed ? plural(placed, 'chat or team has', 'chats and teams have') + ' a place of ' + (placed === 1 ? 'its' : 'their') + ' own' : 'All of them are in AionDX\'s folder') +
-          (miss ? '; ' + plural(miss, 'is', 'are') + ' missing.' : '.');
-        pst.classList.toggle('aiondx-places-state--bad', miss > 0);
-      });
-    }
-    var driveMove = el.querySelector('.aiondx-drive-move');
-    if (driveMove) {
-      driveMove.addEventListener('click', function (ev) { ev.preventDefault(); moveToDrive(); });
-      paintDriveState(el);
-    }
     var row = el.querySelector('.aiondx-accent-row');
     ACCENTS.forEach(function (a) {
       var b = document.createElement('button');
@@ -2073,9 +2246,6 @@
       ev.preventDefault();
       changeThemePrefs({ ctx: null });
     });
-    optionsEl = buildOptionsUi();
-    el.appendChild(optionsEl);
-    refreshOptionsUi();
     return el;
   }
   function refreshAccentPicker() {
@@ -7837,6 +8007,22 @@
     '.aiondx-skills-foot{display:flex;align-items:center;gap:10px}',
     '.aiondx-skills-status{font-size:12px;color:var(--color-text-3)}',
     '.aiondx-skills-empty{padding:12px;font-size:13px;color:var(--color-text-3)}',
+    // AionDX's own Settings pages (November 16th, 2026): entries styled as AionUi's Settings list, pages as DX Skills
+    '.aiondx-setnav{display:flex;flex-direction:column;gap:2px}',
+    '.aiondx-setnav-head{padding:0 12px;margin-top:8px;height:28px;display:flex;align-items:center;font-size:14px;font-weight:500;color:var(--color-text-3);user-select:none}',
+    '.aiondx-setnav-item{height:34px;border-radius:8px;display:flex;align-items:center;gap:8px;padding:0 10px;cursor:pointer;flex-shrink:0}',
+    '.aiondx-setnav-item:hover{background:var(--color-fill-3)}',
+    '.aiondx-setnav-item--on{background:var(--color-fill-3)}',
+    '.aiondx-setnav-icon{width:22px;height:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--color-text-2)}',
+    '.aiondx-setnav-label{font-size:14px;font-weight:500;line-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text-1)}',
+    '.settings-sider--collapsed .aiondx-setnav-head,.settings-sider--collapsed .aiondx-setnav-label{display:none}',
+    '.settings-sider--collapsed .aiondx-setnav-item{justify-content:center;padding:0}',
+    '.aiondx-dxset{display:flex;flex-direction:column;gap:12px;margin-bottom:16px}',
+    '.aiondx-dxset-section{display:flex;flex-direction:column;gap:8px}',
+    '.aiondx-dxset-agents{display:flex;flex-direction:column;gap:6px}',
+    '.aiondx-dxcards{margin:0;display:flex;flex-direction:column;gap:18px}',
+    '.aiondx-dxcards > [data-card]{display:flex;flex-direction:column;gap:6px;align-items:flex-start}',
+    '.aiondx-dxcards > [data-card]:empty{display:none}',
     // DX Skills (R-128 step 5)
     '.aiondx-dxskills{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}',
     '.aiondx-dxs-head{display:flex;align-items:center;gap:12px}',
@@ -8668,7 +8854,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel, renderDxSkills].forEach(function (step, idx) {
+    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel, renderDxSkills, renderDxSettings].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
