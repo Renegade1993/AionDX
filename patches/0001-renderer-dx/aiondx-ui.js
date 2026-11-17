@@ -3123,7 +3123,19 @@
    *  (the next window gets its own request), or when the window ran out before it could go: sent later it would compact a chat the
    *  user had just come back to (November 14th, 2026: a request made 5 hours before went out 4 minutes after the user's next
    *  message). A request from the ring's menu, the Loop or an agent has no window and waits for the agent as before. */
+  var COMPACT_MAX_AGE_MS = 12 * 3600000;
   function dropStaleCompact(t, s, convId) {
+    // any request still waiting after 12 hours is dropped: sent now it would land on a chat that has moved on (November 17th, 2026: four
+    // team members' compactions, refused for a day and a half, would otherwise have gone out the moment the route was fixed)
+    if (compactPending(s) && Number(s.compactAt) > 0 && Date.now() - Number(s.compactAt) > COMPACT_MAX_AGE_MS) {
+      s.compactSentAt = s.compactAt;
+      s.compactUntil = 0;
+      s.compactNote = 'Not sent: it was asked for at ' + hhmm(Number(s.compactAt)) + ', over 12 hours ago, and could not go then. Ask again if it is still wanted.';
+      s.why = s.compactNote; s.whyAt = Date.now();
+      save(t, s); publishStatus(t); render();
+      diagnose('auto-compact-dropped', String(convId || '').slice(0, 8), { tooOld: true });
+      return true;
+    }
     var until = Number(s.compactUntil) || 0;
     if (!until || !compactPending(s)) return false;
     var rec = convId ? cacheRecord(convId) : null;
@@ -3195,6 +3207,16 @@
       if (hasDraft(t)) { why(t, s, 'Holding the compaction: you have an unsent draft in this box.'); return; }
       var focus = cmd === 'compact' && opt('skills.atCompact') !== false && (await chatIsClaude(t, convId)) ? ' ' + COMPACT_FOCUS : '';
       var r = await send('/' + cmd + focus);
+      if (r && r.status === 403) {
+        s = state(t);
+        s.compactSentAt = s.compactAt;
+        s.compactUntil = 0;
+        s.compactNote = 'Not sent: AionCore refused the compaction for this chat (403).';
+        s.why = s.compactNote; s.whyAt = Date.now();
+        save(t, s); publishStatus(t); render();
+        diagnose('compact-refused', String(convId || '').slice(0, 8), {});
+        return;
+      }
       if (!r || !r.ok) return;   // the next check tries again
       s = state(t);
       var now = Date.now();
@@ -3575,6 +3597,13 @@
       'reply in a word. This message only keeps your prompt cache warm.';
   }
 
+  /** Where a message to this chat goes: a team member's chat by the team's route (the lead's or the member's), any other the chat's own. */
+  function convSendPath(convId, conv) {
+    var ex = (conv && conv.extra) || {};
+    var team = ex.teamId || ex.team_id, slot = ex.slot_id || ex.slotId;
+    if (team && slot) return isLeadRole(ex.role) ? '/api/teams/' + team + '/messages' : '/api/teams/' + team + '/agents/' + encodeURIComponent(slot) + '/messages';
+    return '/api/conversations/' + convId + '/messages';
+  }
   async function tickConv(t, s) {
     var g = await getJson('/api/conversations/' + t.convId);
     if (g.err === 401 || g.err === 403 || g.err === 404) {
@@ -3583,10 +3612,14 @@
     }
     if (g.data && g.data.runtime) convMidturn[t.convId] = !!g.data.runtime.supports_midturn_delivery;
     if (convBusy(g.data)) { if (s.on) why(t, s, 'Not sending: it is working.'); return; }
+    // A team member's own chat, opened on its own: AionCore refuses an ordinary send to it ("Ordinary send rejected for team-owned
+    // conversation", 403), so it goes by the team's route, the lead's or the member's (November 17th, 2026: a compaction for a member
+    // chat was refused every 15 seconds for a day and a half, 1,627 times in one day's log).
+    var sendPath = convSendPath(t.convId, g.data);
 
     if (compactPending(s)) {
       await sendCompact(t, t.convId, function (text) {
-        return postJson('/api/conversations/' + t.convId + '/messages', { content: text });
+        return postJson(sendPath, { content: text });
       });
       return;
     }
@@ -3594,14 +3627,14 @@
     // Legacy queue from the first version of this patch. Drain it, one per tick.
     if (s.queue.length) {
       var q = s.queue.shift(); save(t, s);
-      var qr = await postJson('/api/conversations/' + t.convId + '/messages', { content: q });
-      if (!qr.ok) { s.queue.unshift(q); save(t, s); }
+      var qr = await postJson(sendPath, { content: q });
+      if (!qr.ok && qr.status !== 403) { s.queue.unshift(q); save(t, s); }   // refused outright: dropped, never retried each tick
       render();
       return;
     }
     if (!s.on) return;
     await fireIfDue(t, s, t.convId, function (text) {
-      return postJson('/api/conversations/' + t.convId + '/messages', { content: text }).then(async function (r) {
+      return postJson(sendPath, { content: text }).then(async function (r) {
         if (!r.ok && r.status !== 401 && r.status !== 403 && r.status !== 404) {
           // runtime may be suspended; wake it so the next tick can send. Straight to the backend: the page's
           // own calls to this route are held while a chat's agent is not running (see holdStart).
@@ -8240,6 +8273,7 @@
     '.aiondx-skill-name{font-size:13px;font-weight:600;color:var(--color-text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.aiondx-skill-layer{flex:0 0 auto;margin-left:auto;padding:0 7px;border-radius:9px;font-size:11px;line-height:18px;color:var(--color-text-2);background:var(--color-fill-2)}',
     '.aiondx-skill-layer--project{color:rgb(var(--primary-6));background:rgba(var(--primary-6),.12)}',
+    '.aiondx-skill-layer--folder{color:rgb(var(--primary-6));background:rgba(var(--primary-6),.12)}',
     '.aiondx-skill-desc{margin-top:3px;font-size:12px;line-height:1.45;color:var(--color-text-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
     '.aiondx-skill-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--color-text-3)}',
     '.aiondx-skill-uses--never{font-style:italic}',

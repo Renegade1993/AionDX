@@ -6027,6 +6027,56 @@ async function pageTarget() {
       const failed = await teamsLine({ __status: 500, success: false });
       check(sc, 'when the teams cannot be read it says so, not "Loading" for good', /^Your teams could not be read just now/.test(String(failed)), String(failed));
     }
+    {
+      const sc = 'teamconv';
+      // A team member's own chat, ticked as a chat: AionCore refuses an ordinary send to it (403 "Ordinary send rejected for team-owned
+      // conversation"), and a compaction for one was retried every 15 seconds for a day and a half (November 17th, 2026). It goes by the
+      // team's route now, and a refused one is dropped with a note.
+      const asMember = async (role, memberStatus) => {
+        await load('theme=light');
+        const now = Date.now();
+        await js(`(() => { const R = window.__stub.routes; const base = R['GET /api/conversations/harness1'] || { success: true, data: { id: 'harness1' } };
+          const data = Object.assign({}, base.data || {}); data.extra = Object.assign({}, data.extra || {}, { teamId: 'teamX', slot_id: 'slotX', role: ${JSON.stringify(role)}, backend: 'claude' });
+          R['GET /api/conversations/harness1'] = Object.assign({}, base, { data: data });
+          R['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 150000, size: 200000 } };
+          R['GET /api/conversations/harness1/slash-commands'] = { success: true, data: [{ command: 'compact' }] };
+          R['POST /api/teams/teamX/agents/slotX/messages'] = ${memberStatus === 403 ? "{ __status: 403, success: false, msg: 'Forbidden.' }" : '{ success: true }'};
+          R['POST /api/teams/teamX/messages'] = { success: true };
+          window.__calls.length = 0; return 0; })()`);
+        await putStore('aiondx.cache.conv.harness1', { v: 1, at: now - 56 * 60000, until: now + 4 * 60000, longUntil: now + 4 * 60000, tailUntil: now + 4 * 60000, ttl: '1h', read: 1000, write: 0, ctx: 150000 });
+        await js('window.__aionDx.tickNow()');
+        await sleep(400);
+        await js('window.__aionDx.autoCompactNow()');
+        await sleep(400);
+        await js('window.__aionDx.tickNow()');
+        await sleep(600);
+        return { own: (await posts('/api/conversations/harness1/messages')).length, member: await posts('/api/teams/teamX/agents/slotX/messages'), lead: await posts('/api/teams/teamX/messages') };
+      };
+      let r = await asMember('teammate', 200);
+      check(sc, "a member's chat: the compaction goes by the team's route to that member, never the chat's own",
+        r.own === 0 && r.member.length === 1 && /^\/compact/.test(r.member[0].body.content) && r.lead.length === 0, JSON.stringify(r));
+      r = await asMember('lead', 200);
+      check(sc, "the lead's chat: by the team's own route", r.own === 0 && r.lead.length === 1 && /^\/compact/.test(r.lead[0].body.content) && r.member.length === 0, JSON.stringify(r));
+      r = await asMember('teammate', 403);
+      const st = await js(`JSON.parse(localStorage.getItem('aionui.dx.harness1') || '{}')`);
+      await js('window.__calls.length = 0; window.__aionDx.tickNow()');
+      await sleep(600);
+      const again = (await posts('/api/teams/teamX/agents/slotX/messages')).length + (await posts('/api/conversations/harness1/messages')).length;
+      check(sc, 'refused (403): dropped with a note, not tried again each tick',
+        r.member.length === 1 && !(st.compactAt > (st.compactSentAt || 0)) && /refused the compaction/.test(st.compactNote || '') && again === 0, JSON.stringify([r.member.length, st.compactNote, again]));
+      // a compaction still waiting after 12 hours is dropped, not sent late
+      {
+        const old = Date.now() - 37 * 3600000;
+        await js(`(() => { const k = 'aionui.dx.harness1'; const v = JSON.parse(localStorage.getItem(k) || '{}'); v.compactAt = ${old}; v.compactSentAt = 0; v.compactUntil = 0; localStorage.setItem(k, JSON.stringify(v)); return 0; })()`);
+        await load('theme=light&keepls=1');
+        await js(`(() => { window.__stub.routes['GET /api/conversations/harness1/slash-commands'] = { success: true, data: [{ command: 'compact' }] }; window.__calls.length = 0; return 0; })()`);
+        await js('window.__aionDx.tickNow()');
+        await sleep(600);
+        const st2 = await js(`JSON.parse(localStorage.getItem('aionui.dx.harness1') || '{}')`);
+        const sentOld = (await posts('/api/conversations/harness1/messages')).length + (await posts('/api/teams/teamX/agents/slotX/messages')).length;
+        check(sc, 'a compaction asked for 37 hours ago is dropped with a note, not sent late', sentOld === 0 && st2.compactSentAt === old && /over 12 hours ago/.test(st2.compactNote || ''), JSON.stringify([sentOld, st2.compactNote]));
+      }
+    }
     clearTimeout(deadline);
     let failed = 0;
     for (const r of results) {
