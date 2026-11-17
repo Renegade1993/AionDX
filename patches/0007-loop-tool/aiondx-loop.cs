@@ -209,7 +209,7 @@ namespace AionDx
         const string Instructions =
             "AionDX options (where links open, spelling, Stop timing, voice, long-chat limits) are read and changed with the command `aiondx config list`, `aiondx config set ID VALUE`; " +
             "the user can ask you to change any of them, and the list says what each does. " +
-            "AionDX Loop: the user's Loop button in AionUi, shared with you. While a Loop is on, AionUi sends " +
+            "AionDX Loop: the user's Loop button in AionDX, shared with you. While a Loop is on, AionDX sends " +
             "its continue message each time the agent stops with nothing queued. loop_status shows it; loop_set " +
             "switches it on or off, changes the continue message, sets how long it keeps a waiting agent's prompt " +
             "cache warm (hold), or asks for a context compaction. The Loop is the only keep-warm mechanism: after " +
@@ -222,7 +222,7 @@ namespace AionDx
             "nudge saying the time has come, since nothing else tells you. The user sees every change " +
             "you make on the button. A team lead also has priority_send: a message to a teammate that goes ahead of " +
             "everything queued for it without stopping its current turn, and agent_stop: the real way to stop a teammate (pause, Loop off, process restart); team_interrupt_agent and team_shutdown_agent are not stops. The user's MCP servers and their credentials " +
-            "are in the AionDX MCP file and AionUi's list, loaded into no chat: when the user asks you to use one, " +
+            "are in the AionDX MCP file and the Settings > Tools list, loaded into no chat: when the user asks you to use one, " +
             "mcp_tools lists its tools and mcp_call calls one, connecting for that call only. The user's GitHub needs no MCP " +
             "server: git on this PC is signed in by itself; github_status says as whom and how to push, and github_create_repo " +
             "makes a repository. usage_status shows the Claude account's 5-hour and weekly usage and whether a limit is reached: " +
@@ -254,8 +254,8 @@ namespace AionDx
                     { "title", "Loop status" },
                     { "description",
                         "Shows the Loop for this chat: whether it is on, its continue message, who changed it last, and what it is doing now. " +
-                        "The Loop is the round button beside the Permission shield in AionUi's message box, and the user controls the same one. " +
-                        "While it is on, AionUi sends the continue message each time you stop with nothing queued. It never sends while you " +
+                        "The Loop is the round button beside the Permission shield in the message box, and the user controls the same one. " +
+                        "While it is on, AionDX sends the continue message each time you stop with nothing queued. It never sends while you " +
                         "are working. After a short reply (nothing to do) the next nudge comes 2, then 4 minutes after your last message, so your " +
                         "prompt cache (5 minutes) stays warm; after the hold (45 minutes of short replies by default) it rests and lets the " +
                         "cache run out, and it never wakes an agent whose cache has already run out. It waits out provider limits, switches " +
@@ -270,12 +270,12 @@ namespace AionDx
                     { "name", "loop_set" },
                     { "title", "Change the Loop" },
                     { "description",
-                        "Changes the Loop for this chat: switch it on or off, change its continue message, or ask AionUi to compact your " +
+                        "Changes the Loop for this chat: switch it on or off, change its continue message, or ask AionDX to compact your " +
                         "context. The user sees every change on the Loop button, with your name and note. Switch your Loop off when your " +
-                        "work is finished or you are waiting on the user, so AionUi stops nudging you; switch it on when you have a long " +
+                        "work is finished or you are waiting on the user, so AionDX stops nudging you; switch it on when you have a long " +
                         "list of work to get through. hold sets how many minutes of short replies it keeps the cache warm through before it " +
                         "rests (default 45; 0 rests after the first short reply): raise it while you wait on a long job whose result you " +
-                        "need the moment it lands. compact: true makes AionUi send /compact (or the agent's own equivalent) the next " +
+                        "need the moment it lands. compact: true makes AionDX send /compact (or the agent's own equivalent) the next " +
                         "time you stop. resume_at: when you are told to hold, wait or slow down until a time, set it to that time. " +
                         "Nothing else tells you the time has come. Until then the Loop's nudges say you are holding (reply in a " +
                         "word), and it keeps your cache warm while that costs less than one reload (up to about 50 minutes away); " +
@@ -290,8 +290,8 @@ namespace AionDx
                         { "properties", new Dictionary<string, object> {
                             { "on", Prop("boolean", "true switches the Loop on, false switches it off. Leave it out to keep it as it is.") },
                             { "until_stopped", Prop("boolean", "true, only when the user asks for it: the Loop is on and runs until the user stops it (no hold, no rest). false ends that mode, which needs the user's own request, like switching such a Loop off.") },
-                            { "message", Prop("string", "A new continue message: the text AionUi sends when you stop. An empty string restores the default.") },
-                            { "compact", Prop("boolean", "true asks AionUi to compact the context the next time the agent stops. Only for agents that offer a compact command.") },
+                            { "message", Prop("string", "A new continue message: the text AionDX sends when you stop. An empty string restores the default.") },
+                            { "compact", Prop("boolean", "true asks AionDX to compact the context the next time the agent stops. Only for agents that offer a compact command.") },
                             { "hold", Prop("integer", "Minutes of short replies (nothing to do) the Loop keeps the prompt cache warm through before it rests, 0 to 240. Default 45. 0 rests after the first short reply.") },
                             { "resume_at", Prop("string", "When to resume: a clock time in the user's time zone (\"12:10\", \"3:30 pm\"; the next time it comes round), minutes from now (\"+45\"), or \"off\" to clear it. Within 24 hours.") },
                             { "resume_message", Prop("string", "What the resume nudge says after \"It is 12:10, the resume time you set.\" Leave it out to use the continue message.") },
@@ -367,9 +367,9 @@ namespace AionDx
                     { "title", "MCP servers" },
                     { "description",
                         "Shows the user's MCP servers: the AionDX MCP file (servers and their credentials, loaded into no chat, used when the " +
-                        "user asks), the servers this chat was started with and how its agent reported them, and AionUi's whole MCP list " +
+                        "user asks), the servers this chat was started with and how its agent reported them, and the whole Settings > Tools list " +
                         "(Settings > Tools): each server ON or OFF, how it runs, and its last check. A new chat gets the servers switched ON " +
-                        "in AionUi's list, unless its assistant has a list of its own. Also lists recent changes made with mcp_set. " +
+                        "in the Settings > Tools list, unless its assistant has a list of its own. Also lists recent changes made with mcp_set. " +
                         "Values of env and headers are never shown." },
                     { "inputSchema", new Dictionary<string, object> { { "type", "object" }, { "properties", new Dictionary<string, object>() } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", true }, { "openWorldHint", false } } } },
@@ -379,11 +379,11 @@ namespace AionDx
                     { "description",
                         "Changes the user's MCP servers. By default the AionDX MCP file: one file of servers and their credentials that " +
                         "nothing loads into a chat; an agent uses a server from it when the user asks, with mcp_tools and mcp_call. " +
-                        "where: \"aionui\" changes AionUi's own list (Settings > Tools) instead, where a server added stays OFF unless on is " +
+                        "where: \"aionui\" changes the Settings > Tools list instead, where a server added stays OFF unless on is " +
                         "true, because every new chat gets the ON ones. action: add (then a connection check), update (its transport or " +
-                        "description), remove, test (connect and list its tools); enable and disable switch a server in AionUi's list. " +
+                        "description), remove, test (connect and list its tools); enable and disable switch a server in the Settings > Tools list. " +
                         "update, remove and test find the name in either place. The user sees each change as a notice with your name and " +
-                        "note. Servers built into AionUi are left alone." },
+                        "note. Servers built into AionDX are left alone." },
                     { "inputSchema", new Dictionary<string, object> {
                         { "type", "object" },
                         { "properties", new Dictionary<string, object> {
@@ -392,7 +392,7 @@ namespace AionDx
                             { "transport", Prop("object", "For add and update. A local server: {\"type\": \"stdio\", \"command\": \"...\", \"args\": [...], \"env\": {...}, \"cwd\": \"...\"}. A remote one: {\"type\": \"http\" or \"sse\", \"url\": \"...\", \"headers\": {...}}. In the AionDX MCP file any value can be ${NAME}, a secret from the file's secrets.") },
                             { "description", Prop("string", "For add and update: a short description.") },
                             { "test", Prop("boolean", "For add and update: false skips the connection check. Default true.") },
-                            { "where", Prop("string", "\"file\" (the AionDX MCP file, the default for add) or \"aionui\" (AionUi's own list).") },
+                            { "where", Prop("string", "\"file\" (the AionDX MCP file, the default for add) or \"aionui\" (the Settings > Tools list).") },
                             { "on", Prop("boolean", "With where \"aionui\" and add: true switches the new server on, so every new chat gets it. Default false.") },
                             { "note", Prop("string", "Why, in a few words. Shown to the user.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", true }, { "idempotentHint", false }, { "openWorldHint", true } } } },
@@ -400,7 +400,7 @@ namespace AionDx
                     { "name", "mcp_tools" },
                     { "title", "An MCP server's tools" },
                     { "description",
-                        "Connects to one of the user's MCP servers for this call only (the AionDX MCP file first, then AionUi's list) and " +
+                        "Connects to one of the user's MCP servers for this call only (the AionDX MCP file first, then the Settings > Tools list) and " +
                         "lists its tools with their parameters; pass tool for one tool's whole description and input schema. The server's " +
                         "credentials go from the file to the server, never into your context. Use a server only when the user has asked " +
                         "you to use it." },
@@ -415,7 +415,7 @@ namespace AionDx
                     { "name", "mcp_call" },
                     { "title", "Call a tool on an MCP server" },
                     { "description",
-                        "Calls one tool on one of the user's MCP servers (the AionDX MCP file first, then AionUi's list), connecting for " +
+                        "Calls one tool on one of the user's MCP servers (the AionDX MCP file first, then the Settings > Tools list), connecting for " +
                         "this call only, so the server is never loaded into the chat. Its credentials go from the file to the server, never " +
                         "into your context. The result comes back as the tool's own content, text and pictures. Every call is logged. " +
                         "Use a server only when the user has asked you to; mcp_tools shows a server's tools and their parameters." },
@@ -721,22 +721,22 @@ namespace AionDx
             "--hold sets how many minutes of short replies it keeps the prompt cache warm through before it rests (0-240, default 45); " +
             "--resume-at sends one nudge at that time (\"12:10\", \"3:30 pm\", \"+45\" minutes; \"off\" clears it), holding until then; " +
             "--resume-message is what that nudge says (default: the continue message); " +
-            "--compact asks AionUi to compact the context the next time the agent stops; --note says why, shown to the user; " +
+            "--compact asks AionDX to compact the context the next time the agent stops; --note says why, shown to the user; " +
             "--member names a teammate (team lead only for set) or all.";
 
         const string McpHelp =
             "Usage:\n" +
-            "  aiondx mcp list                            the user's MCP servers: the AionDX MCP file and AionUi's list\n" +
+            "  aiondx mcp list                            the user's MCP servers: the AionDX MCP file and the Settings > Tools list\n" +
             "  aiondx mcp tools SERVER [TOOL] [--full]    connect and list its tools and their parameters (* = required)\n" +
             "  aiondx mcp call SERVER TOOL [--param NAME=VALUE]... [--json JSON|- | --json-file FILE] [--out FILE] [--raw] [--timeout S]\n" +
             "  aiondx mcp add --name NAME (--command EXE [--arg A]... [--env KEY=VALUE]... [--cwd DIR] | --url URL [--type http|sse] [--header KEY=VALUE]...)\n" +
             "                 [--description TEXT] [--no-test] [--note TEXT] [--aionui [--on]]\n" +
             "  aiondx mcp update --name NAME [the same options]      aiondx mcp remove|test --name NAME\n" +
-            "  aiondx mcp enable|disable --name NAME                 (AionUi's list)\n" +
+            "  aiondx mcp enable|disable --name NAME                 (the Settings > Tools list)\n" +
             "  aiondx mcp status | path | init | secret NAME | secret NAME --set (typed, not shown, or piped in) | protect\n" +
             "Servers and their credentials go in the AionDX MCP file (aiondx mcp path), which no chat loads: use a server only when\n" +
             "the user asks, with tools and call, which connect for that one command and pass the credentials straight to the server.\n" +
-            "--aionui adds to AionUi's own list (Settings > Tools) instead, switched OFF unless --on, since every new chat gets the ON\n" +
+            "--aionui adds to the Settings > Tools list instead, switched OFF unless --on, since every new chat gets the ON\n" +
             "ones. The user sees each change with your name. --param values follow the tool's schema (numbers, true/false, JSON,\n" +
             "a,b,c for a list). In Windows PowerShell 5.1 double quotes inside an argument are lost: use --param, or --json-file.";
 
@@ -1502,7 +1502,7 @@ namespace AionDx
         static Dictionary<string, object> FindTeam(string key)
         {
             var teams = Api("GET", "/api/teams", null) as object[];
-            if (teams == null) throw new ToolError("AionUi did not list its teams.");
+            if (teams == null) throw new ToolError("AionDX did not list its teams.");
             var all = teams.OfType<Dictionary<string, object>>().ToList();
             key = key.Trim();
             var hit = all.FirstOrDefault(t => Same(Str(t, "id"), key));
@@ -1605,7 +1605,7 @@ namespace AionDx
                 var page = Api("GET", "/api/conversations/" + Uri.EscapeDataString(chat) + "/messages?limit=" + last +
                                (before != null ? "&before=" + Uri.EscapeDataString(before) : ""), null) as Dictionary<string, object>;
                 var items = page != null && page.ContainsKey("items") ? page["items"] as object[] : null;
-                if (items == null) throw new ToolError("AionUi did not list that chat's messages.");
+                if (items == null) throw new ToolError("AionDX did not list that chat's messages.");
                 o.WriteLine("Chat: " + (name ?? chat) + " (" + chat + "), " + items.Length + " message" + (items.Length == 1 ? "" : "s") + (before != null ? " before the cursor" : ", the newest") + ":");
                 int shown = 0;
                 foreach (var m in items.OfType<Dictionary<string, object>>())
@@ -1976,7 +1976,7 @@ namespace AionDx
                 {
                     var res = Api("GET", "/api/assistants", null);
                     var arr = res as object[];
-                    if (arr == null) throw new ToolError("AionUi did not list its agents.");
+                    if (arr == null) throw new ToolError("AionDX did not list its agents.");
                     foreach (var x in arr)
                     {
                         var d = x as Dictionary<string, object>;
@@ -2767,7 +2767,7 @@ namespace AionDx
             {
                 string state = PathFirst(bin, fix ? 1 : 0);
                 if (state == "first") o.WriteLine("PATH: ok, " + bin + " is first.");
-                else if (state == "fixed") o.WriteLine("PATH: fixed, " + bin + " is first now. Restart AionUi so it sees the change.");
+                else if (state == "fixed") o.WriteLine("PATH: fixed, " + bin + " is first now. Restart AionDX so it sees the change.");
                 else { o.WriteLine("PATH: " + bin + " is not first (run `aiondx doctor` to fix)."); problems++; }
             }
             catch (Exception e) { o.WriteLine("PATH: could not read or change it: " + e.Message); problems++; }
@@ -4543,7 +4543,7 @@ namespace AionDx
                     var cmd = CompactCommand(t.ConvId);
                     if (cmd == null)
                         throw new ToolError((t.ConvId == ctx.Self.ConvId ? "This agent" : t.Name) +
-                            " offers no compact command, so AionUi cannot compact it. Nothing was changed.");
+                            " offers no compact command, so AionDX cannot compact it. Nothing was changed.");
                     commands[t.Key] = cmd;
                 }
             }
@@ -4623,20 +4623,20 @@ namespace AionDx
                 var eng = prefs.ContainsKey(EngineKey) ? prefs[EngineKey] as Dictionary<string, object> : null;
                 string build = eng != null ? Str(eng, "build") : null;
                 if (build != null && BuildBefore(build, UntilStoppedBuild))
-                    sb.Append("Note: AionUi's Loop engine (build ").Append(build).Append(") predates \"until the user stops it\", so it ")
+                    sb.Append("Note: AionDX's Loop engine (build ").Append(build).Append(") predates \"until the user stops it\", so it ")
                       .Append("treats this as an ordinary Loop (it rests after the hold) until the user installs a newer build with ")
                       .Append("AionDX Apply Update.\n");
             }
             if (compact)
                 foreach (var t in targets)
-                    sb.Append("AionUi sends /").Append(commands[t.Key]).Append(" when ")
+                    sb.Append("AionDX sends /").Append(commands[t.Key]).Append(" when ")
                       .Append(t.ConvId == ctx.Self.ConvId ? "you next stop (after this turn)" : t.Name + " next stops").Append(".\n");
             if (resumeAt > 0)
             {
                 var eng = prefs.ContainsKey(EngineKey) ? prefs[EngineKey] as Dictionary<string, object> : null;
                 string build = eng != null ? Str(eng, "build") : null;
                 if (build != null && BuildBefore(build, "2026-09-26.2"))
-                    sb.Append("Note: AionUi's Loop engine (build ").Append(build).Append(") predates resume times, so nothing sends the ")
+                    sb.Append("Note: AionDX's Loop engine (build ").Append(build).Append(") predates resume times, so nothing sends the ")
                       .Append("resume nudge until the user installs a newer build with AionDX Apply Update. Until then, check the time ")
                       .Append("yourself each time you are nudged.\n");
             }
@@ -4820,7 +4820,7 @@ namespace AionDx
                     .Select(x => Str(x, "name") + " " + (Str(x, "status") ?? "?") + (Str(x, "error") != null ? " (" + OneLine(Str(x, "error")) + ")" : "")))).Append(".\n");
             sb.Append('\n');
             McpFileSection(sb);
-            sb.Append('\n').Append("AionUi's MCP list (Settings > Tools), ").Append(list.Count).Append(list.Count == 1 ? " server" : " servers")
+            sb.Append('\n').Append("the Settings > Tools list (Settings > Tools), ").Append(list.Count).Append(list.Count == 1 ? " server" : " servers")
               .Append(". A new chat gets the ones switched ON, unless its assistant has a list of its own:\n");
             foreach (var s in list.OrderBy(x => Str(x, "name"), StringComparer.OrdinalIgnoreCase)) sb.Append(McpLine(s));
             if (list.Count == 0) sb.Append("  (none yet)\n");
@@ -4910,7 +4910,7 @@ namespace AionDx
             if (Array.IndexOf(actions, action) < 0) throw new ToolError("action is one of add, update, remove, test, enable, disable (and on the command line list, tools, call, status, path, secret).");
             if (name.Length == 0) throw new ToolError("name is the server's name, as the MCP list shows it.");
             string where = (Str(a, "where") ?? "").Trim().ToLowerInvariant();
-            if (where.Length > 0 && where != "file" && where != "aionui") throw new ToolError("where is \"file\" (the AionDX MCP file) or \"aionui\" (AionUi's own list).");
+            if (where.Length > 0 && where != "file" && where != "aionui") throw new ToolError("where is \"file\" (the AionDX MCP file) or \"aionui\" (the Settings > Tools list).");
             // The AionDX MCP file unless told otherwise; update, remove and test go where the name is; on and off are AionUi's.
             if (where.Length == 0) where = action == "enable" || action == "disable" ? "aionui" : action == "add" || McpFileHas(name) ? "file" : "aionui";
             if (where == "file") return McpFileSet(a, action, name, note);
@@ -4927,13 +4927,13 @@ namespace AionDx
                 var body = new Dictionary<string, object> { { "name", name }, { "transport", transport } };
                 if (!string.IsNullOrEmpty(Str(a, "description"))) body["description"] = Str(a, "description");
                 s = Api("POST", "/api/mcp/servers", Json.Serialize(body)) as Dictionary<string, object>;
-                if (s == null) throw new ToolError("AionUi did not return the new server.");
+                if (s == null) throw new ToolError("AionDX did not return the new server.");
                 // Create leaves a server OFF. It stays OFF unless asked (the user, September 26th: no chat gets his MCP servers
                 // unless he says so), since every new chat gets the ON ones; mcp_call reaches it either way.
                 bool on = Bool(a, "on") == true;
                 if (on && Bool(s, "enabled") != true) s = Api("POST", "/api/mcp/servers/" + Uri.EscapeDataString(Str(s, "id")) + "/toggle", null) as Dictionary<string, object> ?? s;
-                sb.Append("Added ").Append(name).Append(on ? " to AionUi's MCP list and switched it on: new chats get it."
-                                                          : " to AionUi's MCP list, switched OFF: no chat gets it, and mcp_call reaches it when the user asks.");
+                sb.Append("Added ").Append(name).Append(on ? " to the Settings > Tools list and switched it on: new chats get it."
+                                                          : " to the Settings > Tools list, switched OFF: no chat gets it, and mcp_call reaches it when the user asks.");
                 if (Bool(a, "test") != false) sb.Append(' ').Append(McpTest(s));
             }
             else
@@ -4942,7 +4942,7 @@ namespace AionDx
                 name = Str(s, "name");
                 string id = Str(s, "id");
                 bool builtin = Bool(s, "builtin") == true;
-                if (builtin && action != "test") throw new ToolError(name + " is built into AionUi; its Settings page does not let it be changed here either.");
+                if (builtin && action != "test") throw new ToolError(name + " is built into AionDX; its Settings page does not let it be changed here either.");
                 if (action == "update")
                 {
                     var body = new Dictionary<string, object>();
@@ -5281,10 +5281,10 @@ namespace AionDx
             McpFileSection(sb);
             List<Dictionary<string, object>> list = null;
             try { list = McpServers(); } catch (ToolError) { }
-            if (list == null) sb.Append("\nAionUi's MCP list: out of reach from here (this is not an AionUi chat, or AionUi is closed).\n");
+            if (list == null) sb.Append("\nthe Settings > Tools list: out of reach from here (this is not an AionDX chat, or AionDX is closed).\n");
             else
             {
-                sb.Append("\nAionUi's MCP list (Settings > Tools); a new chat gets the ones switched ON:\n");
+                sb.Append("\nthe Settings > Tools list (Settings > Tools); a new chat gets the ones switched ON:\n");
                 foreach (var s in list.OrderBy(x => Str(x, "name"), StringComparer.OrdinalIgnoreCase)) sb.Append(McpLine(s));
                 if (list.Count == 0) sb.Append("  (none)\n");
             }
@@ -5321,7 +5321,7 @@ namespace AionDx
         static string McpFileSet(Dictionary<string, object> a, string action, string name, string note)
         {
             if (action == "enable" || action == "disable")
-                throw new ToolError("On and off belong to AionUi's list; nothing in the AionDX MCP file is loaded into a chat. Use update or remove.");
+                throw new ToolError("On and off belong to the Settings > Tools list; nothing in the AionDX MCP file is loaded into a chat. Use update or remove.");
             if (action == "add" && !McpNameOk.IsMatch(name))
                 throw new ToolError("A server name is letters, digits, dot, dash or underscore, up to 64, starting with a letter or digit.");
             var transport = McpTransportArg(a);
@@ -5407,7 +5407,7 @@ namespace AionDx
             public List<string> Args = new List<string>();
             public Dictionary<string, string> Env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, string> Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            public string Where { get { return Source == "file" ? "the AionDX MCP file" : "AionUi's MCP list"; } }
+            public string Where { get { return Source == "file" ? "the AionDX MCP file" : "the Settings > Tools list"; } }
         }
 
         static McpDef McpDefOf(string name, string source, Dictionary<string, object> t, Dictionary<string, object> secrets)
@@ -5469,14 +5469,14 @@ namespace AionDx
             if (s != null)
             {
                 var t = s.ContainsKey("transport") ? s["transport"] as Dictionary<string, object> : null;
-                if (t == null) throw new ToolError(Str(s, "name") + " in AionUi's MCP list has no transport.");
+                if (t == null) throw new ToolError(Str(s, "name") + " in the Settings > Tools list has no transport.");
                 return McpDefOf(Str(s, "name"), "aionui", t, secrets);
             }
             var known = McpFileServers(file).Keys.ToList();
             if (list != null) known.AddRange(list.Select(x => Str(x, "name")).Where(x => x != null));
             throw new ToolError("No MCP server named \"" + name + "\"" +
                                 (known.Count > 0 ? ". There are: " + string.Join(", ", known.Distinct(StringComparer.OrdinalIgnoreCase)) : " in the AionDX MCP file") +
-                                (list == null && !fileOnly ? " (AionUi's list is out of reach from here)" : "") + ".");
+                                (list == null && !fileOnly ? " (the Settings > Tools list is out of reach from here)" : "") + ".");
         }
 
         static T McpUse<T>(McpDef d, int ms, Func<McpClient, T> work)
@@ -6519,10 +6519,10 @@ namespace AionDx
             long at = e != null ? Long(e, "at") : 0;
             long age = NowMs() - at;
             if (at > 0 && age < EngineStaleMs)
-                return "AionUi is running the Loop (last seen " + Ago(age) + " ago" +
+                return "AionDX is running the Loop (last seen " + Ago(age) + " ago" +
                        (Str(e, "build") != null ? ", build " + Str(e, "build") : "") + ").";
-            return "AionUi's Loop engine has not reported in the last 5 minutes" + (at > 0 ? " (last seen " + Ago(age) + " ago)" : "") +
-                   ". The change is saved and takes effect once it runs: AionUi's window must be open, and the installed AionDX " +
+            return "AionDX's Loop engine has not reported in the last 5 minutes" + (at > 0 ? " (last seen " + Ago(age) + " ago)" : "") +
+                   ". The change is saved and takes effect once it runs: AionDX's window must be open, and the installed AionDX " +
                    "build must include the shared Loop (the user installs it with AionDX Apply Update).";
         }
 
@@ -6634,11 +6634,11 @@ namespace AionDx
                     if (err != null) detail = err;
                 }
                 catch (Exception) { }
-                throw new ToolError("AionUi's API answered " + r.Item1 + " to " + method + " " + path.Split('?')[0] + ": " + OneLine(detail));
+                throw new ToolError("AionDX's API answered " + r.Item1 + " to " + method + " " + path.Split('?')[0] + ": " + OneLine(detail));
             }
             object parsed;
             try { parsed = Json.DeserializeObject(r.Item2); }
-            catch (Exception) { throw new ToolError("AionUi's API sent something that is not JSON for " + path.Split('?')[0] + "."); }
+            catch (Exception) { throw new ToolError("AionDX's API sent something that is not JSON for " + path.Split('?')[0] + "."); }
             var wrapper = parsed as Dictionary<string, object>;
             return wrapper != null && wrapper.ContainsKey("data") ? wrapper["data"] : parsed;
         }
@@ -6672,7 +6672,7 @@ namespace AionDx
             {
                 var resp = e.Response as HttpWebResponse;
                 if (resp == null)
-                    throw new ToolError("AionUi's API at " + id.BaseUrl + " did not answer (" + e.Status + "). AionUi may be closed or restarting.");
+                    throw new ToolError("AionDX's API at " + id.BaseUrl + " did not answer (" + e.Status + "). AionDX may be closed or restarting.");
                 using (resp)
                 using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                     return Tuple.Create((int)resp.StatusCode, rd.ReadToEnd());
@@ -6693,8 +6693,8 @@ namespace AionDx
             var found = FromEnv(own, "own environment") ??
                         (Environment.GetEnvironmentVariable("AIONDX_LOOP_NO_ANCESTORS") == "1" ? null : FromAncestors());
             if (found == null)
-                throw new ToolError("The Loop tool cannot tell which AionUi chat it belongs to: neither its own environment nor its " +
-                                    "parent processes carry AIONDX_CONVERSATION_ID. It works in chats that AionUi starts.");
+                throw new ToolError("The Loop tool cannot tell which AionDX chat it belongs to: neither its own environment nor its " +
+                                    "parent processes carry AIONDX_CONVERSATION_ID. It works in chats that AionDX starts.");
             Ident = found;
             return found;
         }

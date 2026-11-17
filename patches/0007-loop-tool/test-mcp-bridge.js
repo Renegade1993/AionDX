@@ -3,7 +3,7 @@
  * test-mcp-bridge.js - patch 0007's MCP servers used as needed (1.6.0): the AionDX MCP file, and aiondx mcp list, tools,
  * call, add, update, remove, test and secret, driven the way an agent drives them. The server is test-mcp-fixture.js,
  * over stdio (through a .cmd wrapper, the way npx runs), streamable HTTP (answered as JSON and as an event stream) and
- * the older SSE transport; a stand-in for AionUi's API covers the reach into AionUi's own list and the user's notices.
+ * the older SSE transport; a stand-in for AionDX's API covers the reach into AionUi's own list and the user's notices.
  *
  *   node patches\0007-loop-tool\test-mcp-bridge.js     exit 0 only if every check passes
  *
@@ -142,7 +142,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
   check('mcp path prints the file', r.status === 0 && r.out.trim() === FILE, r.out);
   r = await mcp('list');
   check('mcp list with no file yet, outside AionUi: says so, and that AionUi is out of reach', r.status === 0 && /\(not made yet\): 0 servers/.test(r.out) &&
-    /AionUi's MCP list: out of reach from here/.test(r.out), r.out);
+    /the Settings > Tools list: out of reach from here/.test(r.out), r.out);
   r = await mcp('init');
   let f = fs.existsSync(FILE) ? readFile() : {};
   check('mcp init makes the file: an explanation, mcpServers and secrets, laid out for a person', r.status === 0 && /^Made /.test(r.out) &&
@@ -365,7 +365,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
   r = await run(['mcp', 'call', 'listed', 'env', '--param', 'name=FIXTURE_SECRET'], inChat());
   check("a server only in AionUi's list, switched OFF, is used with its own credentials", r.out.trim() === 'from-aionui', r.out);
   r = await run(['mcp', 'list'], inChat());
-  check("list shows AionUi's list too, ON and OFF", /AionUi's MCP list \(Settings > Tools\); a new chat gets the ones switched ON:/.test(r.out) && /listed: OFF/.test(r.out), r.out);
+  check("list shows AionUi's list too, ON and OFF", /the Settings > Tools list \(Settings > Tools\); a new chat gets the ones switched ON:/.test(r.out) && /listed: OFF/.test(r.out), r.out);
   r = await run(['mcp', 'add', '--aionui', '--name', 'uionly', '--command', 'x', '--no-test'], inChat());
   const uionly = listed.find((s) => s.name === 'uionly');
   check("--aionui adds to AionUi's list, switched OFF, since every new chat gets the ON ones", r.status === 0 && uionly && uionly.enabled === false &&

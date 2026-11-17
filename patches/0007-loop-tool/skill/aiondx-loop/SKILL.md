@@ -1,12 +1,12 @@
 ---
 name: aiondx-loop
-description: The AionDX Loop, the button that keeps an AionUi chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. Also use it whenever the user asks for a document, report, plan, proposal or anything to keep: make it a DX Doc (dxdoc_create, then dxdoc_update section by section), which the user watches being written in the chat's sidebar; and when a message starts [DX Doc comment]. Also use it when the user @@-mentions a team (its line in the sessions block ends [team]) or asks you to read another of their chats: aiondx team show gives the team's layout, lead first, and aiondx chat read reads any chat. It is the only keep-warm mechanism: do not write a script that pokes agents.
+description: The AionDX Loop, the button that keeps an AionDX chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. Also use it whenever the user asks for a document, report, plan, proposal or anything to keep: make it a DX Doc (dxdoc_create, then dxdoc_update section by section), which the user watches being written in the chat's sidebar; and when a message starts [DX Doc comment]. Also use it when the user @@-mentions a team (its line in the sessions block ends [team]) or asks you to read another of their chats: aiondx team show gives the team's layout, lead first, and aiondx chat read reads any chat. It is the only keep-warm mechanism: do not write a script that pokes agents.
 ---
 
 # The AionDX Loop
 
-The Loop is the round button beside the Permission shield in AionUi's message box. While a
-chat's Loop is on, AionUi sends that chat its continue message each time the agent stops with
+The Loop is the round button beside the Permission shield in AionDX's message box. While a
+chat's Loop is on, AionDX sends that chat its continue message each time the agent stops with
 nothing queued. It never sends while the agent is working. On a team page every member has its
 own Loop.
 
@@ -49,7 +49,7 @@ Otherwise run the program below from your shell. Both change the same Loop. In P
 ```
 
 `loop status` says whether the Loop is on, its continue message, who changed it last, what it
-last decided, until when your cache is warm, whether it is resting, and whether AionUi is running
+last decided, until when your cache is warm, whether it is resting, and whether AionDX is running
 it. `loop set` takes `--on` or `--off`, `--until-stopped` (only when the user asks for it;
 `--until-stopped=false` ends that mode, which needs the user's request like `--off` does),
 `--message` (an empty string restores the default),
@@ -80,7 +80,7 @@ stopping the turn it is in: `priority_send` in your tool list, or from the shell
 "{{AIONDX}}" priority --member Worker --message "Stop the spread; the map seed is wrong."
 ```
 
-It travels by the user's own route to that teammate, which AionUi serves before agents' messages
+It travels by the user's own route to that teammate, which AionDX serves before agents' messages
 and team notices, and it arrives marked as a priority message from you; the user sees it in the
 teammate's chat. Use it for what cannot wait behind a long queue: a stop instruction, a correction
 to something actively wrong. It does not stop the teammate's current turn; `team_interrupt_agent`
@@ -129,7 +129,7 @@ command at a time; the program starts or calls the server, hands its credentials
 and closes it again, so they never pass through your context:
 
 ```
-"{{AIONDX}}" mcp list                                        the servers: the file and AionUi's list
+"{{AIONDX}}" mcp list                                        the servers: the file and the Settings > Tools list
 "{{AIONDX}}" mcp tools example-github                        its tools and parameters (* = required)
 "{{AIONDX}}" mcp tools example-github get_file_contents      one tool in full, with its input schema
 "{{AIONDX}}" mcp call example-github get_file_contents --param owner=octocat --param repo=hello --param path=README.md
@@ -145,7 +145,7 @@ a list. Windows PowerShell 5.1 loses double quotes inside an argument, so pass J
 (default 120).
 
 Adding and changing servers (`mcp_set`, or the commands below) goes to the file unless you say
-`--aionui` (`where: "aionui"`): AionUi's own list feeds every new chat the servers switched ON, so
+`--aionui` (`where: "aionui"`): the Settings > Tools list feeds every new chat the servers switched ON, so
 a server added there stays OFF unless the user asks for `--on`. Every add is checked by connecting.
 
 ```
@@ -166,7 +166,7 @@ Rules:
 - The user sees each change as a notice with your name and note; every use is logged beside the
   file (`use.log`: when, which chat, server and tool, never arguments or values).
 - `mcp_status` (`"{{AIONDX}}" mcp status`) also shows the servers this chat was started with and
-  AionUi's list with each server ON or OFF.
+  the Settings > Tools list with each server ON or OFF.
 
 ## Usage and limits
 
@@ -242,11 +242,11 @@ Pictures in a chat open in AionDX's viewer (previous and next arrows, the arrow 
 The chat draws Markdown, so you can also write them by hand:
 
 - A picture: `![what it shows](C:/Work/Project/shots/map.png)`, or a path relative to your working folder (`./shots/map.png`).
-  The file has to be inside your working folder (AionUi refuses a picture outside it with "outside the allowed sandbox"),
+  The file has to be inside your working folder (AionDX refuses a picture outside it with "outside the allowed sandbox"),
   so copy or save the image there first. Use forward slashes. A path with spaces goes in angle brackets,
   `![map](<C:/Work/My Maps/map.png>)`, or as a `file:///` address with `%20` for each space.
 - A file or folder: `[the build folder](file:///C:/Work/Project/build/)`. It shows as a chip with the label you gave. The
-  user clicks the chip to preview a file in AionUi (a folder opens in Explorer), or the arrow button beside it to open
+  user clicks the chip to preview a file in AionDX (a folder opens in Explorer), or the arrow button beside it to open
   the file in its own program; Shift+click on the arrow shows it in its folder. Absolute paths only.
 - Give the label in words the user will recognize ("the mod build"), not the path.
 
@@ -428,7 +428,7 @@ Reading changes nothing in that chat and its agent does not see it. Send nothing
   resting. Past about 50 minutes a single reload is cheaper, so do not raise it further than the
   job needs.
 - You are told to hold, pause or slow down until a time: `--resume-at` that time, straight away.
-- Your context is large and the work ahead does not need the detail: `--compact`. AionUi sends
+- Your context is large and the work ahead does not need the detail: `--compact`. AionDX sends
   the agent's own compact command (`/compact`, or `/compress` for Gemini CLI) the next time you
   stop. Agents with no compact command are refused.
 - The user asks about the Loop: run `loop status` and report what it says.
@@ -438,6 +438,6 @@ Reading changes nothing in that chat and its agent does not see it. Send nothing
 - Always give a note. The user sees it on the button.
 - Only a team lead changes a teammate's Loop. Anyone can read one.
 - Do not switch the Loop on for work that needs the user's answer first.
-- If `loop status` says AionUi's Loop engine has not reported, the change is saved but nothing
-  runs it yet: AionUi's window is closed, or the installed AionDX build predates the shared Loop.
+- If `loop status` says AionDX's Loop engine has not reported, the change is saved but nothing
+  runs it yet: AionDX's window is closed, or the installed AionDX build predates the shared Loop.
   Tell the user.

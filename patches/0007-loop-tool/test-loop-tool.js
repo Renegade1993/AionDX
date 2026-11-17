@@ -2,7 +2,7 @@
 /**
  * test-loop-tool.js - patch 0007's MCP server, driven the way an agent drives it.
  *
- * Compiles aiondx-loop.cs, starts a stand-in for AionUi's API on 127.0.0.1 (the routes the tool
+ * Compiles aiondx-loop.cs, starts a stand-in for AionDX's API on 127.0.0.1 (the routes the tool
  * uses, with the response shapes of AionCore v0.2.2 checked live on 2026-09-24), and talks MCP to
  * the exe over its stdin and stdout, one JSON message per line.
  *
@@ -64,7 +64,7 @@ const stub = { pause: 'ok', restart: 'ok' };   // what the pause and restart rou
 // Each member's queue, as GET /api/teams/{id}/run-state reports it (aionui-api-types team.rs TeamSlotWorkPayload).
 const work = { slotL: { state: 'running', fg: 0, bg: 0 }, slotW: { state: 'running', fg: 0, bg: 3 }, slotV: { state: 'idle', fg: 0, bg: 0 } };
 
-// AionUi's MCP list as GET /api/mcp/servers returns it (aionui-api-types mcp.rs McpServerResponse). Create leaves a
+// the Settings > Tools list as GET /api/mcp/servers returns it (aionui-api-types mcp.rs McpServerResponse). Create leaves a
 // server switched off and toggle flips it, as AionCore 0.2.2 does (research 2026-09-26_mcp-configurable-and-transparent.md).
 const mcp = [
   { id: 'mcp-1', name: 'aiondx-loop', enabled: true, builtin: false, transport: { type: 'stdio', command: 'C:\\bin\\aiondx-loop.exe', env: { SECRET_TOKEN: 'shh-value' } },
@@ -343,12 +343,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await solo.call('loop_set', { compact: true });
   rec = kv['aiondx.loop.conv.convS'];
   check('compact: true records the request and keeps the Loop as it was', !r.isError && rec.compactAt > 0 && rec.on === true, JSON.stringify(rec));
-  check('and says /compact goes out when the agent next stops', /AionUi sends \/compact when you next stop/.test(r.text), r.text);
+  check('and says /compact goes out when the agent next stops', /AionDX sends \/compact when you next stop/.test(r.text), r.text);
 
   kv['aiondx.engine'] = { at: Date.now() - 30000, build: 'test-build' };
   kv['aiondx.loopstatus.conv.convS'] = { why: 'Not sending: it is working.', fires: 3, lastFired: Date.now() - 600000, compactSentAt: 0 };
   r = await solo.call('loop_status');
-  check('status shows the engine running, with its build', /AionUi is running the Loop \(last seen 3\d s ago, build test-build\)/.test(r.text), r.text);
+  check('status shows the engine running, with its build', /AionDX is running the Loop \(last seen 3\d s ago, build test-build\)/.test(r.text), r.text);
   check('status shows what the Loop last decided and its nudge count', /Now: Not sending: it is working\./.test(r.text) && /Nudges since it was last switched on: 3, the last at \d\d:\d\d/.test(r.text), r.text);
   check('status shows the pending compaction', /Compaction: requested at \d\d:\d\d, goes out when you stop/.test(r.text), r.text);
   check('status shows who changed it last', /Last change: by Solo chat at \d\d:\d\d/.test(r.text), r.text);
@@ -410,7 +410,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await solo.call('loop_status');
   check('status says when the Loop last resumed it', /Resumed you at \d\d:\d\d, the resume time set\./.test(r.text), r.text);
 
-  // ---- MCP (1.5.0): see and change AionUi's MCP list the way Settings > Tools does ----
+  // ---- MCP (1.5.0): see and change the Settings > Tools list the way Settings > Tools does ----
   r = await solo.call('mcp_status');
   check("mcp_status names this chat's servers and how its agent reported them", !r.isError && /This chat's MCP servers, set when it was created: aiondx-loop\./.test(r.text) &&
     /As this chat's agent reported them: aiondx-loop connected\./.test(r.text), r.text);
@@ -423,7 +423,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let gh = mcp.find((s) => s.name === 'github');
   const mlog = (kv['aiondx.mcp.log'] || []).slice(-1)[0] || {};
   check('add with where aionui and on: creates the server, switches it on (create leaves it off) and checks it', !r.isError && gh && gh.enabled === true && toggles() === t0 + 1 &&
-    /^Added github to AionUi's MCP list and switched it on: new chats get it\. The check connected and found 2 tools: a, b\./.test(r.text), r.text);
+    /^Added github to the Settings > Tools list and switched it on: new chats get it\. The check connected and found 2 tools: a, b\./.test(r.text), r.text);
   check('the change is logged with the agent and its note, for the user\'s notice, and no secret is echoed', mlog.who === 'Solo chat' && mlog.action === 'add' &&
     mlog.name === 'github' && mlog.note === 'for the PR work' && !/ghp_secret/.test(r.text) && !/ghp_secret/.test(JSON.stringify(kv['aiondx.mcp.log'])), JSON.stringify(mlog));
   r = await solo.call('mcp_set', { action: 'add', name: 'GitHub', where: 'aionui', transport: { type: 'http', url: 'https://x' } });
@@ -434,7 +434,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await solo.call('mcp_set', { action: 'disable', name: 'github', note: 'not needed now' });
   check('disable switches it off', !r.isError && mcp.find((s) => s.name === 'github').enabled === false && toggles() === t0 + 1, r.text);
   r = await solo.call('mcp_set', { action: 'update', name: 'image-gen', transport: { type: 'stdio', command: 'x' } });
-  check('a server built into AionUi is left alone', r.isError && /built into AionUi/.test(r.text), r.text);
+  check('a server built into AionDX is left alone', r.isError && /built into AionDX/.test(r.text), r.text);
   r = await solo.call('mcp_set', { action: 'update', name: 'github', transport: { type: 'stdio', command: 'broken-cmd' } });
   check('update changes the transport and reports a failed check with its code', !r.isError && mcp.find((s) => s.name === 'github').transport.command === 'broken-cmd' &&
     /The check failed \(COMMAND_NOT_FOUND\): spawn failed/.test(r.text), r.text);
@@ -456,7 +456,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const gem = startTool('convG');
   await gem.rpc('initialize', { protocolVersion: '2025-06-18' });
   r = await gem.call('loop_set', { compact: true });
-  check('an agent that offers /compress gets /compress', !r.isError && /AionUi sends \/compress/.test(r.text), r.text);
+  check('an agent that offers /compress gets /compress', !r.isError && /AionDX sends \/compress/.test(r.text), r.text);
   const none = startTool('convN');
   await none.rpc('initialize', { protocolVersion: '2025-06-18' });
   const beforeNone = puts().length;
@@ -551,7 +551,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const tlOrphan = await orphan.rpc('tools/list', {});
   check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 27, tlOrphan.result && tlOrphan.result.tools.length);
   r = await orphan.call('loop_status');
-  check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionUi chat/.test(r.text), r.text);
+  check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionDX chat/.test(r.text), r.text);
 
   // An agent that passes its MCP servers no environment: the tool finds its chat in the parent.
   // The stand-in parent carries the identity; the tool itself gets none.
@@ -567,7 +567,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const badTok = startTool('convS', { AIONDX_RUNTIME_TOKEN: 'tok-stale' });
   await badTok.rpc('initialize', { protocolVersion: '2025-06-18' });
   r = await badTok.call('loop_status');
-  check('a refused token is reported plainly', r.isError && /AionUi's API answered 401 to GET \/api\/teams: Invalid runtime token/.test(r.text), r.text);
+  check('a refused token is reported plainly', r.isError && /AionDX's API answered 401 to GET \/api\/teams: Invalid runtime token/.test(r.text), r.text);
 
   // ---- priority messages (1.3.0, a team lead's request of September 26th) ----
   const leadTool = startTool('convL');

@@ -10,7 +10,7 @@ description: >-
 
 # AionDX setup: bring the user's other AI tools into AionDX
 
-AionDX is a free edition of AionUi that drives many AI agents from one app. This skill brings what a
+AionDX is a free app that drives many AI agents from one place. This skill brings what a
 user already built in other tools into AionDX, so every agent they run here starts from their best
 instructions and their own tools. The Welcome screen's Import button does the same with two clicks;
 you are the other way in, for a user who asked an agent to do it.
