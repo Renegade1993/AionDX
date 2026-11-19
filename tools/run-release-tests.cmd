@@ -24,6 +24,10 @@ echo ==== drive >> "%OUT%"
 node tools\test-live-drive.js >> "%OUT%" 2>&1
 echo ==== places >> "%OUT%"
 node tools\test-live-places.js >> "%OUT%" 2>&1
+echo ==== second pc >> "%OUT%"
+node tools\test-live-second-pc.js >> "%OUT%" 2>&1
+echo ==== big files and folders >> "%OUT%"
+node tools\test-live-biglinks.js >> "%OUT%" 2>&1
 echo ==== look >> "%OUT%"
 node tools\test-live-look.js >> "%OUT%" 2>&1
 echo ==== click >> "%OUT%"
