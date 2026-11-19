@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-17.2';
+  var BUILD = '2026-11-19.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -13443,7 +13443,7 @@
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
     // the release being built: its date is set the day it is released (the Changelog shows it)
-    release: '0.28.5', date: '',
+    release: '0.28.5', date: '2026-11-19',
     items: [
       ['Lane colours', 'Right-click a team member\u2019s button at the top of a team to give its lane a colour; its name, its column and its messages to teammates take it. Lanes you have not coloured get distinct colours in lane order, the lead first. Settings > Appearance has the same colours, and a team lead can set them with aiondx team colour.'],
       ['Pictures of any size', 'A big picture in a DX Doc shows (from a smaller copy, with its size), and a click opens it whole, full screen; pictures in chat open full screen too. Right-click a picture: Open in photo viewer, or Open image location.'],
