@@ -13,6 +13,9 @@ const D = require('./dxdocs.js');
 
 const exportAll = (md) => D.MD.exportAll(md);
 
+const PICTURE_MAX = 400 * 1048576;   // a picture bigger than this is not loaded into the page at all (it is offered to open from its folder)
+const PREVIEW_OVER = 8 * 1048576;    // a picture bigger than this is drawn in a doc from a smaller copy, full size on a click
+const PREVIEW_EDGE = 3000;           // the smaller copy's longest side
 function create(o) {
   const opts = o || {};
   const allowed = new Set();
@@ -113,6 +116,7 @@ function create(o) {
     if (op === 'comments') return { ok: true, comments: D.comments(dir, req.id) };
     if (op === 'comment') return { ok: true, comment: D.addComment(dir, req.id, { quote: req.quote, text: req.text, section: req.section, tab: req.tab, on: req.on, index: req.index, sg: req.sg, by: 'user' }) };
     if (op === 'reply') return { ok: true, comment: D.replyComment(dir, req.id, req.comment, { text: req.text, resolve: req.resolve, by: 'user' }) };
+    if (op === 'imagefull') return handle(Object.assign({}, req, { op: 'image', full: true }), sender);
     if (op === 'image') {
       // a picture a doc shows: relative to the DX Docs folder, or a path or file: URL under the project's root (the folder above it)
       let src = String(req.src || '');
@@ -126,8 +130,23 @@ function create(o) {
       const type = types[path.extname(f).toLowerCase()];
       if (!type) return { ok: false, error: 'Not a picture.' };
       let st; try { st = fs.statSync(f); } catch { return { ok: false, error: 'No such picture: ' + rel }; }
-      if (!st.isFile() || st.size > 15 * 1048576) return { ok: false, error: 'Too large to show (over 15 MB).' };
-      return { ok: true, url: 'data:' + type + ';base64,' + fs.readFileSync(f).toString('base64') };
+      // any size (November 19th, 2026: a 2572 x 4800 sheet showed only "Too large to show (over 15 MB)", and the user judges pixel detail):
+      // a big picture is drawn in the doc from a smaller copy and opened full size on a click (op imagefull); the guard only stops a file
+      // too big to hold at all
+      if (!st.isFile()) return { ok: false, error: 'No such picture: ' + rel };
+      if (st.size > PICTURE_MAX) return { ok: false, error: 'This picture is ' + Math.round(st.size / 1048576) + ' MB, too big to load; open it from its folder.', path: f };
+      if (!req.full && st.size > PREVIEW_OVER && opts.nativeImage && type !== 'image/svg+xml' && type !== 'image/gif') {
+        try {
+          const im = opts.nativeImage.createFromPath(f);
+          const sz = im.getSize();
+          if (sz.width > 0) {
+            const k = Math.min(1, PREVIEW_EDGE / Math.max(sz.width, sz.height));
+            const small = k < 1 ? im.resize({ width: Math.round(sz.width * k), height: Math.round(sz.height * k), quality: 'good' }) : im;
+            return { ok: true, url: 'data:image/jpeg;base64,' + small.toJPEG(90).toString('base64'), preview: true, width: sz.width, height: sz.height, bytes: st.size, path: f };
+          }
+        } catch { /* drawn whole below */ }
+      }
+      return { ok: true, url: 'data:' + type + ';base64,' + fs.readFileSync(f).toString('base64'), path: f, bytes: st.size };
     }
     if (op === 'suggestions') return { ok: true, suggestions: D.suggestions(dir, req.id) };
     // a picture pasted or dropped into a doc: DX Docs\pictures\<doc>-<stamp>.<type>, its path for the doc's Markdown
@@ -136,7 +155,7 @@ function create(o) {
       const m = /^data:image\/(png|jpeg|gif|webp|bmp);base64,([A-Za-z0-9+/=]+)$/.exec(String(req.data || ''));
       if (!m) return { ok: false, error: 'Only a picture (PNG, JPEG, GIF, WebP or BMP) can go in a doc.' };
       const buf = Buffer.from(m[2], 'base64');
-      if (buf.length > 15 * 1048576) return { ok: false, error: 'That picture is over 15 MB.' };
+      if (buf.length > PICTURE_MAX) return { ok: false, error: 'That picture is over ' + Math.round(PICTURE_MAX / 1048576) + ' MB.' };
       const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
       const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
       const name = req.id + '-' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds()) + '-' + Math.random().toString(36).slice(2, 6) + '.' + ext;
@@ -323,7 +342,7 @@ function install(electron) {
       return await w.webContents.printToPDF({ printBackground: true, pageSize: 'A4', margins: { marginType: 'default' } });
     } finally { w.destroy(); }
   };
-  const svc = create({ dataDir: () => app.getPath('userData'), shell, printPdf });
+  const svc = create({ dataDir: () => app.getPath('userData'), shell, printPdf, nativeImage: electron.nativeImage });
   // looks: a hidden window that draws offscreen (nothing reaches the screen) at the page's own size, then its frame as a PNG
   const capture = async (page) => {
     const w = new BrowserWindow({ show: false, width: 800, height: 600, webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, javascript: true, backgroundThrottling: false } });

@@ -48,13 +48,13 @@ const click = (t, label) => { const i = t.find((x) => x.label === label); log.le
   check('a link with selected text: the link entries, a line, Copy', JSON.stringify(labels(t)) === JSON.stringify(['Open link in browser', 'Copy link', 'separator', 'Copy']));
 
   t = buildTemplate({ mediaType: 'image', x: 40, y: 50, srcURL: 'data:image/png;base64,AAAA' }, deps({ imagePath: 'C:\\pics\\one.png' }));
-  check('a picture: Copy image, Open image location', JSON.stringify(labels(t)) === JSON.stringify(['Copy image', 'Open image location']) && t[1].enabled === true, JSON.stringify(labels(t)));
+  check('a picture: Copy image, Open in photo viewer, Open image location', JSON.stringify(labels(t)) === JSON.stringify(['Copy image', 'Open in photo viewer', 'Open image location']) && t[2].enabled === true, JSON.stringify(labels(t)));
   check('Copy image copies the picture under the pointer', JSON.stringify(click(t, 'Copy image')) === JSON.stringify(['copyImage:40,50']));
   check('Open image location shows the file in its folder', JSON.stringify(click(t, 'Open image location')) === JSON.stringify(['show:C:\\pics\\one.png']));
   t = buildTemplate({ mediaType: 'image', x: 1, y: 2 }, deps());
-  check('a picture with no file: the location entry is greyed and says why', t[1].enabled === false && /no file/.test(t[1].label), JSON.stringify(labels(t)));
+  check('a picture with no file: the location entry is greyed and says why', t[2].enabled === false && /no file/.test(t[2].label), JSON.stringify(labels(t)));
   t = buildTemplate({ mediaType: 'image', linkURL: 'https://example.com/x', x: 1, y: 2 }, deps({ imagePath: 'C:\\a.png' }));
-  check('a linked picture has both sets, link first', JSON.stringify(labels(t)) === JSON.stringify(['Open link in browser', 'Copy link', 'separator', 'Copy image', 'Open image location']), JSON.stringify(labels(t)));
+  check('a linked picture has both sets, link first', JSON.stringify(labels(t)) === JSON.stringify(['Open link in browser', 'Copy link', 'separator', 'Copy image', 'Open in photo viewer', 'Open image location']), JSON.stringify(labels(t)));
 
   // An entry that throws (the picture went, Explorer refused) is swallowed: a menu click never breaks the app.
   t = buildTemplate({ mediaType: 'image', x: 1, y: 2 }, deps({ imagePath: 'C:\\a.png', shell: { showItemInFolder: () => { throw new Error('no'); } }, wc: { copyImageAt: () => { throw new Error('gone'); } } }));
@@ -80,6 +80,27 @@ const click = (t, label) => { const i = t.find((x) => x.label === label); log.le
   check('spelling: a language it does not have falls back to English', JSON.stringify(calls[0]) === JSON.stringify(['langs', 'en-US']), JSON.stringify(calls));
   let ok = true; try { setupSpellcheck(null, 'en-US'); setupSpellcheck({}, 'en-US'); } catch (e) { ok = false; }
   check('spelling: a session with no checker is left alone', ok);
+
+  // Open in photo viewer (November 19th, 2026): its file, or a copy written for a picture that has none
+  {
+    const { openPicture } = require('./aiondx-menu.js');
+    const fs = require('fs'), os = require('os'), path = require('path');
+    const opened = [];
+    const shell = { openPath: (p) => { opened.push(['path', p]); return Promise.resolve(''); }, openExternal: (u) => { opened.push(['web', u]); } };
+    const tmpFile = path.join(os.tmpdir(), 'aiondx-menu-test-' + process.pid + '.png');
+    fs.writeFileSync(tmpFile, 'x');
+    check('a picture with a file opens that file in the viewer', openPicture(shell, tmpFile, 'data:image/png;base64,AAAA') === tmpFile && opened[0][1] === tmpFile);
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const got = openPicture(shell, '', 'data:image/png;base64,' + png);
+    check('a picture only in the page: a copy is written to the temp folder and opened', /AionDX-pictures[\\/]picture-[0-9a-f]{12}\.png$/.test(got) && fs.readFileSync(got).equals(Buffer.from(png, 'base64')) && opened[1][1] === got, got);
+    check('the same picture again: the same copy, not another one', openPicture(shell, '', 'data:image/png;base64,' + png) === got);
+    check('a web picture opens in the browser', openPicture(shell, '', 'https://example.com/a.png') === 'https://example.com/a.png' && opened.some((o) => o[0] === 'web'));
+    const tm = buildTemplate({ mediaType: 'image', x: 1, y: 2, srcURL: 'data:image/png;base64,' + png }, deps({ openPicture: (p, src) => opened.push(['menu', p, src.slice(0, 15)]) }));
+    const vi = tm.find((i) => i.label === 'Open in photo viewer');
+    vi.click();
+    check('with no file, the menu item is still there and hands over the picture', vi.enabled === true && JSON.stringify(opened[opened.length - 1]) === JSON.stringify(['menu', '', 'data:image/png;']), JSON.stringify(opened[opened.length - 1]));
+    try { fs.rmSync(tmpFile, { force: true }); fs.rmSync(got, { force: true }); } catch (e) { /* temp */ }
+  }
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

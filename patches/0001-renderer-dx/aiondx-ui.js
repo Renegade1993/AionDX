@@ -13082,6 +13082,32 @@
   guardFetch();
   installLinkRouting();
 
+  // A picture in a chat message opens full screen, the same view as a doc's (November 19th, 2026, the user: "make sure i can fullscreen view an
+  // image" in chat too). AionUi draws a message's pictures as plain images, some inside the reply's Markdown shadow root; right-click on it
+  // (or in the full-screen view) keeps Copy image, Open in photo viewer and Open image location. A picture inside a link, a small icon, or
+  // one AionUi already previews (its Image component) is left as it is.
+  function chatPictureClicks() {
+    document.addEventListener('click', function (ev) {
+      if (disabled() || ev.button !== 0 || ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+      var path = ev.composedPath ? ev.composedPath() : [ev.target];
+      var img = path[0];
+      if (!img || img.tagName !== 'IMG') return;
+      var inMsg = false;
+      for (var i = 0; i < path.length; i++) {
+        var n = path[i];
+        if (!n || n.nodeType !== 1) continue;
+        if (n.tagName === 'A' || (n.classList && (n.classList.contains('arco-image') || n.classList.contains('aiondx-lightbox') || n.classList.contains('dx-body')))) return;
+        if ((n.id && n.id.indexOf('message-') === 0) || (n.getAttribute && n.getAttribute('data-testid') === 'message-text-content')) inMsg = true;
+      }
+      if (!inMsg) return;
+      if ((img.clientWidth || img.width || img.naturalWidth || 0) < 48 && (img.clientHeight || img.height || img.naturalHeight || 0) < 48) return;   // an icon: as drawn
+      ev.preventDefault();
+      ev.stopPropagation();
+      dxLightbox(img);
+    }, true);
+  }
+  chatPictureClicks();
+
   // ---------------------------------------------------------------- big files go in as links (November 17th, 2026)
 
   // Dragging or pasting a file into a message box uploads a copy to AionCore (POST /api/fs/upload, FileService.ts), and AionCore takes
@@ -15684,7 +15710,7 @@
   /** A picture from the clipboard or a drop: saved beside the doc by the main side, then put in where the caret is (or the drop). */
   function dxInsertPicture(file, range) {
     if (!/^image\/(png|jpeg|gif|webp|bmp)$/.test(file.type || '')) { toast('Only a picture (PNG, JPEG, GIF, WebP or BMP) can go in a doc.'); return; }
-    if (file.size > 15 * 1048576) { toast('That picture is over 15 MB.'); return; }
+    if (file.size > 400 * 1048576) { toast('That picture is over 400 MB.'); return; }
     var body = dx.main && dx.main.querySelector('.dx-body[contenteditable="true"]');
     var sel = window.getSelection();
     var keep = range || (sel && sel.rangeCount && body && body.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null);
@@ -15806,8 +15832,12 @@
       img.setAttribute('data-dx-src', src);
       dxApi('image', { src: src }).then(function (r) {
         if (dx.docsDir !== dir) return;
-        if (r && r.ok && r.url) img.src = r.url;
-        else { img.alt = (img.alt || src) + ' (' + ((r && r.error) || 'picture not found') + ')'; img.classList.add('dx-img-missing'); }
+        if (r && r.ok && r.url) {
+          img.src = r.url;
+          if (r.path) rememberImage(r.url, r.path);
+          if (r.preview) { img.setAttribute('data-dx-full', src); img.title = (img.alt ? img.alt + ': ' : '') + r.width + ' x ' + r.height + ', ' + Math.round(r.bytes / 1048576) + ' MB. Click for full size.'; }
+        }
+        else { img.alt = (img.alt || src) + ' (' + ((r && r.error) || 'picture not found') + ')'; img.classList.add('dx-img-missing'); if (r && r.path) img.setAttribute('data-dx-path', r.path); }
       }, function () {});
     });
   }
@@ -15823,6 +15853,15 @@
     var pic = document.createElement('img');
     pic.className = 'aiondx-lightbox-img';
     pic.src = img.currentSrc || img.src;
+    // a big doc picture is drawn from a smaller copy: the full one replaces it here as soon as it is read
+    var fullSrc = img.getAttribute && img.getAttribute('data-dx-full');
+    if (fullSrc && window.aiondxDx) {
+      box.setAttribute('data-loading', 'full');
+      dxApi('imagefull', { src: fullSrc }).then(function (r) {
+        if (r && r.ok && r.url && pic.isConnected) { pic.src = r.url; if (r.path) rememberImage(r.url, r.path); }
+        box.removeAttribute('data-loading');
+      }, function () { box.removeAttribute('data-loading'); });
+    }
     pic.alt = img.alt || '';
     pic.draggable = false;
     box.appendChild(pic);

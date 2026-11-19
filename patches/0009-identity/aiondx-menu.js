@@ -4,7 +4,7 @@
  * the right-click itself, so AionUi's own menus (the file tree, say) are untouched. The menu has, as the target allows:
  *   a misspelled word   suggestions, "Add to dictionary"
  *   a link              Open link in browser, Copy link
- *   a picture           Copy image, Open image location
+ *   a picture           Copy image, Open in photo viewer, Open image location
  *   a text box          Cut, Copy, Paste, Select all
  *   selected text       Copy
  * buildTemplate() is pure (it takes what it needs in `deps`) so tests can run it without Electron. The wiring is install(), called from the helper
@@ -48,6 +48,13 @@ function buildTemplate(params, deps) {
   if (params.mediaType === 'image') {
     out.push({ label: 'Copy image', click: () => { try { wc.copyImageAt(params.x, params.y); } catch (e) { /* the picture went */ } } });
     const where = deps.imagePath || '';
+    // the system's own picture viewer (November 19th, 2026): its file, or a copy written for it when the picture has no file of its own
+    const viewable = !!where || /^(data:image\/|file:|https?:)/i.test(String(params.srcURL || ''));
+    out.push({
+      label: viewable ? 'Open in photo viewer' : 'Open in photo viewer (no picture to open)',
+      enabled: viewable && typeof deps.openPicture === 'function',
+      click: () => { try { deps.openPicture(where, String(params.srcURL || '')); } catch (e) { /* the system refused */ } },
+    });
     out.push({
       label: where ? 'Open image location' : 'Open image location (this picture has no file)',
       enabled: !!where,
@@ -82,6 +89,28 @@ function askPage(wc, x, y, ms) {
   });
 }
 
+/** A picture in the system's own viewer: its file when it has one, else a copy written to %TEMP%\AionDX-pictures (a data URL), a file:
+ *  URL's file, or the web address in the browser. Returns what was opened. */
+function openPicture(shell, filePath, src) {
+  const path = require('path'), os = require('os'), crypto = require('crypto');
+  if (filePath && fs.existsSync(filePath)) { shell.openPath(filePath); return filePath; }
+  src = String(src || '');
+  const m = /^data:image\/(png|jpeg|jpg|gif|webp|bmp|svg\+xml);base64,(.+)$/i.exec(src);
+  if (m) {
+    const ext = m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase() === 'svg+xml' ? 'svg' : m[1].toLowerCase();
+    const buf = Buffer.from(m[2], 'base64');
+    const dir = path.join(os.tmpdir(), 'AionDX-pictures');
+    fs.mkdirSync(dir, { recursive: true });
+    const f = path.join(dir, 'picture-' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12) + '.' + ext);
+    if (!fs.existsSync(f)) fs.writeFileSync(f, buf);
+    shell.openPath(f);
+    return f;
+  }
+  if (/^file:/i.test(src)) { try { const f = require('url').fileURLToPath(src); shell.openPath(f); return f; } catch (e) { return ''; } }
+  if (/^https?:/i.test(src)) { shell.openExternal(src); return src; }
+  return '';
+}
+
 /** Free spell checking: Chromium's own checker on the language of the PC, English as the fall-back. */
 function setupSpellcheck(session, locale) {
   try {
@@ -102,7 +131,8 @@ function install(electron) {
       wc.on('context-menu', (_e, params) => {
         const run = async () => {
           const imagePath = params && params.mediaType === 'image' ? await askPage(wc, params.x, params.y, 400) : '';
-          const items = buildTemplate(params, { wc, clipboard: electron.clipboard, shell: electron.shell, imagePath, openExternal: (u) => electron.shell.openExternal(u) });
+          const items = buildTemplate(params, { wc, clipboard: electron.clipboard, shell: electron.shell, imagePath, openExternal: (u) => electron.shell.openExternal(u),
+            openPicture: (p, src) => openPicture(electron.shell, p, src) });
           const testFile = process.env.AIONDX_MENU_TEST_FILE;
           if (testFile) {
             try { fs.appendFileSync(testFile, JSON.stringify({ labels: (items || []).map((i) => i.label || i.type || i.role), misspelled: (params && params.misspelledWord) || '', suggestions: (params && params.dictionarySuggestions) || [], image: imagePath }) + '\n'); } catch (e) { /* no log */ }
@@ -118,4 +148,4 @@ function install(electron) {
   } catch (e) { /* the menu is a convenience */ }
 }
 
-module.exports = { buildTemplate, askPage, setupSpellcheck, install };
+module.exports = { buildTemplate, askPage, setupSpellcheck, install, openPicture };

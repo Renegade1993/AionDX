@@ -51,6 +51,21 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiondx-dxdocs-main-'));
     fs.writeFileSync(path.join(dir, 'pictures', 'massif.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
     r = await svc.handle({ op: 'image', docsDir: dir, src: 'pictures/massif.jpg' }, wc);
     check('a picture beside the doc comes back as a data URL', r.ok && r.url === 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]).toString('base64'), JSON.stringify(r).slice(0, 120));
+    check('and its file, for Open image location and the photo viewer', r.path === path.join(dir, 'pictures', 'massif.jpg'), JSON.stringify(r).slice(-160));
+    // any size (November 19th, 2026: a 2572 x 4800 sheet showed only "Too large to show (over 15 MB)"): a big one is drawn from a smaller
+    // copy, full size on request
+    const big = path.join(dir, 'pictures', 'sheet.png');
+    { const fd = fs.openSync(big, 'w'); fs.ftruncateSync(fd, 20 * 1048576); fs.closeSync(fd); }
+    const made = [];
+    const fakeImage = { createFromPath: (p) => { made.push(p); return { getSize: () => ({ width: 2572, height: 4800 }), resize: (o) => { made.push(o); return { toJPEG: () => Buffer.from('small') }; }, toJPEG: () => Buffer.from('whole') }; } };
+    const svcP = M.create({ dataDir: () => data, nativeImage: fakeImage, printPdf: async () => Buffer.from('') });
+    await svcP.handle({ op: 'where', convId: 'c1', workspace: ws }, wc);
+    r = await svcP.handle({ op: 'image', docsDir: dir, src: 'pictures/sheet.png' }, wc);
+    check('a 20 MB picture: shown, from a smaller copy (longest side 3000), with its size and file', r.ok && r.preview === true && r.url === 'data:image/jpeg;base64,' + Buffer.from('small').toString('base64') &&
+      r.width === 2572 && r.height === 4800 && r.bytes === 20 * 1048576 && r.path === big && made[1] && made[1].height === 3000 && made[1].width === Math.round(2572 * 3000 / 4800), JSON.stringify([r.preview, r.width, made[1]]));
+    r = await svcP.handle({ op: 'imagefull', docsDir: dir, src: 'pictures/sheet.png' }, wc);
+    check('and full size on request', r.ok && !r.preview && r.url.length > 20 * 1048576 && r.path === big, JSON.stringify({ ok: r.ok, preview: r.preview, len: r.url && r.url.length }));
+    fs.rmSync(big, { force: true });
     r = await svc.handle({ op: 'image', docsDir: dir, src: 'pictures/massif%20x.jpg' }, wc);
     check('a missing one says so', r.ok === false && /No such picture/.test(r.error), JSON.stringify(r));
     fs.writeFileSync(path.join(path.dirname(path.dirname(dir)), 'outside.png'), 'x');

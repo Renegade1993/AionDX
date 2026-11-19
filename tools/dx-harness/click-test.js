@@ -4464,6 +4464,44 @@ async function pageTarget() {
         check(sc, 'your own change does not count', bn && bn.n === '', JSON.stringify(bn));
         await js(`localStorage.removeItem('aionui.dx.dx.seen'); 0`);
       }
+      // ---- pictures of any size, full screen in docs and in chat (November 19th, 2026, the user through the Landfall lead)
+      {
+        await load('theme=light');
+        await setup(false);
+        const SMALL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        const FULL = 'data:image/gif;base64,R0lGODlhAgACAIAAAP///wAAACwAAAAAAgACAAACAoRRADs=';
+        await js(`(() => { const old = window.aiondxDx.call; window.__picCalls = [];
+          window.aiondxDx.call = (op, a) => {
+            if (op === 'image' && a.src === 'pictures/sheet.png') { window.__picCalls.push('image'); return Promise.resolve({ ok: true, url: '${SMALL}', preview: true, width: 2572, height: 4800, bytes: 20 * 1048576, path: 'C:\\\\ws\\\\Docs\\\\pictures\\\\sheet.png' }); }
+            if (op === 'imagefull' && a.src === 'pictures/sheet.png') { window.__picCalls.push('imagefull'); return Promise.resolve({ ok: true, url: '${FULL}', path: 'C:\\\\ws\\\\Docs\\\\pictures\\\\sheet.png' }); }
+            return old(op, a); };
+          window.__dx.docs['sheets'] = '# Sheets\\n\\n![Map sheet](pictures/sheet.png)\\n';
+          window.__dx.cb && window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'sheets' });
+          return 0; })()`);
+        await sleep(900);
+        await js(`(() => { const b = document.querySelector('#tbox [data-testid="aiondx-dx-open"]'); if (b && b.getAttribute('aria-pressed') !== 'true') b.click(); return 0; })()`);
+        await sleep(900);
+        await js(`(() => { const r = document.querySelector('#tbox .dx-row[data-doc="sheets"]'); if (r) r.click(); return 0; })()`);
+        await sleep(900);
+        const pic = await js(`(() => { const i = document.querySelector('#tbox .dx-body img'); return i ? { src: i.getAttribute('src'), full: i.getAttribute('data-dx-full'), title: i.title } : null; })()`);
+        check(sc, 'a 20 MB picture in a doc: drawn (from its smaller copy), never "too large", saying its size and that a click shows it whole', pic && pic.src === SMALL && pic.full === 'pictures/sheet.png' && /2572 x 4800, 20 MB\. Click for full size\./.test(pic.title), JSON.stringify(pic));
+        check(sc, 'and the page knows its file (Open image location, Open in photo viewer)', (await js(`window.__aionDx.imagePathAt ? (() => { const i = document.querySelector('#tbox .dx-body img'); const r = i.getBoundingClientRect(); return window.__aionDx.imagePathAt(r.left + 2, r.top + 2); })() : ''`)) === 'C:\\ws\\Docs\\pictures\\sheet.png');
+        await js(`document.querySelector('#tbox .dx-body img').click(); 0`);
+        await sleep(600);
+        const lb = await js(`(() => { const b = document.querySelector('[data-testid="aiondx-lightbox"]'); const i = b && b.querySelector('.aiondx-lightbox-img'); return b ? { src: i.getAttribute('src'), loading: b.getAttribute('data-loading') } : null; })()`);
+        check(sc, 'full screen: the whole picture replaces the smaller copy', lb && lb.src === FULL && !lb.loading && (await js('window.__picCalls.join(",")')).indexOf('imagefull') >= 0, JSON.stringify(lb));
+        await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
+        await sleep(300);
+        // a picture in a chat message
+        await js(`(() => { document.querySelectorAll('[data-testid="aiondx-lightbox"]').forEach((b) => b.remove()); const c = document.querySelector('#message-m-77 [data-testid="message-text-content"]'); const i = document.createElement('img'); i.id = 'chatpic'; i.width = 120; i.height = 90; i.src = '${FULL}'; c.appendChild(i); return 0; })()`);
+        await js(`document.getElementById('chatpic').click(); 0`);
+        await sleep(400);
+        check(sc, 'a picture in a chat message opens full screen too', (await js(`(() => { const b = document.querySelector('[data-testid="aiondx-lightbox"]'); return !!b && b.querySelector('.aiondx-lightbox-img').getAttribute('src') === '${FULL}'; })()`)));
+        await js(`document.querySelectorAll('[data-testid="aiondx-lightbox"]').forEach((b) => b.remove()); const l = document.createElement('a'); l.href = 'https://example.com'; l.id = 'piclink'; const i2 = document.createElement('img'); i2.width = 120; i2.height = 90; i2.src = '${FULL}'; l.appendChild(i2); l.addEventListener('click', (e) => e.preventDefault()); document.querySelector('#message-m-77 [data-testid="message-text-content"]').appendChild(l); i2.click(); 0`);
+        await sleep(300);
+        check(sc, 'a picture inside a link stays a link', !(await js(`!!document.querySelector('[data-testid="aiondx-lightbox"]')`)));
+        await js(`(() => { ['chatpic', 'piclink'].forEach((id) => { const e = document.getElementById(id); if (e) e.remove(); }); return 0; })()`);
+      }
     }
 
     // ---- DX Docs: documents and tabs (DX Docs mirror, November 15th, 2026) ----
