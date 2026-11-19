@@ -120,6 +120,14 @@ pin only what the work needs: every pinned skill costs context in every turn of 
 member at its next start. Nothing is pinned unless you or the user pin it; the user sees and changes pins in each chat's Skills panel
 (the button beside the Loop), which also shows how often each skill was used in that chat and switches a skill on or off there.
 
+## Lane colours (a team)
+
+Each member of a team has a lane colour: its button at the top of the team page, its column's name and its messages to teammates.
+`aiondx team colour TEAM MEMBER COLOUR` sets one (the `team_colour` tool does the same): MEMBER is its name, slot id, chat id or
+`lead`; COLOUR is `#RRGGBB`, one of blue, orange, green, purple, amber, pink, teal, red, indigo, lime, sky, brown, or `default` (the
+colour from its place in the team, the lead first). `aiondx team show` lists the colours that are set. The user sets the same colours
+by right-clicking a member's button or in Settings > Appearance; change one only when they ask, or to tell lanes apart.
+
 ## MCP servers and their credentials
 
 The user's MCP servers and their access credentials live in one file, the AionDX MCP file

@@ -2767,7 +2767,7 @@ async function pageTarget() {
       check(sc, "and the member's column and name carry its colour", team && before && team.tint !== before.tint && team.name !== before.name, JSON.stringify([before, team]));
       await rightClick('[data-slot-id="slotB"] .truncate');
       menu = await js(`[...document.querySelectorAll('[data-testid="aiondx-colour-menu"] .arco-dropdown-menu-item')].map(i => i.textContent)`);
-      check(sc, "right-clicking a member's column offers its colour", JSON.stringify(menu) === JSON.stringify(['Colour of Worker...']), JSON.stringify(menu));
+      check(sc, "right-clicking a member's column offers its colour: the palette there, any colour in Settings", JSON.stringify(menu) === JSON.stringify(['Colour of Worker (any colour in Settings)...']) && (await js(`document.querySelectorAll('[data-testid="aiondx-colour-menu"] .aiondx-lane-swatch').length`)) === 12, JSON.stringify(menu));
       await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
     }
 
@@ -3847,11 +3847,11 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW285 = ['Big files go in as links'];
+      const NEW285 = ['Lane colours', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.5' && JSON.stringify(c.names) === JSON.stringify(NEW285) &&
-        /^Drag or paste a file of 30 MB or more/.test(c.hows[0]) && /goes in as a link/.test(c.hows[0]), JSON.stringify(c));
+        /^Right-click a team member/.test(c.hows[0]) && /aiondx team colour/.test(c.hows[0]) && /red number on the Docs button/.test(c.hows[1]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
@@ -3894,7 +3894,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.5 card (with 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 32, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.5 card (with 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 39, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -5779,7 +5779,7 @@ async function pageTarget() {
           date: c ? (c.querySelector('.aiondx-clog-date') || {}).textContent : '', hidAgents: getComputedStyle(document.getElementById('aionui-agents')).display }; })()`);
       check(sc, 'Settings > About > Changelog: the group renamed About, Changelog after About and marked, every release newest first with all its items, each asking for its picture',
         cl.group === 'About' && cl.next && cl.on && cl.page && JSON.stringify(cl.rels) === JSON.stringify(cl.want) && cl.items === cl.wantItems && cl.items >= 30 &&
-        cl.firstName === 'Big files go in as links' && /^\.\/aiondx-changelog\/v0-28-5-big-files-go-in-as-links-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
+        cl.firstName === 'Lane colours' && /^\.\/aiondx-changelog\/v0-28-5-lane-colours-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
       await shot('changelog-light');
       await clogShot("0.28.4", "The Changelog", '[data-testid="aiondx-setnav-changelog"]');
       await page('agents');
@@ -6153,6 +6153,58 @@ async function pageTarget() {
       gs = await js('window.__aionDx.groupsNow()');
       check(sc, 'restored: back in its old group', gs.items['c:arch1'] === 'g1' && !gs.archived['c:arch1'] && gs.order.indexOf('c:arch1') >= 0, JSON.stringify(gs));
       await js(`delete window.aiondxPlaces; localStorage.removeItem('aionui.dx.groups'); 0`);
+    }
+    {
+      const sc = 'lanes';
+      // Lane colours (November 17th, 2026): defaults in lane order, the lead first; right-click a member's button in the team's top row for
+      // the palette; the same colours in Settings; the button, the column's name and the messages to teammates take a lane's colour.
+      await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await load('team=1&single=1&theme=dark');
+      const tabColour = (slot) => js(`(() => { const n = document.querySelector('[data-testid="team-tab-name-${slot}"]'); return n ? getComputedStyle(n).color : null; })()`);
+      let a = null, b = null;
+      for (let i = 0; i < 16 && (a !== 'rgb(59, 130, 246)' || b !== 'rgb(249, 115, 22)'); i++) { await js('window.__aionDx.repaint(); 0'); await sleep(250); a = await tabColour('slotA'); b = await tabColour('slotB'); }
+      check(sc, 'lanes with no colour of their own: the palette in lane order, the lead first (blue, then orange)', a === 'rgb(59, 130, 246)' && b === 'rgb(249, 115, 22)', JSON.stringify([a, b]));
+      await rightClick('[data-testid="team-tab-slotB"]');
+      await sleep(200);
+      const menu = await js(`(() => { const m = document.querySelector('[data-testid="aiondx-colour-menu"]'); if (!m) return null; const r = m.getBoundingClientRect();
+        return { items: [...m.querySelectorAll('.arco-dropdown-menu-item')].map((i) => i.textContent), sw: m.querySelectorAll('.aiondx-lane-swatch').length,
+          dflt: !!m.querySelector('.aiondx-lane-default.aiondx-lane-on'), on: (m.querySelector('.aiondx-lane-swatch.aiondx-lane-on') || {}).title || '', inWin: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }; })()`);
+      check(sc, 'right-click a member\'s top button: its colour, 12 swatches and Default, its own colour marked', menu && menu.items[0] === 'Colour of Worker (any colour in Settings)...' && menu.sw === 12 && menu.dflt && menu.on === 'orange' && menu.inWin, JSON.stringify(menu));
+      await shot('lanes-menu-dark');
+      await clogShot('0.28.5', 'Lane colours', '[data-testid="aiondx-colour-menu"]');
+      await humanClick('[data-testid="aiondx-colour-menu"] .aiondx-lane-swatch[title="green"]');
+      await sleep(400);
+      const th = await js(`(window.__stub.store['aiondx.theme'] || {}).bubbles`);
+      check(sc, 'a swatch colours the lane in both modes, in the shared colours (the store Settings and agents use)', th && th.members && th.members['team1/slotB'] && th.members['team1/slotB'].dark === '#22a35a' && th.members['team1/slotB'].light === '#22a35a', JSON.stringify(th));
+      check(sc, 'and the menu closes', !(await js(`!!document.querySelector('[data-testid="aiondx-colour-menu"]')`)));
+      await js('window.__aionDx.repaint(); 0');
+      await sleep(200);
+      check(sc, 'its button takes it at once', (await tabColour('slotB')) === 'rgb(34, 163, 90)', await tabColour('slotB'));
+      check(sc, 'the other lane keeps its own', (await tabColour('slotA')) === 'rgb(59, 130, 246)', await tabColour('slotA'));
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
+      await sleep(200);
+      check(sc, 'light mode: the same lane colour', (await tabColour('slotB')) === 'rgb(34, 163, 90)', await tabColour('slotB'));
+      await shot('lanes-tabs-light');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); return 0; })()`);
+      // Settings > Appearance: each member's row has the palette, the lane's colour marked; Default there puts it back
+      await js(`(() => { location.hash = '#/settings/appearance'; const sec = document.createElement('section'); sec.id = 'fake-appearance'; const grid = document.createElement('div'); sec.appendChild(grid);
+        ['light', 'dark'].forEach(id => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-' + id); c.textContent = id; grid.appendChild(c); });
+        document.body.appendChild(sec); return 0; })()`);
+      let rows = null;
+      for (let i = 0; i < 16 && !(rows && rows.length === 2); i++) {
+        await js('window.__aionDx.repaint(); 0');
+        await sleep(250);
+        rows = await js(`[...document.querySelectorAll('.aiondx-bubble-row--lane')].map((r) => ({ key: r.getAttribute('data-bubble'), sw: r.querySelectorAll('.aiondx-lane-swatch').length, on: (r.querySelector('.aiondx-lane-on') || {}).title || (r.querySelector('.aiondx-lane-on') || {}).textContent || '' }))`);
+      }
+      check(sc, 'Settings: each member, in lane order, with the palette and its colour marked', rows && rows.length === 2 && rows[0].key === 'member:team1/slotA' && rows[0].on === 'blue' && rows[1].key === 'member:team1/slotB' && rows[1].on === 'green' && rows.every((r) => r.sw === 12), JSON.stringify(rows));
+      const lr = await js(`(() => { const r = document.querySelector('.aiondx-bubble-row--lane[data-bubble="member:team1/slotB"]'); if (!r) return null; r.scrollIntoView({ block: 'center' }); const b = r.getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height) }; })()`);
+      check(sc, 'the row fits: the palette on its own line, not squeezed', lr && lr.h < 120 && lr.w > 300, JSON.stringify(lr));
+      await shot('lanes-settings-dark');
+      await humanClick('.aiondx-bubble-row--lane[data-bubble="member:team1/slotB"] .aiondx-lane-default');
+      await sleep(400);
+      const th2 = await js(`(window.__stub.store['aiondx.theme'] || {}).bubbles`);
+      check(sc, 'Default in Settings: the lane\'s own colour is gone, back to its place in the palette', th2 && !(th2.members || {})['team1/slotB'], JSON.stringify(th2));
+      await send('Emulation.clearDeviceMetricsOverride', {});
     }
     clearTimeout(deadline);
     let failed = 0;

@@ -581,7 +581,7 @@
   //            assistants: slotId -> assistant id }
   var teamCache = {};
   function readTeam(teamId, data) {
-    var c = { at: Date.now(), ok: false, name: '', map: {}, backend: {}, names: {}, assistants: {}, roles: {} };
+    var c = { at: Date.now(), ok: false, name: '', map: {}, backend: {}, names: {}, assistants: {}, roles: {}, order: [] };
     var members = data && (data.assistants || data.agents);
     if (Array.isArray(members)) {
       c.ok = true;
@@ -594,7 +594,9 @@
         c.names[m.slot_id] = String(m.name || m.assistant_name || '');
         c.assistants[m.slot_id] = String(m.assistant_id || '');
         c.roles[m.slot_id] = String(m.role || '');
+        c.order.push(String(m.slot_id));
       }
+      c.order.sort(function (a, b) { return (isLeadRole(c.roles[b]) ? 1 : 0) - (isLeadRole(c.roles[a]) ? 1 : 0); });
     }
     teamCache[teamId] = c;
     return c;
@@ -2626,6 +2628,109 @@
     changeThemePrefs({ bubbles: b });
   }
   function cssId(s) { return String(s).replace(/["\\\n]/g, ''); }
+  // ---- lane colours (the user, November 17th, 2026: "want the ability that the agent has ... to manually color code the agent colors that
+  // represent their lane. Right now it seems pseudo randon", and "colors per agent should be something you can get by right-clicking their
+  // team-member button on a team as well"). Upstream gives a lane one of 8 pale colours in the order it first saw each member, kept in the
+  // page only. A lane with no colour of its own gets one of these twelve, in lane order (the lead first), the same on every PC; a colour
+  // set here, in Settings or by an agent (aiondx team colour) is the member's entry in aiondx.theme bubbles.members.
+  var LANE_PALETTE = [
+    { name: 'blue', hex: '#3b82f6' }, { name: 'orange', hex: '#f97316' }, { name: 'green', hex: '#22a35a' }, { name: 'purple', hex: '#a855f7' },
+    { name: 'amber', hex: '#d4a017' }, { name: 'pink', hex: '#ec4899' }, { name: 'teal', hex: '#14b8a6' }, { name: 'red', hex: '#e5484d' },
+    { name: 'indigo', hex: '#6366f1' }, { name: 'lime', hex: '#65a30d' }, { name: 'sky', hex: '#0ea5e9' }, { name: 'brown', hex: '#a16207' }];
+  /** The colour a lane has when none is set: its place in the team, the lead first. Empty when the team is not known yet. */
+  function laneDefault(teamId, slot) {
+    var c = teamCache[teamId];
+    if (!c || !c.order) return '';
+    var i = c.order.indexOf(slot);
+    return i < 0 ? '' : LANE_PALETTE[i % LANE_PALETTE.length].hex;
+  }
+  /** A lane's colour, both modes at once (one write); hex '' puts it back to its default. */
+  function setLane(key, hex) {
+    var b = JSON.parse(JSON.stringify(bubblePrefs()));
+    b.members = b.members || {};
+    var k = key.slice(7);
+    if (hexRgb(hex)) b.members[k] = { dark: hex.toLowerCase(), light: hex.toLowerCase() }; else delete b.members[k];
+    changeThemePrefs({ bubbles: b });
+  }
+  /** The defaults as a stylesheet: each lane with no colour of its own, on its button, its column's name and its messages to teammates. */
+  var laneStyleEl = null, laneCssWas = '', laneTeamAsked = {};
+  function laneDefaultsCss() {
+    var mem = bubblePrefs().members || {};
+    var css = '';
+    Object.keys(teamCache).forEach(function (t) {
+      var c = teamCache[t];
+      if (!c || !c.ok || !c.order) return;
+      c.order.forEach(function (slot) {
+        var k = t + '/' + slot;
+        var e = mem[k];
+        if (e && (hexRgb(e.dark) || hexRgb(e.light))) return;
+        var hex = laneDefault(t, slot);
+        if (!hex) return;
+        var T = 'body[data-aiondx-team="' + cssId(t) + '"] ';
+        css += T + '[data-testid="team-tab-' + cssId(slot) + '"]{--mc:' + hex + ' !important}' +
+          T + '[data-testid="team-tab-' + cssId(slot) + '"][data-active="true"]{border-color:' + hex + ' !important}' +
+          T + '[data-testid="team-tab-name-' + cssId(slot) + '"]{color:' + hex + ' !important}' +
+          T + '[data-slot-id="' + cssId(slot) + '"] > .h-full > div:first-child .truncate{color:' + hex + ' !important}' +
+          '[data-aiondx-kind="a2a"][data-aiondx-from="' + cssId(k) + '"] span.text-12px{color:' + hex + ' !important}';
+      });
+    });
+    return css;
+  }
+  function paintLaneDefaults() {
+    if (disabled()) return;
+    var r = route();
+    // the open team's members, once a minute at most, so its lanes have their colours without waiting for the Loop to read it
+    if (r && r.kind === 'team' && (!teamCache[r.id] || !teamCache[r.id].order) && Date.now() - (laneTeamAsked[r.id] || 0) > 60000) {
+      laneTeamAsked[r.id] = Date.now();
+      var tid = r.id;
+      getJson('/api/teams/' + encodeURIComponent(tid)).then(function (g) { if (g && g.data && !g.err) { readTeam(tid, g.data); schedule(); } }).catch(function () {});
+    }
+    var css = laneDefaultsCss();
+    if (css === laneCssWas && laneStyleEl && laneStyleEl.parentNode) return;
+    laneCssWas = css;
+    if (!laneStyleEl || !laneStyleEl.parentNode) { laneStyleEl = document.createElement('style'); laneStyleEl.id = 'aiondx-lane-defaults'; document.head.appendChild(laneStyleEl); }
+    laneStyleEl.textContent = css;
+  }
+  /** A strip of the palette's swatches for a lane: a click colours it (both modes); Default puts it back. */
+  function laneSwatches(key, after) {
+    var box = document.createElement('div');
+    box.className = 'aiondx-lane-swatches';
+    box.setAttribute('data-testid', 'aiondx-lane-swatches');
+    LANE_PALETTE.forEach(function (p) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'aiondx-lane-swatch';
+      b.setAttribute('data-lane-colour', p.hex);
+      b.setAttribute('aria-label', p.name);
+      b.title = p.name;
+      b.style.background = p.hex;
+      b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); setLane(key, p.hex); if (after) after(); });
+      box.appendChild(b);
+    });
+    var d = document.createElement('button');
+    d.type = 'button';
+    d.className = 'aiondx-lane-default';
+    d.setAttribute('data-lane-colour', '');
+    d.textContent = 'Default';
+    d.title = 'Its colour from its place in the team';
+    d.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); setLane(key, ''); if (after) after(); });
+    box.appendChild(d);
+    return box;
+  }
+  /** Marks the swatch a lane has now (its own colour, or its default). */
+  function markLaneSwatches(box, key) {
+    if (!box) return;
+    var e = bubbleEntry(key) || {};
+    var own = (hexRgb(e.dark) && e.dark) || (hexRgb(e.light) && e.light) || '';
+    var parts = key.slice(7).split('/');
+    var cur = (own || laneDefault(parts[0], parts[1] || '')).toLowerCase();
+    Array.prototype.forEach.call(box.querySelectorAll('[data-lane-colour]'), function (b) {
+      var v = b.getAttribute('data-lane-colour');
+      var on = v ? v.toLowerCase() === cur : !own;
+      b.classList.toggle('aiondx-lane-on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
   function softOn(hex) { return onColour(hex) === '#ffffff' ? 'rgba(255,255,255,.72)' : 'rgba(17,17,17,.68)'; }
   function bubbleDecl(hex) {
     var t = onColour(hex), s = softOn(hex);
@@ -2666,6 +2771,10 @@
         paint(from + ' .bg-3', hex, ';border-left-color:' + hex + ' !important');
         var name = 'color:color-mix(in srgb, ' + hex + ' 70%, var(--text-primary)) !important';
         css += root + from + ' span.text-12px{' + name + '}';
+        // its button in the team's top row (TeamTabs: team-tab-<slot>, its name team-tab-name-<slot>): the name, and the ring when open
+        var tab = 'body[data-aiondx-team="' + cssId(parts[0]) + '"] [data-testid="team-tab-' + cssId(parts[1] || '') + '"]';
+        css += root + tab + '{--mc:' + hex + ' !important}' + root + tab + '[data-active="true"]{border-color:' + hex + ' !important}' +
+          root + 'body[data-aiondx-team="' + cssId(parts[0]) + '"] [data-testid="team-tab-name-' + cssId(parts[1] || '') + '"]{color:' + hex + ' !important}';
         var col = 'body[data-aiondx-team="' + cssId(parts[0]) + '"] [data-slot-id="' + cssId(parts[1] || '') + '"]';
         css += root + col + ' > .h-full{background:color-mix(in srgb, ' + hex + ' 6%, var(--bg-base)) !important}' +
           root + col + ' > .h-full > div:first-child .truncate{' + name + '}';
@@ -2782,6 +2891,10 @@
       });
     });
     row.querySelector('.aiondx-bubble-reset').addEventListener('click', function (ev) { ev.preventDefault(); setBubble(key, null); });
+    if (key.indexOf('member:') === 0) {
+      row.classList.add('aiondx-bubble-row--lane');
+      row.appendChild(laneSwatches(key));
+    }
     return row;
   }
   function paintBubbleRow(row) {
@@ -2797,6 +2910,7 @@
       if (document.activeElement !== input && input.value !== val) input.value = val;
     });
     row.querySelector('.aiondx-bubble-reset').disabled = !(e.dark || e.light);
+    markLaneSwatches(row.querySelector('.aiondx-lane-swatches'), row.getAttribute('data-bubble'));
   }
   function bubbleSub(text) {
     var d = document.createElement('div');
@@ -2882,12 +2996,13 @@
     return (c && c.names && c.names[slot]) || 'this member';
   }
   function colourItemsFor(path) {
-    var items = [], row = null, col = null;
+    var items = [], row = null, col = null, tabSlot = '';
     for (var i = 0; i < path.length; i++) {
       var n = path[i];
       if (!n || n.nodeType !== 1) continue;
       if (!row && n.id && n.id.indexOf('message-') === 0 && n.hasAttribute('data-aiondx-kind')) row = n;
       if (!col && n.hasAttribute && n.hasAttribute('data-slot-id')) col = n;
+      if (!tabSlot && n.getAttribute) { var tm = /^team-tab-(?!bar$|name-|failed-)(.+)$/.exec(n.getAttribute('data-testid') || ''); if (tm) tabSlot = tm[1]; }
     }
     var r = route();
     var teamId = r && r.kind === 'team' ? r.id : '';
@@ -2904,6 +3019,9 @@
         if (fr) items.push({ key: 'member:' + fr, label: 'Colour of ' + memberName(fr.split('/')[0], fr.split('/')[1]) + '...' });
         items.push({ key: kind, label: 'Colour of ' + label + '...' });
       }
+    } else if (tabSlot && teamId) {
+      // a member's button in the team's top row (November 17th, 2026: "right-clicking their team-member button")
+      items.push({ key: 'member:' + teamId + '/' + tabSlot, label: 'Colour of ' + memberName(teamId, tabSlot) + '...' });
     } else if (col && teamId) {
       var sl = col.getAttribute('data-slot-id');
       items.push({ key: 'member:' + teamId + '/' + sl, label: 'Colour of ' + memberName(teamId, sl) + '...' });
@@ -2962,7 +3080,7 @@
       el.className = 'arco-dropdown-menu-item';
       el.setAttribute('role', 'menuitem');
       if (it.key) el.setAttribute('data-colour-key', it.key);
-      el.textContent = it.label;
+      el.textContent = it.key && it.key.indexOf('member:') === 0 ? it.label.replace(/\.\.\.$/, '') + ' (any colour in Settings)...' : it.label;
       el.addEventListener('click', function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
@@ -2976,6 +3094,11 @@
         openColourControl(it.key);
       });
       colourMenu.appendChild(el);
+      if (it.key && it.key.indexOf('member:') === 0) {
+        var sw = laneSwatches(it.key, closeColourMenu);
+        markLaneSwatches(sw, it.key);
+        colourMenu.appendChild(sw);
+      }
     });
     document.body.appendChild(colourMenu);
     var w = colourMenu.offsetWidth || 220, h = colourMenu.offsetHeight || 80;
@@ -8803,6 +8926,15 @@
     // Chat colours (build 2026-09-26.3).
     '.aiondx-bubbles{display:flex;flex-direction:column;gap:6px;margin-top:8px}',
     '.aiondx-bubble-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;transition:box-shadow .3s}',
+    // a lane's row: its palette under the name and pickers
+    '.aiondx-bubble-row--lane{flex-wrap:wrap}',
+    '.aiondx-bubble-row--lane .aiondx-lane-swatches{flex-basis:100%;margin:2px 0 4px}',
+    '.aiondx-lane-swatches{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 12px 8px}',
+    '.aiondx-lane-swatch{width:20px;height:20px;border-radius:50%;border:2px solid transparent;padding:0;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15);transition:transform .12s}',
+    '.aiondx-lane-swatch:hover{transform:scale(1.15)}',
+    '.aiondx-lane-swatch.aiondx-lane-on{border-color:var(--color-text-1);box-shadow:0 0 0 2px var(--color-bg-2)}',
+    '.aiondx-lane-default{height:22px;padding:0 8px;border-radius:11px;border:1px solid var(--color-border-2);background:transparent;color:var(--color-text-2);font-size:12px;cursor:pointer}',
+    '.aiondx-lane-default.aiondx-lane-on{border-color:rgb(var(--primary-6));color:rgb(var(--primary-6))}',
     '.aiondx-bubble-text{flex:1;min-width:0}',
     '.aiondx-bubble-name{font-size:13px;line-height:18px;color:var(--color-text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.aiondx-bubble-desc{font-size:12px;line-height:16px;color:var(--color-text-3)}',
@@ -9329,7 +9461,7 @@
       if (menuKey === k) closeMenu();
       if (tipKey === k) hideTip();
     });
-    [labelPermissionButtons, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel, renderDxSkills, renderDxSettings, renderChangelog, renderSettingsLook].forEach(function (step, idx) {
+    [labelPermissionButtons, paintLaneDefaults, paintContextRings, renderSched, reconcileSpinners, ensureAccentPicker, focusColour, renderAccounts, renderUnsend, renderRespondNow, hideDriftNotices, tagBubbles, renderMcpSwitches, markHeldStart, labelModels, holdTitle, applySpellcheck, renderAgentCacheButtons, renderGroups, renderGuidGroup, paintCostCard, renderChatMenuButton, renderBell, renderAccountPills, renderDxPanel, renderDxSkills, renderDxSettings, renderChangelog, renderSettingsLook].forEach(function (step, idx) {
       // On a page with a long message list each step is a sweep of the page: all but the context ring run at most every 400 ms there.
       if (big && idx !== 1 && !every('step' + idx, 400)) return;
       try { step(); } catch (e) { console.log('[dx] render step failed', e); }
@@ -13158,7 +13290,14 @@
     // the release being built: its date is set the day it is released (the Changelog shows it)
     release: '0.28.5', date: '',
     items: [
+      ['Lane colours', 'Right-click a team member\u2019s button at the top of a team to give its lane a colour; its name, its column and its messages to teammates take it. Lanes you have not coloured get distinct colours in lane order, the lead first. Settings > Appearance has the same colours, and a team lead can set them with aiondx team colour.'],
+      ['What changed in your docs', 'A red number on the Docs button counts the docs an agent changed since you last had the panel open in that chat. Changed docs and tabs are marked in the panel until you open them.'],
       ['Big files go in as links', 'Drag or paste a file of 30 MB or more into a message box and it goes in as a link to where it already is, so files of any size can go with a message. Smaller files are still copied in.'],
+      ['Folders go in as links', 'Drag a folder into a message box: it shows there like a dropped file, and the agent gets its path.'],
+      ['Archived chats stay where they are kept', 'A chat on a drive that you archive stays on the drive, archived on every PC that reads it, and goes back into its group when you restore it.'],
+      ['Chats on a drive work on another PC', 'Chats brought in from a drive belong to you on the new PC and bring their own agent with them, without any key. Each one is checked as it comes in; one that cannot be opened is shown in a notice that stays until you click it, and AionDX\u2019s log says why. Groups travel with them, and opening a chat no longer rewrites it on the drive.'],
+      ['Claude Code installs with a meter', 'Installing Claude Code from AionDX shows how much has downloaded, then a notice with a Sign in button when it is ready.'],
+      ['Fixes', 'Chat colours says No teams yet when you have none. The Loop sends to a team member\u2019s own chat the team\u2019s way (it was refused). The skills list shows the skills in the folders above a chat, and counts every use. AionDX\u2019s Claude hooks work on a PC without Git for Windows, where they had blocked every file edit. Agents can pipe commands to aioncore from Windows PowerShell.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.4', date: '2026-11-17', items: [
@@ -13443,6 +13582,8 @@
       text: 'AionDX\u2019s own settings: Agents (each agent\u2019s state, sign-in, Stop and the Loop), Chats and drives, and Typing, links and voice. Appearance keeps the colours.' },
     { id: 'reqnotes', sel: '[data-testid="aiondx-dxs-tab-notes"]', title: 'Request notes',
       text: 'What AionDX made of your requests in Claude chats, with the first words of each, on this PC only. Mark each Fit or Did not fit so the notes can be tuned.' },
+    { id: 'lanecolour', sel: '[data-testid="team-tab-bar"] [data-team-tab-role="teammate"]', title: 'Lane colours',
+      text: 'Right-click a member\u2019s button to give its lane a colour: its name, its column and its messages to teammates take it.' },
     { id: 'accinstall', sel: '[data-testid="aiondx-acc-install"]', title: 'Install Claude Code',
       text: 'Claude Code is not on this PC yet. This runs Anthropic\u2019s own installer, then you sign in in your browser.' },
     { id: 'dxdocs', sel: '[data-testid="aiondx-dx-open"]', title: 'DX Docs',

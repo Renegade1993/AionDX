@@ -346,6 +346,22 @@ namespace AionDx
                             { "member", Prop("string", "One teammate: its name, slot id or conversation id. Leave out for the whole team.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } },
                 new Dictionary<string, object> {
+                    { "name", "team_colour" },
+                    { "title", "Colour a team member's lane" },
+                    { "description",
+                        "Sets the colour of one team member's lane: its button at the top of the team page, its column's name and its messages to " +
+                        "teammates. A colour is #RRGGBB, one of blue, orange, green, purple, amber, pink, teal, red, indigo, lime, sky, brown, or " +
+                        "default (the colour from its place in the team). The user sees and changes the same colours by right-clicking the member's " +
+                        "button or in Settings > Appearance. Use it when the user asks for lane colours, or to tell lanes apart." },
+                    { "inputSchema", new Dictionary<string, object> {
+                        { "type", "object" },
+                        { "properties", new Dictionary<string, object> {
+                            { "team", Prop("string", "The team: its id, its name, or any member's chat id.") },
+                            { "member", Prop("string", "The member: its name, slot id, chat id, or lead.") },
+                            { "colour", Prop("string", "#RRGGBB, a colour name from the list, or default.") } } },
+                        } },
+                    { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } },
+                new Dictionary<string, object> {
                     { "name", "agent_stop" },
                     { "title", "Stop a teammate" },
                     { "description",
@@ -658,6 +674,7 @@ namespace AionDx
                 else if (name == "priority_send") text = PrioritySend(a);
                 else if (name == "agent_stop") text = AgentStop(a);
                 else if (name == "skills_pin") text = SkillsPin(a);
+                else if (name == "team_colour") text = TeamColour(Str(a, "team"), Str(a, "member"), Str(a, "colour") ?? Str(a, "color"));
                 else if (name == "asks") text = Asks(a);
                 else if (name == "mcp_status") text = McpStatus(a);
                 else if (name == "mcp_set") text = McpSet(a);
@@ -1481,6 +1498,8 @@ namespace AionDx
             "Usage:\n" +
             "  aiondx team show ID|NAME     a team's layout: its lead first, then each member, with the chat id to read\n" +
             "  aiondx team list             every team that is not archived\n" +
+            "  aiondx team colour TEAM MEMBER COLOUR   a member's lane colour: #RRGGBB, a name (blue, orange, green, purple, amber, pink,\n" +
+            "                               teal, red, indigo, lime, sky, brown), or default; MEMBER is its name, slot id, chat id, or lead\n" +
             "ID is the team id, or any member's chat id (a @@ team mention gives the lead's chat id); NAME matches the team's name.\n" +
             "Read a chat with: aiondx chat read CHAT_ID [--last N]";
 
@@ -1532,6 +1551,69 @@ namespace AionDx
                    (agent != null ? ", agent " + agent : "") + (model != null ? ", model " + model : "");
         }
 
+        // ---- lane colours (the user, November 17th, 2026: agents colour the lanes too). The colours live in the settings store's aiondx.theme,
+        // bubbles.members["<team>/<slot>"] = { dark, light }, the same entry the team page's right-click menu and Settings > Appearance write.
+        static readonly string[][] LanePalette = {
+            new[] { "blue", "#3b82f6" }, new[] { "orange", "#f97316" }, new[] { "green", "#22a35a" }, new[] { "purple", "#a855f7" },
+            new[] { "amber", "#d4a017" }, new[] { "pink", "#ec4899" }, new[] { "teal", "#14b8a6" }, new[] { "red", "#e5484d" },
+            new[] { "indigo", "#6366f1" }, new[] { "lime", "#65a30d" }, new[] { "sky", "#0ea5e9" }, new[] { "brown", "#a16207" } };
+        /** "" for default (the colour from the member's place in the team). */
+        internal static string LaneHex(string c)
+        {
+            c = (c ?? "").Trim().ToLowerInvariant();
+            if (c == "default" || c == "none" || c == "auto") return "";
+            foreach (var p in LanePalette) if (p[0] == c) return p[1];
+            var m = System.Text.RegularExpressions.Regex.Match(c, "^#?([0-9a-f]{6}|[0-9a-f]{3})$");
+            if (!m.Success) throw new ToolError("A colour is #RRGGBB, one of " + string.Join(", ", LanePalette.Select(p => p[0]).ToArray()) + ", or default.");
+            string h = m.Groups[1].Value;
+            if (h.Length == 3) h = new string(new[] { h[0], h[0], h[1], h[1], h[2], h[2] });
+            return "#" + h;
+        }
+        /** Every lane colour set: "<team>/<slot>" -> its colour (the dark one, or the light). */
+        static Dictionary<string, string> LaneColours()
+        {
+            var o = new Dictionary<string, string>();
+            try
+            {
+                var th = Sub(Api("GET", "/api/settings/client?keys=aiondx.theme", null) as Dictionary<string, object>, "aiondx.theme");
+                var mem = Sub(Sub(th, "bubbles"), "members");
+                if (mem != null) foreach (var kv in mem) { var e = kv.Value as Dictionary<string, object>; string hx = e != null ? (Str(e, "dark") ?? Str(e, "light")) : null; if (hx != null) o[kv.Key] = hx; }
+            }
+            catch (Exception) { }
+            return o;
+        }
+        internal static string TeamColour(string teamKey, string memberKey, string colour)
+        {
+            string hex = LaneHex(colour);
+            var team = FindTeam(teamKey);
+            var members = TeamMembers(team).OfType<Dictionary<string, object>>().ToList();
+            string mk = (memberKey ?? "").Trim();
+            Dictionary<string, object> m = null;
+            if (mk.ToLowerInvariant() == "lead") m = members.FirstOrDefault(x => Str(x, "role") == "lead" || Str(x, "role") == "leader");
+            if (m == null) m = members.FirstOrDefault(x => string.Equals(Str(x, "slot_id"), mk, StringComparison.OrdinalIgnoreCase) || string.Equals(Str(x, "conversation_id"), mk, StringComparison.OrdinalIgnoreCase));
+            if (m == null)
+            {
+                var byName = members.Where(x => string.Equals(Str(x, "name"), mk, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (byName.Count > 1) throw new ToolError("More than one member is called \"" + mk + "\"; name it by its slot id (aiondx team show).");
+                if (byName.Count == 1) m = byName[0];
+            }
+            if (m == null) throw new ToolError("No member \"" + mk + "\" in " + (Str(team, "name") ?? "that team") + ". Its members: " +
+                string.Join(", ", members.Select(x => Str(x, "name") ?? Str(x, "slot_id")).ToArray()) + ".");
+            const string key = "aiondx.theme";
+            var cur = Sub(Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(key), null) as Dictionary<string, object>, key) ?? new Dictionary<string, object>();
+            var bubbles = Sub(cur, "bubbles") ?? new Dictionary<string, object>();
+            var mem = Sub(bubbles, "members") ?? new Dictionary<string, object>();
+            string mkey = Str(team, "id") + "/" + Str(m, "slot_id");
+            if (hex == "") mem.Remove(mkey); else mem[mkey] = new Dictionary<string, object> { { "dark", hex }, { "light", hex } };
+            bubbles["members"] = mem;
+            cur["bubbles"] = bubbles;
+            cur["at"] = NowMs();
+            Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { key, cur } }));
+            string who = Str(m, "name") ?? Str(m, "slot_id");
+            return who + "'s lane in " + (Str(team, "name") ?? "the team") + (hex == "" ? " has its default colour again (from its place in the team)." : " is " + hex + " now.") +
+                   " Its button, its column's name and its messages to teammates take it; the user can change it by right-clicking the member's button.";
+        }
+
         static int TeamCli(string[] args, StreamWriter o)
         {
             if (args.Length < 2 || args[1] == "help" || args[1] == "--help" || args[1] == "-h") { o.WriteLine(TeamHelp); return args.Length < 2 ? 2 : 0; }
@@ -1550,6 +1632,12 @@ namespace AionDx
                     }
                     return 0;
                 }
+                if (sub == "colour" || sub == "color")
+                {
+                    if (args.Length < 5) throw new ToolError("Name the team, the member and the colour: aiondx team colour TEAM MEMBER COLOUR.\n" + TeamHelp);
+                    o.WriteLine(TeamColour(args[2], args[3], string.Join(" ", args.Skip(4))));
+                    return 0;
+                }
                 if (sub != "show") throw new ToolError("Unknown team command \"" + args[1] + "\".\n" + TeamHelp);
                 if (args.Length < 3) throw new ToolError("Name the team: aiondx team show ID|NAME.");
                 var team = FindTeam(string.Join(" ", args.Skip(2)));
@@ -1557,7 +1645,13 @@ namespace AionDx
                 var ordered = members.Where(m => Str(m, "role") == "lead").Concat(members.Where(m => Str(m, "role") != "lead")).ToList();
                 o.WriteLine("Team: " + (Str(team, "name") ?? "?") + " (team " + Str(team, "id") + ")" +
                             (Str(team, "workspace") != null ? ", workspace " + Str(team, "workspace") : ""));
-                foreach (var m in ordered) o.WriteLine("  " + MemberLine(m));
+                var laneSet = LaneColours();
+                foreach (var m in ordered)
+                {
+                    string lane = null;
+                    laneSet.TryGetValue(Str(team, "id") + "/" + Str(m, "slot_id"), out lane);
+                    o.WriteLine("  " + MemberLine(m) + (lane != null ? ", lane colour " + lane : ""));
+                }
                 o.WriteLine("Read the lead's chat first, then any member's as needed: aiondx chat read CHAT_ID [--last N]");
                 return 0;
             }

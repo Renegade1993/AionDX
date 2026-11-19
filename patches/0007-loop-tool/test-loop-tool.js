@@ -298,7 +298,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const tl = await solo.rpc('tools/list', {});
   const tools = (tl.result && tl.result.tools) || [];
-  check('tools/list offers loop_status, loop_set, priority_send, asks, skills_pin, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the ten DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,asks,skills_pin,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,context_status,chat_send,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_comment,dxdoc_look,dxdoc_decide,dxdoc_list,dxdoc_comments,dxdoc_reply,dxdoc_suggest,usage_alert', tools.map((t) => t.name));
+  check('tools/list offers loop_status, loop_set, priority_send, asks, skills_pin, agent_stop, mcp_status, mcp_set, mcp_tools, mcp_call, github_status, github_create_repo, usage_status, show_file, the ten DX Docs tools and usage_alert', tools.map((t) => t.name).join(',') === 'loop_status,loop_set,priority_send,asks,skills_pin,team_colour,agent_stop,mcp_status,mcp_set,mcp_tools,mcp_call,github_status,github_create_repo,usage_status,show_file,context_status,chat_send,dxdoc_create,dxdoc_update,dxdoc_read,dxdoc_comment,dxdoc_look,dxdoc_decide,dxdoc_list,dxdoc_comments,dxdoc_reply,dxdoc_suggest,usage_alert', tools.map((t) => t.name));
   const schemaText = JSON.stringify(tools.map((t) => t.inputSchema));
   check('schemas use only type, properties, description and items (every backend takes them; a parameter may be called title)', !/additionalProperties|\$schema|"required"|"title":"/.test(schemaText), schemaText);
   const set = tools.find((t) => t.name === 'loop_set') || { inputSchema: { properties: {} } };
@@ -549,7 +549,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const orphan = startTool('convS', { AIONDX_CONVERSATION_ID: '', AIONDX_RUNTIME_TOKEN: '', AIONDX_LOOP_NO_ANCESTORS: '1' });
   await orphan.rpc('initialize', { protocolVersion: '2025-06-18' });
   const tlOrphan = await orphan.rpc('tools/list', {});
-  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 27, tlOrphan.result && tlOrphan.result.tools.length);
+  check('without an identity it still starts and lists its tools', tlOrphan.result && tlOrphan.result.tools.length === 28, tlOrphan.result && tlOrphan.result.tools.length);
   r = await orphan.call('loop_status');
   check('with no identity the tool says so, and does not crash', r.isError && /cannot tell which AionDX chat/.test(r.text), r.text);
 
@@ -1089,6 +1089,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     [tm, tm2, tm3].every((r) => /^Team: Team One/.test(r.stdout)), tm.stdout + tm2.stdout + tm3.stdout);
   tm = await cli(['team', 'show', 'nobody'], 'convS');
   check('an unknown team says so and points to team list', tm.status === 1 && /No team matches "nobody"\. aiondx team list/.test(tm.stdout), tm.stdout);
+  // lane colours by agents (November 17th, 2026): the same entry in aiondx.theme the team page's right-click and Settings write
+  kv['aiondx.theme'] = { accent: '#123456', at: 5, bubbles: { mine: { dark: '#111111' } } };
+  tm = await cli(['team', 'colour', 'team one', 'Worker', 'green'], 'convS');
+  const th1 = kv['aiondx.theme'];
+  check('team colour by name: the member\'s lane in the shared colours, both modes, the rest of the theme kept, a newer time',
+    tm.status === 0 && th1 && th1.bubbles.members && JSON.stringify(th1.bubbles.members['team1/slotW']) === JSON.stringify({ dark: '#22a35a', light: '#22a35a' }) &&
+    th1.accent === '#123456' && th1.bubbles.mine.dark === '#111111' && th1.at > 5 && /Worker's lane in Team One is #22a35a now\./.test(tm.stdout), tm.stdout + JSON.stringify(th1));
+  tm = await cli(['team', 'colour', 'team1', 'lead', '#F0A'], 'convS');
+  check('team colour: lead and a short #RGB', tm.status === 0 && kv['aiondx.theme'].bubbles.members['team1/slotL'].dark === '#ff00aa', tm.stdout);
+  tm = await cli(['team', 'show', 'team1'], 'convS');
+  check('team show names each lane colour that is set', /Worker: chat convW[^\n]*, lane colour #22a35a/.test(tm.stdout) && /Lead \(lead\)[^\n]*, lane colour #ff00aa/.test(tm.stdout), tm.stdout);
+  tm = await cli(['team', 'colour', 'team1', 'Worker', 'default'], 'convS');
+  check('team colour default: the member\'s own colour removed', tm.status === 0 && !kv['aiondx.theme'].bubbles.members['team1/slotW'] && /default colour again/.test(tm.stdout), tm.stdout);
+  tm = await cli(['team', 'colour', 'team1', 'Nobody', 'red'], 'convS');
+  const tmBad = await cli(['team', 'colour', 'team1', 'Worker', 'mauve'], 'convS');
+  check('an unknown member or colour is refused, saying what there is', tm.status === 1 && /No member "Nobody" in Team One\. Its members: Lead, Worker, Viewer\./.test(tm.stdout) &&
+    tmBad.status === 1 && /A colour is #RRGGBB, one of blue, orange/.test(tmBad.stdout), tm.stdout + tmBad.stdout);
   tm = await cli(['team'], 'convS');
   check('team on its own prints the help (and exits 2)', tm.status === 2 && /aiondx team show ID\|NAME/.test(tm.stdout), tm.stdout);
   let cr = await cli(['chat', 'read', 'convL', '--last', '4'], 'convS');
