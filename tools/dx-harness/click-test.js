@@ -3279,6 +3279,8 @@ async function pageTarget() {
       const w1 = await rowWhere('c-c1'), w2 = await rowWhere('c-convB'), w3 = await rowWhere('c-c3');
       check(sc, 'each row says where it is: its place, AionDX\'s folder, or missing with where it was', w1 === 'H:\\Chats' && w2 === 'AionDX\'s folder' && w3 === 'Missing: it was in E:\\Work\\c3', JSON.stringify([w1, w2, w3]));
       check(sc, 'with nothing ticked, Move and Bring back are off', await js(`document.querySelector('[data-testid="aiondx-places-move"]').disabled && document.querySelector('[data-testid="aiondx-places-back"]').disabled`));
+      await clogShot('0.28.5', 'Chats on a drive work on another PC', '[data-testid="aiondx-places-row-c-c1"]');
+      await clogShot('0.28.5', 'Archived chats stay where they are kept', '[data-testid="aiondx-places-row-c-c1"]');
       await shot('places-light');
       await clogShot("0.28.0", "Chats where you choose", "[data-testid=\"aiondx-places-list\"]");
       await humanClick('[data-testid="aiondx-places-group-g1"] input');
@@ -3393,7 +3395,6 @@ async function pageTarget() {
       await humanClick('[data-testid="aiondx-places-menu"] button');
       await sleep(400);
       await clogShot("0.28.3", "Chats that share a folder move together", "[data-testid=\"aiondx-places-ask\"] .aiondx-places-asktext");
-      await clogShot('0.28.5', 'Archived chats stay where they are kept', '[data-testid^="aiondx-places-row-"]');
       const at1 = await askYes(/^"Map notes" also works in C:\\Proj\\Maps\.\n\nMove it together\? That folder goes to H:\\Chats\\Maps once/);
       check(sc, 'a chat whose folder another chat works in: asked to move them together, naming it and where the folder goes', at1.ok, at1.t);
       await sleep(400);
@@ -4496,7 +4497,7 @@ async function pageTarget() {
       {
         await load('theme=light');
         await setup(false);
-        const SMALL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        const SMALL = 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="300"><rect width="480" height="300" fill="#e8dfc8"/>' + Array.from({ length: 12 }, (_, k) => '<line x1="' + (k * 40) + '" y1="0" x2="' + (k * 40) + '" y2="300" stroke="#b9a77d"/>').join('') + Array.from({ length: 8 }, (_, k) => '<line x1="0" y1="' + (k * 40) + '" x2="480" y2="' + (k * 40) + '" stroke="#b9a77d"/>').join('') + '<path d="M40 240 C120 120 200 260 300 120 S420 80 460 60" stroke="#3b6e3b" stroke-width="10" fill="none"/><circle cx="300" cy="120" r="14" fill="#c0392b"/></svg>').toString('base64');
         const FULL = 'data:image/gif;base64,R0lGODlhAgACAIAAAP///wAAACwAAAAAAgACAAACAoRRADs=';
         await js(`(() => { const old = window.aiondxDx.call; window.__picCalls = [];
           window.aiondxDx.call = (op, a) => {
@@ -6252,7 +6253,6 @@ async function pageTarget() {
       await sleep(9600);
       tl = await dfToasts();
       check(sc, 'those notices stay past the usual 9 seconds, until clicked', tl.filter((t) => /cannot open it|does not have/.test(t)).length === 2, JSON.stringify(tl));
-      await clogShot('0.28.5', 'Chats on a drive work on another PC', '.aiondx-toast--stay');
       await js(`document.querySelectorAll('.aiondx-toast--stay').forEach((t) => t.click()); 0`);
       check(sc, 'a click puts each away', !(await dfToasts()).some((t) => /cannot open it|does not have/.test(t)));
       // a relink waits to write the package until the chat is seen
