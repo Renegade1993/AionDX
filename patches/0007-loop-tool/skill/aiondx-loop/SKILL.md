@@ -209,10 +209,11 @@ Respond-now bolt does), to whoever you name:
 ```
 
 (`usage_alert` does the same as a tool.) A team lead may notify the lead, every member, or itself; a member only itself; a
-solo chat is always itself. Each alert goes off once per window and is armed again after the reset. It is checked by the
-AionDX window, so it works while AionDX is open. The user sees every alert, and changes it, by clicking the usage meter;
+solo chat is always itself. An alert goes off once and is then removed; `--repeat` keeps it for every window until you remove
+it. It never starts a turn in an agent that is idle with its Loop off: then nothing is sent and it waits. It is checked by
+the AionDX window, so it works while AionDX is open. The user sees every alert, and changes it, by clicking the usage meter;
 an alert the user made is not yours to change. When a team starts a long job, the lead should set one for itself at about
-80% and one for every member at about 90%.
+80% and one for every member at about 90%, and remove any `--repeat` alert when the team's work ends.
 
 ## Options: change how AionDX behaves
 

@@ -1155,6 +1155,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ua = await cli(['usage', 'alert', '--at', '60'], 'convW');
   const wRule = kv['aiondx.usagealert.team.team1'].rules.find((r) => r.notify === 'self');
   check('a member sets one for itself, remembering which member', ua.status === 0 && wRule && wRule.slot === 'slotW' && wRule.conv === 'convW' && wRule.at === 0.6, ua.stdout);
+  // November 19th, 2026 (the user: "THOSE ALERTS NEED TO AUTO-DISARM ONCE THEY SUCCESSFULLY ALERT A TEAM"): once, unless --repeat
+  check('an alert goes off once and is then removed: it says so, and is stored without repeat, with when it was set', wRule && wRule.repeat === false && wRule.set > 0 &&
+    /goes off once and is then removed \(--repeat keeps it for every window\)/.test(ua.stdout) && /never starts a turn in an agent that is idle with its Loop off/.test(ua.stdout), ua.stdout + JSON.stringify(wRule));
+  ua = await cli(['usage', 'alert', '--at', '65', '--window', 'week', '--repeat'], 'convW');
+  const rRule = kv['aiondx.usagealert.team.team1'].rules.find((r) => r.notify === 'self' && r.window === 'week');
+  check('--repeat keeps it for every window, and says so', ua.status === 0 && rRule && rRule.repeat === true && /It repeats: once per window/.test(ua.stdout), ua.stdout + JSON.stringify(rRule));
+  kv['aiondx.usagealert.team.team1'].rules = kv['aiondx.usagealert.team.team1'].rules.filter((r) => !(r.notify === 'self' && r.window === 'week'));
   ua = await cli(['usage', 'alert', '--at', '0'], 'convL');
   check('a threshold of zero is refused', ua.status === 1 && /at is required/.test(ua.stdout), ua.stdout);
   ua = await cli(['usage', 'alert', '--at', '80', '--window', 'month'], 'convL');
@@ -1163,7 +1170,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ua = await cli(['usage', 'alert', '--at', '55', '--window', 'week', '--notify', 'lead'], 'convL');
   check('an alert the user made is not for an agent to change', ua.status === 1 && /The user already set a weekly alert/.test(ua.stdout), ua.stdout);
   ua = await cli(['usage', 'alerts'], 'convW');
-  check('the list shows every rule with who set it', ua.status === 0 && /5-hour window at 70%: tell the team lead \(set by Lead\)/.test(ua.stdout) && /Weekly window at 50%: tell the team lead \(set by the user\)/.test(ua.stdout), ua.stdout);
+  check('the list shows every rule with who set it', ua.status === 0 && /5-hour window at 70%: tell the team lead \(set by Lead, [A-Z][a-z]+ \d+(st|nd|rd|th), \d\d:\d\d; goes off once, then is removed\)/.test(ua.stdout) && /Weekly window at 50%: tell the team lead \(set by the user; (goes off once, then is removed|repeats every window)\)/.test(ua.stdout), ua.stdout);
   ua = await cli(['usage', 'alert', '--remove'], 'convW');
   check('a member removes only its own alert', ua.status === 0 && /^1 alert removed\./.test(ua.stdout) && !kv['aiondx.usagealert.team.team1'].rules.some((r) => r.notify === 'self'), ua.stdout);
   ua = await cli(['usage', 'alert', '--remove'], 'convL');

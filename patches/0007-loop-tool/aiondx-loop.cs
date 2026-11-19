@@ -644,7 +644,8 @@ namespace AionDx
                             { "at", Prop("number", "Percent of the window, 1 to 100, for example 80.") },
                             { "window", Prop("string", "5h (default) or week.") },
                             { "notify", Prop("string", "lead, all or self.") },
-                            { "message", Prop("string", "Optional text added to the alert (up to 400 characters).") } } } } },
+                            { "message", Prop("string", "Optional text added to the alert (up to 400 characters).") },
+                            { "repeat", Prop("boolean", "true: goes off once in every window until removed. Default: once, then removed.") } } } } },
                     { "annotations", new Dictionary<string, object> { { "readOnlyHint", false }, { "destructiveHint", false }, { "idempotentHint", true }, { "openWorldHint", false } } } }
             };
         }
@@ -1228,11 +1229,21 @@ namespace AionDx
             return notify == "all" ? "every member on that account" : notify == "self" ? (string.IsNullOrEmpty(who) ? "the agent that set it" : who) : "the team lead";
         }
 
+        /** "November 19th, 10:24": a date the way AionDX writes one. */
+        static string DayText(DateTimeOffset t)
+        {
+            int d = t.Day;
+            string suf = (d % 100 >= 11 && d % 100 <= 13) ? "th" : d % 10 == 1 ? "st" : d % 10 == 2 ? "nd" : d % 10 == 3 ? "rd" : "th";
+            return t.ToString("MMMM", Inv) + " " + d + suf + ", " + t.ToString("HH:mm", Inv);
+        }
         static string UsageAlertLine(Dictionary<string, object> r)
         {
             double at = Dbl(r, "at");
+            double setAt = Dbl(r, "set");
             return "  " + (Str(r, "window") == "week" ? "Weekly" : "5-hour") + " window at " + Math.Round(at * 100) + "%: tell " + UsageAlertWho(Str(r, "notify"), Str(r, "who")) +
-                   (Str(r, "by") == "user" ? " (set by the user)" : " (set by " + (Str(r, "who") ?? "an agent") + ")") +
+                   (Str(r, "by") == "user" ? " (set by the user" : " (set by " + (Str(r, "who") ?? "an agent")) +
+                   (!double.IsNaN(setAt) && setAt > 0 ? ", " + DayText(DateTimeOffset.FromUnixTimeMilliseconds((long)setAt).ToLocalTime()) : "") +
+                   (Bool(r, "repeat") == true ? "; repeats every window" : "; goes off once, then is removed") + ")" +
                    (string.IsNullOrEmpty(Str(r, "message")) ? "" : ": \"" + Str(r, "message") + "\"");
         }
 
@@ -1313,6 +1324,7 @@ namespace AionDx
             if (next.Count >= 12) throw new ToolError("This " + (team ? "team" : "chat") + " already has 12 alerts; remove one first.");
             next.Add(new Dictionary<string, object> {
                 { "window", window }, { "at", at }, { "notify", notify }, { "message", message }, { "by", "agent" }, { "who", who },
+                { "repeat", Bool(a, "repeat") == true }, { "set", NowMs() },
                 { "slot", ctx.Self.SlotId ?? "" }, { "conv", ctx.Self.ConvId ?? "" } });
             UsageAlertPut(key, next, rec);
             // An alert needs readings to cross. A chat with none yet gets told why, so a saved alert is not taken for a working one (a report of 2026-10-12).
@@ -1326,7 +1338,9 @@ namespace AionDx
             }
             catch (Exception) { }
             return warn + "Saved. When the " + (window == "week" ? "weekly" : "5-hour") + " window reaches " + Math.Round(at * 100) + "% on the account " + (team ? "this team runs on" : "this chat runs on") +
-                   ", AionDX tells " + UsageAlertWho(notify, who) + " at once, into the running turn (the way Respond now does). It goes off once per window and is armed again after the reset.\n" +
+                   ", AionDX tells " + UsageAlertWho(notify, who) + " at once, into the running turn (the way Respond now does)" +
+                   (Bool(a, "repeat") == true ? ". It repeats: once per window, armed again after each reset, until it is removed.\n" : ". It goes off once and is then removed (--repeat keeps it for every window).\n") +
+                   "It never starts a turn in an agent that is idle with its Loop off: then nothing is sent and the alert waits.\n" +
                    "It is checked by the AionDX window, so it works while AionDX is open. The user sees and can change it by clicking the usage meter.\n";
         }
 
@@ -2289,6 +2303,7 @@ namespace AionDx
                             case "--notify": a["notify"] = inline ?? Next(args, ref i, x); break;
                             case "--message": a["message"] = inline ?? Next(args, ref i, x); break;
                             case "--remove": a["action"] = "remove"; break;
+                            case "--repeat": a["repeat"] = true; break;
                             default: throw new ToolError("Unknown option " + args[i] + ".\n" + UsageHelp);
                         }
                     }

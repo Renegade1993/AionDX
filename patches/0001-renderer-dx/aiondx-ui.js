@@ -6198,9 +6198,10 @@
           if (w.u < thr) { if (prev && w.u < thr - 0.05) { delete fired[fk]; changed = true; } return; }
           var reset = Number(a[key].reset) || 0;
           if (prev && Number(prev.reset) === reset) return;
+          if (usageSending[scope + '|' + fk]) return;   // being sent: the next check waits for its answer
           fired[fk] = { reset: reset, at: Date.now() };
           changed = true;
-          sendUsageAlert(scope, rec, rule, cr.acct, a, w, members);
+          sendUsageAlert(scope, rec, rule, cr.acct, a, w, members, fk);
         });
       });
       if (changed) {
@@ -6219,7 +6220,29 @@
       (w.reset ? ', resets ' + resetText(w.reset) : '') + (other ? '; ' + (rule.window === 'week' ? '5-hour' : 'week') + ' ' + pct(other.u) : '') + '. ' +
       (rule.message ? String(rule.message) : 'Finish or checkpoint what you are doing now, hand off anything that needs a long run, and tell the user if the rest of the work will not fit.');
   }
-  function sendUsageAlert(scope, rec, rule, acct, a, w, members) {
+  var usageSending = {};   // scope|rule key -> sending now
+  /** An agent an alert may go to: working on a turn, or its Loop on. An alert never starts a turn in an idle agent whose Loop is off
+   *  (November 19th, 2026: a finished team's alerts woke its idle lead and workers for days, each wake reloading a cold context). */
+  async function alertLive(m) {
+    var t = m.teamId ? { kind: 'team', key: 'team:' + m.teamId + ':' + m.slotId, teamId: m.teamId, slotId: m.slotId } : { kind: 'conv', key: 'conv:' + m.convId, convId: m.convId };
+    try { if (state(t).on) return true; } catch (e) { /* no Loop record */ }
+    var g = await getJson('/api/conversations/' + encodeURIComponent(m.convId)).catch(function () { return null; });
+    return !!(g && g.data && !g.err && convBusy(g.data));
+  }
+  /** A rule that has alerted is taken out (unless it repeats): the user, November 19th, 2026: "THOSE ALERTS NEED TO AUTO-DISARM ONCE THEY
+   *  SUCCESSFULLY ALERT A TEAM". */
+  function disarmUsageAlert(scope, rule) {
+    var rec = usageAlerts[scope];
+    if (!rec || !Array.isArray(rec.rules)) return;
+    var left = rec.rules.filter(function (r) { return !(r.window === rule.window && Number(r.at) === Number(rule.at) && r.notify === rule.notify && (r.conv || '') === (rule.conv || '') && (r.slot || '') === (rule.slot || '')); });
+    if (left.length === rec.rules.length) return;
+    var b = {};
+    if (left.length) { usageAlerts[scope] = Object.assign({}, rec, { rules: left, at: Date.now(), rev: (rec.rev || 0) + 1 }); b[USAGE_ALERT + scope] = usageAlerts[scope]; }
+    else { delete usageAlerts[scope]; b[USAGE_ALERT + scope] = null; }
+    putPrefs(b);
+    console.log('[dx] usage alert ' + scope + ': ' + rule.window + ' at ' + Math.round(Number(rule.at) * 100) + '% went off and is disarmed');
+  }
+  async function sendUsageAlert(scope, rec, rule, acct, a, w, members, fk) {
     var text = alertText(rule, a, w);
     var to = [];
     if (scope.indexOf('conv.') === 0) to = members;
@@ -6227,8 +6250,27 @@
     else if (rule.notify === 'self') to = members.filter(function (m) { return m.slotId === rule.slot || m.convId === rule.conv; });
     else to = members.filter(function (m) { return isLeadRole(m.role); });
     if (!to.length) { console.log('[dx] usage alert ' + scope + ': nobody to tell (' + rule.notify + ')'); return; }
+    var sk = scope + '|' + (fk || '');
+    usageSending[sk] = true;
+    var live = [];
+    try { for (var i = 0; i < to.length; i++) if (await alertLive(to[i])) live.push(to[i]); } catch (e) { live = []; }
+    if (!live.length) {
+      // nobody working: nothing is sent and nothing woken; the alert stays as it is (the next check may find someone at work)
+      delete usageSending[sk];
+      var fr = Object.assign({}, usageFired[scope] || {});
+      if (fk && fr[fk]) { delete fr[fk]; usageFired[scope] = fr; var bb = {}; bb[USAGE_FIRED + scope] = fr; putPrefs(bb); }
+      console.log('[dx] usage alert ' + scope + ': nobody is working (idle, Loop off): not sent, nobody woken');
+      return;
+    }
+    to = live;
+    var sent = 0, left = to.length;
+    var settle = function () {
+      if (--left > 0) return;
+      delete usageSending[sk];
+      if (sent && !rule.repeat) disarmUsageAlert(scope, rule);
+    };
     to.forEach(function (m) {
-      var done = function (ok) { console.log('[dx] usage alert ' + scope + ' -> ' + (m.name || m.convId) + (ok ? ' sent' : ' failed')); };
+      var done = function (ok) { console.log('[dx] usage alert ' + scope + ' -> ' + (m.name || m.convId) + (ok ? ' sent' : ' failed')); if (ok) sent++; settle(); };
       if (!m.teamId) { postJson('/api/conversations/' + m.convId + '/messages', { content: text }).then(function (r) { done(r.ok); }, function () { done(false); }); return; }
       var t = { kind: 'team', key: 'team:' + m.teamId + ':' + m.slotId, teamId: m.teamId, slotId: m.slotId, role: m.role };
       // Respond now: the message goes ahead of the queue and into the running turn, the same as the bolt.
@@ -6490,8 +6532,9 @@
       '<label class="aiondx-uspanel-chk"><input type="checkbox" data-f="alerts"> Send usage alerts</label></div>' +
       '<div class="aiondx-uspanel-sec"><b class="aiondx-uspanel-h"></b><div class="aiondx-uspanel-rules"></div>' +
       '<div class="aiondx-uspanel-add"><select data-f="nwin"></select> at <input type="number" min="1" max="100" value="80" data-f="npct"> % <span>tell</span> <select data-f="nwho"></select>' +
+      ' <label class="aiondx-uspanel-chk" title="Off: it goes off once, then is removed"><input type="checkbox" data-f="nrep"> Every window</label>' +
       '<button type="button" data-act="add">Add alert</button></div>' +
-      '<div class="aiondx-uspanel-note">The message goes straight into the agent\u2019s running turn, the same as the Respond-now bolt. An alert goes off once per window; agents can set their own with <code>aiondx usage alert</code>.</div></div></div>';
+      '<div class="aiondx-uspanel-note">The message goes straight into the agent\u2019s running turn, the same as the Respond-now bolt. An alert goes off once and is then removed, unless it is set for every window; it never wakes an agent that is idle with its Loop off. Agents can set their own with <code>aiondx usage alert</code>.</div></div></div>';
     var q = function (sel) { return el.querySelector(sel); };
     q('[data-f="pollSec"]').innerHTML = optionsHtml([[1, '1 second'], [3, '3 seconds'], [5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds'], [60, 'minute']], usageCfg.pollSec);
     q('[data-f="writeSec"]').innerHTML = optionsHtml([[5, '5 seconds'], [15, '15 seconds'], [30, '30 seconds'], [60, 'minute'], [120, '2 minutes'], [300, '5 minutes']], usageCfg.writeSec);
@@ -6514,7 +6557,7 @@
         row.className = 'aiondx-uspanel-rule';
         var who = r.notify === 'all' ? 'every member on that account' : r.notify === 'self' ? (r.who || 'the agent that set it') : 'the team lead';
         row.innerHTML = '<span></span><button type="button" data-act="del" data-i="' + i + '">Remove</button>';
-        row.firstChild.textContent = (r.window === 'week' ? 'Weekly' : '5-hour') + ' window at ' + Math.round(Number(r.at) * 100) + '%: tell ' + who + (r.by === 'agent' ? ' (set by ' + (r.who || 'an agent') + ')' : '') + (r.message ? ' \u2014 ' + r.message : '');
+        row.firstChild.textContent = (r.window === 'week' ? 'Weekly' : '5-hour') + ' window at ' + Math.round(Number(r.at) * 100) + '%: tell ' + who + (r.by === 'agent' ? ' (set by ' + (r.who || 'an agent') + ')' : '') + (r.repeat ? ', every window' : ', once') + (r.message ? ': ' + r.message : '');
         box.appendChild(row);
       });
     }
@@ -6538,7 +6581,7 @@
       } else if (act === 'add') {
         var pctv = Math.round(Number(q('[data-f="npct"]').value));
         if (!(pctv >= 1 && pctv <= 100)) { q('[data-f="npct"]').focus(); return; }
-        var rule = { window: q('[data-f="nwin"]').value, at: pctv / 100, notify: q('[data-f="nwho"]').value, by: 'user' };
+        var rule = { window: q('[data-f="nwin"]').value, at: pctv / 100, notify: q('[data-f="nwho"]').value, by: 'user', repeat: !!q('[data-f="nrep"]').checked, set: Date.now() };
         var list = ((usageAlerts[scope] && usageAlerts[scope].rules) || []).filter(function (r) { return !(r.window === rule.window && r.notify === rule.notify); });
         list.push(rule);
         saveUsageRules(scope, list);

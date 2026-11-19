@@ -6266,6 +6266,45 @@ async function pageTarget() {
       check(sc, 'Default in Settings: the lane\'s own colour is gone, back to its place in the palette', th2 && !(th2.members || {})['team1/slotB'], JSON.stringify(th2));
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
+    {
+      const sc = 'alerts';
+      // Usage alerts disarm once they have alerted and never wake an idle agent (November 19th, 2026, the user: "THOSE ALERTS NEED TO
+      // AUTO-DISARM ONCE THEY SUCCESSFULLY ALERT A TEAM"; a finished team's alerts had woken it for days).
+      await load('theme=light');
+      const seed = (rules, busy) => js(`(async () => {
+        const S = window.__stub.store, R = window.__stub.routes, now = Date.now();
+        S['aiondx.usage.acct.k1'] = { five_hour: { u: 0.85, reset: Math.floor(now / 1000) + 3600 }, seven_day: { u: 0.3, reset: Math.floor(now / 1000) + 86400 }, at: now };
+        S['aiondx.usage.conv.harness1'] = { acct: 'k1', at: now };
+        S['aiondx.usagealert.conv.harness1'] = { rules: ${JSON.stringify(rules)}, at: now, rev: 1 };
+        delete S['aiondx.usagefired.conv.harness1'];
+        R['GET /api/conversations/harness1'] = { success: true, data: { id: 'harness1', status: ${busy ? "'running'" : "'finished'"}, runtime: { is_processing: ${busy ? 'true' : 'false'}, state: ${busy ? "'running'" : "'idle'"} } } };
+        R['POST /api/conversations/harness1/messages'] = { success: true, data: {} };
+        window.__calls.length = 0;
+        await window.__aionDx.pullNow();
+        return 0; })()`);
+      const settle = async () => { for (let i = 0; i < 6; i++) { await js('window.__aionDx.checkAlerts(); 0'); await sleep(300); } };
+      const sends = () => js(`window.__calls.filter((c) => c.method === 'POST' && c.path === '/api/conversations/harness1/messages' && /\\[AionDX usage alert\\]/.test((c.body || {}).content || '')).length`);
+      const rulesNow = () => js(`(() => { const v = window.__stub.store['aiondx.usagealert.conv.harness1']; return v ? v.rules : null; })()`);
+      const once = [{ window: '5h', at: 0.8, notify: 'self', by: 'agent', who: 'Main', conv: 'harness1', slot: '', message: '', repeat: false, set: Date.now() }];
+      // the chat is idle and its Loop is off: nothing is sent, nothing woken, the alert waits
+      await seed(once, false);
+      await settle();
+      check(sc, 'over the line, but the agent is idle with its Loop off: nothing is sent', (await sends()) === 0, String(await sends()));
+      check(sc, 'and the alert stays armed for when it is at work', JSON.stringify(await rulesNow()) === JSON.stringify(once), JSON.stringify(await rulesNow()));
+      // at work: it is told once, and the alert is gone
+      await seed(once, true);
+      await settle();
+      check(sc, 'at work: the alert goes in once', (await sends()) === 1, String(await sends()));
+      check(sc, 'and, having alerted, it is disarmed (removed)', (await rulesNow()) === null, JSON.stringify(await rulesNow()));
+      await settle();
+      check(sc, 'and does not go off again', (await sends()) === 1, String(await sends()));
+      // a repeating one stays
+      const rep = [Object.assign({}, once[0], { repeat: true })];
+      await seed(rep, true);
+      await settle();
+      check(sc, 'one set to repeat goes off and stays for the next window', (await sends()) === 1 && JSON.stringify(await rulesNow()) === JSON.stringify(rep), JSON.stringify([await sends(), await rulesNow()]));
+      await js(`(() => { const S = window.__stub.store; ['aiondx.usage.acct.k1', 'aiondx.usage.conv.harness1', 'aiondx.usagealert.conv.harness1', 'aiondx.usagefired.conv.harness1'].forEach((k) => delete S[k]); return 0; })()`);
+    }
     clearTimeout(deadline);
     let failed = 0;
     for (const r of results) {
