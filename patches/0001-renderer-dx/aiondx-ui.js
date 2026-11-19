@@ -4813,13 +4813,13 @@
         if (cheld === null) continue;   // working: the next minute
         var ir;
         try { ir = await placesImport(b, ch.package); } finally { await releaseIds(cheld); }
-        if (ir && ir.ok && ir.imported && !ir.imported.skipped) came.push(ir.imported);
+        if (ir && ir.ok && ir.imported && typeof ir.imported.skipped !== 'string') came.push(ir.imported);
       }
       // new on a plugged-in drive
       for (var k = 0; k < (r.incoming || []).length; k++) {
         var inc = r.incoming[k];
         var nr = await placesImport(b, inc.package);
-        if (nr && nr.ok && nr.imported && !nr.imported.skipped) came.push(nr.imported);
+        if (nr && nr.ok && nr.imported && typeof nr.imported.skipped !== 'string') came.push(nr.imported);
       }
       if (came.length || (r.relink || []).length) {
         await placesLoad();
@@ -4872,7 +4872,7 @@
     var r = await b.call('import', { package: pkg, user: user || undefined });
     if (!r || !r.ok) { placesLog(b, 'warn', 'import ' + pkg + ' failed: ' + ((r && r.error) || 'no answer')); return r; }
     var imp = r.imported;
-    if (!imp || imp.skipped) return r;
+    if (!imp || typeof imp.skipped === 'string') return r;   // skipped as text: this PC has it already; as a number: rows left out
     // agents the mover added straight into the database: AionCore reloads each (switching one on is its own reload)
     for (var a = 0; a < (imp.agentsAdded || []).length; a++) {
       await nativeFetch.call(window, apiUrl('/api/agents/' + encodeURIComponent(imp.agentsAdded[a].agent_id) + '/enabled'), {
@@ -13446,11 +13446,13 @@
     release: '0.28.5', date: '',
     items: [
       ['Lane colours', 'Right-click a team member\u2019s button at the top of a team to give its lane a colour; its name, its column and its messages to teammates take it. Lanes you have not coloured get distinct colours in lane order, the lead first. Settings > Appearance has the same colours, and a team lead can set them with aiondx team colour.'],
+      ['Pictures of any size', 'A big picture in a DX Doc shows (from a smaller copy, with its size), and a click opens it whole, full screen; pictures in chat open full screen too. Right-click a picture: Open in photo viewer, or Open image location.'],
       ['What changed in your docs', 'A red number on the Docs button counts the docs an agent changed since you last had the panel open in that chat. Changed docs and tabs are marked in the panel until you open them.'],
       ['Big files go in as links', 'Drag or paste a file of 30 MB or more into a message box and it goes in as a link to where it already is, so files of any size can go with a message. Smaller files are still copied in.'],
       ['Folders go in as links', 'Drag a folder into a message box: it shows there like a dropped file, and the agent gets its path.'],
       ['Archived chats stay where they are kept', 'A chat on a drive that you archive stays on the drive, archived on every PC that reads it, and goes back into its group when you restore it.'],
       ['Chats on a drive work on another PC', 'Chats brought in from a drive belong to you on the new PC and bring their own agent with them, without any key. Each one is checked as it comes in; one that cannot be opened is shown in a notice that stays until you click it, and AionDX\u2019s log says why. Groups travel with them, and opening a chat no longer rewrites it on the drive.'],
+      ['Usage alerts go off once', 'A usage alert now tells its agents once and is then removed, unless it is set for every window (the Every window box when you add one). It never wakes an agent that is idle with its Loop off.'],
       ['Claude Code installs with a meter', 'Installing Claude Code from AionDX shows how much has downloaded, then a notice with a Sign in button when it is ready.'],
       ['Fixes', 'Chat colours says No teams yet when you have none. The Loop sends to a team member\u2019s own chat the team\u2019s way (it was refused). The skills list shows the skills in the folders above a chat, and counts every use. AionDX\u2019s Claude hooks work on a PC without Git for Windows, where they had blocked every file edit. Agents can pipe commands to aioncore from Windows PowerShell.'],
     ],

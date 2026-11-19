@@ -15,11 +15,13 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
 
 const DIR = path.join(os.tmpdir(), 'aiondx-biglink-test');
 const BIG = path.join(DIR, 'big-installer-200mb.bin');
+const FOLDER = path.join(DIR, 'Survey sheets');   // a folder dropped into the box goes in as a link too (November 17th, 2026)
 
 (async () => {
   fs.mkdirSync(DIR, { recursive: true });
   const fd = fs.openSync(BIG, 'w'); fs.ftruncateSync(fd, 200 * 1048576); fs.closeSync(fd);
-  const app = await launch({ port: 9571, deadlineMs: 330000 });
+  fs.mkdirSync(FOLDER, { recursive: true }); fs.writeFileSync(path.join(FOLDER, 'sheet-1.txt'), 'one');
+  const app = await launch({ port: 9571, deadlineMs: 480000 });
   try {
     for (let i = 0; i < 90; i++) { const st = await app.js('({ dx: !!window.__aionDx, port: window.__backendPort || null })'); if (st && st.dx && st.port) break; await sleep(1000); }
     await app.overrideScript('aiondx-ui.js', path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'));
@@ -46,10 +48,10 @@ const BIG = path.join(DIR, 'big-installer-200mb.bin');
       });
       return Object.values(byId).filter((r) => r.url);
     };
-    const dropOn = async (sel) => {
+    const dropOn = async (sel, what) => {
       const p = await app.js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
       if (!p) return false;
-      const data = { items: [], files: [BIG], dragOperationsMask: 1 };
+      const data = { items: [], files: [what || BIG], dragOperationsMask: 1 };
       for (const type of ['dragEnter', 'dragOver', 'drop']) { await app.send('Input.dispatchDragEvent', { type, x: p.x, y: p.y, data }); await sleep(150); }
       return true;
     };
@@ -91,6 +93,32 @@ const BIG = path.join(DIR, 'big-installer-200mb.bin');
         return l.filter((m) => m && m.position !== 'right' && m.role !== 'user').map((m) => JSON.stringify(m.content || m)).join(' | '); })()`) || '';
     }
     check('the agent was given the real path (its reply names the file\'s folder)', /aiondx-biglink-test/i.test(said) && /big-installer-200mb\.bin/i.test(said), said.slice(0, 600));
+
+    // 1b. A folder dropped into the same box: shown there, sent as a link to it, accepted, its path given to the agent
+    await sleep(3000);
+    app.events.length = 0;
+    check('a folder dropped into the box', await dropOn('.sendbox-panel', FOLDER));
+    await sleep(2500);
+    const fbox = await app.js(`(document.querySelector('.sendbox-panel') || {}).innerText || ''`);
+    check('the folder shows in the box like a file', /Survey sheets/.test(fbox), fbox.slice(0, 300));
+    check('and nothing was uploaded, no failure', reqs().filter((r) => /\/api\/fs\/upload/.test(r.url)).length === 0 && !/Failed to process/.test(await app.js('document.body.innerText')));
+    await app.js(`(() => { const t = document.querySelector('.sendbox-panel textarea'); t.focus(); return 0; })()`);
+    await app.type('Reply with only the full path of the attached folder, nothing else.');
+    await sleep(300);
+    app.events.length = 0;
+    await app.key('Enter');
+    await sleep(4000);
+    const fsent = reqs().filter((r) => r.method === 'POST' && /\/api\/conversations\/[^/]+\/messages$/.test(r.url));
+    const ffiles = fsent.map((r) => { try { return JSON.parse(r.body).files; } catch (e) { return null; } });
+    check('the message went with the folder as a local attachment, and AionCore (core-0023) accepted it',
+      fsent.length === 1 && JSON.stringify(ffiles[0]) === JSON.stringify([{ kind: 'local', path: FOLDER }]) && fsent[0].status >= 200 && fsent[0].status < 300, JSON.stringify(fsent).slice(0, 600));
+    let fsaid = '';
+    for (let i = 0; i < 45 && !/Survey sheets/i.test(fsaid); i++) {
+      await sleep(2000);
+      fsaid = await app.js(`(async () => { const rs = await window.__t.call('GET', '/api/conversations/${conv.id}/messages?limit=20'); const d = rs.json && (rs.json.data || rs.json); const l = Array.isArray(d) ? d : (d && (d.items || d.messages)) || [];
+        return l.filter((m) => m && m.position !== 'right' && m.role !== 'user').map((m) => JSON.stringify(m.content || m)).join(' | '); })()`) || '';
+    }
+    check('the agent was given the folder\'s path', /Survey sheets/i.test(fsaid), fsaid.slice(-400));
 
     // 2. The new-chat page's box: the file is attached there and the chat it starts gets it as a link.
     await app.js(`location.hash = '#/guid'; 0`);

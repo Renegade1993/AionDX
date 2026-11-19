@@ -249,7 +249,7 @@ function install(electron, opts) {
       try { m = JSON.parse(fs.readFileSync(path.join(pkg, 'aiondx-chat.json'), 'utf8')); } catch { return { ok: false, error: 'No AionDX chat in ' + pkg + '.' }; }
       const rec = readRec();
       const r = await run('import', { package: pkg, lastSync: rec.sync[m.id] || null, user: req.user ? String(req.user) : undefined });
-      if (r.ok && r.imported && !r.imported.skipped) {
+      if (r.ok && r.imported && typeof r.imported.skipped !== 'string') {   // skipped: text when it was not brought in, a count of rows left out when it was
         const rec2 = readRec();
         const id = r.imported.id;
         rec2.placed[id] = { kind: m.kind, package: pkg, at: Date.now() };

@@ -3393,6 +3393,7 @@ async function pageTarget() {
       await humanClick('[data-testid="aiondx-places-menu"] button');
       await sleep(400);
       await clogShot("0.28.3", "Chats that share a folder move together", "[data-testid=\"aiondx-places-ask\"] .aiondx-places-asktext");
+      await clogShot('0.28.5', 'Archived chats stay where they are kept', '[data-testid^="aiondx-places-row-"]');
       const at1 = await askYes(/^"Map notes" also works in C:\\Proj\\Maps\.\n\nMove it together\? That folder goes to H:\\Chats\\Maps once/);
       check(sc, 'a chat whose folder another chat works in: asked to move them together, naming it and where the folder goes', at1.ok, at1.t);
       await sleep(400);
@@ -3459,6 +3460,7 @@ async function pageTarget() {
       await clogShot("0.28.0", "Skills in every chat", "[data-testid=\"aiondx-skills\"]");
       await clogShot("0.28.0", "One set of skills for every agent", "[data-testid=\"aiondx-skills\"] .aiondx-skill-layer");
       await clogShot("0.28.3", "Fixes", "[data-testid=\"aiondx-skills\"]");
+      await clogShot('0.28.5', 'Fixes', '[data-testid="aiondx-skills"]');
       await js(`(() => { const s = document.querySelector('[data-skill="review"] .aiondx-skill-state'); s.value = 'name-only'; s.dispatchEvent(new Event('change', { bubbles: true })); return 0; })()`);
       await sleep(300);
       const set = await js('window.__sk.find((c) => c[0] === "set")');
@@ -3873,11 +3875,11 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW285 = ['Lane colours', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Claude Code installs with a meter', 'Fixes'];
+      const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.5' && JSON.stringify(c.names) === JSON.stringify(NEW285) &&
-        /^Right-click a team member/.test(c.hows[0]) && /aiondx team colour/.test(c.hows[0]) && /red number on the Docs button/.test(c.hows[1]), JSON.stringify(c));
+        /^Right-click a team member/.test(c.hows[0]) && /aiondx team colour/.test(c.hows[0]) && /red number on the Docs button/.test(c.hows[2]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
@@ -3920,7 +3922,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.5 card (with 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 39, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.5 card (with 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 41, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -4511,6 +4513,7 @@ async function pageTarget() {
         await sleep(900);
         const pic = await js(`(() => { const i = document.querySelector('#tbox .dx-body img'); return i ? { src: i.getAttribute('src'), full: i.getAttribute('data-dx-full'), title: i.title } : null; })()`);
         check(sc, 'a 20 MB picture in a doc: drawn (from its smaller copy), never "too large", saying its size and that a click shows it whole', pic && pic.src === SMALL && pic.full === 'pictures/sheet.png' && /2572 x 4800, 20 MB\. Click for full size\./.test(pic.title), JSON.stringify(pic));
+        await clogShot('0.28.5', 'Pictures of any size', '#tbox .dx-body img');
         check(sc, 'and the page knows its file (Open image location, Open in photo viewer)', (await js(`window.__aionDx.imagePathAt ? (() => { const i = document.querySelector('#tbox .dx-body img'); const r = i.getBoundingClientRect(); return window.__aionDx.imagePathAt(r.left + 2, r.top + 2); })() : ''`)) === 'C:\\ws\\Docs\\pictures\\sheet.png');
         await js(`document.querySelector('#tbox .dx-body img').click(); 0`);
         await sleep(600);
@@ -6125,6 +6128,7 @@ async function pageTarget() {
       check(sc, 'a message with no files goes out unchanged', plain && plain.content === 'no files' && !('files' in plain), JSON.stringify(plain));
       await js(`localStorage.removeItem('aionui.dx.biglinks'); delete window.electronAPI; 0`);
       await clogShot('0.28.5', 'Big files go in as links', '#solo .sendbox-panel');
+      await clogShot('0.28.5', 'Folders go in as links', '#solo .sendbox-panel');
     }
     {
       const sc = 'bubbleteams';
@@ -6222,7 +6226,7 @@ async function pageTarget() {
         window.aiondxPlaces = { call: (op, a) => {
           window.__df.calls.push([op, a || {}]);
           if (op === 'status') return Promise.resolve({ ok: true, items, places: [], groups: {}, home: '' });
-          if (op === 'import' && /in1/.test(a.package)) return Promise.resolve({ ok: true, imported: { id: 'in1', from: 'in1', kind: 'c', name: 'Trip notes', mode: 'new', rows: 9, skipped: 0, owner: a.user, convIds: ['in1'], agentsAdded: [{ agent_id: 'x123', name: 'Claude Code (Office)', backend: 'claude' }], agentsMissing: [], historyFolded: [], group: 'Work' } });
+          if (op === 'import' && /in1/.test(a.package)) return Promise.resolve({ ok: true, imported: { id: 'in1', from: 'in1', kind: 'c', name: 'Trip notes', mode: 'new', rows: 9, skipped: 2, owner: a.user, convIds: ['in1'], agentsAdded: [{ agent_id: 'x123', name: 'Claude Code (Office)', backend: 'claude' }], agentsMissing: [], historyFolded: [], group: 'Work' } });
           if (op === 'import' && /in2/.test(a.package)) return Promise.resolve({ ok: true, imported: { id: 'in2', from: 'in2', kind: 'c', name: 'Map work', mode: 'new', rows: 4, skipped: 0, owner: a.user, convIds: ['in2'], agentsAdded: [], agentsMissing: ['zz9'], historyFolded: [], group: null } });
           if (op === 'relink') return Promise.resolve({ ok: true, relinked: { kind: 'c', id: a.item.id, name: 'Map work', at: a.to, rows: 3, journal: 'j' } });
           if (op === 'log' || op === 'sync') return Promise.resolve({ ok: true, exported: 0, changed: [], relink: [], incoming: [] });
@@ -6235,7 +6239,7 @@ async function pageTarget() {
       check(sc, 'an import names the signed-in user', imp1 && imp1[1].user === 'user_signed_in', JSON.stringify(imp1));
       check(sc, 'the agent it added is reloaded in AionCore (switched on)', (await js(`JSON.stringify(window.__df.calls.filter((c) => c[0] === 'enable'))`)) === JSON.stringify([['enable', { enabled: true }]]));
       const logs1 = await js(`window.__df.calls.filter((c) => c[0] === 'log').map((c) => c[1])`);
-      check(sc, 'it is logged as seen, with its owner and the agent added', logs1.length === 1 && logs1[0].level === 'info' && /import c:in1 \(Trip notes\) mode new, owner user_signed_in, rows 9, skipped 0, agents added x123, seen/.test(logs1[0].text), JSON.stringify(logs1));
+      check(sc, 'it is logged as seen, with its owner and the agent added', logs1.length === 1 && logs1[0].level === 'info' && /import c:in1 \(Trip notes\) mode new, owner user_signed_in, rows 9, skipped 2, agents added x123, seen/.test(logs1[0].text), JSON.stringify(logs1));
       check(sc, 'a chat that opens: no warning', !(await dfToasts()).some((t) => /cannot open/.test(t)));
       await js('window.__df.calls.length = 0; 0');
       r = await js(`window.__aionDx.placesImportNow('W:\\\\Chats\\\\Map work (in2)')`);
@@ -6248,6 +6252,7 @@ async function pageTarget() {
       await sleep(9600);
       tl = await dfToasts();
       check(sc, 'those notices stay past the usual 9 seconds, until clicked', tl.filter((t) => /cannot open it|does not have/.test(t)).length === 2, JSON.stringify(tl));
+      await clogShot('0.28.5', 'Chats on a drive work on another PC', '.aiondx-toast--stay');
       await js(`document.querySelectorAll('.aiondx-toast--stay').forEach((t) => t.click()); 0`);
       check(sc, 'a click puts each away', !(await dfToasts()).some((t) => /cannot open it|does not have/.test(t)));
       // a relink waits to write the package until the chat is seen
@@ -6366,6 +6371,15 @@ async function pageTarget() {
       const rep = [Object.assign({}, once[0], { repeat: true })];
       await seed(rep, true);
       await settle();
+      // the usage panel, where the user adds one (Every window) and sees once or every window on each
+      await js('window.__aionDx.repaint(); 0'); await sleep(300);
+      if (await js(`!!document.querySelector('[data-testid="aiondx-usage"]')`)) {
+        await humanClick('[data-testid="aiondx-usage"]'); await sleep(400);
+        const up = await js(`(() => { const p = document.querySelector('.aiondx-uspanel'); return p ? { rep: !!p.querySelector('[data-f="nrep"]'), rules: [...p.querySelectorAll('.aiondx-uspanel-rule span')].map((e) => e.textContent) } : null; })()`);
+        check(sc, 'the usage panel offers Every window and says once or every window on each alert', up && up.rep && up.rules.length === 1 && /, every window$/.test(up.rules[0]), JSON.stringify(up));
+        await clogShot('0.28.5', 'Usage alerts go off once', '.aiondx-uspanel');
+        await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
+      }
       check(sc, 'one set to repeat goes off and stays for the next window', (await sends()) === 1 && JSON.stringify(await rulesNow()) === JSON.stringify(rep), JSON.stringify([await sends(), await rulesNow()]));
       await js(`(() => { const S = window.__stub.store; ['aiondx.usage.acct.k1', 'aiondx.usage.conv.harness1', 'aiondx.usagealert.conv.harness1', 'aiondx.usagefired.conv.harness1'].forEach((k) => delete S[k]); return 0; })()`);
     }
