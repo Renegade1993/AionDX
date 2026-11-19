@@ -7185,10 +7185,38 @@
     var ib = box.querySelector('.aiondx-acc-install');
     ib.disabled = true;
     box.querySelectorAll('.aiondx-acc-signin, .aiondx-acc-add').forEach(function (b) { b.disabled = true; });
-    welcomeStatus('Installing Claude Code with Anthropic\u2019s own installer (claude.ai/install.ps1). It shows no progress while it downloads; leave this open.', '');
+    welcomeStatus('Installing Claude Code with Anthropic\u2019s own installer (claude.ai/install.ps1). Leave this open.', '');
+    var meter = box.querySelector('.aiondx-acc-meter');
+    var ready0 = box.querySelector('.aiondx-acc-ready');
+    if (ready0) ready0.hidden = true;
+    var paint = function (p) {
+      var b2 = accountsBox(); var m = b2 && b2.querySelector('.aiondx-acc-meter');
+      if (!m || !p) return;
+      m.hidden = false;
+      var mb = function (n) { return (n / 1048576).toFixed(0); };
+      var share = p.total > 0 ? Math.min(1, p.bytes / p.total) : 0;
+      var text = p.phase === 'downloading' ? 'Downloading Claude Code' + (p.version ? ' ' + p.version : '') + ': ' + mb(p.bytes) + (p.total ? ' of ' + mb(p.total) + ' MB (' + Math.round(share * 100) + '%)' : ' MB')
+        : p.phase === 'setup' ? 'Setting up Claude Code' + (p.version ? ' ' + p.version : '') + '...'
+        : p.phase === 'done' ? 'Claude Code is installed.'
+        : p.phase === 'failed' ? 'The install stopped.'
+        : 'Finding the latest Claude Code...';
+      var tx = m.querySelector('.aiondx-acc-meter-text');
+      if (tx.textContent !== text) tx.textContent = text;
+      var bar = m.querySelector('.aiondx-acc-meter-bar > span');
+      bar.style.width = (p.phase === 'setup' || p.phase === 'done' ? 100 : Math.round(share * 100)) + '%';
+      m.classList.toggle('aiondx-acc-meter--busy', p.phase === 'checking' || p.phase === 'setup' || (p.phase === 'downloading' && !p.total));
+    };
+    if (meter) { meter.hidden = false; paint({ phase: 'checking', bytes: 0, total: 0 }); }
+    var poll = window.aiondxSignin.progress ? setInterval(function () {
+      if (!accountsBox()) { clearInterval(poll); return; }
+      window.aiondxSignin.progress().then(function (pr) { if (pr && pr.ok) paint(pr.progress); }, function () {});
+    }, 600) : null;
     var r = null;
     try { r = await window.aiondxSignin.install(); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+    if (poll) clearInterval(poll);
     if (!accountsBox()) return;
+    var mEl = accountsBox().querySelector('.aiondx-acc-meter');
+    if (mEl) mEl.hidden = true;
     ib.disabled = false;
     if (!r || !r.ok) { welcomeStatus('Claude Code was not installed: ' + ((r && r.error) || 'no answer') + '.', (r && r.text) || ''); accountsStatus(); return; }
     await accountsStatus();
@@ -7197,6 +7225,17 @@
     welcomeStatus((r.already ? 'Claude Code is already on this PC' : 'Claude Code ' + (r.version || '') + ' is installed') + '. Sign in now; restart AionDX once so its chats can use it.', '');
     var rs = box2.querySelector('.aiondx-acc-restart');
     if (rs && !r.already) rs.hidden = false;
+    // it is time to sign in: said where the eye is, with the button right there, and once as a toast
+    var ready = box2.querySelector('.aiondx-acc-ready');
+    if (ready) {
+      ready.querySelector('.aiondx-acc-ready-text').textContent = (r.already ? 'Claude Code is on this PC.' : 'Claude Code ' + String(r.version || '').replace(/ *[(]Claude Code[)] *$/, '') + ' is installed.') +
+        ' Next: sign in to your Claude account. Your browser opens on Anthropic\u2019s sign-in page; come back here when it says you are signed in.' + (r.already ? '' : ' Then restart AionDX once.');
+      ready.hidden = false;
+      var go = ready.querySelector('.aiondx-acc-ready-go');
+      go.onclick = function (ev) { ev.preventDefault(); ready.hidden = true; accountsStart(''); };
+      try { ready.scrollIntoView({ block: 'center' }); go.focus(); } catch (e) {}
+    }
+    toast('Claude Code is installed: time to sign in.', 'Press Sign in now, where you installed it.');
   }
   async function accountsStart(account) {
     accounts.account = account;
@@ -7368,6 +7407,11 @@
             '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-acc-add">Add another Claude account</button>' +
             '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-acc-restart" data-testid="aiondx-acc-restart" hidden>Restart AionDX</button>' +
           '</div>' +
+          // the install's meter, and the notice that it is time to sign in (the user, November 17th, 2026: "the Claude Code download and setup
+          // needs a meter and a clearer alert when it's time to sign in")
+          '<div class="aiondx-acc-meter" data-testid="aiondx-acc-meter" hidden><div class="aiondx-acc-meter-text"></div><div class="aiondx-acc-meter-bar"><span></span></div></div>' +
+          '<div class="aiondx-acc-ready" data-testid="aiondx-acc-ready" role="alert" hidden><div class="aiondx-acc-ready-text"></div>' +
+            '<button type="button" class="arco-btn arco-btn-primary aiondx-acc-ready-go" data-testid="aiondx-acc-ready-go">Sign in now</button></div>' +
           '<div class="aiondx-signin-row aiondx-acc-newrow" data-testid="aiondx-acc-newrow" hidden><input class="arco-input aiondx-acc-newname" type="text" spellcheck="false" autocomplete="off" placeholder="A short name for it, like work">' +
           '<button type="button" class="arco-btn arco-btn-primary arco-btn-size-small aiondx-acc-newgo">Sign it in</button>' +
           '<button type="button" class="arco-btn arco-btn-text arco-btn-size-small aiondx-acc-newcancel">Cancel</button></div>' +
@@ -8452,6 +8496,15 @@
     '.aiondx-welcome-fact-desc{font-size:12px;line-height:18px;color:var(--color-text-2);margin-top:2px}',
     '.aiondx-welcome-status{min-height:18px;margin:10px 0 0;font-size:13px;line-height:19px;color:var(--color-text-2);overflow-wrap:anywhere}',
     // "Sign in to your agents"
+    '.aiondx-acc-meter{flex-basis:100%;margin:8px 0 2px}',
+    '.aiondx-acc-meter-text{font-size:12px;color:var(--color-text-2);margin-bottom:4px}',
+    '.aiondx-acc-meter-bar{height:6px;border-radius:3px;background:var(--color-fill-3,rgba(0,0,0,.08));overflow:hidden}',
+    '.aiondx-acc-meter-bar>span{display:block;height:100%;width:0;background:rgb(var(--primary-6));border-radius:3px;transition:width .4s}',
+    '.aiondx-acc-meter--busy .aiondx-acc-meter-bar>span{width:35% !important;animation:aiondx-acc-busy 1.2s ease-in-out infinite}',
+    '@keyframes aiondx-acc-busy{0%{margin-left:-35%}100%{margin-left:100%}}',
+    '.aiondx-acc-ready{flex-basis:100%;display:flex;align-items:center;gap:12px;margin:10px 0 2px;padding:10px 12px;border-radius:8px;border:1px solid rgb(var(--primary-6));background:rgba(var(--primary-6),.08);font-size:13px;color:var(--color-text-1)}',
+    '.aiondx-acc-ready[hidden]{display:none !important}',
+    '.aiondx-acc-ready-text{flex:1}',
     '.aiondx-acc-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:14px 0 0;padding:10px 12px;border:1px solid var(--color-border-2);border-radius:8px}',
     '.aiondx-acc-name{font-weight:600;color:var(--color-text-1)}',
     '.aiondx-acc-state{flex:1;min-width:160px;font-size:13px;color:var(--color-text-2)}',
@@ -13177,6 +13230,37 @@
       });
     }, 0);
   }
+  // A folder dropped or pasted into a message box goes in as a link too (the user, November 17th, 2026: "i should be able to drag a folder to
+  // link its url, but to me it should look the same as if i drag a jpg to it"). The page cannot read a folder as a file, so its upload failed;
+  // the drop and paste are looked at first (each item's entry says whether it is a folder) and those File objects are linked, whatever size.
+  // AionCore takes a local attachment that is a folder from core-0023.
+  var bigLinkFolders = typeof WeakSet === 'function' ? new WeakSet() : null;
+  var bigLinkFolderKeys = {};   // name|size|lastModified -> when, for a File object the page hands on as a copy
+  function bigLinkFolderKey(f) { return [f && f.name, f && f.size, f && f.lastModified].join('|'); }
+  function bigLinkNoteFolders(dt) {
+    try {
+      var items = dt && dt.items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (!it || it.kind !== 'file' || typeof it.webkitGetAsEntry !== 'function') continue;
+        var en = it.webkitGetAsEntry();
+        if (!en || !en.isDirectory) continue;
+        var f = it.getAsFile();
+        if (!f) continue;
+        if (bigLinkFolders) bigLinkFolders.add(f);
+        bigLinkFolderKeys[bigLinkFolderKey(f)] = Date.now();
+      }
+    } catch (e) { /* nothing noted: an ordinary upload */ }
+  }
+  function bigLinkIsFolder(f) {
+    if (!f) return false;
+    if (bigLinkFolders && bigLinkFolders.has(f)) return true;
+    var at = bigLinkFolderKeys[bigLinkFolderKey(f)];
+    return !!at && Date.now() - at < 60000;
+  }
+  window.addEventListener('drop', function (ev) { bigLinkNoteFolders(ev.dataTransfer); }, true);
+  window.addEventListener('paste', function (ev) { bigLinkNoteFolders(ev.clipboardData); }, true);
   function bigLinkInstall() {
     var X = window.XMLHttpRequest;
     if (!X || !X.prototype || X.prototype.__dxBigLink) return;
@@ -13190,9 +13274,11 @@
       try {
         if (this.__dxUpload && !disabled() && body && typeof body.get === 'function') {
           var f = body.get('file');
-          if (f && typeof f === 'object' && f.size >= BIGLINK_MIN) {
+          var folder = bigLinkIsFolder(f);
+          if (f && typeof f === 'object' && (f.size >= BIGLINK_MIN || folder)) {
             var p = bigLinkPathOf(f);
-            if (p) { bigLinkAnswer(this, p, f.size); return; }
+            if (p) { bigLinkAnswer(this, p, f.size || 0); return; }
+            if (folder) { toast((f.name || 'That folder') + ' cannot go in from here.', 'A folder goes in as a link to where it is, and this page cannot see where it is. Type or paste its path instead.'); }
             var name = String(f.name || 'The file');
             this.addEventListener('load', function () {
               if (this.status === 413) toast(name + ' is over the 30 MB upload limit.', 'Here it can only be copied, and copies stop at 30 MB. In the AionDX app a file this big goes in as a link to where it is.');

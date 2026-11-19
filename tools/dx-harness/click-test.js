@@ -2925,7 +2925,13 @@ async function pageTarget() {
       // a PC without Claude Code (November 16th, 2026): an Install button runs Anthropic's installer, then the sign-in is ready
       await js(`(() => { window.__si.installed = false; window.__si.logged = false;
         window.aiondxSignin.status = () => Promise.resolve({ ok: true, installed: window.__si.installed, loggedIn: false });
-        window.aiondxSignin.install = () => { window.__si.calls.push(['install']); window.__si.installed = true; return new Promise((r) => setTimeout(() => r({ ok: true, exe: 'C:/u/.local/bin/claude.exe', version: '2.1.400 (Claude Code)' }), 2000)); };
+        window.__si.p = { phase: 'idle', bytes: 0, total: 0, version: '' };
+        window.aiondxSignin.progress = () => Promise.resolve({ ok: true, progress: window.__si.p });
+        window.aiondxSignin.install = () => { window.__si.calls.push(['install']); window.__si.installed = true;
+          window.__si.p = { phase: 'checking', bytes: 0, total: 0, version: '' };
+          setTimeout(() => { window.__si.p = { phase: 'downloading', bytes: 100 * 1048576, total: 362 * 1048576, version: '2.1.400' }; }, 300);
+          setTimeout(() => { window.__si.p = { phase: 'setup', bytes: 362 * 1048576, total: 362 * 1048576, version: '2.1.400' }; }, 1700);
+          return new Promise((r) => setTimeout(() => { window.__si.p.phase = 'done'; r({ ok: true, exe: 'C:/u/.local/bin/claude.exe', version: '2.1.400 (Claude Code)' }); }, 3000)); };
         window.aiondxSignin.restart = () => { window.__si.calls.push(['restart']); return Promise.resolve({ ok: true }); };
         return 0; })()`);
       await humanClick('.aiondx-w-back');
@@ -2944,12 +2950,32 @@ async function pageTarget() {
       await sleep(100);
       iv = await inst();
       check(sc, 'while it installs, it says whose installer runs and to leave it open', /Anthropic\u2019s own installer \(claude\.ai\/install\.ps1\)/.test(iv.status), JSON.stringify(iv));
-      await sleep(2600);
+      // November 17th, 2026 (the laptop): "the Claude Code download and setup needs a meter and a clearer alert when it's time to sign in"
+      await sleep(900);
+      const meterNow = () => js(`(() => { const m = document.querySelector('[data-testid="aiondx-acc-meter"]'); if (!m) return null; const bar = m.querySelector('.aiondx-acc-meter-bar > span'); const r = m.getBoundingClientRect();
+        return { shown: !m.hidden && r.width > 0, text: m.querySelector('.aiondx-acc-meter-text').textContent, width: bar.style.width }; })()`);
+      let mt = await meterNow();
+      check(sc, 'a meter while it downloads: how much of the real size, and a bar', mt && mt.shown && mt.text === 'Downloading Claude Code 2.1.400: 100 of 362 MB (28%)' && mt.width === '28%', JSON.stringify(mt));
+      await shot('signin-meter');
+      await sleep(450);
+      mt = await meterNow();
+      check(sc, 'then setting up, the bar full', mt && mt.shown && mt.text === 'Setting up Claude Code 2.1.400...' && mt.width === '100%', JSON.stringify(mt));
+      await sleep(1700);
       iv = await inst();
       check(sc, 'installed: the version, Sign in ready, Install gone, and Restart AionDX offered for the chats', !iv.install && !iv.signinOff && iv.restart && iv.inside && /^Claude Code 2\.1\.400 \(Claude Code\) is installed\. Sign in now; restart AionDX once/.test(iv.status), JSON.stringify(iv));
+      const rd = await js(`(() => { const e = document.querySelector('[data-testid="aiondx-acc-ready"]'); const m = document.querySelector('[data-testid="aiondx-acc-meter"]'); if (!e) return null; const r = e.getBoundingClientRect();
+        return { shown: !e.hidden && r.width > 0, onScreen: r.top >= 0 && r.bottom <= innerHeight, text: e.textContent, focus: document.activeElement === e.querySelector('.aiondx-acc-ready-go'), meter: !m.hidden }; })()`);
+      check(sc, 'when it is installed: a clear notice that it is time to sign in, on screen, its Sign in now button ready', rd && rd.shown && rd.onScreen && !rd.meter &&
+        /Claude Code 2\.1\.400 is installed\. Next: sign in to your Claude account\./.test(rd.text) && /Sign in now$/.test(rd.text) && rd.focus, JSON.stringify(rd));
+      await shot('signin-ready');
+      await clogShot('0.28.5', 'Claude Code installs with a meter', '[data-testid="aiondx-acc-ready"]');
       await humanClick('[data-testid="aiondx-acc-restart"]');
       await sleep(200);
       check(sc, 'Restart AionDX restarts it', (await js('window.__si.calls')).some((c) => c[0] === 'restart'));
+      await js(`(() => { window.aiondxSignin.start = (agent, account) => { window.__si.calls.push(['start-ready', agent, account || '']); return Promise.resolve({ ok: false, error: 'stub' }); }; return 0; })()`);
+      await humanClick('[data-testid="aiondx-acc-ready-go"]');
+      await sleep(300);
+      check(sc, 'Sign in now starts the sign-in and the notice goes', (await js('window.__si.calls')).some((c) => c[0] === 'start-ready' && c[1] === 'claude') && (await js(`document.querySelector('[data-testid="aiondx-acc-ready"]').hidden`)));
       await js(`(() => { delete window.aiondxSignin; return 0; })()`);
     }
 

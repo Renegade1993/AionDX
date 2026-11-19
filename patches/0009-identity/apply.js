@@ -342,6 +342,15 @@ function __aiondxIconFile(name) {
     const os = require("os");
     let run = null;   // { child, out, code, started }
     let installing = false;
+    // what the Claude Code install is doing, for the page's meter: checking, downloading (bytes of total), setup, done or failed
+    let installProgress = { phase: "idle", bytes: 0, total: 0, version: "", at: 0 };
+    const getText = (u) => new Promise((resolve) => {
+      try {
+        const rq = require("https").get(u, { timeout: 10000 }, (res) => { let b = ""; res.on("data", (d) => { if (b.length < 300000) b += d; }); res.on("end", () => resolve(res.statusCode === 200 ? b : "")); });
+        rq.on("timeout", () => { rq.destroy(); resolve(""); });
+        rq.on("error", () => resolve(""));
+      } catch { resolve(""); }
+    });
     const findClaude = () => {
       const dirs = String(process.env.PATH || process.env.Path || "").split(path__namespace.delimiter).filter(Boolean);
       for (const d of dirs) {
@@ -447,10 +456,31 @@ function __aiondxIconFile(name) {
         // Windows PowerShell ("irm https://claude.ai/install.ps1 | iex"; no administrator needed), run hidden. It puts claude.exe in
         // %USERPROFILE%\.local\bin, where AionDX's launcher and this sign-in look for it; that folder also goes on this process's PATH so a
         // restart of AionDX (op restart) carries it to the chats. Ten minutes at most. AIONDX_CLAUDE_INSTALLER stands in for it in tests.
+        if (op === "progress") return { ok: true, progress: installProgress };
         if (op === "install") {
           if (findClaude()) return { ok: true, already: true, exe: findClaude() };
           if (installing) return { ok: false, error: "Claude Code is already being installed." };
           installing = true;
+          installProgress = { phase: "checking", bytes: 0, total: 0, version: "", at: Date.now() };
+          // the size to expect: Anthropic's own release manifest, the one the installer checks its download against
+          getText("https://downloads.claude.ai/claude-code-releases/latest").then((v) => {
+            v = String(v || "").trim();
+            if (!v || v.length > 40) return;
+            installProgress.version = v;
+            return getText("https://downloads.claude.ai/claude-code-releases/" + v + "/manifest.json").then((m) => {
+              try { const p = JSON.parse(m).platforms; const k = process.arch === "arm64" ? "win32-arm64" : "win32-x64"; if (p && p[k] && p[k].size) installProgress.total = Number(p[k].size); } catch {}
+            });
+          }).catch(() => {});
+          // the download, as it grows in the installer's own folder (USERPROFILE/.claude/downloads/claude-VERSION-PLATFORM.exe)
+          const dlDir = path__namespace.join(process.env.USERPROFILE || os.homedir(), ".claude", "downloads");
+          const tick = setInterval(() => {
+            try {
+              let best = 0;
+              for (const n of fs__namespace.readdirSync(dlDir)) if (n.startsWith("claude-") && n.endsWith(".exe")) { const sz = fs__namespace.statSync(path__namespace.join(dlDir, n)).size; if (sz > best) best = sz; }
+              if (best > 0 && installProgress.phase === "checking") installProgress.phase = "downloading";
+              if (best > installProgress.bytes) installProgress.bytes = best;
+            } catch {}
+          }, 500);
           try {
             const stand = process.env.AIONDX_CLAUDE_INSTALLER;
             const ps = path__namespace.join(process.env.SystemRoot || process.env.WINDIR || "C:/Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -461,19 +491,21 @@ function __aiondxIconFile(name) {
               try { child = cp.spawn(file, argv, { windowsHide: true, env: envFor(""), stdio: ["ignore", "pipe", "pipe"] }); }
               catch (e) { resolve({ code: -1, text: String(e && e.message || e) }); return; }
               const timer = setTimeout(() => { try { child.kill(); } catch {} }, 600000);
-              child.stdout.on("data", (d) => { if (text.length < 20000) text += d; });
+              child.stdout.on("data", (d) => { if (text.length < 20000) text += d; if (String(d).indexOf("Setting up Claude Code") >= 0) installProgress.phase = "setup"; });
               child.stderr.on("data", (d) => { if (text.length < 20000) text += d; });
               child.on("error", (e) => { clearTimeout(timer); resolve({ code: -1, text: text + String(e && e.message || e) }); });
               child.on("exit", (code) => { clearTimeout(timer); resolve({ code, text }); });
             });
+            clearInterval(tick);
             const exe = findClaude();
+            installProgress.phase = exe ? "done" : "failed";
             if (!exe) return { ok: false, error: "The installer ended without Claude Code in place.", text: plain(res.text).slice(-400) };
             const folder = path__namespace.dirname(exe);
             const cur = String(process.env.PATH || process.env.Path || "");
             if (!cur.toLowerCase().split(path__namespace.delimiter).includes(folder.toLowerCase())) process.env.PATH = folder + path__namespace.delimiter + cur;
             const version = await new Promise((resolve) => cp.execFile(exe, ["--version"], { windowsHide: true, timeout: 30000, env: envFor("") }, (err, stdout) => resolve(String(stdout || "").trim())));
             return { ok: true, exe, version };
-          } finally { installing = false; }
+          } finally { installing = false; clearInterval(tick); if (installProgress.phase !== "done") installProgress.phase = "failed"; }
         }
         if (op === "restart") {
           setTimeout(() => { try { electron.app.relaunch(); electron.app.exit(0); } catch {} }, 600);
@@ -787,6 +819,7 @@ else {
     '  poll: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "poll" }),\n' +
     '  cancel: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "cancel" }),\n' +
     '  install: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "install", agent: "claude" }),\n' +
+    '  progress: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "progress" }),\n' +
     '  restart: () => electron.ipcRenderer.invoke("aiondx:signin", { op: "restart" })\n' +
     '});\n' + anchor);
   notes.push('preload: aiondxSignin');
