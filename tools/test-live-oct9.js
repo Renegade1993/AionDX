@@ -106,15 +106,30 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
     await sleep(3500);
     await app.js('window.__aionDx.pullNow()');
     await sleep(2500);
+    // November 19th, 2026: an alert never wakes an idle agent whose Loop is off; it waits, armed
     let text = await msgs();
-    check('crossing the threshold sends the alert at once, naming the account, the percent and the rule\'s own words', /AionDX usage alert/.test(text) && /probe account/.test(text) && /83%/.test(text) && /Wrap up\./.test(text), text.slice(0, 400));
+    check('over the line, but the chat is idle with its Loop off: nothing is sent', !/AionDX usage alert/.test(text), text.slice(0, 400));
+    us = await app.js('window.__aionDx.usageSettings()');
+    check('and the alert stays armed', us.alerts['conv.' + conv.id] && us.alerts['conv.' + conv.id].rules.length === 1, JSON.stringify(us.alerts));
+    // its Loop on: the alert goes in once and is disarmed
+    await app.js(`localStorage.setItem('aionui.dx.${conv.id}', JSON.stringify({ on: true })); 0`);
+    await app.js('window.__aionDx.checkAlerts(); 0');
+    await sleep(2500);
+    text = await msgs();
+    check('with its Loop on, crossing the threshold sends the alert, naming the account, the percent and the rule\'s own words', /AionDX usage alert/.test(text) && /probe account/.test(text) && /83%/.test(text) && /Wrap up\./.test(text), text.slice(0, 400));
     us = await app.js('window.__aionDx.usageSettings()');
     check('and it records that it went off for this window', Object.keys(us.fired['conv.' + conv.id] || {}).length === 1, JSON.stringify(us.fired));
+    check('and, having alerted, the alert is disarmed', !us.alerts['conv.' + conv.id], JSON.stringify(us.alerts));
+    await app.js(`localStorage.removeItem('aionui.dx.${conv.id}'); 0`);
     await sleep(3500);
     await app.js('window.__aionDx.pullNow()');
     await sleep(1500);
     text = await msgs();
     check('the same window does not send it twice', (text.match(/AionDX usage alert/g) || []).length === 1, (text.match(/AionDX usage alert/g) || []).length);
+    // the agent sets the alert again (it went off and was taken out), for the panel below
+    await put({ ['aiondx.usagealert.conv.' + conv.id]: { rules: [{ window: '5h', at: 0.8, notify: 'self', by: 'agent', who: 'Probe', conv: conv.id, message: 'Wrap up.' }], at: Date.now(), rev: 3 } });
+    await app.js('window.__aionDx.pullNow()');
+    await sleep(500);
 
     // the settings panel
     await app.js(`window.__aionDx.openUsagePanel({ kind: 'conv', key: 'conv:${conv.id}', convId: '${conv.id}' }); 0`);

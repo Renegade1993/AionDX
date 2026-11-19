@@ -51,12 +51,12 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
     const pic = await centerOf('#pic');
     let m2 = null;
     for (let i = 0; i < 12 && pic && !(m2 && m2.labels.length); i++) { if (i) await sleep(1700); m2 = await rightClickAt(pic.x + 10, pic.y + 10); }
-    check('right-clicking a picture offers Copy image and Open image location, with the file the page knows', m2 && JSON.stringify(m2.labels) === JSON.stringify(['Copy image', 'Open image location']) && /one\.png$/.test(m2.image), JSON.stringify(m2));
+    check('right-clicking a picture offers Copy image, Open in photo viewer and Open image location, with the file the page knows', m2 && JSON.stringify(m2.labels) === JSON.stringify(['Copy image', 'Open in photo viewer', 'Open image location']) && /one\.png$/.test(m2.image), JSON.stringify(m2));
     await app.js(`(() => { const i = document.createElement('img'); i.id = 'pic2'; i.src = ${JSON.stringify(DATA + 'AAAA')}; i.style.cssText = 'position:fixed;left:140px;top:200px;width:80px;height:80px;z-index:99999'; document.body.appendChild(i); return 0; })()`);
     await sleep(300);
     const pic2 = await centerOf('#pic2');
     const m3 = pic2 && await rightClickAt(pic2.x + 10, pic2.y + 10);
-    check('a picture with no known file says so', m3 && /no file/.test(m3.labels[1] || ''), JSON.stringify(m3));
+    check('a picture with no known file says so, and still opens in the photo viewer', m3 && m3.labels[1] === 'Open in photo viewer' && /no file/.test(m3.labels[2] || ''), JSON.stringify(m3));
 
     // A misspelled word in a text box
     await app.js(`(() => { const t = document.createElement('textarea'); t.id = 'tb'; t.setAttribute('spellcheck', 'true'); t.style.cssText = 'position:fixed;left:40px;top:320px;width:420px;height:60px;z-index:99999;font-size:18px'; document.body.appendChild(t); t.focus(); return 0; })()`);
