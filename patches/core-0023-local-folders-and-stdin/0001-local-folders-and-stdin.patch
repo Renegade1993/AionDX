@@ -1,0 +1,281 @@
+diff --git a/crates/aionui-api-types/src/chat_file.rs b/crates/aionui-api-types/src/chat_file.rs
+index 99507cb0..e20dd2f5 100644
+--- a/crates/aionui-api-types/src/chat_file.rs
++++ b/crates/aionui-api-types/src/chat_file.rs
+@@ -26,7 +26,7 @@ pub enum ChatFileRef {
+     /// A file on the backend machine's filesystem, chosen by the user in the
+     /// host-file browser (`/api/fs/browse`, which already exposes the whole
+     /// filesystem). Carries an absolute path; the backend only checks it exists
+-    /// and is a regular file — no managed-directory restriction, since the
++    /// and is a regular file or a folder (AionDX) — no managed-directory restriction, since the
+     /// picker that produced it already exposes this surface and the agent reads
+     /// the path through its own filesystem tools.
+     Local { path: String },
+diff --git a/crates/aionui-app/src/commands/cmd_config.rs b/crates/aionui-app/src/commands/cmd_config.rs
+index c32dc12f..04c07f3f 100644
+--- a/crates/aionui-app/src/commands/cmd_config.rs
++++ b/crates/aionui-app/src/commands/cmd_config.rs
+@@ -1,7 +1,7 @@
+ //! `aioncore config` subcommand: agent-facing automation CLI for AionUi config.
+ 
+ use std::collections::BTreeMap;
+-use std::io::{self, Read, Write};
++use std::io::{self, Write};
+ use std::process::ExitCode;
+ 
+ use reqwest::Method;
+@@ -1504,7 +1504,7 @@ fn extract_api_data(value: Value, command: &str) -> Result<Value, ConfigError> {
+ 
+ fn read_stdin_payload(command: &str) -> Result<Value, ConfigError> {
+     let mut raw = String::new();
+-    io::stdin().read_to_string(&mut raw).map_err(|_| {
++    super::stdin_text::read_stdin_text(&mut raw).map_err(|_| {
+         ConfigError::new(
+             ConfigErrorCode::PayloadInvalid,
+             command,
+diff --git a/crates/aionui-app/src/commands/cmd_conversation.rs b/crates/aionui-app/src/commands/cmd_conversation.rs
+index d8c60d67..eb4b4a71 100644
+--- a/crates/aionui-app/src/commands/cmd_conversation.rs
++++ b/crates/aionui-app/src/commands/cmd_conversation.rs
+@@ -6,7 +6,7 @@
+ //! appears.
+ 
+ use std::ffi::OsString;
+-use std::io::{self, Read, Write};
++use std::io::{self, Write};
+ use std::process::ExitCode;
+ 
+ use aionui_api_types::{
+@@ -116,7 +116,7 @@ fn required_env(command: &str, name: &'static str) -> Result<String, ExitCode> {
+ 
+ fn read_stdin_json_object(command: &str, tool: ConversationToolName) -> Result<Value, ExitCode> {
+     let mut input = String::new();
+-    io::stdin().read_to_string(&mut input).map_err(|error| {
++    super::stdin_text::read_stdin_text(&mut input).map_err(|error| {
+         print_failure(
+             command,
+             "CONVERSATION_CLI_STDIN_READ_FAILED",
+diff --git a/crates/aionui-app/src/commands/cmd_diagnose.rs b/crates/aionui-app/src/commands/cmd_diagnose.rs
+index 8253e5d4..e6810209 100644
+--- a/crates/aionui-app/src/commands/cmd_diagnose.rs
++++ b/crates/aionui-app/src/commands/cmd_diagnose.rs
+@@ -1,7 +1,7 @@
+ //! `aioncore diagnose` subcommand: agent-facing read-only troubleshooting CLI.
+ 
+ use std::collections::BTreeMap;
+-use std::io::{self, Read, Write};
++use std::io::{self, Write};
+ use std::path::{Path, PathBuf};
+ use std::process::ExitCode;
+ 
+@@ -389,7 +389,7 @@ fn read_stdin_payload(command: &str) -> Result<Value, DiagnoseError> {
+ 
+ fn read_optional_stdin_payload(command: &str) -> Result<Value, DiagnoseError> {
+     let mut raw = String::new();
+-    io::stdin().read_to_string(&mut raw).map_err(|_| {
++    super::stdin_text::read_stdin_text(&mut raw).map_err(|_| {
+         DiagnoseError::new(
+             DiagnoseErrorCode::PayloadInvalid,
+             command,
+diff --git a/crates/aionui-app/src/commands/cmd_session.rs b/crates/aionui-app/src/commands/cmd_session.rs
+index 1f311e29..6e1cf0eb 100644
+--- a/crates/aionui-app/src/commands/cmd_session.rs
++++ b/crates/aionui-app/src/commands/cmd_session.rs
+@@ -6,7 +6,7 @@
+ //! is the body), and there is no `help` / `context` subcommand.
+ 
+ use std::ffi::OsString;
+-use std::io::{self, Read, Write};
++use std::io::{self, Write};
+ use std::process::ExitCode;
+ 
+ use aionui_api_types::{SessionCliEnvelope, SessionToolErrorCode, SessionToolErrorPayload, SessionToolName};
+@@ -176,7 +176,7 @@ fn required_env(command: &str, name: &'static str) -> Result<String, ExitCode> {
+ 
+ fn read_stdin_json_object(command: &str, tool: SessionToolName) -> Result<Value, ExitCode> {
+     let mut input = String::new();
+-    io::stdin().read_to_string(&mut input).map_err(|error| {
++    super::stdin_text::read_stdin_text(&mut input).map_err(|error| {
+         print_failure(
+             command,
+             "SESSION_CLI_STDIN_READ_FAILED",
+diff --git a/crates/aionui-app/src/commands/cmd_skills.rs b/crates/aionui-app/src/commands/cmd_skills.rs
+index 62d4c4db..db8ecd1d 100644
+--- a/crates/aionui-app/src/commands/cmd_skills.rs
++++ b/crates/aionui-app/src/commands/cmd_skills.rs
+@@ -7,7 +7,7 @@
+ //! relative path.
+ 
+ use std::ffi::OsString;
+-use std::io::{self, Read, Write};
++use std::io::{self, Write};
+ use std::process::ExitCode;
+ 
+ use aionui_api_types::{SkillRuntimeEnvelope, SkillRuntimeErrorCode, SkillRuntimeErrorPayload};
+@@ -159,7 +159,7 @@ fn required_env(command: &str, name: &'static str) -> Result<String, ExitCode> {
+ 
+ fn read_stdin_json_object(command: &str) -> Result<Value, ExitCode> {
+     let mut input = String::new();
+-    io::stdin().read_to_string(&mut input).map_err(|error| {
++    super::stdin_text::read_stdin_text(&mut input).map_err(|error| {
+         print_failure(
+             command,
+             "SKILLS_CLI_STDIN_READ_FAILED",
+diff --git a/crates/aionui-app/src/commands/cmd_team.rs b/crates/aionui-app/src/commands/cmd_team.rs
+index 90f3c1bc..908ff708 100644
+--- a/crates/aionui-app/src/commands/cmd_team.rs
++++ b/crates/aionui-app/src/commands/cmd_team.rs
+@@ -1,5 +1,5 @@
+ use std::ffi::OsString;
+-use std::io::{self, Read, Write};
++use std::io::{self, Write};
+ use std::process::ExitCode;
+ 
+ use aionui_api_types::{
+@@ -132,7 +132,7 @@ fn required_env(command: &str, name: &'static str) -> Result<String, ExitCode> {
+ 
+ fn read_stdin_json_object(command: &str, tool: TeamToolName) -> Result<Value, ExitCode> {
+     let mut input = String::new();
+-    io::stdin().read_to_string(&mut input).map_err(|error| {
++    super::stdin_text::read_stdin_text(&mut input).map_err(|error| {
+         print_failure(
+             command,
+             "TEAM_CLI_STDIN_READ_FAILED",
+diff --git a/crates/aionui-app/src/commands/mod.rs b/crates/aionui-app/src/commands/mod.rs
+index fb301941..b5a93b36 100644
+--- a/crates/aionui-app/src/commands/mod.rs
++++ b/crates/aionui-app/src/commands/mod.rs
+@@ -23,6 +23,7 @@ pub(crate) mod diagnose_capabilities;
+ pub(crate) mod error;
+ pub(crate) mod session_capabilities;
+ pub(crate) mod skills_capabilities;
++pub(crate) mod stdin_text;
+ pub(crate) mod team_capabilities;
+ 
+ pub(crate) use cmd_antigravity_hook::run_antigravity_hook;
+diff --git a/crates/aionui-app/src/commands/stdin_text.rs b/crates/aionui-app/src/commands/stdin_text.rs
+new file mode 100644
+index 00000000..7bf2379f
+--- /dev/null
++++ b/crates/aionui-app/src/commands/stdin_text.rs
+@@ -0,0 +1,67 @@
++//! AionDX: JSON on stdin from any Windows shell.
++//!
++//! Windows PowerShell 5.1 puts a UTF-8 byte-order mark (sometimes two) in front of what it pipes to a
++//! program, even with `$OutputEncoding` set to UTF-8 without one (measured November 19th, 2026), and a
++//! UTF-16 pipe is possible too. serde_json refuses both, so `'{...}' | aioncore diagnose ...` failed with
++//! "invalid JSON payload on stdin" in the shell agents on Windows use when Git Bash is missing. This reads
++//! the bytes, decodes UTF-16 when it starts with its mark, and drops every leading mark.
++
++use std::io::{self, Read};
++
++/// Read all of stdin as text into `out` (as `read_to_string` would), tolerating the marks above.
++pub(crate) fn read_stdin_text(out: &mut String) -> io::Result<usize> {
++    let mut bytes = Vec::new();
++    io::stdin().read_to_end(&mut bytes)?;
++    let text = decode(&bytes)?;
++    out.push_str(&text);
++    Ok(text.len())
++}
++
++pub(crate) fn decode(bytes: &[u8]) -> io::Result<String> {
++    let text = if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
++        let le = bytes[0] == 0xFF;
++        let units: Vec<u16> = bytes[2..]
++            .chunks(2)
++            .filter(|c| c.len() == 2)
++            .map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) })
++            .collect();
++        String::from_utf16(&units).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "stdin is not valid UTF-16"))?
++    } else {
++        String::from_utf8(bytes.to_vec()).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "stdin is not valid UTF-8"))?
++    };
++    Ok(text.trim_start_matches('\u{feff}').to_owned())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::decode;
++
++    #[test]
++    fn plain_utf8_is_unchanged() {
++        assert_eq!(decode(b"{\"a\":1}\r\n").unwrap(), "{\"a\":1}\r\n");
++    }
++
++    #[test]
++    fn powershell_byte_order_marks_are_dropped() {
++        // what Windows PowerShell 5.1 pipes: one mark, or two when $OutputEncoding is UTF8 (with mark)
++        assert_eq!(decode(b"\xef\xbb\xbf{\"conversation_id\":\"x\"}\r\n").unwrap(), "{\"conversation_id\":\"x\"}\r\n");
++        assert_eq!(decode(b"\xef\xbb\xbf\xef\xbb\xbf{\"a\":1}").unwrap(), "{\"a\":1}");
++        let v: serde_json::Value = serde_json::from_str(&decode(b"\xef\xbb\xbf{\"a\":1}\r\n").unwrap()).unwrap();
++        assert_eq!(v["a"], 1);
++    }
++
++    #[test]
++    fn utf16_with_its_mark_is_decoded() {
++        let mut le = vec![0xFF, 0xFE];
++        for u in "{\"a\":\"é\"}".encode_utf16() { le.extend_from_slice(&u.to_le_bytes()); }
++        assert_eq!(decode(&le).unwrap(), "{\"a\":\"é\"}");
++        let mut be = vec![0xFE, 0xFF];
++        for u in "{\"a\":2}".encode_utf16() { be.extend_from_slice(&u.to_be_bytes()); }
++        assert_eq!(decode(&be).unwrap(), "{\"a\":2}");
++    }
++
++    #[test]
++    fn bytes_that_are_not_text_are_an_error() {
++        assert!(decode(&[0xC3, 0x28]).is_err());
++    }
++}
+diff --git a/crates/aionui-project/src/chat_files.rs b/crates/aionui-project/src/chat_files.rs
+index 4a16a3ce..4cda65bc 100644
+--- a/crates/aionui-project/src/chat_files.rs
++++ b/crates/aionui-project/src/chat_files.rs
+@@ -118,10 +118,12 @@ impl ProjectService {
+                 // which already exposes the whole filesystem. No managed-root
+                 // restriction (that is the upload channel's D2 invariant only);
+                 // just canonicalize (collapsing `..`/symlinks) and require an
+-                // existing regular file.
++                // existing file or folder. AionDX: a folder the user dropped into
++                // the message box goes in as its path, the same as a project ref
++                // may name a folder; the agent reads it with its own tools.
+                 let canonical = std::fs::canonicalize(path)
+                     .map_err(|_| ProjectError::LocalPathNotReadable { path: path.clone() })?;
+-                if !canonical.is_file() {
++                if !canonical.is_file() && !canonical.is_dir() {
+                     return Err(ProjectError::LocalPathNotReadable { path: path.clone() });
+                 }
+                 Ok(canonical.to_string_lossy().into_owned())
+diff --git a/crates/aionui-project/src/chat_files_test.rs b/crates/aionui-project/src/chat_files_test.rs
+index 7c90f130..3a28744d 100644
+--- a/crates/aionui-project/src/chat_files_test.rs
++++ b/crates/aionui-project/src/chat_files_test.rs
+@@ -293,13 +293,13 @@ async fn local_nonexistent_is_rejected() {
+ }
+ 
+ #[tokio::test]
+-async fn local_directory_is_rejected() {
++async fn local_directory_resolves_to_its_path() {
+     let (service, _pe, _dir, upload_root) = setup().await;
+-    // A real directory is not a regular file → rejected.
++    // AionDX: a folder dropped into the message box goes in as its path.
+     let d = tempfile::tempdir().unwrap();
+     let path = d.path().to_string_lossy().into_owned();
+ 
+-    let err = service
++    let out = service
+         .resolve_chat_message(
+             "system_default_user",
+             "x",
+@@ -307,8 +307,10 @@ async fn local_directory_is_rejected() {
+             upload_root.path(),
+         )
+         .await
+-        .unwrap_err();
+-    assert!(matches!(err, ProjectError::LocalPathNotReadable { .. }), "got {err:?}");
++        .unwrap();
++    assert_eq!(out.files.len(), 1);
++    assert!(std::path::Path::new(&out.files[0]).is_dir());
++    assert_eq!(out.content, format!("x\n\n{AIONUI_FILES_MARKER}\n{}", out.files[0]));
+ }
+ 
+ #[tokio::test]

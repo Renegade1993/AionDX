@@ -127,8 +127,20 @@ process.env.AIONDX_PORTABLE_ROOTS = ROOT;
   fs.writeFileSync(path.join(ROOT, 'AionDX-chats.json'), JSON.stringify({ format: 1, packages: [{ id: 'x1', kind: 'c', name: 'Trip', path: path.relative(ROOT, pkgX) }] }));
   r = await a.call('sync');
   check('PC1 sync: the drive\'s chat is offered as coming in', r.ok && r.incoming.length === 1 && r.incoming[0].id === 'x1' && r.incoming[0].package === pkgX, JSON.stringify(r));
-  r = await a.call('import', { package: pkgX });
+  // R-132: the page names the signed-in user; a user this AionDX does not have is refused and nothing comes in
+  r = await a.call('import', { package: pkgX, user: 'nobody' });
+  check('import for a user that is not here: refused', !r.ok && /No user nobody/.test(r.error || ''), JSON.stringify(r));
+  // every run of the mover is in AionDX's log (its main console), failures as warnings
+  const logged = [];
+  const ci = console.info, cw = console.warn;
+  console.info = (l) => logged.push(String(l)); console.warn = (l) => logged.push('W ' + String(l));
+  try { r = await a.call('import', { package: pkgX }); } finally { console.info = ci; console.warn = cw; }
   check('PC1 brings it in', r.ok && r.imported.mode === 'new' && r.imported.id === 'x1', JSON.stringify(r));
+  const imLine = logged.find((l) => /aiondx:places import /.test(l));
+  check('the import is logged: the item, its mode and owner, the package', !!imLine && /"id":"x1"/.test(imLine) && /"mode":"new"/.test(imLine) && /"owner":/.test(imLine) && /"package":/.test(imLine), JSON.stringify(logged));
+  console.warn = (l) => logged.push('W ' + String(l));
+  try { await a.call('log', { level: 'warn', text: 'relink c:x1: NOT SEEN' }); } finally { console.warn = cw; }
+  check('the page\'s own findings are logged too, a warning as a warning', logged.some((l) => /^W \[AionDX places\] aiondx:places relink c:x1: NOT SEEN/.test(l)), JSON.stringify(logged));
   r = await a.call('status');
   check('PC1 now has it, placed on the drive', r.items.some((i) => i.id === 'x1' && i.placed && i.package === pkgX), JSON.stringify(r.items));
   r = await a.call('sync');

@@ -408,7 +408,7 @@ else {
   r = run('import', { package: seen }, null, db3, home2);
   const man3 = JSON.parse(fs.readFileSync(path.join(seen, 'aiondx-chat.json'), 'utf8'));
   { const d = new DatabaseSync(db3); r.v = d.prepare("SELECT COUNT(*) AS n FROM messages").get().n; d.close(); }
-  const ls3 = { version: (() => { const d = new DatabaseSync(db3, { readOnly: true }); try { return require(TOOL).localVersion(d, { convIds: man3.convIds }); } finally { d.close(); } })(), exportedAt: man3.exportedAt };
+  const ls3 = { version: (() => { const d = new DatabaseSync(db3, { readOnly: true }); try { return require(TOOL).localVersion(d, { kind: man3.kind, id: man3.id, convIds: man3.convIds }); } finally { d.close(); } })(), exportedAt: man3.exportedAt };
   fs.writeFileSync(path.join(seen, 'aiondx-chat.json'), JSON.stringify(Object.assign({}, man3, { exportedAt: man3.exportedAt + 1 })));
   r = run('import', { package: seen, lastSync: ls3 }, null, db3, home2);
   { const d = new DatabaseSync(db3, { readOnly: true }); r.n = d.prepare('SELECT COUNT(*) AS n FROM teams').get().n; d.close(); }

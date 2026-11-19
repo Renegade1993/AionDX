@@ -59,8 +59,17 @@ try {
   // R-127: the planning hooks, passed with --settings (a file holding only hooks)
   const st = a[a.indexOf('--settings') + 1];
   let hk = null; try { hk = JSON.parse(fs.readFileSync(st, 'utf8')); } catch (e) {}
+  const h0 = (ev) => hk && hk.hooks[ev] && hk.hooks[ev][0].hooks[0];
   check('the planning hooks go in with --settings: a file of hooks only, prompt, stop and edits', st === path.join(data, 'aiondx-claude-hooks.json') && hk && JSON.stringify(Object.keys(hk)) === '["hooks"]' &&
-    /aiondx-plan-hooks.js" prompt$/.test(hk.hooks.UserPromptSubmit[0].hooks[0].command) && /" stop$/.test(hk.hooks.Stop[0].hooks[0].command) && hk.hooks.PreToolUse[0].matcher === 'Edit|Write|MultiEdit|NotebookEdit', JSON.stringify(hk));
+    h0('UserPromptSubmit').args[1] === 'prompt' && h0('Stop').args[1] === 'stop' && h0('PreToolUse').args[1] === 'pretool' && hk.hooks.PreToolUse[0].matcher === 'Edit|Write|MultiEdit|NotebookEdit', JSON.stringify(hk));
+  // November 17th, 2026 (the laptop): as one quoted string the hooks ran in PowerShell on a PC without Git for Windows and failed, which
+  // blocked every Write and Edit. Exec form: the program alone in "command", its arguments in "args", and a failure lets the work go on.
+  check('every hook is exec form: node.exe alone in command, the script and its mode in args, onFailure continue, no shell needed',
+    ['UserPromptSubmit', 'Stop', 'PreToolUse'].every((ev) => { const h = h0(ev); return h && h.command === process.execPath && Array.isArray(h.args) && /aiondx-plan-hooks\.js$/.test(h.args[0]) && h.onFailure === 'continue' && !/"/.test(h.command); }), JSON.stringify(hk));
+  // run one the way Claude Code's exec form does (spawn, no shell): it starts and answers
+  const ph = h0('PreToolUse');
+  const pr = require('child_process').spawnSync(ph.command, ph.args, { input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: path.join(root, 'x.txt') }, cwd: root }), encoding: 'utf8', windowsHide: true, timeout: 20000, shell: false });
+  check('spawned with no shell, the edit hook runs and lets an ordinary edit through (exit 0)', pr.status === 0, JSON.stringify({ status: pr.status, err: String(pr.stderr || '').slice(0, 300), error: pr.error && pr.error.message }));
   a = run([]);
   check('no system prompt argument from AionCore: one is added', /^Pinned skills:/.test(sp(a) || ''), JSON.stringify(a).slice(0, 300));
 } catch (e) {

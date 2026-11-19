@@ -24,7 +24,9 @@ const os = require('os');
 const cp = require('child_process');
 
 function install(electron, opts) {
-  const o = opts || {};
+  const o = Object.assign({}, opts || {});
+  // AionDX's main log: the main process's console is written to it ([Notification], [CoreUserBridge] lines are there the same way)
+  if (!o.log) o.log = (line) => { const s = String(line); if (/^WARN /.test(s)) console.warn('[AionDX places] ' + s.slice(5)); else console.info('[AionDX places] ' + s); };
   const app = electron.app;
   const userData = () => app.getPath('userData');
   const dbFile = () => process.env.AIONDX_PLACES_DB || path.join(userData(), 'aionui', 'aiondx-backend.db');
@@ -65,6 +67,22 @@ function install(electron, opts) {
 
   const childEnv = () => { const e = Object.assign({}, process.env); delete e.ELECTRON_RUN_AS_NODE; return e; };
   let busy = null;   // one command at a time (a move and a sync must not meet)
+  /** One line per mover run in AionDX's log (November 17th, 2026: an import, its relinks and exports left no trace at all). status and an
+   *  export that wrote nothing are left out: they run every minute. */
+  function logRun(cmd, args, out, ms) {
+    try {
+      if (!o.log) return;
+      if (cmd === 'status' && out.ok) return;
+      if (cmd === 'export' && out.ok && !(out.exported || []).some((e) => e.exported || e.error)) return;
+      const brief = { ok: !!out.ok, error: out.error || undefined, ms };
+      if (out.imported) brief.imported = { id: out.imported.id, from: out.imported.from, kind: out.imported.kind, mode: out.imported.mode, owner: out.imported.owner, rows: out.imported.rows, skipped: out.imported.skipped, agentsAdded: (out.imported.agentsAdded || []).map((a) => a.agent_id), agentsMissing: out.imported.agentsMissing };
+      if (out.relinked) brief.relinked = { id: out.relinked.id, at: out.relinked.at, rows: out.relinked.rows };
+      if (out.exported) brief.exported = out.exported.map((e) => e.id + (e.exported ? ' written' : e.error ? ' error ' + e.error : ' ' + (e.skipped || '')));
+      if (args && args.package) brief.package = args.package;
+      if (args && args.items) brief.items = args.items.map((i) => i.kind + ':' + i.id);
+      o.log((out.ok ? '' : 'WARN ') + 'aiondx:places ' + cmd + ' ' + JSON.stringify(brief));
+    } catch { /* a log line never stops a move */ }
+  }
   /** The mover, hidden; resolves with its one JSON line. */
   function run(cmd, args, timeoutMs) {
     const node = nodeExe();
@@ -72,13 +90,16 @@ function install(electron, opts) {
     const jf = path.join(os.tmpdir(), 'aiondx-place-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.json');
     fs.writeFileSync(jf, JSON.stringify(args || {}));
     const go = () => new Promise((resolve) => {
+      const t0 = Date.now();
       cp.execFile(node, ['--no-warnings', mover(), cmd, '--db', dbFile(), '--home', homeDir(), '--work', workDir(), '--json-file', jf],
         { windowsHide: true, timeout: timeoutMs || 600000, maxBuffer: 16 * 1024 * 1024, env: childEnv() },
         (err, stdout) => {
           try { fs.rmSync(jf, { force: true }); } catch { /* best effort */ }
           let j = null;
           try { j = JSON.parse(String(stdout).trim().split('\n').pop()); } catch { /* not JSON */ }
-          resolve(j && typeof j === 'object' ? j : { ok: false, error: String((err && err.message) || 'No answer from the mover.').slice(0, 400) });
+          const out = j && typeof j === 'object' ? j : { ok: false, error: String((err && err.message) || 'No answer from the mover.').slice(0, 400) };
+          logRun(cmd, args, out, Date.now() - t0);
+          resolve(out);
         });
     });
     const p = (busy || Promise.resolve()).then(go, go);
@@ -198,7 +219,7 @@ function install(electron, opts) {
     if (op === 'relink') {
       let to = req.to;
       if (!to) { const c = await choose('Where is "' + String(req.name || 'it') + '" now? Choose its folder, or the folder it is in'); if (!c.ok) return c; to = c.to; }
-      const r = await run('relink', { item: req.item, to });
+      const r = await run('relink', { item: req.item, to, exportAfter: req.exportAfter, group: req.group });
       if (r.ok && r.relinked) {
         const rec = readRec();
         const pkg = r.relinked.at;
@@ -227,7 +248,7 @@ function install(electron, opts) {
       let m = null;
       try { m = JSON.parse(fs.readFileSync(path.join(pkg, 'aiondx-chat.json'), 'utf8')); } catch { return { ok: false, error: 'No AionDX chat in ' + pkg + '.' }; }
       const rec = readRec();
-      const r = await run('import', { package: pkg, lastSync: rec.sync[m.id] || null });
+      const r = await run('import', { package: pkg, lastSync: rec.sync[m.id] || null, user: req.user ? String(req.user) : undefined });
       if (r.ok && r.imported && !r.imported.skipped) {
         const rec2 = readRec();
         const id = r.imported.id;
@@ -238,6 +259,7 @@ function install(electron, opts) {
       }
       return r;
     }
+    if (op === 'log') { if (o.log) o.log((req.level === 'warn' ? 'WARN ' : '') + 'aiondx:places ' + String(req.text || '').slice(0, 1500)); return { ok: true }; }
     if (op === 'decline') {   // "not on this PC": a package the user does not want brought in is not offered again
       const rec = readRec();
       rec.declined = Object.assign({}, rec.declined || {}, { [String(req.id || '')]: Date.now() });

@@ -116,7 +116,9 @@ function rewriteRows(db, info, pairs, journal) {
         const u = rewrite(v, pairs);
         if (u === v) continue;
         db.prepare('UPDATE "' + t + '" SET "' + c + '" = ? WHERE "' + pk + '" = ?').run(u, r.__pk);
-        if (journal) journal.rows.push({ t, pk, id: r.__pk, c, v });
+        // the old value is kept only when rewriting the paths back would not give it exactly (rare): a journal holds ids and paths, not
+        // message text (November 17th, 2026: relink journals held 15,552 old values, tool output and replies, kept for good)
+        if (journal) journal.rows.push(rewrite(u, inversePairs(pairs)) === v ? { t, pk, id: r.__pk, c, p: journalPairs(journal, pairs) } : { t, pk, id: r.__pk, c, v });
         changed++;
       }
     }
@@ -213,18 +215,52 @@ function moveFolder(from, to, journal) {
 }
 
 // ---------------------------------------------------------------- the journal (undo)
+/** Journals of finished commands go after 30 days (they hold ids and paths; Undo of the last move uses its journal). */
+function pruneJournals(work) {
+  const root = path.join(work, 'place-move');
+  let names = [];
+  try { names = fs.readdirSync(root); } catch { return; }
+  const old = Date.now() - 30 * 86400000;
+  for (const n of names) {
+    const d = path.join(root, n);
+    try {
+      if (fs.statSync(d).mtimeMs > old) continue;
+      const j = readJson(path.join(d, 'journal.json'));
+      if (j && j.state !== 'done' && j.state !== 'undone' && j.state !== 'imported') continue;
+      fs.rmSync(d, { recursive: true, force: true });
+    } catch { /* next time */ }
+  }
+}
 function newJournal(work, cmd) {
+  pruneJournals(work);
   const dir = path.join(work, 'place-move', stamp());
   fs.mkdirSync(dir, { recursive: true });
-  return { dir, file: path.join(dir, 'journal.json'), cmd, steps: [], rows: [], notes: [], removeAfter: [], state: 'started', save() { fs.writeFileSync(this.file, JSON.stringify({ cmd: this.cmd, state: this.state, steps: this.steps, rows: this.rows, notes: this.notes, removeAfter: this.removeAfter }, null, 1)); } };
+  return { dir, file: path.join(dir, 'journal.json'), cmd, steps: [], rows: [], notes: [], removeAfter: [], state: 'started', save() { fs.writeFileSync(this.file, JSON.stringify({ cmd: this.cmd, state: this.state, steps: this.steps, rows: this.rows, pairSets: this.pairSets || [], notes: this.notes, removeAfter: this.removeAfter, info: this.info || null }, null, 1)); } };
 }
-/** Undo the steps of a journal, newest first; the rows' old values back. */
+function inversePairs(pairs) { return pairs.map(([o, n]) => [n, o]); }
+/** The journal's index of this set of path pairs (kept once, for every row it rewrote). */
+function journalPairs(journal, pairs) {
+  journal.pairSets = journal.pairSets || [];
+  const key = JSON.stringify(pairs);
+  let i = journal.pairSets.findIndex((p) => JSON.stringify(p) === key);
+  if (i < 0) { journal.pairSets.push(pairs); i = journal.pairSets.length - 1; }
+  return i;
+}
+/** Undo the steps of a journal, newest first; the rows' old values back (the paths rewritten back, or the value kept). */
 function undoJournal(j, db) {
   const left = [];
   if (j.rows && j.rows.length && db) {
     try {
       db.exec('BEGIN IMMEDIATE');
-      for (const r of j.rows.slice().reverse()) db.prepare('UPDATE "' + r.t + '" SET "' + r.c + '" = ? WHERE "' + r.pk + '" = ?').run(r.v, r.id);
+      for (const r of j.rows.slice().reverse()) {
+        let v = r.v;
+        if (v === undefined) {
+          const cur = db.prepare('SELECT "' + r.c + '" AS v FROM "' + r.t + '" WHERE "' + r.pk + '" = ?').get(r.id);
+          if (!cur || typeof cur.v !== 'string') continue;
+          v = rewrite(cur.v, inversePairs((j.pairSets || [])[r.p] || []));
+        }
+        db.prepare('UPDATE "' + r.t + '" SET "' + r.c + '" = ? WHERE "' + r.pk + '" = ?').run(v, r.id);
+      }
       db.exec('COMMIT');
     } catch (e) { try { db.exec('ROLLBACK'); } catch { /* none */ } left.push('rows: ' + e.message); }
   }
@@ -270,13 +306,17 @@ function packageLayout(db, info, pkg, homeMap) {
 }
 /** The rows of an item into its package's database (a fresh file swapped in), and its manifest. */
 /** group: the name of the item's sidebar group on this PC (null: none); undefined keeps what the manifest had. */
-function exportRows(db, info, pkg, layout, homeOf, userHome, group) {
+function exportRows(db, info, pkg, layout, homeOf, userHome, group, op) {
   if (userHome) exportHistory(db, userHome, pkg, layout);
   const rows = itemRows(db, info);
   // a chat's assistant snapshot points at an assistant record this PC made (November 16th, 2026: another PC has none, so every chat
   // was refused there with "FOREIGN KEY constraint failed"): those records go with it, for the other PC to add when it lacks them
   const defIds = [...new Set((rows.conversation_assistant_snapshots || []).map((r) => r.assistant_definition_id).filter(Boolean))];
   if (defIds.length && hasTable(db, 'assistant_definitions')) rows.assistant_definitions = defIds.map((id) => db.prepare('SELECT * FROM assistant_definitions WHERE id = ?').get(id)).filter(Boolean);
+  // the custom agents the item runs on (November 17th, 2026: every chat ran on "Claude Code (Office)", which the other PC did not have, so
+  // none could have answered there): their records go with it, every secret and local check left out
+  const agents = agentRowsFor(db, rows);
+  if (agents.length) rows.agent_metadata = agents;
   const tmp = path.join(pkg, ROWS + '.tmp');
   fs.rmSync(tmp, { force: true });
   const out = openDb(tmp, false);
@@ -298,22 +338,105 @@ function exportRows(db, info, pkg, layout, homeOf, userHome, group) {
   } finally { out.close(); }
   fs.renameSync(tmp, path.join(pkg, ROWS));
   const version = localVersion(db, info);
+  const prev = readJson(path.join(pkg, MANIFEST)) || {};
+  const at = Date.now();
+  const archived = (rows.conversations || []).length > 0 && (info.kind === 't' ? !!((rows.teams || [])[0] || {}).archived_at : (rows.conversations || []).every((c) => !!c.archived_at));
+  // who wrote the package when: the newest 20 writes (exportedBy alone lost the first PC's name the first time another PC wrote it)
+  const history = (Array.isArray(prev.history) ? prev.history : (prev.exportedAt ? [{ op: 'export', by: prev.exportedBy || null, at: prev.exportedAt, version: prev.version || null }] : []))
+    .concat([{ op: op || 'export', by: os.hostname(), at, version }]).slice(-20);
   const manifest = { format: 1, kind: info.kind, id: info.id, name: info.name, convIds: info.convIds,
     workspaces: layout.map((l) => ({ convId: l.convId, rel: l.rel, path: path.join(pkg, l.rel) })),
-    home: homeOf || (readJson(path.join(pkg, MANIFEST)) || {}).home || {},
-    group: group !== undefined ? (group || null) : ((readJson(path.join(pkg, MANIFEST)) || {}).group || null),
-    version, exportedAt: Date.now(), exportedBy: os.hostname() };
+    home: homeOf || prev.home || {},
+    group: group !== undefined ? (group || null) : (prev.group || null),
+    archived, version, exportedAt: at, exportedBy: os.hostname(), history };
   fs.writeFileSync(path.join(pkg, MANIFEST), JSON.stringify(manifest, null, 1));
   return manifest;
 }
-/** A stamp of an item's rows that changes when they do: its chats' last change and message counts. */
-function localVersion(db, info) {
+/** The stamp packages were written with before November 19th, 2026: its chats' last change and message counts. Still read, so an
+ *  update of AionDX does not take every package for changed (a whole package rewritten, or a copy of a chat made on the next import). */
+function localVersionOld(db, info) {
   const ids = info.convIds;
   if (!ids.length) return '0';
   const q = (sql) => { try { return db.prepare(sql.replace('@ids', ids.map(() => '?').join(','))).get(...ids); } catch { return {}; } };
   const a = q('SELECT MAX(updated_at) AS u, COUNT(*) AS n FROM conversations WHERE id IN (@ids)');
   const b = q('SELECT MAX(created_at) AS m, COUNT(*) AS n FROM messages WHERE conversation_id IN (@ids)');
   return [a.u || 0, a.n || 0, b.m || 0, b.n || 0].join('.');
+}
+/** The agent ids an item's rows name: each chat's own, its session's, its assistant snapshot's, and a team's members' ("bare:<id>"). */
+function agentIdsOf(rows) {
+  const ids = new Set();
+  for (const c of rows.conversations || []) { try { const e = JSON.parse(c.extra || '{}'); if (e.agent_id) ids.add(String(e.agent_id)); } catch { /* none */ } }
+  for (const r of rows.acp_session || []) if (r.agent_id) ids.add(String(r.agent_id));
+  for (const r of rows.conversation_assistant_snapshots || []) if (r.agent_id) ids.add(String(r.agent_id));
+  for (const t of rows.teams || []) { let a = []; try { a = JSON.parse(t.agents || '[]'); } catch { /* none */ } for (const m of a) { const id = m && (m.assistant_id || ''); if (/^bare:/.test(id)) ids.add(id.slice(5)); } }
+  return [...ids];
+}
+const AGENT_SECRET_COLS = ['env', 'env_override', 'command_override', 'last_check_status', 'last_check_kind', 'last_check_error_code', 'last_check_error_message',
+  'last_check_guidance', 'last_check_latency_ms', 'last_check_at', 'last_success_at', 'last_failure_at'];
+/** Those agents' custom records, with nothing secret or local in them (env, overrides, the last check). Built-in agents are on every PC. */
+function agentRowsFor(db, rows) {
+  if (!hasTable(db, 'agent_metadata')) return [];
+  const cols = new Set(tableCols(db, 'agent_metadata').map((c) => c.name));
+  const out = [];
+  for (const id of agentIdsOf(rows)) {
+    const a = db.prepare("SELECT * FROM agent_metadata WHERE agent_id = ? AND agent_source = 'custom' ORDER BY (user_id IS NULL) LIMIT 1").get(id);
+    if (!a) continue;
+    const r = Object.assign({}, a);
+    for (const c of AGENT_SECRET_COLS) if (cols.has(c)) r[c] = c === 'env' ? '{}' : null;
+    out.push(r);
+  }
+  return out;
+}
+/** A package's custom agents into this database, for the owner, where none with that id is there for them yet. Never replaces one. */
+function addAgents(db, agents, owner) {
+  const added = [];
+  if (!agents.length || !hasTable(db, 'agent_metadata')) return added;
+  const have = new Set(tableCols(db, 'agent_metadata').map((c) => c.name));
+  for (const a0 of agents) {
+    if (!a0 || !a0.agent_id) continue;
+    if (db.prepare('SELECT 1 FROM agent_metadata WHERE agent_id = ? AND (user_id IS NULL OR user_id = ?)').get(a0.agent_id, owner)) continue;
+    const a = Object.assign({}, a0, { user_id: owner, updated_at: Date.now() });
+    if (a.id !== undefined && db.prepare('SELECT 1 FROM agent_metadata WHERE id = ?').get(a.id)) a.id = typeof a.id === 'number' ? null : crypto.randomUUID();
+    for (const c of AGENT_SECRET_COLS) if (have.has(c)) a[c] = c === 'env' ? '{}' : null;
+    const cols = Object.keys(a).filter((c) => have.has(c) && !(c === 'id' && a.id === null));
+    db.prepare('INSERT INTO agent_metadata (' + cols.map((c) => '"' + c + '"').join(',') + ') VALUES (' + cols.map(() => '?').join(',') + ')').run(...cols.map((c) => a[c]));
+    added.push({ agent_id: a.agent_id, name: a.name, backend: a.backend || null });
+  }
+  return added;
+}
+/** A stamp of what an item holds: its messages (count, newest, last change) and what its chats and team are (name, settings, archived),
+ *  but not updated_at, which AionCore moves when a chat is only opened (November 17th, 2026: a read rewrote a 234 MB package). The
+ *  folders' own paths are left out of the settings: they differ from PC to PC and say nothing about the chat. */
+function localVersion(db, info) {
+  const ids = info.convIds;
+  if (!ids.length) return 'c2.0';
+  const q = (sql) => { try { return db.prepare(sql.replace('@ids', ids.map(() => '?').join(','))).get(...ids); } catch { return {}; } };
+  const b = q('SELECT MAX(created_at) AS m, COUNT(*) AS n' + (tableCols(db, 'messages').some((c) => c.name === 'updated_at') ? ', MAX(updated_at) AS u' : ', 0 AS u') + ' FROM messages WHERE conversation_id IN (@ids)');
+  const h = crypto.createHash('sha1');
+  const hasArch = tableCols(db, 'conversations').some((c) => c.name === 'archived_at');
+  const conv = db.prepare('SELECT id, name, extra' + (hasArch ? ', archived_at' : ', NULL AS archived_at') + ' FROM conversations WHERE id IN (' + ids.map(() => '?').join(',') + ') ORDER BY id').all(...ids);
+  const settled = (extra) => { let e = {}; try { e = JSON.parse(extra || '{}'); } catch { return String(extra || ''); } delete e.workspace; delete e.mcp_statuses; return JSON.stringify(e, Object.keys(e).sort()); };
+  for (const c of conv) h.update([c.id, c.name || '', settled(c.extra), c.archived_at ? 1 : 0].join(' ') + '');
+  if (info.kind === 't' && hasTable(db, 'teams')) {
+    const tArch = tableCols(db, 'teams').some((c) => c.name === 'archived_at');
+    const t = db.prepare('SELECT name, agents' + (tArch ? ', archived_at' : ', NULL AS archived_at') + ' FROM teams WHERE id = ?').get(info.id);
+    if (t) h.update([t.name || '', t.agents || '', t.archived_at ? 1 : 0].join(' '));
+  }
+  return ['c2', b.n || 0, b.m || 0, b.u || 0, h.digest('hex').slice(0, 16)].join('.');
+}
+/** An item is archived: a team by its own row, a chat when it is. */
+function isArchived(db, info) {
+  try {
+    if (info.kind === 't') return hasTable(db, 'teams') && tableCols(db, 'teams').some((c) => c.name === 'archived_at') && !!(db.prepare('SELECT archived_at FROM teams WHERE id = ?').get(info.id) || {}).archived_at;
+    if (!tableCols(db, 'conversations').some((c) => c.name === 'archived_at')) return false;
+    const ids = info.convIds || [];
+    return ids.length > 0 && ids.every((id) => !!(db.prepare('SELECT archived_at FROM conversations WHERE id = ?').get(id) || {}).archived_at);
+  } catch { return false; }
+}
+/** Whether an item still is as it was when its package was written or read (a stamp of either kind). */
+function sameVersion(db, info, version) {
+  if (!version) return false;
+  return /^c2\./.test(String(version)) ? localVersion(db, info) === version : localVersionOld(db, info) === version;
 }
 /** The drive's root lists the packages on it (another PC reads this to find them). */
 function indexOnDrive(pkg, info, remove) {
@@ -348,10 +471,13 @@ function exportHistory(db, userHome, pkg, layout) {
 /** A package's agents' history to where this PC's agents look for it (the working folder's path here), its paths rewritten. */
 function importHistory(userHome, pkg, m, pairs) {
   let n = 0;
+  const folded = [];
   const root = path.join(pkg, 'agents');
-  if (!exists(root)) return 0;
+  if (!exists(root)) return { files: 0, folded };
   for (const cfg of fs.readdirSync(root)) {
     const cfgHere = exists(path.join(userHome, cfg)) ? path.join(userHome, cfg) : path.join(userHome, '.claude');
+    // a config folder this PC does not have (.claude-work, say): its history goes where this PC's Claude Code reads it, and the result says so
+    if (cfgHere !== path.join(userHome, cfg) && cfg !== '.claude') folded.push(cfg);
     const seen = new Set();
     for (const w of m.workspaces) {
       if (seen.has(w.rel)) continue;
@@ -361,7 +487,7 @@ function importHistory(userHome, pkg, m, pairs) {
       n += syncTree(from, path.join(cfgHere, 'projects', mangle(path.join(pkg, w.rel))), pairs);
     }
   }
-  return n;
+  return { files: n, folded };
 }
 /** Files under one folder copied to another when missing there or newer (paths in text files rewritten when pairs are given). */
 function syncTree(from, to, pairs) {
@@ -548,6 +674,15 @@ function cmdMove(db, a, ctx) {
   return { moved: done, shared: shared ? { folders: shared.pairs.map((p) => p[1]), journal: shared.journal.file } : null };
 }
 /** Back to where it was before it was first moved (the package's manifest remembers), or into AionDX's own folder when that is taken. */
+/** A first-PC folder usable here: its drive and its parent folder exist, and it is not under another Windows user's profile. */
+function homeHere(dest, ctx) {
+  try {
+    if (!exists(path.parse(path.resolve(dest)).root) || !exists(path.dirname(path.resolve(dest)))) return false;
+    const users = path.dirname(path.resolve(ctx.home));
+    if (path.basename(users).toLowerCase() === 'users' && inside(dest, users) && !inside(dest, ctx.home) && path.resolve(dest).toLowerCase() !== path.resolve(ctx.home).toLowerCase()) return false;
+    return true;
+  } catch { return false; }
+}
 function cmdBack(db, a, ctx) {
   const done = [];
   const infos = (a.items || []).map((item) => itemInfo(db, item));
@@ -595,7 +730,8 @@ function cmdBack(db, a, ctx) {
           continue;
         }
         let dest = m.home && m.home[w.convId || '_team'];
-        if (!dest || exists(dest)) dest = path.join(ctx.dataDir, 'aionui', 'conversations', 'placed-back', safeName(info.name) + ' (' + info.id.slice(0, 8) + ')', w.rel);
+        // the first PC's folder only when it is on this PC and free: another PC's user folder (C:\Users\<someone else>) is not ours to make
+        if (!dest || exists(dest) || !homeHere(dest, ctx)) dest = path.join(ctx.dataDir, 'aionui', 'conversations', 'placed-back', safeName(info.name) + ' (' + info.id.slice(0, 8) + ')', w.rel);
         moveFolder(cur, dest, journal);
         pairs.push([cur, dest]);
       }
@@ -783,7 +919,10 @@ function cmdRelink(db, a, ctx) {
   try {
     for (const [o, n] of pairs) moveClaudeHistory(claudeDirs(ctx.home, db), o, n, journal);
     const changed = pairs.length ? rewriteRows(db, info, pairs, journal) : 0;
-    if (m) { const layout = m.workspaces.map((w) => ({ convId: w.convId, old: path.join(to, w.rel), rel: w.rel })); exportRows(db, info, to, layout, m.home, ctx.home); indexOnDrive(to, info, false); }
+    // writing to the package waits until AionDX has checked the signed-in user sees the item (a.exportAfter false: the next sync does it).
+    // November 17th, 2026: a relink on the PC where every chat was invisible rewrote every package with that PC's state.
+    if (m && a.exportAfter !== false) { const layout = m.workspaces.map((w) => ({ convId: w.convId, old: path.join(to, w.rel), rel: w.rel })); exportRows(db, info, to, layout, m.home, ctx.home, a.group, 'relink'); }
+    if (m) indexOnDrive(to, info, false);
     journal.state = 'done'; journal.save();
     return { relinked: { kind: info.kind, id: info.id, name: info.name, at: to, rows: changed, journal: journal.file } };
   } catch (e) {
@@ -804,12 +943,29 @@ function cmdExport(db, a, ctx) {
     if (!m) { out.push({ id: info.id, skipped: 'not placed' }); continue; }
     const group = a.groupOf ? (a.groupOf[info.id] || null) : undefined;
     const groupMoved = group !== undefined && (m.group || null) !== group;
-    if (!a.force && !groupMoved && m.version === localVersion(db, info)) { out.push({ id: info.id, skipped: 'unchanged' }); continue; }
+    // archived or restored since the package was written (an old-style stamp does not see it)
+    const archivedMoved = !!m.archived !== isArchived(db, info);
+    if (!a.force && !groupMoved && !archivedMoved && sameVersion(db, info, m.version)) { out.push({ id: info.id, skipped: 'unchanged' }); continue; }
     const layout = m.workspaces.map((w) => ({ convId: w.convId, old: path.join(pkg, w.rel), rel: w.rel }));
-    const nm = exportRows(db, info, pkg, layout, m.home, ctx && ctx.home, group);
+    const nm = exportRows(db, info, pkg, layout, m.home, ctx && ctx.home, group, 'export');
+    indexOnDrive(pkg, info, false);   // the drive's list keeps current with its packages (its times went stale: only move and relink wrote it)
     out.push({ id: info.id, exported: nm.version, exportedAt: nm.exportedAt });
   }
   return { exported: out };
+}
+/** Who an imported chat belongs to: the signed-in user AionDX names (a.user), else the one real user (never AionCore's built-in
+ *  system_default_user while a real one exists). November 17th, 2026: "the user with the most conversations, else the first user" gave a
+ *  fresh install's chats to system_default_user, made 0.7 s before the real one, so every chat answered 404 to the person who owns it. */
+function ownerFor(db, named) {
+  if (named) {
+    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(String(named))) throw new Error('No user ' + named + ' in this AionDX.');
+    return String(named);
+  }
+  const order = tableCols(db, 'users').some((c) => c.name === 'created_at') ? 'created_at' : 'rowid';
+  const real = db.prepare("SELECT id FROM users WHERE id <> 'system_default_user' ORDER BY " + order).all();
+  if (real.length === 1) return real[0].id;
+  if (!real.length) throw new Error('This AionDX has no signed-in user to give the chat to yet; open it once first.');
+  throw new Error('This AionDX has more than one user; AionDX has to say which one the chat is for.');
 }
 /** Another PC's package into this database: its rows (this PC's user; its paths where the package is now). Same ids already here: the
  *  newer one wins when only one side changed since they last met; both changed, the package's comes in as a copy beside it. */
@@ -819,11 +975,12 @@ function cmdImport(db, a, ctx) {
   if (!m || !m.id) throw new Error('No AionDX chat in ' + pkg + '.');
   const src = openDb(path.join(pkg, ROWS), true);
   const rows = {};
-  try { for (const t of CONV_TABLES.concat(TEAM_TABLES).map((x) => x[0]).concat(['assistant_definitions'])) if (hasTable(src, t)) rows[t] = src.prepare('SELECT * FROM "' + t + '"').all(); } finally { src.close(); }
+  try { for (const t of CONV_TABLES.concat(TEAM_TABLES).map((x) => x[0]).concat(['assistant_definitions', 'agent_metadata'])) if (hasTable(src, t)) rows[t] = src.prepare('SELECT * FROM "' + t + '"').all(); } finally { src.close(); }
   const defs = rows.assistant_definitions || [];
   delete rows.assistant_definitions;
-  const user = db.prepare('SELECT user_id AS u, COUNT(*) AS n FROM conversations GROUP BY user_id ORDER BY n DESC LIMIT 1').get() || db.prepare('SELECT id AS u FROM users LIMIT 1').get();
-  if (!user || !user.u) throw new Error('This AionDX has no user to give the chat to yet; open it once first.');
+  const agents = rows.agent_metadata || [];
+  delete rows.agent_metadata;
+  const user = { u: ownerFor(db, a.user) };
   // the paths the package's rows were written with, and where its folders are on this PC now
   const pairs = m.workspaces.map((w) => [w.path, path.join(pkg, w.rel)]).filter(([o, n]) => o && o.toLowerCase() !== n.toLowerCase());
   const here = m.convIds.filter((id) => db.prepare('SELECT 1 FROM conversations WHERE id = ?').get(id));
@@ -831,7 +988,7 @@ function cmdImport(db, a, ctx) {
   let mode = 'new';
   if (here.length) {
     const info = itemInfo(db, { kind: m.kind, id: m.id });
-    const localChanged = !last.version || localVersion(db, info) !== last.version;
+    const localChanged = !last.version || !sameVersion(db, info, last.version);
     const pkgChanged = !last.exportedAt || m.exportedAt !== last.exportedAt;
     if (!pkgChanged) return { imported: { id: m.id, skipped: 'this PC has it as the package has it' + (localChanged ? ' (and newer: it will be written to the package)' : '') } };
     mode = localChanged ? 'copy' : 'replace';
@@ -864,6 +1021,7 @@ function cmdImport(db, a, ctx) {
       for (const [t, col] of CONV_TABLES.slice().reverse()) if (hasTable(db, t)) db.prepare('DELETE FROM "' + t + '" WHERE "' + col + '" IN (' + m.convIds.map(() => '?').join(',') + ')').run(...m.convIds);
     }
     let n = 0, skipped = 0;
+    const agentsAdded = addAgents(db, agents, user.u);
     if (defs.length && hasTable(db, 'assistant_definitions')) {
       const have = new Set(tableCols(db, 'assistant_definitions').map((c) => c.name));
       for (const d0 of defs) {
@@ -905,10 +1063,16 @@ function cmdImport(db, a, ctx) {
     const newId = mode === 'copy' ? idMap.get(m.id) || m.id : m.id;
     // history files name the folder where the chat first lived (home) as well as where the package was written
     const histPairs = pairs.concat(m.workspaces.map((w) => [m.home && m.home[w.convId || '_team'], path.join(pkg, w.rel)]).filter(([o, n]) => o && o.toLowerCase() !== n.toLowerCase()));
-    const history = importHistory(ctx.home, pkg, m, histPairs);
-    let version = null;
-    try { version = localVersion(db, itemInfo(db, { kind: m.kind, id: newId })); } catch { /* counted next time */ }
-    return { imported: { id: newId, from: m.id, kind: m.kind, name: m.name, mode, rows: n, skipped, history, version, exportedAt: m.exportedAt, group: m.group || null } };
+    const hist = importHistory(ctx.home, pkg, m, histPairs);
+    let version = null, convIds = m.convIds;
+    try { const inf = itemInfo(db, { kind: m.kind, id: newId }); version = localVersion(db, inf); convIds = inf.convIds; } catch { /* counted next time */ }
+    // a journal of the import: what came in and for whom (ids and counts only), so support can tell when and how it ran
+    try { const j = newJournal(ctx.work, 'import ' + m.kind + ':' + m.id); j.state = 'imported'; j.info = { id: newId, from: m.id, kind: m.kind, mode, owner: user.u, rows: n, skipped, agentsAdded, history: hist.files, package: pkg, at: Date.now() }; j.save(); } catch { /* no journal: the import stands */ }
+    // the agents the chats need that are on neither PC as custom agents nor built in here (a missing record makes a chat fail on its first message)
+    const needs = agentIdsOf({ conversations: rows.conversations || [], acp_session: rows.acp_session || [], teams: rows.teams || [] })
+      .filter((id) => hasTable(db, 'agent_metadata') && !db.prepare('SELECT 1 FROM agent_metadata WHERE agent_id = ? AND (user_id IS NULL OR user_id = ?)').get(id, user.u));
+    return { imported: { id: newId, from: m.id, kind: m.kind, name: m.name, mode, rows: n, skipped, owner: user.u, convIds, agentsAdded, agentsMissing: needs,
+      history: hist.files, historyFolded: hist.folded, version, exportedAt: m.exportedAt, group: m.group || null, archived: !!m.archived } };
   } catch (e) { try { db.exec('ROLLBACK'); } catch { /* none */ } throw e; }
 }
 
@@ -930,21 +1094,24 @@ function cmdStatus(db) {
   };
   const hasArch = tableCols(db, 'conversations').some((c) => c.name === 'archived_at');
   for (const c of db.prepare('SELECT id, name, extra, updated_at' + (hasArch ? ', archived_at' : ', NULL AS archived_at') + ' FROM conversations').all()) {
-    if (c.archived_at) continue;
     let e = {}; try { e = JSON.parse(c.extra || '{}'); } catch { /* none */ }
     if (teamOf.has(c.id) || e.teamId) continue;
     const ws = typeof e.workspace === 'string' ? e.workspace : '';
-    items.push(Object.assign({ kind: 'c', id: c.id, name: c.name || 'Chat', ws, custom: !!e.customWorkspace, updated: c.updated_at || 0, convIds: [c.id] }, look(ws, c.id)));
+    const where = look(ws, c.id);
+    // November 19th, 2026 (the user: an archived chat "stays where it's stored ... and it remains archived until it's restored or deleted"):
+    // an archived chat kept in a place is still listed, marked archived, so it is still written to its package (archived there too)
+    if (c.archived_at && !where.placed) continue;
+    items.push(Object.assign({ kind: 'c', id: c.id, name: c.name || 'Chat', ws, custom: !!e.customWorkspace, updated: c.updated_at || 0, convIds: [c.id], archived: !!c.archived_at }, where));
   }
   for (const t of teams) {
-    if (t.archived_at) continue;
+    if (t.archived_at && !look(t.workspace || '', t.id).placed) continue;
     let agents = []; try { agents = JSON.parse(t.agents || '[]'); } catch { /* none */ }
-    items.push(Object.assign({ kind: 't', id: t.id, name: t.name || 'Team', ws: t.workspace || '', custom: true, members: agents.length, updated: t.updated_at || 0, convIds: agents.map((a) => a && a.conversation_id).filter(Boolean) }, look(t.workspace || '', t.id)));
+    items.push(Object.assign({ kind: 't', id: t.id, name: t.name || 'Team', ws: t.workspace || '', custom: true, members: agents.length, updated: t.updated_at || 0, archived: !!t.archived_at, convIds: agents.map((a) => a && a.conversation_id).filter(Boolean) }, look(t.workspace || '', t.id)));
   }
   return { items };
 }
 
-module.exports = { cmdStatus, rewrite, spellings, mangle, localVersion, packageLayout, cmdMove, cmdBack, cmdRelink, cmdExport, cmdImport, undoJournal, openDb, MANIFEST, ROWS, DRIVE_INDEX };
+module.exports = { cmdStatus, rewrite, spellings, mangle, localVersion, localVersionOld, sameVersion, ownerFor, agentRowsFor, addAgents, homeHere, packageLayout, cmdMove, cmdBack, cmdRelink, cmdExport, cmdImport, undoJournal, openDb, MANIFEST, ROWS, DRIVE_INDEX };
 
 if (require.main === module) {
   const cmd = argv[0];

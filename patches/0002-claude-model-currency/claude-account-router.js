@@ -661,11 +661,15 @@ function planHooks(env, dataDir, convId, teamId) {
     if (!fs.existsSync(script) || !dataDir) return;
     const reg = (() => { try { return JSON.parse(fs.readFileSync(path.join(dataDir, 'aiondx-projects.json'), 'utf8')); } catch { return {}; } })();
     if (reg.planHooks === 'off') return;
-    const cmd = (mode) => '"' + process.execPath + '" "' + script + '" ' + mode;
+    // Exec form: the program in "command", its arguments in "args", no shell. As one quoted string the hook ran in Git Bash, or in
+    // PowerShell on a PC without Git for Windows, where a quoted path followed by arguments is not a command; a failed PreToolUse hook
+    // there blocked every Write and Edit (November 17th, 2026, the laptop; Claude Code's hooks reference, filed
+    // Research\2026-11-19_claude-code-hooks-exec-form-web.md). onFailure "continue": a broken hook never stops the agent's work.
+    const hook = (mode) => ({ type: 'command', command: process.execPath, args: [script, mode], timeout: 10, onFailure: 'continue' });
     const hooks = { hooks: {
-      UserPromptSubmit: [{ hooks: [{ type: 'command', command: cmd('prompt'), timeout: 10 }] }],
-      Stop: [{ hooks: [{ type: 'command', command: cmd('stop'), timeout: 10 }] }],
-      PreToolUse: [{ matcher: 'Edit|Write|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: cmd('pretool'), timeout: 10 }] }] } };
+      UserPromptSubmit: [{ hooks: [hook('prompt')] }],
+      Stop: [{ hooks: [hook('stop')] }],
+      PreToolUse: [{ matcher: 'Edit|Write|MultiEdit|NotebookEdit', hooks: [hook('pretool')] }] } };
     const file = path.join(dataDir, 'aiondx-claude-hooks.json');
     const text = JSON.stringify(hooks, null, 1);
     let have = ''; try { have = fs.readFileSync(file, 'utf8'); } catch { /* first time */ }

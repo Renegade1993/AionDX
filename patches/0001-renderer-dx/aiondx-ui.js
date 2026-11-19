@@ -2121,7 +2121,9 @@
       el.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') go(ev); });
     }
     toastBox.appendChild(el);
-    setTimeout(remove, TOAST_MS);
+    // stay: a notice that must not slip by (a chat that came in but cannot be opened) stays until clicked
+    if (place && place.stay) { el.classList.add('aiondx-toast--stay'); el.title = 'Click to close'; if (!place.href) el.addEventListener('click', remove); }
+    else setTimeout(remove, TOAST_MS);
     return el;
   }
 
@@ -4076,7 +4078,8 @@
     chatPlaces.loading = b.call('status').then(function (r) {
       chatPlaces.loading = null;
       if (!r || !r.ok) return r;
-      chatPlaces.items = r.items || [];
+      chatPlaces.items = (r.items || []).filter(function (it) { return !it.archived; });
+      chatPlaces.archivedItems = (r.items || []).filter(function (it) { return it.archived; });
       chatPlaces.recent = r.places || [];
       chatPlaces.groupPlaces = r.groups || {};
       chatPlaces.last = r.last;
@@ -4089,7 +4092,7 @@
     }, function (e) { chatPlaces.loading = null; return { ok: false, error: String(e) }; });
     return chatPlaces.loading;
   }
-  function placeItem(key) { var l = chatPlaces.items || []; for (var i = 0; i < l.length; i++) if (placeKey(l[i]) === key) return l[i]; return null; }
+  function placeItem(key) { var l = (chatPlaces.items || []).concat(chatPlaces.archivedItems || []); for (var i = 0; i < l.length; i++) if (placeKey(l[i]) === key) return l[i]; return null; }
   /** Hold (or release) one chat's agent: AionCore ends its process and starts none until released. A chat working on a turn is refused unless stop. */
   async function holdConv(id, hold, stop) {
     try {
@@ -4675,7 +4678,7 @@
         var rl = r.relink[i], it = placeItem(rl.kind + ':' + rl.id);
         var held = it ? await holdItems([it], 'find it').catch(function () { return null; }) : [];
         if (held === null) continue;
-        try { await b.call('relink', { item: { kind: rl.kind, id: rl.id }, to: rl.to }); } finally { await releaseIds(held); }
+        try { await placesRelink(b, rl, rl.to); } finally { await releaseIds(held); }
       }
       // changed on the drive by another PC: brought in (both changed: kept as a second copy)
       for (var j = 0; j < (r.changed || []).length; j++) {
@@ -4686,13 +4689,13 @@
         }
         if (cheld === null) continue;   // working: the next minute
         var ir;
-        try { ir = await b.call('import', { package: ch.package }); } finally { await releaseIds(cheld); }
+        try { ir = await placesImport(b, ch.package); } finally { await releaseIds(cheld); }
         if (ir && ir.ok && ir.imported && !ir.imported.skipped) came.push(ir.imported);
       }
       // new on a plugged-in drive
       for (var k = 0; k < (r.incoming || []).length; k++) {
         var inc = r.incoming[k];
-        var nr = await b.call('import', { package: inc.package });
+        var nr = await placesImport(b, inc.package);
         if (nr && nr.ok && nr.imported && !nr.imported.skipped) came.push(nr.imported);
       }
       if (came.length || (r.relink || []).length) {
@@ -4706,11 +4709,70 @@
     } catch (e) {
     } finally { placesSyncing = false; }
   }
-  /** Each grouped chat's and team's sidebar group, by name, for the packages: another PC files them the same way (November 16th, 2026). */
+  /** Each grouped chat's and team's sidebar group, by name, for the packages: another PC files them the same way (November 16th, 2026).
+   *  An archived one's group too: archived on a drive, it still belongs to its group there. */
   function placesGroupOf() {
     var o = {};
+    Object.keys(groupsState.archived || {}).forEach(function (k) { var g = groupById(groupsState.archived[k]); if (g) o[k.slice(2)] = g.name; });
     Object.keys(groupsState.items).forEach(function (k) { var g = groupById(groupsState.items[k]); if (g) o[k.slice(2)] = g.name; });
     return o;
+  }
+  /** A chat or team kept in a place (a drive's package): AionDX's own list says so. */
+  function placedOnDrive(key) {
+    var l = (chatPlaces.items || []).concat(chatPlaces.archivedItems || []);
+    for (var i = 0; i < l.length; i++) if (placeKey(l[i]) === key && l[i].placed) return true;
+    return false;
+  }
+  // R-132 (the laptop, November 17th, 2026): chats from a drive went to AionCore's built-in user and nothing said so. The signed-in user
+  // is named in every import; each item is then opened as that user, its agents reloaded, and every result logged and told.
+  var placesUserId = '';
+  async function placesUser() {
+    if (placesUserId) return placesUserId;
+    try {
+      var res = await nativeFetch.call(window, apiUrl('/api/auth/user'), { credentials: 'include' });
+      if (res.ok) { var j = await res.json(); var u = (j && j.user) || (j && j.data && (j.data.user || j.data)) || {}; if (u && u.id) placesUserId = String(u.id); }
+    } catch (e) { /* the mover takes the one real user */ }
+    return placesUserId;
+  }
+  /** Which of an item's chats (and its team) the signed-in user cannot open: [{ id, status }]. */
+  async function placesUnseen(item) {
+    var bad = [];
+    var look = async function (url, id) { var g = await getJson(url).catch(function () { return { err: 0 }; }); if (!g || g.err !== undefined) bad.push({ id: id, status: (g && g.err) || 'no answer' }); };
+    if (item.kind === 't') await look('/api/teams/' + encodeURIComponent(item.id), item.id);
+    var ids = item.convIds || [];
+    for (var i = 0; i < ids.length; i++) await look('/api/conversations/' + encodeURIComponent(ids[i]), ids[i]);
+    return bad;
+  }
+  function placesLog(b, level, text) { try { b.call('log', { level: level, text: String(text).slice(0, 1500) }); } catch (e) {} }
+  async function placesImport(b, pkg) {
+    var user = await placesUser();
+    var r = await b.call('import', { package: pkg, user: user || undefined });
+    if (!r || !r.ok) { placesLog(b, 'warn', 'import ' + pkg + ' failed: ' + ((r && r.error) || 'no answer')); return r; }
+    var imp = r.imported;
+    if (!imp || imp.skipped) return r;
+    // agents the mover added straight into the database: AionCore reloads each (switching one on is its own reload)
+    for (var a = 0; a < (imp.agentsAdded || []).length; a++) {
+      await nativeFetch.call(window, apiUrl('/api/agents/' + encodeURIComponent(imp.agentsAdded[a].agent_id) + '/enabled'), {
+        method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify({ enabled: true }) }).catch(function () {});
+    }
+    var bad = await placesUnseen({ kind: imp.kind, id: imp.id, convIds: imp.convIds || [] });
+    imp.unseen = bad;
+    placesLog(b, bad.length ? 'warn' : 'info', 'import ' + imp.kind + ':' + imp.id + ' (' + imp.name + ') mode ' + imp.mode + ', owner ' + imp.owner + ', rows ' + imp.rows +
+      ', skipped ' + imp.skipped + ', agents added ' + (imp.agentsAdded || []).map(function (x) { return x.agent_id; }).join(',') + (bad.length ? ', NOT SEEN: ' + bad.map(function (x) { return x.id + '=' + x.status; }).join(',') : ', seen'));
+    if (bad.length) toast('"' + imp.name + '" came in from the drive, but this PC cannot open it.', 'AionCore answered ' + bad.map(function (x) { return x.status; }).join(', ') +
+      ' for it as the signed-in user. Nothing on the drive was changed; AionDX’s log has the details.', { stay: true });
+    if ((imp.agentsMissing || []).length) toast('"' + imp.name + '" runs on an agent this PC does not have.', 'Agent ' + imp.agentsMissing.join(', ') + ': add it under Settings > Agents, or the chat cannot answer here.', { stay: true });
+    if ((imp.historyFolded || []).length) placesLog(b, 'info', 'import ' + imp.id + ': history from ' + imp.historyFolded.join(', ') + ' put in .claude (this PC has no such folder)');
+    return r;
+  }
+  async function placesRelink(b, item, to) {
+    var r = await b.call('relink', { item: { kind: item.kind, id: item.id }, to: to, exportAfter: false });
+    if (!r || !r.ok) { placesLog(b, 'warn', 'relink ' + item.kind + ':' + item.id + ' failed: ' + ((r && r.error) || 'no answer')); return r; }
+    var it = placeItem(item.kind + ':' + item.id) || item;
+    var bad = await placesUnseen({ kind: item.kind, id: item.id, convIds: it.convIds || [] });
+    placesLog(b, bad.length ? 'warn' : 'info', 'relink ' + item.kind + ':' + item.id + ' to ' + to + (bad.length ? ': NOT SEEN, the package is left as it was: ' + bad.map(function (x) { return x.id + '=' + x.status; }).join(',') : ': seen'));
+    if (bad.length) { r.unseen = bad; toast('"' + (it.name || 'A chat') + '" was found on the drive, but this PC cannot open it.', 'Its package on the drive was left as it was. AionDX’s log has the details.', { stay: true }); }
+    return r;
   }
   /** Chats that came in from a drive go into the group their package names, made here when there is none of that name. */
   function placesFileCame(came) {
@@ -10566,7 +10628,7 @@
   // for a chat or a team, with one line more for the group (the same menu in a group and out of one). A chat or a team is dragged into a group,
   // out of it, and to any place in it; the order inside a group is the user's (aiondx.groups.order), by default the order they were added.
   var GROUPS_PREF = 'aiondx.groups';
-  var groupsState = { v: 1, at: 0, groups: [], items: {}, order: [], collapsed: {} };   // order: every grouped key, in the order the user placed them
+  var groupsState = { v: 1, at: 0, groups: [], items: {}, order: [], collapsed: {}, archived: {} };   // archived: an archived item's group, for its return   // order: every grouped key, in the order the user placed them
   var groupCache = {};         // item key -> { name, icon }: what a grouped item looked like when its sidebar row was last on the page
   var groupInfo = {};          // item key -> { at, gone, name }: the backend's word on an item whose row is not on the page
   var groupInfoAsk = {};
@@ -10580,7 +10642,7 @@
   var SVG_G_MORE = '<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="12" r="3" fill="currentColor"/><circle cx="24" cy="24" r="3" fill="currentColor"/><circle cx="24" cy="35" r="3" fill="currentColor"/></svg>';
 
   function normGroups(j) {
-    var s = { v: 1, at: Number(j && j.at) || 0, groups: [], items: {}, order: [], collapsed: {} };
+    var s = { v: 1, at: Number(j && j.at) || 0, groups: [], items: {}, order: [], collapsed: {}, archived: {} };
     var ids = {};
     if (j && Array.isArray(j.groups)) j.groups.forEach(function (g) {
       if (g && g.id && g.name && !ids[String(g.id)]) { ids[String(g.id)] = 1; s.groups.push({ id: String(g.id), name: String(g.name).slice(0, 80) }); }
@@ -10591,6 +10653,7 @@
     if (j && Array.isArray(j.order)) j.order.forEach(function (k) { if (s.items[k] && !seen[k]) { seen[k] = 1; s.order.push(k); } });
     Object.keys(s.items).forEach(function (k) { if (!seen[k]) { seen[k] = 1; s.order.push(k); } });
     if (j && j.collapsed && typeof j.collapsed === 'object') Object.keys(j.collapsed).forEach(function (k) { if (ids[k] && j.collapsed[k]) s.collapsed[k] = true; });
+    if (j && j.archived && typeof j.archived === 'object') Object.keys(j.archived).forEach(function (k) { if (/^[ct]:./.test(k) && ids[j.archived[k]] && !s.items[k]) s.archived[k] = String(j.archived[k]); });
     return s;
   }
   function loadGroups() {
@@ -11293,8 +11356,29 @@
         if (Array.isArray(arr)) { okT = true; arr.forEach(function (x) { if (x && x.id && !x.archived_at) live['t:' + x.id] = 1; }); }
       }
       var gone = keys.filter(function (k) { return (k.charAt(0) === 'c' ? okC : okT) && !live[k]; });
-      if (gone.length) {
-        gone.forEach(function (k) { delete groupsState.items[k]; });
+      // November 19th, 2026 (the user: an archived chat "stays where it's stored", and restoring it brings it back into its old group):
+      // an archived item's group is kept aside; a deleted one leaves; one a drive still lists never leaves for a 404 (on another PC a 404
+      // can mean "not yours yet", the laptop of November 17th)
+      var changed = false;
+      for (var gi = 0; gi < gone.length; gi++) {
+        var gk = gone[gi], gid = groupsState.items[gk];
+        var one = await getJson((gk.charAt(0) === 't' ? '/api/teams/' : '/api/conversations/') + encodeURIComponent(gk.slice(2))).catch(function () { return null; });
+        if (!one) continue;   // no answer: next time
+        if (one.err && one.err !== 404) continue;
+        if (one.err === 404 && placedOnDrive(gk)) continue;
+        if (!one.err) groupsState.archived[gk] = gid;   // there, but out of the lists: archived
+        delete groupsState.items[gk];
+        changed = true;
+      }
+      // restored: back into the group it was in
+      Object.keys(groupsState.archived).forEach(function (k) {
+        if (!(k.charAt(0) === 'c' ? okC : okT) || !live[k]) return;
+        var g = groupById(groupsState.archived[k]);
+        delete groupsState.archived[k];
+        changed = true;
+        if (g && !groupsState.items[k]) { groupsState.items[k] = g.id; groupsState.order.push(k); }
+      });
+      if (changed) {
         groupsState.order = groupsState.order.filter(function (k) { return !!groupsState.items[k]; });
         saveGroups();
       }
@@ -16785,6 +16869,11 @@
     clogBalloonClear: function () { clogBalloonClear(); },
     whatsNew: function () { return clogReleases().map(function (r) { return { release: r.release, date: r.date, items: r.items.map(function (it) { return { title: it[0], how: it[1], pic: clogPicture(r.release, it[0]) }; }) }; }); },
     placesSyncNow: function () { return placesSync(); },
+    placesLoadNow: function () { return placesLoad(); },
+    reconcileGroupsNow: function () { reconAt = 0; return reconcileGroups(true); },
+    groupsNow: function () { return JSON.parse(JSON.stringify(groupsState)); },
+    placesImportNow: function (pkg) { return placesImport(placesBridge(), pkg); },
+    placesRelinkNow: function (item, to) { return placesRelink(placesBridge(), item, to); },
     projectPicker: function (sel, key) { var el = document.querySelector(sel); if (el) projectPicker(el, key, null); return !!el; },
     targets: function () { return targets().map(function (t) { return { key: t.key, on: state(t).on }; }); },
     status: function () { var t = firstTarget(); return t ? state(t) : null; },

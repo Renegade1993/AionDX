@@ -6077,6 +6077,83 @@ async function pageTarget() {
         check(sc, 'a compaction asked for 37 hours ago is dropped with a note, not sent late', sentOld === 0 && st2.compactSentAt === old && /over 12 hours ago/.test(st2.compactNote || ''), JSON.stringify([sentOld, st2.compactNote]));
       }
     }
+    {
+      const sc = 'drivefix';
+      // R-132 (the laptop, November 17th, 2026) and archived chats kept where they are (November 19th, 2026), the page's half: imports
+      // name the signed-in user, each item is opened as that user after it comes in, its agents are reloaded, everything is logged, and a
+      // chat this PC cannot open is told about until clicked away. An archived grouped chat keeps its group for when it is restored.
+      const groups = { v: 1, at: 1, groups: [{ id: 'g1', name: 'Work' }], items: { 'c:arch1': 'g1', 'c:del1': 'g1', 'c:drv1': 'g1' }, order: ['c:arch1', 'c:del1', 'c:drv1'], collapsed: {} };
+      await load('theme=light');
+      await js(`localStorage.setItem('aionui.dx.groups', ${JSON.stringify(JSON.stringify(groups))}); 0`);
+      await load('theme=light&keepls=1');
+      const dfToasts = () => js('[...document.querySelectorAll(".aiondx-toasts .aiondx-toast")].map(t => [...t.querySelectorAll(".aiondx-toast-text, .aiondx-toast-sub")].map(e => e.textContent).join(""))');
+      await js(`(() => {
+        window.__df = { calls: [] };
+        const R = window.__stub.routes;
+        R['GET /api/auth/user'] = { success: true, user: { id: 'user_signed_in', username: 'me' } };
+        R['GET /api/conversations/in1'] = { success: true, data: { id: 'in1', name: 'Trip notes' } };
+        R['GET /api/conversations/in2'] = { __status: 404, success: false, msg: 'Conversation in2 not found' };
+        R['PATCH /api/agents/x123/enabled'] = (url, body) => { window.__df.calls.push(['enable', body]); return { success: true }; };
+        const items = [{ kind: 'c', id: 'drv1', name: 'On the drive', ws: 'W:\\\\Chats\\\\drv1\\\\workspace', exists: true, placed: true, package: 'W:\\\\Chats\\\\drv1', place: 'W:\\\\Chats', missing: false, convIds: ['drv1'], updated: 1 }];
+        window.aiondxPlaces = { call: (op, a) => {
+          window.__df.calls.push([op, a || {}]);
+          if (op === 'status') return Promise.resolve({ ok: true, items, places: [], groups: {}, home: '' });
+          if (op === 'import' && /in1/.test(a.package)) return Promise.resolve({ ok: true, imported: { id: 'in1', from: 'in1', kind: 'c', name: 'Trip notes', mode: 'new', rows: 9, skipped: 0, owner: a.user, convIds: ['in1'], agentsAdded: [{ agent_id: 'x123', name: 'Claude Code (Office)', backend: 'claude' }], agentsMissing: [], historyFolded: [], group: 'Work' } });
+          if (op === 'import' && /in2/.test(a.package)) return Promise.resolve({ ok: true, imported: { id: 'in2', from: 'in2', kind: 'c', name: 'Map work', mode: 'new', rows: 4, skipped: 0, owner: a.user, convIds: ['in2'], agentsAdded: [], agentsMissing: ['zz9'], historyFolded: [], group: null } });
+          if (op === 'relink') return Promise.resolve({ ok: true, relinked: { kind: 'c', id: a.item.id, name: 'Map work', at: a.to, rows: 3, journal: 'j' } });
+          if (op === 'log' || op === 'sync') return Promise.resolve({ ok: true, exported: 0, changed: [], relink: [], incoming: [] });
+          return Promise.resolve({ ok: false, error: 'unknown' });
+        } };
+        return 0; })()`);
+      await js('window.__aionDx.placesLoadNow()');
+      let r = await js(`window.__aionDx.placesImportNow('W:\\\\Chats\\\\Trip notes (in1)')`);
+      const imp1 = await js(`window.__df.calls.filter((c) => c[0] === 'import')[0]`);
+      check(sc, 'an import names the signed-in user', imp1 && imp1[1].user === 'user_signed_in', JSON.stringify(imp1));
+      check(sc, 'the agent it added is reloaded in AionCore (switched on)', (await js(`JSON.stringify(window.__df.calls.filter((c) => c[0] === 'enable'))`)) === JSON.stringify([['enable', { enabled: true }]]));
+      const logs1 = await js(`window.__df.calls.filter((c) => c[0] === 'log').map((c) => c[1])`);
+      check(sc, 'it is logged as seen, with its owner and the agent added', logs1.length === 1 && logs1[0].level === 'info' && /import c:in1 \(Trip notes\) mode new, owner user_signed_in, rows 9, skipped 0, agents added x123, seen/.test(logs1[0].text), JSON.stringify(logs1));
+      check(sc, 'a chat that opens: no warning', !(await dfToasts()).some((t) => /cannot open/.test(t)));
+      await js('window.__df.calls.length = 0; 0');
+      r = await js(`window.__aionDx.placesImportNow('W:\\\\Chats\\\\Map work (in2)')`);
+      const logs2 = await js(`window.__df.calls.filter((c) => c[0] === 'log').map((c) => c[1])`);
+      check(sc, 'a chat that came in but answers 404 to this user: logged as a warning, naming it', logs2.some((l) => l.level === 'warn' && /NOT SEEN: in2=404/.test(l.text)), JSON.stringify(logs2));
+      await sleep(300);
+      let tl = await dfToasts();
+      check(sc, 'and told: it came in but this PC cannot open it, nothing on the drive changed', tl.some((t) => /"Map work" came in from the drive, but this PC cannot open it\..*404.*Nothing on the drive was changed/.test(t)), JSON.stringify(tl));
+      check(sc, 'an agent this PC lacks is told too', tl.some((t) => /runs on an agent this PC does not have.*zz9/.test(t)), JSON.stringify(tl));
+      await sleep(9600);
+      tl = await dfToasts();
+      check(sc, 'those notices stay past the usual 9 seconds, until clicked', tl.filter((t) => /cannot open it|does not have/.test(t)).length === 2, JSON.stringify(tl));
+      await js(`document.querySelectorAll('.aiondx-toast--stay').forEach((t) => t.click()); 0`);
+      check(sc, 'a click puts each away', !(await dfToasts()).some((t) => /cannot open it|does not have/.test(t)));
+      // a relink waits to write the package until the chat is seen
+      await js('window.__df.calls.length = 0; 0');
+      await js(`window.__aionDx.placesRelinkNow({ kind: 'c', id: 'in2', convIds: ['in2'] }, 'W:\\\\New\\\\Map work (in2)')`);
+      const rl = await js(`window.__df.calls.filter((c) => c[0] === 'relink')[0]`);
+      check(sc, 'a relink asks the mover not to write the package yet', rl && rl[1].exportAfter === false, JSON.stringify(rl));
+      check(sc, 'and, the chat not seen, logs it and leaves the package', (await js(`window.__df.calls.filter((c) => c[0] === 'log').map((c) => c[1].text).join(' ')`)).indexOf('NOT SEEN, the package is left as it was') >= 0);
+      // groups: archived keeps its group aside, deleted leaves, on the drive and 404 stays; restored comes back
+      await js(`(() => { const R = window.__stub.routes;
+        R['GET /api/conversations'] = { success: true, data: { items: [], has_more: false } };
+        R['GET /api/conversations/arch1'] = { success: true, data: { id: 'arch1', name: 'Archived one' } };
+        R['GET /api/conversations/del1'] = { __status: 404, success: false };
+        R['GET /api/conversations/drv1'] = { __status: 404, success: false };
+        return 0; })()`);
+      await js('window.__aionDx.reconcileGroupsNow()');
+      await sleep(300);
+      let gs = await js('window.__aionDx.groupsNow()');
+      check(sc, 'archived: out of the group\'s list, its group kept for its return', !gs.items['c:arch1'] && gs.archived['c:arch1'] === 'g1', JSON.stringify(gs));
+      check(sc, 'deleted: leaves the group', !gs.items['c:del1'] && !gs.archived['c:del1'], JSON.stringify(gs));
+      check(sc, 'kept on a drive and answering 404 here: stays in its group', gs.items['c:drv1'] === 'g1', JSON.stringify(gs));
+      const go = await js(`(async () => { window.__df.calls.length = 0; await window.__aionDx.placesSyncNow(); const s = window.__df.calls.find((c) => c[0] === 'sync'); return s && s[1].groupOf; })()`);
+      check(sc, 'the archived chat\'s group still goes to its package', go && go.arch1 === 'Work', JSON.stringify(go));
+      await js(`window.__stub.routes['GET /api/conversations'] = { success: true, data: { items: [{ id: 'arch1' }, { id: 'drv1' }], has_more: false } }; 0`);
+      await js('window.__aionDx.reconcileGroupsNow()');
+      await sleep(300);
+      gs = await js('window.__aionDx.groupsNow()');
+      check(sc, 'restored: back in its old group', gs.items['c:arch1'] === 'g1' && !gs.archived['c:arch1'] && gs.order.indexOf('c:arch1') >= 0, JSON.stringify(gs));
+      await js(`delete window.aiondxPlaces; localStorage.removeItem('aionui.dx.groups'); 0`);
+    }
     clearTimeout(deadline);
     let failed = 0;
     for (const r of results) {
