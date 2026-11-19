@@ -4087,9 +4087,9 @@ async function pageTarget() {
           call: (op, a) => { window.__dx.calls.push([op, a]); const D = window.__dx;
             if (op === 'where') return Promise.resolve({ ok: true, docsDir: 'C:/ws/Docs', root: 'C:/ws', project: null });
             if (op === 'watch' || op === 'unwatch' || op === 'reveal') return Promise.resolve({ ok: true });
-            if (op === 'list') return Promise.resolve({ ok: true, docs: Object.keys(D.docs).map((id) => ({ id, title: (/^# (.*)/m.exec(D.docs[id]) || [])[1] || id, modified: Date.now(), pending: (D.docs[id].match(/aiondx:pending/g) || []).length, openComments: (D.comments[id] || []).length })) });
+            if (op === 'list') return Promise.resolve({ ok: true, docs: Object.keys(D.docs).map((id) => ({ id, by: ((D.by || {})[id] || {}).by || null, byAt: ((D.by || {})[id] || {}).at || null, title: (/^# (.*)/m.exec(D.docs[id]) || [])[1] || id, modified: Date.now(), pending: (D.docs[id].match(/aiondx:pending/g) || []).length, openComments: (D.comments[id] || []).length })) });
             if (op === 'read') return Promise.resolve(md(a.id) ? { ok: true, id: a.id, title: (/^# (.*)/m.exec(md(a.id)) || [])[1], markdown: md(a.id), comments: D.comments[a.id] || [], suggestions: (D.sgs[a.id] || []).filter((x) => x.status === 'open') } : { ok: false, error: 'no doc' });
-            if (op === 'save') { (D.versions[a.id] = D.versions[a.id] || []).push(D.docs[a.id]); D.docs[a.id] = a.markdown; return Promise.resolve({ ok: true }); }
+            if (op === 'save') { (D.versions[a.id] = D.versions[a.id] || []).push(D.docs[a.id]); D.docs[a.id] = a.markdown; (D.by = D.by || {})[a.id] = { by: 'you', at: Date.now() }; return Promise.resolve({ ok: true }); }
             if (op === 'comment') { const c = { id: 'c1', quote: a.quote, section: a.section, text: a.text, replies: [], resolved: false }; (D.comments[a.id] = D.comments[a.id] || []).push(c); return Promise.resolve({ ok: true, comment: c }); }
             if (op === 'history') return Promise.resolve({ ok: true, versions: (D.versions[a.id] || []).map((x, i) => ({ version: 'v' + i, at: Date.now() - 60000 })) });
             if (op === 'version') return Promise.resolve({ ok: true, markdown: D.versions[a.id][+a.version.slice(1)] });
@@ -4100,11 +4100,11 @@ async function pageTarget() {
             return Promise.resolve({ ok: false, error: 'stub: ' + op }); },
           onEvent: (cb) => { window.__dx.cb = cb; return () => {}; },
         };
-        window.__dxAgent = (id, text) => { window.__dx.docs[id] = text; window.__dx.cb && window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id }); };
+        window.__dxAgent = (id, text) => { window.__dx.docs[id] = text; (window.__dx.by = window.__dx.by || {})[id] = { by: 'agent', at: Date.now() }; window.__dx.cb && window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id }); };
         window.__calls.length = 0; return 0; })()`);
       const side = () => js(`(() => { const o = document.querySelector('#tbox > [data-testid="aiondx-dx-sider"]'); const b = document.querySelector('#tbox .chat-layout-header [data-testid="aiondx-dx-open"]');
         return { w: o ? Math.round(o.getBoundingClientRect().width) : -1, bw: Math.round(document.getElementById('tbox').getBoundingClientRect().width), last: !!o && o === document.getElementById('tbox').lastElementChild, files: Math.round(document.getElementById('tsider').getBoundingClientRect().width),
-          btn: b ? b.textContent : null, pressed: b ? b.getAttribute('aria-pressed') : null }; })()`);
+          btn: b ? (b.querySelector('.aiondx-dxbtn-label') || b).textContent : null, badge: b && b.querySelector('.aiondx-dx-badge:not([hidden])') ? b.querySelector('.aiondx-dx-badge').textContent : '', pressed: b ? b.getAttribute('aria-pressed') : null }; })()`);
       const panel = () => js(`(() => { const p = document.querySelector('#tbox [data-testid="aiondx-dx"]'); if (!p) return null;
         return { files: p.classList.contains('aiondx-dx--files'), tab: (p.querySelector('.dx-tab--on') || {}).textContent, bar: (p.querySelector('.dx-bar-title') || {}).textContent || '',
           body: (p.querySelector('.dx-body') || {}).innerHTML || '', list: [...p.querySelectorAll('.dx-row-title')].map((e) => e.textContent), empty: (p.querySelector('.dx-empty') || {}).textContent || '' }; })()`);
@@ -4266,12 +4266,12 @@ async function pageTarget() {
       await humanClick('#tbox [data-testid="aiondx-dx-close"]');
       await sleep(400);
       sd = await side();
-      check(sc, 'the X closes the panel (no room taken); the Docs button now counts the chat\'s docs', sd.w === 0 && sd.btn === 'Docs 1' && sd.pressed === 'false', JSON.stringify(sd));
+      check(sc, 'the X closes the panel (no room taken); the Docs button says Docs, no red number (nothing changed since)', sd.w === 0 && sd.btn === 'Docs' && sd.badge === '' && sd.pressed === 'false', JSON.stringify(sd));
       await js(`window.__dxAgent('notes', '# Notes\\n\\n## One\\n\\n<!-- aiondx:pending first -->\\n'); 0`);
       await sleep(700);
       sd = await side();
       const wHalf = Math.max(480, Math.round(sd.bw / 2));
-      check(sc, 'a doc the agent writes while you have the panel closed: it stays closed (open or closed is yours), the Docs button counts it', sd.w === 0 && sd.btn === 'Docs 2' && sd.pressed === 'false', JSON.stringify(sd));
+      check(sc, 'a doc the agent writes while you have the panel closed: it stays closed (open or closed is yours), a red 1 on the Docs button', sd.w === 0 && sd.btn === 'Docs' && sd.badge === '1' && sd.pressed === 'false', JSON.stringify(sd));
       await humanClick('#tbox [data-testid="aiondx-dx-open"]');
       await sleep(400);
       check(sc, 'Docs opens it on the doc the agent wrote', (await side()).w === wHalf && (await panel()).bar === 'Notes', JSON.stringify(await side()));
@@ -4358,7 +4358,7 @@ async function pageTarget() {
       const goChat = async (id, ms) => { await js(`(() => { location.hash = '#/conversation/${id}'; return 0; })()`); await sleep(ms || 2500); return side(); };
       await js(`(() => { window.__dx.calls.length = 0; return 0; })()`);
       sd = await goChat('other1', 6000);
-      check(sc, 'another chat with docs, never opened there: the panel is closed, its Docs button counts them', sd.w === 0 && /^Docs \d/.test(sd.btn) && sd.pressed === 'false', JSON.stringify(sd));
+      check(sc, 'another chat with docs, never opened there: the panel is closed, no red number (its docs were there before)', sd.w === 0 && sd.btn === 'Docs' && sd.badge === '' && sd.pressed === 'false', JSON.stringify(sd));
       await humanClick('#tbox [data-testid="aiondx-dx-open"]');
       await sleep(400);
       check(sc, 'opened there by Docs, at the kept size', Math.abs((await side()).w - wDrag) <= 2, JSON.stringify(await side()));
@@ -4369,7 +4369,7 @@ async function pageTarget() {
       sd = await goChat('other1');
       check(sc, 'closing it in one chat leaves the other as you left it (open)', Math.abs(sd.w - wDrag) <= 2, JSON.stringify(sd));
       sd = await goChat('harness1');
-      check(sc, 'and the chat you closed it in opens closed', sd.w === 0 && /^Docs \d/.test(sd.btn), JSON.stringify(sd));
+      check(sc, 'and the chat you closed it in opens closed', sd.w === 0 && sd.btn === 'Docs', JSON.stringify(sd));
       sd = await goChat('other1');
       sd = await goChat('harness1');
       check(sc, 'the same each time you come back (no flip-flop)', sd.w === 0, JSON.stringify(sd));
@@ -4404,6 +4404,66 @@ async function pageTarget() {
       await sleep(1500);
       check(sc, 'leaving the chat takes the panel and its button away and stops watching', !(await js(`!!document.querySelector('[data-testid="aiondx-dx"]') || !!document.querySelector('[data-testid="aiondx-dx-open"]')`)) && (await js('window.__dx.calls')).some((c) => c[0] === 'unwatch'));
       await js(`(() => { const b = document.getElementById('tbox'); if (b) b.remove(); delete window.aiondxDx; localStorage.removeItem('aionui.dx.dx.share'); localStorage.removeItem('aionui.dx.dx.openChats'); location.hash = '#/conversation/harness1'; return 0; })()`);
+      // ---- what changed since you last looked (November 17th, 2026: "a notification number over the docs button when the agent has made
+      // changes since the user was last in there", "a white number on a red circle, identical to the bell")
+      {
+        await js(`localStorage.removeItem('aionui.dx.dx.seen'); localStorage.removeItem('aionui.dx.dx.openChats'); localStorage.removeItem('aionui.dx.dx.views'); 0`);
+        await load('theme=dark');
+        await setup(false);
+        await js(`(() => { window.__dx.docs['plan'] = '# Plan\\n\\n<!-- dx:tab id="t1" title="Overview" -->\\n\\nOne\\n\\n<!-- dx:tab id="t2" title="Risks" -->\\n\\nTwo\\n'; window.__dx.docs['notes'] = '# Notes\\n\\nA\\n'; window.__dx.cb && window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'plan' }); return 0; })()`);
+        const btnNow = () => js(`(() => { const b = document.querySelector('#tbox [data-testid="aiondx-dx-open"]'); const g = b && b.querySelector('.aiondx-dx-badge'); if (!b || !g) return null; const cs = getComputedStyle(g); const r = g.getBoundingClientRect(), br = b.getBoundingClientRect();
+          return { label: b.querySelector('.aiondx-dxbtn-label').textContent, n: g.hidden ? '' : g.textContent, bg: cs.backgroundColor, fg: cs.color, round: cs.borderRadius, onTop: r.top < br.top + 4 && r.right > br.right - 8, title: b.title }; })()`);
+        const repaint = async () => { await js('window.__aionDx.repaint(); 0'); await sleep(250); };
+        await sleep(1500); await repaint();
+        let bn = await btnNow();
+        check(sc, 'a chat seen for the first time: docs that were there before are not counted', bn && bn.label === 'Docs' && bn.n === '', JSON.stringify(bn));
+        // open the panel, open the plan, look at its first tab; then close it
+        await humanClick('#tbox [data-testid="aiondx-dx-open"]'); await sleep(600);
+        await js(`(() => { const r = document.querySelector('#tbox .dx-row[data-doc="plan"]'); if (r) r.click(); return 0; })()`); await sleep(700);
+        await repaint(); await repaint();
+        await humanClick('#tbox [data-testid="aiondx-dx-open"]'); await sleep(500);
+        // an agent changes the plan's second tab while the panel is closed
+        await js(`window.__dxAgent('plan', window.__dx.docs['plan'].replace('Two', 'Two, and a third risk')); 0`);
+        await sleep(900); await repaint();
+        bn = await btnNow();
+        check(sc, 'an agent changes a doc while the panel is closed: a red 1 over the Docs button', bn && bn.n === '1' && /, 1 changed by an agent since you looked$/.test(bn.title), JSON.stringify(bn));
+        const bell = await js(`(() => { const s = document.createElement('span'); s.className = 'aiondx-bell-badge'; document.body.appendChild(s); const cs = getComputedStyle(s); const o = { bg: cs.backgroundColor, fg: cs.color, round: cs.borderRadius }; s.remove(); return o; })()`);
+        check(sc, 'white on a red circle, the bell\'s own badge, at the button\'s top right', bn && bn.bg === bell.bg && bn.fg === bell.fg && bn.round === bell.round && bn.fg === 'rgb(255, 255, 255)' && bn.onTop, JSON.stringify([bn, bell]));
+        await shot('docs-badge-dark');
+        await clogShot('0.28.5', 'What changed in your docs', '#tbox [data-testid="aiondx-dx-open"]');
+        // reload: it is still there (kept per chat)
+        await load('theme=light&keepls=1');
+        await setup(false);
+        await js(`(() => { window.__dx.docs['plan'] = '# Plan\\n\\n<!-- dx:tab id="t1" title="Overview" -->\\n\\nOne\\n\\n<!-- dx:tab id="t2" title="Risks" -->\\n\\nTwo, and a third risk\\n'; window.__dx.docs['notes'] = '# Notes\\n\\nA\\n'; window.__dx.by = { plan: { by: 'agent', at: Date.now() - 1000 } }; window.__dx.cb && window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'notes' }); return 0; })()`);
+        await sleep(1500); await repaint();
+        bn = await btnNow();
+        check(sc, 'after a restart the count is still there', bn && bn.n === '1', JSON.stringify(bn));
+        await shot('docs-badge-light');
+        // open the panel: the number goes; the doc opens on the tab you left, and the changed tab is marked
+        await humanClick('#tbox [data-testid="aiondx-dx-open"]'); await sleep(800); await repaint();
+        bn = await btnNow();
+        check(sc, 'opening the panel puts the number away', bn && bn.n === '', JSON.stringify(bn));
+        let tabs = await js(`[...document.querySelectorAll('#tbox .dx-tabbtn[data-tabid]')].map((b) => [b.getAttribute('data-tabid'), b.classList.contains('dx-tabbtn--changed')])`);
+        if (!tabs.length) { await js(`(() => { const b = document.querySelector('#tbox .dx-bar [data-act="back"]'); if (b) b.click(); return 0; })()`); await sleep(700); await js(`(() => { const r = document.querySelector('#tbox .dx-row[data-doc="plan"]'); if (r) r.click(); return 0; })()`); await sleep(700); await repaint(); tabs = await js(`[...document.querySelectorAll('#tbox .dx-tabbtn[data-tabid]')].map((b) => [b.getAttribute('data-tabid'), b.classList.contains('dx-tabbtn--changed')])`); }
+        check(sc, 'in the doc, the tab the agent changed is marked, the one you read is not', JSON.stringify(tabs) === JSON.stringify([['t1', false], ['t2', true]]), JSON.stringify([tabs, await js("localStorage.getItem('aionui.dx.dx.seen')"), await js('location.hash')]));
+        await js(`document.querySelector('#tbox .dx-tabbtn[data-tabid="t2"]').click(); 0`); await sleep(500); await repaint(); await repaint();
+        tabs = await js(`[...document.querySelectorAll('#tbox .dx-tabbtn[data-tabid]')].map((b) => [b.getAttribute('data-tabid'), b.classList.contains('dx-tabbtn--changed')])`);
+        check(sc, 'opening that tab clears its mark', tabs.every((t) => !t[1]), JSON.stringify(tabs));
+        // the list: an agent's new change to another doc is marked Changed until it is opened
+        await js(`window.__dxAgent('notes', '# Notes\\n\\nA and B\\n'); 0`); await sleep(400);
+        await js(`(() => { const back = document.querySelector('#tbox .dx-bar [data-act="home"], #tbox .dx-bar [data-act="back"], #tbox [data-testid="aiondx-dx-home"]'); if (back) back.click(); return 0; })()`);
+        await sleep(400);
+        await js('window.__aionDx.dxListNow && window.__aionDx.dxListNow(); 0'); await sleep(600);
+        const marks = await js(`[...document.querySelectorAll('#tbox .dx-row')].map((r) => [r.getAttribute('data-doc'), !!r.querySelector('[data-testid="aiondx-dx-changed"]')])`);
+        check(sc, 'the list marks the doc an agent changed since you opened it, and not the one you have opened', marks.some((m) => m[0] === 'notes' && m[1]) && marks.some((m) => m[0] === 'plan' && !m[1]), JSON.stringify(marks));
+        // your own save never counts
+        await humanClick('#tbox [data-testid="aiondx-dx-open"]'); await sleep(400);
+        await js(`(async () => { await window.aiondxDx.call('save', { id: 'plan', markdown: window.__dx.docs['plan'] + 'mine\\n' }); window.__dx.cb && window.__dx.cb({ kind: 'changed', docsDir: 'C:/ws/Docs', id: 'plan' }); return 0; })()`);
+        await sleep(900); await repaint();
+        bn = await btnNow();
+        check(sc, 'your own change does not count', bn && bn.n === '', JSON.stringify(bn));
+        await js(`localStorage.removeItem('aionui.dx.dx.seen'); 0`);
+      }
     }
 
     // ---- DX Docs: documents and tabs (DX Docs mirror, November 15th, 2026) ----

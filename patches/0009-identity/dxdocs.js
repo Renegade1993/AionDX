@@ -283,7 +283,10 @@ function info(docsDir, id) {
   const secs = allSections(md);
   const pending = secs.filter((s) => pendingOf(s.body)).length;
   const comments = (readJson(path.join(docsDir, '.comments', id + '.json')) || []).filter((c) => !c.resolved).length;
-  return { id, title: T.title || id, path: f, modified: st.mtimeMs, sections: secs.length, tabs: T.tabs[0].implicit ? 0 : T.tabs.length, pending, openComments: comments };
+  // who wrote the doc as it stands, and when (the Docs button counts the docs an agent changed since the user last looked, November 17th, 2026)
+  const w = author(docsDir, id) || {};
+  return { id, title: T.title || id, path: f, modified: st.mtimeMs, sections: secs.length, tabs: T.tabs[0].implicit ? 0 : T.tabs.length, pending, openComments: comments,
+    by: w.by || null, byAt: Number(w.at) || null };
 }
 function list(docsDir) {
   if (!fs.existsSync(docsDir)) return [];

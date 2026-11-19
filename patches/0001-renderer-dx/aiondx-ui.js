@@ -14069,7 +14069,82 @@
   function dxHide() { dxSetOpen(false, true); }
   /** The Docs button in the chat's top bar (beside the bell): opens and closes the panel, with the chat's doc count. */
   var dxBtn = null;
+  // ---- what changed since the user last looked (the user, November 17th, 2026: a number over the Docs button "when the agent has made
+  // changes since the user was last in there", "a white number on a red circle, identical to the bell"). Per chat, kept across restarts:
+  // when its panel was last open (the badge counts the docs an agent wrote after that), when each doc was last opened (its mark in the
+  // list), and each tab's text as last seen (a tab changed or added since is marked). The user's own typing never counts.
+  var DX_SEEN_KEY = KEY_PREFIX + 'dx.seen';
+  var dxSeenMem = null, dxSeenSavedAt = 0;
+  function dxSeenAll() {
+    if (dxSeenMem) return dxSeenMem;
+    try { dxSeenMem = JSON.parse(localStorage.getItem(DX_SEEN_KEY) || '{}') || {}; } catch (e) { dxSeenMem = {}; }
+    return dxSeenMem;
+  }
+  function dxSeenSave(now) {
+    if (!now && Date.now() - dxSeenSavedAt < 3000) return;
+    dxSeenSavedAt = Date.now();
+    var all = dxSeenAll();
+    var keys = Object.keys(all);
+    if (keys.length > 300) keys.sort(function (a, b) { return (all[a].at || 0) - (all[b].at || 0); }).slice(0, keys.length - 300).forEach(function (k) { delete all[k]; });
+    try { localStorage.setItem(DX_SEEN_KEY, JSON.stringify(all)); } catch (e) {}
+  }
+  /** This chat's record; a chat seen for the first time starts now (its docs are not all "changed"). */
+  function dxSeen(conv) {
+    if (!conv) return null;
+    var all = dxSeenAll();
+    if (!all[conv]) { all[conv] = { since: Date.now(), at: Date.now(), docs: {}, tabs: {}, known: {} }; dxSeenSave(true); }
+    var r = all[conv];
+    r.docs = r.docs || {}; r.tabs = r.tabs || {}; r.known = r.known || {};
+    return r;
+  }
+  function dxByAgent(d) { return !!(d && d.by && !/^you\b/i.test(String(d.by)) && Number(d.byAt) > 0); }
+  /** The docs an agent wrote since the panel was last open in this chat (the badge). */
+  function dxBadgeCount() {
+    var rec = dxSeen(dx.conv);
+    if (!rec || dx.open) return 0;
+    return dx.docs.filter(function (d) { return dxByAgent(d) && Number(d.byAt) > rec.at; }).length;
+  }
+  /** A doc an agent wrote since the user last opened it (its mark in the list). */
+  function dxDocChanged(d) {
+    var rec = dxSeen(dx.conv);
+    return !!rec && dxByAgent(d) && Number(d.byAt) > (rec.docs[d.id] || rec.since || 0);
+  }
+  function dxHash(t) { var h = 5381, s2 = String(t || ''); for (var i = 0; i < s2.length; i++) h = ((h << 5) + h + s2.charCodeAt(i)) | 0; return String(h >>> 0); }
+  /** A tab changed or added since the user last saw it (its mark in the doc's tab strip). */
+  function dxTabChanged(tabId) {
+    var rec = dxSeen(dx.conv);
+    if (!rec || !dx.doc || !window.__dxMd) return false;
+    var known = rec.known[dx.doc];
+    if (!known) return false;   // the doc never opened here: nothing to compare with
+    if (known.indexOf(tabId) < 0) return true;
+    var was = rec.tabs[dx.doc + '|' + tabId];
+    if (!was) return false;
+    try { return was !== dxHash(window.__dxMd.tabView(dx.md, tabId)); } catch (e) { return false; }
+  }
+  /** While the panel is open the user is "in there": the time moves on, the open doc and the open tab count as seen. */
+  function dxSeenTick() {
+    if (!dx.open || !dx.conv) return;
+    var rec = dxSeen(dx.conv);
+    rec.at = Date.now();
+    if (dx.view === 'doc' && dx.doc) {
+      var first = !rec.known[dx.doc] || !rec.known[dx.doc].length;   // its tabs not noted yet (the tick can come before they load)
+      rec.docs[dx.doc] = Date.now();
+      if (dx.tab && window.__dxMd) { try { rec.tabs[dx.doc + '|' + dx.tab] = dxHash(window.__dxMd.tabView(dx.md, dx.tab)); } catch (e) {} }
+      // the tabs there are now; a doc opened for the first time has every tab's text noted, so later changes show
+      var ids = (dx.tabs || []).map(function (t) { return t.id; });
+      if (first && window.__dxMd) ids.forEach(function (id) { try { rec.tabs[dx.doc + '|' + id] = dxHash(window.__dxMd.tabView(dx.md, id)); } catch (e) {} });
+      if (first) rec.known[dx.doc] = ids;
+      else if (dx.tab && rec.known[dx.doc].indexOf(dx.tab) < 0) rec.known[dx.doc].push(dx.tab);
+      var strip = dx.main && dx.main.querySelector('.dx-tabstrip');
+      if (strip) Array.prototype.forEach.call(strip.querySelectorAll('.dx-tabbtn[data-tabid]'), function (b) {
+        var ch = dxTabChanged(b.getAttribute('data-tabid'));
+        if (b.classList.contains('dx-tabbtn--changed') !== ch) { b.classList.toggle('dx-tabbtn--changed', ch); b.title = b.title.replace(/ \(changed since you looked\)$/, '') + (ch ? ' (changed since you looked)' : ''); }
+      });
+    }
+    dxSeenSave();
+  }
   function dxHeaderButton() {
+    dxSeenTick();
     var h = document.querySelector('.chat-layout-header');
     var right = h ? h.querySelector(':scope > .shrink-0') : null;
     if (!right) { if (dxBtn && dxBtn.parentNode) dxBtn.parentNode.removeChild(dxBtn); return; }
@@ -14078,15 +14153,22 @@
       dxBtn.type = 'button';
       dxBtn.className = 'arco-btn arco-btn-text arco-btn-size-mini aiondx-dxbtn';
       dxBtn.setAttribute('data-testid', 'aiondx-dx-open');
-      dxBtn.innerHTML = SVG_DOC + '<span class="aiondx-dxbtn-label">Docs</span>';
+      dxBtn.innerHTML = SVG_DOC + '<span class="aiondx-dxbtn-label">Docs</span><span class="aiondx-bell-badge aiondx-dx-badge" data-testid="aiondx-dx-badge" hidden></span>';
       dxBtn.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); dxSetOpen(!dx.open, true); });
     }
     if (dxBtn.parentNode !== right) right.insertBefore(dxBtn, right.firstChild);
     var n = dx.docs.length;
-    var label = 'Docs' + (n ? ' ' + n : '');
+    // the red number is what an agent changed since you were last in there; how many docs there are is in the tooltip (two numbers side by
+    // side read as one)
+    var label = 'Docs';
     var lb = dxBtn.querySelector('.aiondx-dxbtn-label');
     if (lb.textContent !== label) lb.textContent = label;
-    var tip = (dx.open ? 'Close' : 'Open') + ' this chat\u2019s DX Docs' + (n ? ' (' + n + ')' : '');
+    var nb = dxBadgeCount();
+    var badge = dxBtn.querySelector('.aiondx-dx-badge');
+    var bt = !nb ? '' : nb > 99 ? '99+' : String(nb);
+    if (badge && badge.textContent !== bt) badge.textContent = bt;
+    if (badge && badge.hidden !== !nb) badge.hidden = !nb;
+    var tip = (dx.open ? 'Close' : 'Open') + ' this chat\u2019s DX Docs' + (n ? ' (' + n + ')' : '') + (nb ? ', ' + nb + ' changed by an agent since you looked' : '');
     if (dxBtn.title !== tip) dxBtn.title = tip;
     var pr = dx.open ? 'true' : 'false';
     if (dxBtn.getAttribute('aria-pressed') !== pr) dxBtn.setAttribute('aria-pressed', pr);
@@ -14305,6 +14387,12 @@
     meta.textContent = dxWhen(d.modified) + (d.tabs ? ' · ' + d.tabs + ' tabs' : '') + (d.pending ? ' · ' + d.pending + ' to write' : '') +
       (d.openComments ? ' · ' + d.openComments + ' comment' + (d.openComments > 1 ? 's' : '') : '');
     row.appendChild(t); row.appendChild(meta);
+    if (dxDocChanged(d)) {
+      row.classList.add('dx-row--changed');
+      var mk = document.createElement('span'); mk.className = 'dx-row-changed'; mk.setAttribute('data-testid', 'aiondx-dx-changed'); mk.textContent = 'Changed';
+      mk.title = 'An agent changed it since you last opened it';
+      t.appendChild(mk);
+    }
     row.addEventListener('click', open);
     return row;
   }
@@ -14476,6 +14564,7 @@
       b.style.marginLeft = t.depth ? (t.depth * 10) + 'px' : '';
       b.title = t.title + ' (double-click to rename)';
       b.textContent = (t.depth ? '↳ ' : '') + t.title;
+      if (t.id !== dx.tab && dxTabChanged(t.id)) { b.classList.add('dx-tabbtn--changed'); b.title += ' (changed since you looked)'; }
       strip.appendChild(b);
     });
     var menu = document.createElement('button');
@@ -15751,6 +15840,8 @@
     // a doc an agent made or changed: shown in the panel (open or closed is the user's: a closed one stays closed, and opens on it);
     // the one on screen redraws in place
     var known = dx.docs.some(function (d) { return d.id === id; });
+    // who wrote it and when, for the Docs button's count and the list's marks
+    dxApi('list').then(function (lr) { if (lr && lr.ok) { dx.docs = lr.docs; dxHeaderButton(); if (dx.view === 'list' && dx.main) { var row = dx.main.querySelector('.dx-row[data-doc="' + cssId(id) + '"]'); var d = lr.docs.filter(function (x) { return x.id === id; })[0]; if (row && d && dxDocChanged(d) && !row.classList.contains('dx-row--changed')) dxList(); } } }).catch(function () {});
     if (dx.view === 'doc' && dx.doc === id) {
       var cur = await dxApi('read', { id: id });
       if (!cur || !cur.ok) { if (dx.view === 'doc' && dx.doc === id) { toast('This doc was deleted or moved.', 'Recently deleted, at the bottom of the list, can bring it back.'); dx.view = 'list'; dx.doc = null; dxList(); } return; }
@@ -16340,7 +16431,11 @@
       '.aiondx-dx-grip:hover,.aiondx-dx-dragging .aiondx-dx-grip{background:rgba(var(--primary-6),.25)}',
       'body.aiondx-dx-dragging{cursor:col-resize !important;user-select:none !important}',
       '.aiondx-dx-sider .dx-tab[data-tab="files"]{display:none}',
-      '.aiondx-dxbtn{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px;color:var(--color-text-2)}',
+      '.aiondx-dxbtn{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px;color:var(--color-text-2);position:relative;overflow:visible}',
+      '.aiondx-dx-badge[hidden]{display:none !important}',
+      '.dx-row-changed{display:inline-block;margin-left:8px;padding:0 6px;border-radius:8px;background:#f53f3f;color:#fff;font-size:10px;font-weight:600;line-height:16px;vertical-align:middle}',
+      '.dx-tabbtn--changed{position:relative}',
+      '.dx-tabbtn--changed::after{content:"";position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#f53f3f;pointer-events:none}',
       '.aiondx-dxbtn[aria-pressed="true"]{color:rgb(var(--primary-6));background:var(--color-fill-2,rgba(0,0,0,.06))}',
       '.dx-body img{max-width:100%;height:auto}',
       // typing in the doc: the formatting bar, the save state, the link box

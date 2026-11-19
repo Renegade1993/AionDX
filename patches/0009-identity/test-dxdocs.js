@@ -94,7 +94,14 @@ try {
   const first = hist[hist.length - 1];
   D.restore(dir, 'launch-plan', first.version);
   check('restore brings an earlier version back, keeping the current one in the history', /aiondx:pending the three/.test(fs.readFileSync(c.path, 'utf8')) && D.history(dir, 'launch-plan').length === hist.length + 1);
+  // the list says who wrote each doc as it stands, and when (the Docs button's count, November 17th, 2026)
+  const sideId = D.create(dir, { title: 'Side note by the agent' }).id;
+  const byAgent = D.list(dir).find((d) => d.id === sideId);
+  fs.rmSync(path.join(dir, sideId + '.md'), { force: true });
+  check('the list names the last writer: an agent\'s change', byAgent && byAgent.by === 'agent' && byAgent.byAt > 0, JSON.stringify(byAgent));
   D.save(dir, 'launch-plan', '# Edited by hand\r\n\r\nText\r\n');
+  const byYou = D.list(dir).find((d) => d.id === 'launch-plan');
+  check('and the user\'s own save', byYou && byYou.by === 'you' && byYou.byAt >= byAgent.byAt, JSON.stringify(byYou));
   check('the user\'s own save writes the Markdown (line ends made plain) and keeps the version before', fs.readFileSync(c.path, 'utf8') === '# Edited by hand\n\nText\n' && D.history(dir, 'launch-plan').length === hist.length + 2);
   // comments
   const cm = D.addComment(dir, 'launch-plan', { quote: 'Text', text: 'Say which text.', section: '' });
