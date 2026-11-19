@@ -1,0 +1,129 @@
+diff --git a/crates/aionui-app/src/router/routes.rs b/crates/aionui-app/src/router/routes.rs
+index 24e3bce0..b4b6d415 100644
+--- a/crates/aionui-app/src/router/routes.rs
++++ b/crates/aionui-app/src/router/routes.rs
+@@ -30,7 +30,7 @@ use aionui_common::ApiErrorLogContext;
+ use aionui_conversation::{
+     ConversationRuntimeRouterState, conversation_ops_routes, conversation_routes, conversation_runtime_routes,
+ };
+-use aionui_cron::cron_routes;
++use aionui_cron::{cron_internal_routes, cron_routes};
+ use aionui_extension::{extension_routes, hub_routes, skill_routes};
+ use aionui_file::file_routes;
+ use aionui_mcp::mcp_routes;
+@@ -359,6 +359,8 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
+         team_routes(states.team.clone()).route_layer(from_fn_with_state(auth_mw_state.clone(), auth_middleware));
+ 
+     // Cron routes protected by auth middleware
++    // The desktop shell's wake call carries no session (AionDX core-0024).
++    let cron_internal = cron_internal_routes(states.cron.clone());
+     let cron_authenticated =
+         cron_routes(states.cron).route_layer(from_fn_with_state(auth_mw_state.clone(), auth_middleware));
+ 
+@@ -436,6 +438,7 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
+         .merge(channel_authenticated)
+         .merge(team_authenticated)
+         .merge(cron_authenticated)
++        .merge(cron_internal)
+         .merge(office_authenticated)
+         .merge(shell_authenticated)
+         .merge(assistant_authenticated)
+diff --git a/crates/aionui-app/tests/cron_e2e.rs b/crates/aionui-app/tests/cron_e2e.rs
+index af72d4ff..8b4bca57 100644
+--- a/crates/aionui-app/tests/cron_e2e.rs
++++ b/crates/aionui-app/tests/cron_e2e.rs
+@@ -186,6 +186,35 @@ async fn au2_unauthenticated_all_endpoints() {
+     }
+ }
+ 
++// AionDX core-0024: the desktop shell's wake call, exactly as it sends it
++// (only `x-aionui-internal: 1`, no cookie, no token), is served.
++#[tokio::test]
++async fn system_resume_from_the_shell_is_served() {
++    let (app, _services) = build_app().await;
++    let req = axum::http::Request::builder()
++        .method("POST")
++        .uri("/api/cron/internal/system-resume")
++        .header("x-aionui-internal", "1")
++        .body(axum::body::Body::empty())
++        .unwrap();
++    let resp = app.clone().oneshot(req).await.unwrap();
++    assert_eq!(resp.status(), StatusCode::OK);
++    let json = body_json(resp).await;
++    assert_eq!(json["success"], true, "{json}");
++}
++
++#[tokio::test]
++async fn system_resume_without_the_internal_header_is_refused() {
++    let (app, _services) = build_app().await;
++    let req = axum::http::Request::builder()
++        .method("POST")
++        .uri("/api/cron/internal/system-resume")
++        .body(axum::body::Body::empty())
++        .unwrap();
++    let resp = app.clone().oneshot(req).await.unwrap();
++    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
++}
++
+ #[test]
+ fn cron_skill_does_not_instruct_agents_to_write_payload_files() {
+     let skill = std::fs::read_to_string(
+diff --git a/crates/aionui-auth/src/csrf.rs b/crates/aionui-auth/src/csrf.rs
+index a11e6a0c..cbbcb786 100644
+--- a/crates/aionui-auth/src/csrf.rs
++++ b/crates/aionui-auth/src/csrf.rs
+@@ -57,8 +57,15 @@ pub async fn csrf_middleware(
+     // hook reads that as "no answer" and denies (measured 2026-08-14: 9/9 then
+     // 12/12 calls rejected across two live runs).
+     let is_antigravity_hook = path.starts_with("/internal/antigravity-hook/");
++    // The desktop shell's wake call (powerMonitor 'resume'): it posts with only
++    // `x-aionui-internal: 1`, no cookie and no token, so it was refused 403 on
++    // every wake and scheduled tasks due while the PC slept were never caught
++    // up (AionDX core-0024). The handler reads no cookie and no user; a forged
++    // call can only make the scheduler re-check due runs, which it does anyway.
++    let is_system_resume = path == "/api/cron/internal/system-resume";
+     let is_exempt = path == "/login"
+         || path == "/api/auth/qr-login"
++        || is_system_resume
+         || path.starts_with("/api/auth/internal/external-users/")
+         || path.starts_with("/api/auth/internal/external-sessions")
+         || is_antigravity_hook
+diff --git a/crates/aionui-cron/src/lib.rs b/crates/aionui-cron/src/lib.rs
+index d1d13d1d..a65ec871 100644
+--- a/crates/aionui-cron/src/lib.rs
++++ b/crates/aionui-cron/src/lib.rs
+@@ -15,5 +15,5 @@ pub mod state;
+ pub mod types;
+ 
+ pub use events::CronEventEmitter;
+-pub use routes::cron_routes;
++pub use routes::{cron_internal_routes, cron_routes};
+ pub use state::CronRouterState;
+diff --git a/crates/aionui-cron/src/routes.rs b/crates/aionui-cron/src/routes.rs
+index 6e2ff2d7..aa2229e0 100644
+--- a/crates/aionui-cron/src/routes.rs
++++ b/crates/aionui-cron/src/routes.rs
+@@ -65,7 +65,6 @@ pub fn cron_routes(state: CronRouterState) -> Router {
+             "/api/internal/conversation-cron/jobs/{id}",
+             put(update_conversation_cron),
+         )
+-        .route("/api/cron/internal/system-resume", post(system_resume))
+         .route("/api/cron/jobs/{id}/conversations", get(list_conversations_by_cron_job))
+         .route(
+             "/api/cron/jobs/{id}/skill",
+@@ -74,6 +73,15 @@ pub fn cron_routes(state: CronRouterState) -> Router {
+         .with_state(state)
+ }
+ 
++/// The desktop shell's wake call, served outside the auth layer: the shell
++/// posts it with no session (AionDX core-0024). The handler still requires
++/// `x-aionui-internal: 1` and needs no user.
++pub fn cron_internal_routes(state: CronRouterState) -> Router {
++    Router::new()
++        .route("/api/cron/internal/system-resume", post(system_resume))
++        .with_state(state)
++}
++
+ async fn create_job(
+     State(state): State<CronRouterState>,
+     Extension(user): Extension<CurrentUser>,
