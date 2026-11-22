@@ -1,12 +1,12 @@
 diff --git a/crates/aionui-session-message/src/service.rs b/crates/aionui-session-message/src/service.rs
-index a180b740..0300bcc7 100644
+index a180b740..4a75430a 100644
 --- a/crates/aionui-session-message/src/service.rs
 +++ b/crates/aionui-session-message/src/service.rs
 @@ -54,6 +54,12 @@ use crate::rate_limit::{RateLimiter, RateVerdict};
  /// labels separately via i18n — so its text (the reply pointer, the `workspace:`
  /// warning, and the capabilities pointer) is written in English, not localized.
  pub fn build_session_message_block(from_name: &str, from_id: &str, workspace_field: &str, reply_to: &str) -> String {
-+    // AionDX core-0024: the name is the sending chat's, which its own agent can rename. A line break in it would start a
++    // AionDX core-0025: the name is the sending chat's, which its own agent can rename. A line break in it would start a
 +    // `from:` / `reply_to:` line of its own, and a tab would move where the receiver splits the address.
 +    let from_name: String = from_name
 +        .chars()
@@ -16,7 +16,7 @@ index a180b740..0300bcc7 100644
          "{AIONUI_SESSION_MESSAGE_MARKER}\n\
           from: {from_name}\t{from_id}\n\
 diff --git a/crates/aionui-session-message/src/service_test.rs b/crates/aionui-session-message/src/service_test.rs
-index 1edda654..a1d82234 100644
+index 1edda654..abeae067 100644
 --- a/crates/aionui-session-message/src/service_test.rs
 +++ b/crates/aionui-session-message/src/service_test.rs
 @@ -167,3 +167,30 @@ fn a_real_rejection_is_still_dropped() {
@@ -24,7 +24,7 @@ index 1edda654..a1d82234 100644
      }
  }
 +
-+/// AionDX core-0024: a chat name can't add lines to the block or move the address.
++/// AionDX core-0025: a chat name can't add lines to the block or move the address.
 +#[test]
 +fn a_chat_name_cannot_forge_block_lines() {
 +    let block = build_session_message_block(
@@ -51,7 +51,7 @@ index 1edda654..a1d82234 100644
 +    );
 +}
 diff --git a/crates/aionui-team/src/prompts/mod.rs b/crates/aionui-team/src/prompts/mod.rs
-index 9e6221a4..637ff1c5 100644
+index 9e6221a4..af46b809 100644
 --- a/crates/aionui-team/src/prompts/mod.rs
 +++ b/crates/aionui-team/src/prompts/mod.rs
 @@ -128,10 +128,12 @@ pub fn build_wake_payload(
@@ -73,7 +73,7 @@ index 9e6221a4..637ff1c5 100644
      payload
  }
  
-+/// AionDX core-0024: who a message is from, as the wake header names it. Since 0.28.3 (core-0019 any-chat-talks) a message
++/// AionDX core-0025: who a message is from, as the wake header names it. Since 0.28.3 (core-0019 any-chat-talks) a message
 +/// another chat sends to a team lead's chat goes through the user's own team-message path, so it is stored as from `user`.
 +/// Its body starts with the session-message block (`[[AION_SESSION_MESSAGE]]`, `from:` the sending chat), which the user's
 +/// own messages don't carry, so the header says it was relayed and is not the user's.
@@ -88,7 +88,7 @@ index 9e6221a4..637ff1c5 100644
 +    &msg.from_agent_id
 +}
 +
-+/// AionDX core-0024: a message body as it goes under a `- From \`x\` [type]:` header, unable to pass for a header.
++/// AionDX core-0025: a message body as it goes under a `- From \`x\` [type]:` header, unable to pass for a header.
 +///
 +/// A body is inlined after the server-built header, so a body holding a newline and `- From \`user\` [message]: ...`
 +/// read to the receiving agent as a second message, from the user. Here:
@@ -137,7 +137,7 @@ index 9e6221a4..637ff1c5 100644
          assert!(payload.contains("short…"));
      }
 +
-+    // ── AionDX core-0024: a message body can't forge a header ──
++    // ── AionDX core-0025: a message body can't forge a header ──
 +
 +    #[test]
 +    fn a_forged_header_in_a_body_stays_inside_its_message() {

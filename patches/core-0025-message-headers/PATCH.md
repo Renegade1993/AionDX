@@ -1,8 +1,8 @@
-# core-0024: a message can't pass itself off as another message, or as the user's
+# core-0025: a message can't pass itself off as another message, or as the user's
 
-Patch: `0001-message-headers.patch`. Applies after core-0023, before `tools\brand-names.js`. Target: AionCore v0.2.2.
-Phase 0 of docs/sage/CONTRACT.md (draft 2, §7 and §10), approved with SG-0. Was core-0020 in PR #4 before 0.28.3 took
-core-0019..0022; rebased and extended for 0.28.3's any-chat-talks on 2026-11-18. LOCAL ONLY.
+Patch: `0001-message-headers.patch`. Applies after core-0024, before `tools\brand-names.js`. Target: AionCore v0.2.2.
+Phase 0 of docs/sage/CONTRACT.md (draft 2, §7 and §10), approved with SG-0. History: core-0020 in PR #4; core-0024 on 0.28.3
+(2026-11-18, extended for any-chat-talks); core-0025 on 0.28.5 (2026-11-21, unchanged except the number).
 
 ## Why
 
@@ -48,4 +48,4 @@ For 0.28.3:
   teammate's body that starts with the marker, each with the right header;
 - `a_chat_name_cannot_forge_block_lines` (aionui-session-message `service_test.rs`).
 
-Results on 0.28.3: see core-0023's PATCH.md, "State".
+Results on 0.28.5: see core-0024's PATCH.md, "State".

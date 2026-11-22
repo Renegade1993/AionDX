@@ -1,8 +1,9 @@
-# core-0023: routes only a human may call (SG-0, Phase 0 of docs/sage/CONTRACT.md)
+# core-0024: routes only a human may call (SG-0, Phase 0 of docs/sage/CONTRACT.md)
 
-Patch: `0001-human-only-routes.patch`. Applies after core-0022, before `tools\brand-names.js`. Target: AionCore v0.2.2.
+Patch: `0001-human-only-routes.patch`. Applies after core-0023, before `tools\brand-names.js`. Target: AionCore v0.2.2.
 Approved by Nathan ("yes do it", relayed by the lead on 2026-11-13; Phase 0 of the sage contract, draft 2).
-Was core-0019 in PR #4 before 0.28.3 took core-0019..0022 (rebased 2026-11-18, see "0.28.3" below). LOCAL ONLY.
+History: core-0019 in PR #4. It became core-0023 when 0.28.3 took core-0019..0022 (2026-11-18), then core-0024 when 0.28.5
+took core-0023 (2026-11-21). See "0.28.3" and "0.28.5" below.
 
 ## Why
 
@@ -59,14 +60,14 @@ of the new upstream features against these protections. Findings, with what was 
 
   Consequence: `aiondx member set --mode` is now human-only for agents (a lead can no longer change a member's
   permission mode). An ACP agent whose mode option has another id isn't covered.
-- **F2, any-chat-talks (core-0019) (hardened in core-0024).**
+- **F2, any-chat-talks (core-0019) (hardened in core-0025).**
   - A chat can now send to a team's chats. The `sender_is_team` refusal is gone, so team agents can send too.
   - The message goes in through the user's own team-message path (`send_message_to_conversation`, then
     `send_message` / `send_message_to_agent`), so the mailbox stores it as from `user`.
   - It adds no route that sends as the user beyond that, and no way around `cross_session_message_enabled`: the send
     still checks it, and only a human can switch it (`PATCH /api/settings` rule above).
   - Its body starts with the session-message block, which names the sending chat.
-  - core-0024 now heads it in the wake payload as `another chat (relayed, not the user)`, not as `user`. The body is
+  - core-0025 now heads it in the wake payload as `another chat (relayed, not the user)`, not as `user`. The body is
     quoted like any other.
   - It also replaces control characters in the sending chat's name, which goes into the block. An agent can rename its
     own chat, and a line break in the name could otherwise add a forged `from:` / `reply_to:` line.
@@ -74,13 +75,14 @@ of the new upstream features against these protections. Findings, with what was 
     mid-turn message is, as raw text with the block on top. This is upstream's delivery for any chat, team or not.
   - The new `POST /api/session-messages/block` only builds the `[[AION_SESSIONS]]` reference text for chats the caller
     names. It sends nothing.
-- **F3, chat-hold (core-0020) (flagged, not gated).**
+- **F3, chat-hold (core-0020) (gated: the lead, 2026-11-21).**
   - `POST /api/conversations/{id}/runtime/hold` with `stop: true` lets a runtime token end another chat's turn and keep
     its agent from starting until released. An AionCore restart releases everything.
   - It doesn't answer prompts, send as the user, or touch cross-session messaging.
   - Its only caller is the renderer's folder move (patch 0001 `aiondx-ui.js`, session auth), so gating it for agents
     would break nothing.
-  - It's left open, like the other stop and cancel routes, pending a call. Gating it is a one-line rule.
+  - The lead's decision (least privilege): it refuses runtime tokens with `403 HUMAN_ONLY_ROUTE`.
+    `runtime/restart` and the stop and cancel routes stay open.
 - **F4, guarded ask-first chats (app patch 0002) (no change needed).**
   - "Guarded" is Windows' RedirectionGuard, which the Claude launcher turns on at start for any `--permission-mode` but
     `bypassPermissions` (`claude-account-router.js` `guardFor`, commit 14017ad).
@@ -93,19 +95,38 @@ of the new upstream features against these protections. Findings, with what was 
 - **F5, skills-every-agent and skill-view-files (core-0021/0022) (no change needed).** They add no setting and no
   credential surface. They mirror skills into each agent's folder and build skill views as files.
 
+Lead's decisions (2026-11-21): F1 stays narrow (`member set --mode` being human-only is correct: a lead shouldn't put a
+member into bypass); the F2 fixes are accepted; F3 is gated.
+
+## 0.28.5: rebase and audit (2026-11-21)
+
+0.28.5 changed none of core-0001..0022 and added core-0023-local-folders-and-stdin. Ours applied on top without conflicts.
+Audit of core-0023:
+- **G1, a `local` attachment may be a folder (no change needed).**
+  - There's no new route: the message send routes already took `local` attachments. The path must exist and is
+    canonicalized (`aionui-project/src/chat_files.rs`); a folder is now accepted as well as a regular file.
+  - The canonical path goes into the message after the files marker, as a file's always did. In a team chat that text is
+    a message body, so core-0025's quoting covers it. A Windows path can't hold a line break anyway.
+  - An agent learns nothing new: it reads the folder with its own tools, and it could already name any path in its text.
+  - It doesn't touch the gates: no prompt answering, no mode, no settings.
+- **G2, the CLI reads JSON piped from Windows PowerShell (no change needed).** `aioncore` commands now drop a leading byte
+  order mark (or decode UTF-16) on stdin (`commands/stdin_text.rs`). This is client-side only; no route or server check
+  changed. Agents on a PC without Git Bash can now use the config CLI from PowerShell, and its calls still go through the
+  gate.
 ## Tests
 
 - `human_only.rs` unit tests (6):
   - prompts and the mode options are refused; model and every effort id stay open (F1);
   - a conversation PATCH is refused only for the mode keys;
   - settings are refused only for cross-session;
-  - credentials, bots and extension grants are refused;
-  - agent tools keep their routes;
+  - credentials, bots, extension grants and chat-hold are refused (F3);
+  - agent tools keep their routes (`runtime/restart` included);
   - the voice config is stripped from client-settings reads.
 - `middleware_tests.rs`, through the real `auth_middleware`:
   - `an_agent_cannot_call_a_human_only_route_but_the_user_can`: 403 `HUMAN_ONLY_ROUTE` on confirm, a PATCH with
-    `extra.session_mode`, a settings PATCH with cross-session, a bot pairing approval, and the `mode` /
-    `session_mode` config options (chat and team); a session JWT answers the same confirm with 200.
+    `extra.session_mode`, a settings PATCH with cross-session, a bot pairing approval, the `mode` /
+    `session_mode` config options (chat and team), and a chat-hold with `stop`; a session JWT answers the same confirm and
+    holds a chat, both 200.
   - `agent_tools_keep_their_routes_and_bodies_pass_through_intact`: the config CLI's rename, a non-mode `extra`, a
     language setting, a provider create, and `config-options/model` and team `config-options/reasoning_effort` all
     pass, with bodies byte-identical.
@@ -113,47 +134,49 @@ of the new upstream features against these protections. Findings, with what was 
     read both lack the key, and the secret appears nowhere in the body; its write is 403 while other keys are
     written; the session reads and writes the key.
 - `agent_env.rs` `the_bootstrap_secret_never_reaches_an_agent`.
-- Results on 0.28.3: see "State".
+- Results on 0.28.5: see "State".
 - Built and tested with `CARGO_BUILD_JOBS=6` and `--test-threads=4` (the lead's rule after a full-parallel build froze
   the PC). `tools/build-aioncore.ps1` has `-Jobs` (default 6).
 
 ## State
 
-(2026-11-18, on 0.28.3; LOCAL, awaiting the lead's go to force-push PR #4)
+(2026-11-21, on 0.28.5. The lead OK'd a force-push of p0-human-routes once the tests are green and the series tree is
+re-verified.)
 
-- Dev core tree: `AionDX-impl\work-p028`, branch `p028-dev`.
-  - Base `f5af0aff` is core-0001..0022 (origin/main f408991).
-  - `3513fd7e`: ours applied unchanged.
-  - `edc5f037`: F1, the F2 relabel, the renumbering.
-  - HEAD `e62f8984`: the F2 chat-name fix.
+- Dev core tree: `AionDX-impl\work-p028`, branch `p0285-dev`.
+  - Base `bee92fe1` is core-0001..0023 (origin/main 7912efd).
+  - Ours cherry-picked without conflicts (`95ce2531`, `a0c0f20b`, `fde9d08f`).
+  - HEAD `68057889`: the renumbering plus the F3 gate.
 - Exports:
-  - core-0023 = `git diff f5af0aff HEAD -- Cargo.lock crates/aionui-auth crates/aionui-runtime`;
-  - core-0024 = `git diff f5af0aff HEAD -- crates/aionui-team crates/aionui-session-message`.
-- Every `patches\core-*\*.patch` applied to v0.2.2 in name order gives tree `7593547f`, the same tree as the dev HEAD.
-- Release core: `tools\build-aioncore.ps1 -Patched -Jobs 6` built with all 24 core patches. `aioncore.exe` sha256
-  `86ebea32ff365983c1e9e32416bdbdef401c1664398a2938cc159c454491bdaf`.
-- Tests on the dev tree (`CARGO_BUILD_JOBS=6`, `--test-threads=4`):
+  - core-0024 = `git diff bee92fe1 HEAD -- Cargo.lock crates/aionui-auth crates/aionui-runtime`;
+  - core-0025 = `git diff bee92fe1 HEAD -- crates/aionui-team crates/aionui-session-message`.
+- Every `patches\core-*\*.patch` (26 files) applied to v0.2.2 in name order gives tree `df991165`, the same tree as the
+  dev HEAD.
+- Release core: `tools\build-aioncore.ps1 -Patched -Jobs 6` built with all 25 core patches. `aioncore.exe` sha256
+  `1fbbc9968c5b5066675cfa7fb47bad83f3028f079a2738796da4d22b2795a653`.
+- Tests on the dev tree vs the plain 0.28.5 baseline (`bee92fe1`), same machine, `CARGO_BUILD_JOBS=6`, `--test-threads=4`:
 
-  | Suite | Passed | Failed |
+  | Suite | Ours: passed / failed | Baseline: passed / failed |
   |---|---|---|
-  | aionui-auth | 287 | 0 |
-  | aionui-session-message | 148 | 0 |
-  | aionui-team | 779 | 3 |
-  | aionui-conversation | 614 | 2 |
-  | aionui-runtime | 86 | 8 |
-  | aionui-app e2e (12 suites)* | 141 | 1 |
+  | aionui-auth | 287 / 0 | — |
+  | aionui-session-message | 148 / 0 | 147 / 0 |
+  | aionui-team | 779 / 3 | 775 / 3 |
+  | aionui-conversation | 614 / 2 | 614 / 2 |
+  | aionui-runtime | 86 / 8 | 86 / 8 |
+  | aionui-project (upstream core-0023's crate) | 377 / 26 | 377 / 26 |
+  | aionui-app e2e (12 suites)* | 141 / 1 | `session_skill` fails there too |
 
   \* auth, config_cli, team, team_cli, team_model, acp_config_options, runtime_team_tools, session_skill,
   system_settings, helper_runtime_auth, midturn, conversation_runtime_routes.
 
-  Every failure also fails, by the same name, on the plain 0.28.3 baseline (`f5af0aff`, same machine):
-  - aionui-team: three workspace-path tests in `session_service_integration`;
-  - aionui-conversation: `create_rejects_unavailable_workspace_with_trailing_whitespace_in_request` and
-    `is_auto_workspace_matches_by_structure_across_user_and_date`;
-  - aionui-runtime: eight `node_runtime` / `shell_env` / `spawn` tests;
-  - aionui-app: `session_skill` `the_skill_declares_the_name_the_resolver_will_discover`.
-- Clippy (`--no-deps -D warnings`) has nothing in our code. The lints it reports are in upstream files
-  (`aionui-team/src/session.rs`, `aionui-session-message/src/targets.rs`, `aionui-extension/src/skill_view.rs`).
+- The failing tests are the same, by name, on both trees:
+  - Windows path and separator tests in aionui-project (`canonical`, `containment`, `scm::git_provider`,
+    `tree_model`), in aionui-team (`session_service_integration`, workspace) and in aionui-conversation (workspace);
+  - aionui-runtime's eight `node_runtime` / `shell_env` / `spawn` tests;
+  - `session_skill`.
+- The first run of ours also failed `stream_relay_emits_feedback_runtime_terminal_log` (aionui-conversation, which no
+  patch of ours touches). It passed 5 of 5 times alone and in a full rerun of that suite, so it's a timing flake.
+- Clippy (`--no-deps -D warnings`) has nothing in our code. The lints it reports are in upstream files.
 - Earlier: QA's live check of PR #4's core (on 0.27.x). Nathan (2026-11-15): providers / MCP / skills / cron /
   assistants stay open to agents for now; D-4 yes.
 
@@ -182,7 +205,7 @@ The renderer and the main process use a session, so they're unaffected.
 | `/api/auth/internal/*` | user admin | none (bootstrap-secret auth) | **the secret is scrubbed from agent env** |
 | `POST /api/channel/pairings/{approve,reject}`, `/channel/users/revoke`, `/channel/plugins/{enable,disable}` | letting outside users in | none | **gated** |
 | `POST /api/extensions/{permissions,risk-level}` | extension grants | none | **gated** |
-| `POST /api/conversations/{id}/runtime/hold` (0.28.3, core-0020) | stop and hold a chat's agent | none (the renderer's folder move, session) | open, flagged (F3) |
+| `POST /api/conversations/{id}/runtime/hold` (0.28.3, core-0020) | stop and hold a chat's agent | none (the renderer's folder move, session) | **gated** (F3, the lead 2026-11-21) |
 | `POST /api/session-messages/block` (0.28.3, core-0019) | build reference text | none | open (sends nothing) |
 | `/api/mobile/admin/*` | bridge pairing, devices | — | already Session/Local only (core-0016) |
 | team lifecycle | — | — | already lead-only for runtime tokens (core-0015) |

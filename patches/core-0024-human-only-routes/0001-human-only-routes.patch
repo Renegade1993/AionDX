@@ -24,11 +24,11 @@ index ec788e1c..aeefe89a 100644
  aionui-db.workspace = true
 diff --git a/crates/aionui-auth/src/human_only.rs b/crates/aionui-auth/src/human_only.rs
 new file mode 100644
-index 00000000..ed3627da
+index 00000000..1dd4389e
 --- /dev/null
 +++ b/crates/aionui-auth/src/human_only.rs
-@@ -0,0 +1,316 @@
-+//! AionDX core-0023: routes only a human may call (docs/sage/CONTRACT.md §7, SG-0).
+@@ -0,0 +1,321 @@
++//! AionDX core-0024: routes only a human may call (docs/sage/CONTRACT.md §7, SG-0).
 +//!
 +//! Every agent subprocess holds a conversation runtime token that authenticates as the full user, so an agent could
 +//! call any route the desktop calls: answer its own permission prompt, switch its own chat to bypass mode, turn on
@@ -86,6 +86,9 @@ index 00000000..ed3627da
 +            Some("changing a chat's permission mode")
 +        }
 +        (&Method::POST, ["api", "teams", _, "session-mode"]) => Some("changing a team's permission mode"),
++        // holding a chat's agent stopped (0.28.3 core-0020; `stop` also ends its turn). Only the renderer's folder move
++        // calls it, through the session.
++        (&Method::POST, ["api", "conversations", _, "runtime", "hold"]) => Some("holding a chat's agent"),
 +        (&Method::PATCH, ["api", "conversations", _]) => {
 +            let extra = body.and_then(|b| b.get("extra")).and_then(Value::as_object)?;
 +            MODE_KEYS
@@ -301,6 +304,7 @@ index 00000000..ed3627da
 +            (Method::POST, "/api/channel/plugins/disable"),
 +            (Method::POST, "/api/extensions/permissions"),
 +            (Method::POST, "/api/extensions/risk-level"),
++            (Method::POST, "/api/conversations/c1/runtime/hold"),
 +        ] {
 +            assert!(refused(m.clone(), p, None), "{m} {p}");
 +        }
@@ -322,6 +326,7 @@ index 00000000..ed3627da
 +            (Method::POST, "/api/runtime/team-tools/call"),
 +            (Method::POST, "/api/runtime/session-messages/send"),
 +            (Method::POST, "/api/teams/t1/agents/s1/messages"),
++            (Method::POST, "/api/conversations/c1/runtime/restart"),
 +        ] {
 +            assert!(!refused(m.clone(), p, None), "{m} {p}");
 +        }
@@ -357,7 +362,7 @@ index bb30e230..7501828a 100644
  pub mod middleware;
  mod password;
 diff --git a/crates/aionui-auth/src/middleware.rs b/crates/aionui-auth/src/middleware.rs
-index f6c09a09..37779359 100644
+index f6c09a09..092a3d91 100644
 --- a/crates/aionui-auth/src/middleware.rs
 +++ b/crates/aionui-auth/src/middleware.rs
 @@ -226,11 +226,63 @@ async fn runtime_token_channel(state: &AuthState, mut request: Request, next: Ne
@@ -372,7 +377,7 @@ index f6c09a09..37779359 100644
 +    });
  
 -    Ok(next.run(request).await)
-+    // AionDX core-0023: routes only a human may call refuse every agent runtime token.
++    // AionDX core-0024: routes only a human may call refuse every agent runtime token.
 +    let request = refuse_human_only(request, &conversation_id).await?;
 +    let filter = crate::human_only::filters_response(request.method(), request.uri().path());
 +    let response = next.run(request).await;
@@ -382,7 +387,7 @@ index f6c09a09..37779359 100644
 +    strip_protected_keys(response).await
 +}
 +
-+/// AionDX core-0023 (D-4): an agent's read of the client settings never includes the protected keys (the voice
++/// AionDX core-0024 (D-4): an agent's read of the client settings never includes the protected keys (the voice
 +/// config, which holds the ElevenLabs API key). The rest of the response is passed on as it was.
 +async fn strip_protected_keys(response: Response) -> Result<Response, ApiError> {
 +    let (mut parts, body) = response.into_parts();
@@ -400,7 +405,7 @@ index f6c09a09..37779359 100644
 +    Ok(Response::from_parts(parts, axum::body::Body::from(out)))
 +}
 +
-+/// AionDX core-0023: `403 HUMAN_ONLY_ROUTE` for a runtime-token call to a human-only route (`human_only.rs`). The body
++/// AionDX core-0024: `403 HUMAN_ONLY_ROUTE` for a runtime-token call to a human-only route (`human_only.rs`). The body
 +/// is read only for the two routes whose refusal depends on it, and is put back unchanged.
 +async fn refuse_human_only(request: Request, conversation_id: &str) -> Result<Request, ApiError> {
 +    let method = request.method().clone();
@@ -429,15 +434,15 @@ index f6c09a09..37779359 100644
  
  /// Local-mode authentication middleware that skips JWT verification.
 diff --git a/crates/aionui-auth/tests/middleware_tests.rs b/crates/aionui-auth/tests/middleware_tests.rs
-index d5d5c21b..7afd71b4 100644
+index d5d5c21b..59fa9bf2 100644
 --- a/crates/aionui-auth/tests/middleware_tests.rs
 +++ b/crates/aionui-auth/tests/middleware_tests.rs
-@@ -983,3 +983,253 @@ async fn runtime_token_header_with_a_cookie_authenticates_as_the_token() {
+@@ -983,3 +983,271 @@ async fn runtime_token_header_with_a_cookie_authenticates_as_the_token() {
      let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
      assert_eq!(&body[..], br#"RuntimeToken { conversation_id: "conv-1" }"#);
  }
 +
-+// ── AionDX core-0023: human-only routes refuse the runtime-token channel ──
++// ── AionDX core-0024: human-only routes refuse the runtime-token channel ──
 +
 +fn human_only_app(jwt_service: Arc<JwtService>, user_repo: Arc<dyn IUserRepository>) -> Router {
 +    let state = AuthState {
@@ -456,6 +461,7 @@ index d5d5c21b..7afd71b4 100644
 +        .route("/api/settings", axum::routing::patch(echo))
 +        .route("/api/channel/pairings/approve", axum::routing::post(echo))
 +        .route("/api/providers", axum::routing::post(echo))
++        .route("/api/conversations/{id}/runtime/hold", axum::routing::post(echo))
 +        .route("/api/conversations/{id}/config-options/{opt}", axum::routing::put(echo))
 +        .route(
 +            "/api/teams/{id}/conversations/{cid}/config-options/{opt}",
@@ -498,6 +504,11 @@ index d5d5c21b..7afd71b4 100644
 +        ("PATCH", "/api/settings", r#"{"cross_session_message_enabled":true}"#),
 +        ("POST", "/api/channel/pairings/approve", r#"{"code":"1234"}"#),
 +        (
++            "POST",
++            "/api/conversations/conv-2/runtime/hold",
++            r#"{"hold":true,"stop":true}"#,
++        ),
++        (
 +            "PUT",
 +            "/api/conversations/conv-1/config-options/mode",
 +            r#"{"value":"bypassPermissions"}"#,
@@ -521,6 +532,18 @@ index d5d5c21b..7afd71b4 100644
 +            Request::post("/api/conversations/conv-1/confirmations/call-1/confirm")
 +                .header(header::AUTHORIZATION, format!("Bearer {token}"))
 +                .body(Body::from("{}"))
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(resp.status(), StatusCode::OK);
++    // and holds a chat for a folder move (0.28.3 chat-hold)
++    let resp = app
++        .clone()
++        .oneshot(
++            Request::post("/api/conversations/conv-2/runtime/hold")
++                .header(header::AUTHORIZATION, format!("Bearer {token}"))
++                .body(Body::from(r#"{"hold":true}"#))
 +                .unwrap(),
 +        )
 +        .await
@@ -572,7 +595,7 @@ index d5d5c21b..7afd71b4 100644
 +    }
 +}
 +
-+// ── AionDX core-0023 (D-4): agents can neither read nor write the voice config (the ElevenLabs key) ──
++// ── AionDX core-0024 (D-4): agents can neither read nor write the voice config (the ElevenLabs key) ──
 +
 +fn client_settings_app(jwt_service: Arc<JwtService>, user_repo: Arc<dyn IUserRepository>) -> Router {
 +    let state = AuthState {
@@ -687,14 +710,14 @@ index d5d5c21b..7afd71b4 100644
 +    assert_eq!(resp.status(), StatusCode::OK);
 +}
 diff --git a/crates/aionui-runtime/src/agent_env.rs b/crates/aionui-runtime/src/agent_env.rs
-index 57c186e4..3376435e 100644
+index 57c186e4..aa00983d 100644
 --- a/crates/aionui-runtime/src/agent_env.rs
 +++ b/crates/aionui-runtime/src/agent_env.rs
 @@ -67,6 +67,9 @@ fn clean_agent_env(env: &mut BTreeMap<OsString, OsString>) {
          "CLAUDECODE",
          "SSL_CERT_FILE",
          "SSL_CERT_DIR",
-+        // AionDX core-0023: AionCore's own bootstrap secret authenticates the /api/auth/internal routes (create users,
++        // AionDX core-0024: AionCore's own bootstrap secret authenticates the /api/auth/internal routes (create users,
 +        // set passwords, rotate JWT secrets). Agents never need it, and inheriting it bypassed every channel check.
 +        "AIONCORE_BOOTSTRAP_SECRET",
      ] {
@@ -704,7 +727,7 @@ index 57c186e4..3376435e 100644
  
      const CHILD_MARKER: &str = "AIONUI_RUNTIME_AGENT_ENV_TEST_CHILD";
  
-+    /// AionDX core-0023: AionCore's bootstrap secret authenticates the user-admin routes and must never reach an agent.
++    /// AionDX core-0024: AionCore's bootstrap secret authenticates the user-admin routes and must never reach an agent.
 +    #[test]
 +    fn the_bootstrap_secret_never_reaches_an_agent() {
 +        let current = vec![
