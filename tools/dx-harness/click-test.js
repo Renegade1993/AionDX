@@ -627,7 +627,7 @@ async function pageTarget() {
       check(sc, 'a paused member: red dot', d.bg === d.red && d.content !== 'none', JSON.stringify(d));
       await hover('[data-slot-id="slotB"] .aiondx-loop button');
       const t = await tipInfo();
-      check(sc, 'the hover card names the agent state', t && t.agent === 'Agent: paused by the team runtime, usually a provider limit.', t && t.agent);
+      check(sc, 'the hover card names the agent state, why it pauses and how to resume it', t && t.agent === 'Agent: paused by the team runtime after its turns kept failing (a provider limit, or an agent that cannot start: the bell says which). A message from you resumes it.', t && t.agent);
       await unhover();
       await shot('agent-state-team-light');
       await load('theme=light');
