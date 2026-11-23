@@ -7016,7 +7016,56 @@
       saveDraft(scope, text, flushNow, draftQuoteOf(box));
     });
   }
+  // The New Chat page's box (R-135, November 20th, 2026: "\"New Chat\" needs to hold message drafts jus the same as any other chat"): AionUi
+  // holds its text in the page's own state, so leaving the page lost it. Its draft is the scope "guid", kept like a chat's (text only): saved
+  // as you type, put back when the box appears empty, cleared when you send (and saved again if the send did not go and the text stays).
+  var GUID_SCOPE = 'guid';
+  var guidBoxSeen = typeof WeakMap === 'function' ? new WeakMap() : null;   // box -> { at, done }
+  var guidSentAt = 0;
+  function guidBoxEl() { var b = document.querySelector('textarea[data-testid="guid-input"], [data-testid="guid-input"] textarea'); return b && b.isConnected ? b : null; }
+  function syncGuidDraft(flushNow) {
+    var box = guidBoxEl();
+    if (!box) return;
+    var s = guidBoxSeen ? guidBoxSeen.get(box) : null;
+    if (!s) { s = { at: Date.now(), done: false }; if (guidBoxSeen) guidBoxSeen.set(box, s); return; }
+    var text = box.value || '';
+    if (!s.done) {
+      if (Date.now() - s.at < 600) return;   // AionUi fills it first, if it has anything
+      s.done = true;
+      if (!text) {
+        var a = localDraft(GUID_SCOPE), b = draftStore[GUID_SCOPE];
+        var pick = a && b ? (Number(a.at) >= Number(b.at) ? a : b) : (a || b);
+        if (pick && pick.text && pick.text.trim() && Date.now() - (Number(pick.at) || 0) < DRAFT_MAX_AGE_MS) { setComposerValue(box, pick.text); return; }
+      }
+    }
+    if (Date.now() - guidSentAt < 3000) return;   // just sent: the page is on its way to the new chat
+    saveDraft(GUID_SCOPE, text, flushNow, '');
+  }
+  function guidSent() {
+    var box = guidBoxEl();
+    if (!box || !(box.value || '').trim()) return;
+    guidSentAt = Date.now();
+    saveDraft(GUID_SCOPE, '', true, '');
+  }
   function watchDrafts() {
+    document.addEventListener('input', function (ev) {
+      var el = ev.target;
+      if (el && el.closest && el.closest('[data-testid="guid-input"]')) {
+        var gs = guidBoxSeen && guidBoxSeen.get(el);
+        if (gs) gs.done = true; else if (guidBoxSeen) guidBoxSeen.set(el, { at: Date.now(), done: true });   // you are typing: nothing to put back over it
+        saveDraft(GUID_SCOPE, el.value || '', false, '');
+        return;
+      }
+    }, true);
+    document.addEventListener('keydown', function (ev) {
+      var enter = ev.key === 'Enter' || ev.keyCode === 13;
+      if (enter && !ev.shiftKey && !ev.isComposing && ev.target && ev.target.closest && ev.target.closest('[data-testid="guid-input"]')) guidSent();
+    }, true);
+    document.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('[data-testid="guid-send-btn"]') : null;
+      if (b && !b.disabled) guidSent();
+    }, true);
+    setInterval(function () { try { syncGuidDraft(false); } catch (e) { /* next second */ } }, 1000);
     document.addEventListener('input', function (ev) {
       var el = ev.target;
       if (!el || !el.closest || !el.closest('[data-testid="sendbox-input"]')) return;
@@ -7025,8 +7074,8 @@
       draftRestored[draftScope(t)] = true;   // you are typing: nothing to restore over it
       saveDraft(draftScope(t), el.value || '', false, draftQuoteOf(el));
     }, true);
-    var flush = function () { syncDrafts(true); };
-    var closing = function () { draftUnloading = true; syncDrafts(true); };
+    var flush = function () { syncDrafts(true); try { syncGuidDraft(true); } catch (e) {} };
+    var closing = function () { draftUnloading = true; syncDrafts(true); try { syncGuidDraft(true); } catch (e) {} };
     window.addEventListener('beforeunload', closing);
     window.addEventListener('pagehide', closing);
     document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flush(); });
@@ -13787,6 +13836,7 @@
     release: '0.28.6', date: '',
     items: [
       ['Any colour for a lane', 'Right-click a team member\u2019s button for 24 colours, chosen to look as different from each other as possible and to read in light and dark mode, or More colours for any colour at all: a colour field, red, green and blue, hex, or a colour picked from the screen, with how it reads in each mode. Settings > Appearance has the same, and its Dark and Light boxes open it too. Lanes you have not coloured take the new colours in lane order, the lead still blue.'],
+      ['New Chat keeps your draft', 'What you type on the New Chat page stays there when you leave the page or close AionDX, the same as in any chat, and is cleared when you send it.'],
       ['Fixes', 'Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call). A lane colour picked by right-clicking the drag handle or status dot of a member’s button now takes, and colours saved that way before are moved to the member. A team whose agents could not start because of a large pinned skill starts again (the launch was longer than Windows allows), and an agent that cannot start, or a member the team paused, now shows in the bell with the reason.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)

@@ -3895,12 +3895,12 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW286 = ['Any colour for a lane', 'Fixes'];
+      const NEW286 = ['Any colour for a lane', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.6' && JSON.stringify(c.names) === JSON.stringify(NEW286) &&
-        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /asleep/.test(c.hows[1]), JSON.stringify(c));
+        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /New Chat page/.test(c.hows[1]) && /asleep/.test(c.hows[2]), JSON.stringify(c));
       await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
@@ -3944,7 +3944,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 43, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 44, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -6103,6 +6103,49 @@ async function pageTarget() {
       await js(`document.querySelector('.aiondx-acct-menu .aiondx-acct-move').click(); 0`);
       const posted = await js(`window.__calls.filter(c => c.path.endsWith('/replace')).map(c => [c.method, c.path, c.body])`);
       check(sc, 'with the team idle, the swap is posted to that slot with the chosen assistant', posted.length === 1 && posted[0][0] === 'POST' && posted[0][1] === '/api/teams/team1/agents/slotB/replace' && posted[0][2].assistant_id === swaps[0].assistant, JSON.stringify(posted));
+    }
+    {
+      const sc = 'guiddraft';
+      // R-135 (November 20th, 2026: "\"New Chat\" needs to hold message drafts jus the same as any other chat"): the New Chat page's box
+      // (upstream GuidInputCard: a textarea with data-testid guid-input, its text in the page's own state) keeps its draft like a chat's
+      await load('theme=light');
+      await js(`(() => { localStorage.removeItem('aionui.dx.draft.guid'); delete window.__stub.store['aiondx.draft.guid']; return 0; })()`);
+      // the page as AionUi draws it, made again each time it is opened (a new, empty box)
+      const openGuid = () => js(`(() => { document.getElementById('fake-guid')?.remove(); location.hash = '#/guid';
+        const w = document.createElement('div'); w.id = 'fake-guid'; w.style.cssText = 'position:fixed;left:40px;top:120px;width:640px;z-index:9000;background:var(--color-bg-2);padding:12px;border-radius:12px';
+        w.innerHTML = '<textarea data-testid="guid-input" placeholder="New chat" style="width:100%;height:80px"></textarea><button type="button" data-testid="guid-send-btn">Send</button>';
+        w.querySelector('[data-testid="guid-send-btn"]').addEventListener('click', () => { window.__guidSent = w.querySelector('textarea').value; location.hash = '#/conversation/harness1'; w.remove(); });
+        document.body.appendChild(w); return 0; })()`);
+      const leaveGuid = () => js(`(() => { document.getElementById('fake-guid')?.remove(); location.hash = '#/conversation/harness1'; return 0; })()`);
+      const boxText = () => js(`(document.querySelector('[data-testid="guid-input"]') || {}).value`);
+      await openGuid();
+      await sleep(400);
+      await humanClick('[data-testid="guid-input"]');
+      await send('Input.insertText', { text: 'plan the spring survey for the north block' });
+      await sleep(2600);
+      check(sc, 'typing on New Chat saves the draft (on this PC and in the shared store)', (JSON.parse(await js(`localStorage.getItem('aionui.dx.draft.guid')`) || '{}').text === 'plan the spring survey for the north block') &&
+        ((await js(`(window.__stub.store['aiondx.draft.guid'] || {}).text`)) === 'plan the spring survey for the north block'), await js(`localStorage.getItem('aionui.dx.draft.guid')`));
+      await leaveGuid();
+      await sleep(500);
+      await openGuid();
+      let gt = '';
+      for (let i = 0; i < 12 && !gt; i++) { await sleep(300); gt = await boxText(); }
+      check(sc, 'leave the page and come back: the draft is back in the box', gt === 'plan the spring survey for the north block', gt);
+      await shot('guid-draft-light');
+      await clogShot('0.28.6', 'New Chat keeps your draft', '[data-testid="guid-input"]');
+      await load('theme=light&keepls=1');
+      await openGuid();
+      gt = '';
+      for (let i = 0; i < 12 && !gt; i++) { await sleep(300); gt = await boxText(); }
+      check(sc, 'after a reload (a restart) it is back too', gt === 'plan the spring survey for the north block', gt);
+      await humanClick('[data-testid="guid-send-btn"]');
+      await sleep(600);
+      check(sc, 'sending clears it', (await js('window.__guidSent')) === 'plan the spring survey for the north block' && !(await js(`localStorage.getItem('aionui.dx.draft.guid')`)) &&
+        !(await js(`window.__stub.store['aiondx.draft.guid']`)), JSON.stringify([await js(`localStorage.getItem('aionui.dx.draft.guid')`), await js(`window.__stub.store['aiondx.draft.guid']`)]));
+      await openGuid();
+      await sleep(2000);
+      check(sc, 'so the next New Chat starts empty', (await boxText()) === '', await boxText());
+      await leaveGuid();
     }
     {
       const sc = 'biglinks';
