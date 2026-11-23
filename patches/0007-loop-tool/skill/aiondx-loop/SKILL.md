@@ -368,7 +368,9 @@ Show, don't describe. Pick the block by what the content is:
   {"question":"How should a doc hold its tabs?","options":["One file, tabs marked inside","A folder, a file per tab"]}
   ```
   ````
-  Ask only what changes what they get and what their own words have not settled; decide the rest and say so in the doc.
+  Ask only what changes what they get and what their own words have not settled; decide the rest and say so in the doc. Every question
+  has a line where the user can write their own answer: it comes back to you with the answer, and is saved in the block as `"note"` (beside
+  any ticked `"answer"`). Leave it off for one question only when a free answer makes no sense, with `"other": false`.
 - A plan ends with an `approve` block, `{"label":"Approve the plan"}`: you are told when they approve or ask for changes. Do not build
   before the approval.
 - A status per row (a tracker) is a table whose Status column holds `[[pick:Not started|Not started|In progress|Done]]` chips, due dates

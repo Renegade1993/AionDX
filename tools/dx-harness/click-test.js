@@ -3895,12 +3895,12 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW286 = ['Any colour for a lane', 'New Chat keeps your draft', 'Fixes'];
+      const NEW286 = ['Any colour for a lane', 'Write your own answer', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.6' && JSON.stringify(c.names) === JSON.stringify(NEW286) &&
-        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /New Chat page/.test(c.hows[1]) && /asleep/.test(c.hows[2]), JSON.stringify(c));
+        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /your own answer/.test(c.hows[1]) && /New Chat page/.test(c.hows[2]) && /asleep/.test(c.hows[3]), JSON.stringify(c));
       await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
@@ -3944,7 +3944,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 44, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 45, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -4832,6 +4832,30 @@ async function pageTarget() {
       await sleep(1000);
       let s1 = await saved();
       check(sc, 'a pick in a question is saved in its block and sent to the agent', /"answer":\["Q2"\],"by":"you"/.test(s1) && (await sentNow()).some((m) => /^\[DX Doc answer\] In "Plan doc" \(doc chips, tab "Main" \(t1\)\), to "Ship when\?" the user answered: Q2\./.test(m)), JSON.stringify([s1.slice(0, 600), await sentNow()]));
+      // R-138 (November 23rd, 2026: "should always have a additional one where i write in my own reply"): the write-in line
+      await humanClick('#tbox .dx-body .dx-choice .dx-choice-own');
+      await send('Input.insertText', { text: 'Q3, once the survey is in' });
+      const bodyWas = await js(`document.querySelector('#tbox .dx-body .dx-choice .dx-choice-own').value`);
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await sleep(1000);
+      s1 = await saved();
+      const wq = await js(`(() => { const c = document.querySelector('#tbox .dx-body .dx-choice'); return { state: c.querySelector('.dx-choice-state').textContent, own: c.querySelector('.dx-choice-own').value, checked: c.querySelectorAll('input[data-opt]:checked').length }; })()`);
+      check(sc, 'typing in a question\'s write-in line goes into the line (not the doc), and Enter saves it as the answer and tells the agent; one-answer question: the pick is cleared',
+        bodyWas === 'Q3, once the survey is in' && /"answer":\[\],"by":"you","at":\d+,"note":"Q3, once the survey is in"/.test(s1) && wq.checked === 0 && /Answered by you .*: “Q3, once the survey is in”$/.test(wq.state) && wq.own === 'Q3, once the survey is in' &&
+        (await sentNow()).some((m) => /to "Ship when\?" the user answered: wrote their own answer: "Q3, once the survey is in"\./.test(m)), JSON.stringify([wq, s1.slice(s1.indexOf('choice'), s1.indexOf('choice') + 200), await sentNow()]));
+      await js(`(() => { document.querySelector('#tbox .dx-body .dx-choice').scrollIntoView({ block: 'center' }); return 0; })()`);
+      await shot('dx-choice-write-light');
+      await clogShot('0.28.6', 'Write your own answer', '#tbox .dx-body .dx-choice');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); return 0; })()`);
+      await sleep(250);
+      await shot('dx-choice-write-dark');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
+      await humanClick('#tbox .dx-body .dx-choice input[data-opt="Q1"]');
+      await sleep(1000);
+      s1 = await saved();
+      check(sc, 'then a pick: it replaces the written answer (a one-answer question)', /"answer":\["Q1"\],"by":"you","at":\d+\}/.test(s1) && !/"note":"Q3/.test(s1) &&
+        (await js(`document.querySelector('#tbox .dx-body .dx-choice .dx-choice-own').value`)) === '', s1.slice(s1.indexOf('choice'), s1.indexOf('choice') + 200));
       await js(`(() => { document.querySelector('#tbox .dx-body .dx-approve').scrollIntoView({ block: 'center' }); return 0; })()`);
       await sleep(200);
       await humanClick('#tbox .dx-body .dx-approve [data-approve="yes"]');

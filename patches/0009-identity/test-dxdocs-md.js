@@ -51,6 +51,15 @@ check('a callout', H('> [!WARNING] Mind the budget\n> It is tight.'), '<blockquo
 const ch = H('```choice\n{"question":"Ship when?","options":["Q1","Q2"],"answer":["Q2"],"by":"you"}\n```');
 check('a question block: its options, the answer ticked, its source kept', /^<div class="dx-atom dx-choice dx-choice--answered" contenteditable="false" data-kind="choice" data-src="```choice\n\{&quot;question/.test(ch) &&
   /type="radio" name="dxq\d+" data-opt="Q2" checked/.test(ch) && /Answered by you: Q2/.test(ch), true);
+// R-138 (November 23rd, 2026): a write-in line on every question; its text is the block's note, shown in the Answered line; "other": false leaves it out
+check('every question has a write-in line, empty until used', /<input type="text" class="dx-choice-own" data-testid="aiondx-dx-choice-own"[^>]*placeholder="Or write your own answer"[^>]*value=""><button type="button" class="dx-btn dx-choice-send"/.test(ch) &&
+  /Answered by you: Q2</.test(ch), true);
+const chw = H('```choice\n{"question":"Which day?","options":["Mon","Tue"],"multi":true,"answer":["Tue"],"note":"Thu if the crew \\"can\\" <make> it","by":"you"}\n```');
+check('a written answer: kept in the line (escaped), and in the Answered line with the ticks', /value="Thu if the crew &quot;can&quot; &lt;make&gt; it"/.test(chw) && /placeholder="Add your own answer"/.test(chw) &&
+  /Answered by you: Tue, “Thu if the crew &quot;can&quot; &lt;make&gt; it”</.test(chw), true);
+const cho = H('```choice\n{"question":"Ship when?","options":["Q1","Q2"],"note":"Q3","other":false}\n```');
+check('"other": false: no write-in line, and the note is not shown as an answer', !/dx-choice-own/.test(cho) && /Pick one\.</.test(cho) && !/dx-choice--answered/.test(cho), true);
+check('unanswered, the state line says a written answer is welcome', /Pick one, or write your own\.</.test(H('```choice\n{"question":"a","options":["b","c"]}\n```')), true);
 check('an approval block, waiting', /dx-approve--open[\s\S]*Approve the plan[\s\S]*Waiting for approval[\s\S]*data-approve="yes"/.test(H('```approve\n{"label":"Approve the plan"}\n```')), true);
 check('a block that does not read says why', /This question block cannot be shown: it needs &quot;options&quot;: two or more strings/.test(H('```choice\n{"question":"x","options":["only"]}\n```')), true);
 check('an unknown colour is ignored; a cell pipe stays in its cell', H('| a {.bg-pink} | b \\| c |\n| --- | --- |'), '<table><thead><tr><th>a</th><th>b | c</th></tr></thead><tbody></tbody></table>');

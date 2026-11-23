@@ -13836,6 +13836,7 @@
     release: '0.28.6', date: '',
     items: [
       ['Any colour for a lane', 'Right-click a team member\u2019s button for 24 colours, chosen to look as different from each other as possible and to read in light and dark mode, or More colours for any colour at all: a colour field, red, green and blue, hex, or a colour picked from the screen, with how it reads in each mode. Settings > Appearance has the same, and its Dark and Light boxes open it too. Lanes you have not coloured take the new colours in lane order, the lead still blue.'],
+      ['Write your own answer', 'Every question in a DX Doc has a line under its options for your own answer: type it and press Enter or Send, and it is saved in the doc and sent to the agent, like a ticked option. Where you can tick several, your own answer goes with them.'],
       ['New Chat keeps your draft', 'What you type on the New Chat page stays there when you leave the page or close AionDX, the same as in any chat, and is cleared when you send it.'],
       ['Fixes', 'Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call). A lane colour picked by right-clicking the drag handle or status dot of a member’s button now takes, and colours saved that way before are moved to the member. A team whose agents could not start because of a large pinned skill starts again (the launch was longer than Windows allows), and an agent that cannot start, or a member the team paused, now shows in the bell with the reason.'],
     ],
@@ -14838,7 +14839,26 @@
         var t = ev.target;
         if (t && t.classList && t.classList.contains('dx-tick')) dxTick(t);
         var card = t && t.closest && t.closest('.dx-body .dx-choice');
-        if (card && dx.view === 'doc') dxAnswer(card);
+        if (card && dx.view === 'doc') dxAnswer(card, !!(t.classList && t.classList.contains('dx-choice-own')));
+      });
+      // R-138: the write-in line of a question. Its keys stay in the line (the doc's editor around it does not act on them); Enter or Send
+      // sends it.
+      dx.main.addEventListener('keydown', function (ev) {
+        var t = ev.target;
+        if (!t || !t.classList || !t.classList.contains('dx-choice-own')) return;
+        ev.stopPropagation();
+        if (ev.key === 'Enter' && !ev.isComposing) {
+          ev.preventDefault();
+          var card = t.closest('.dx-body .dx-choice');
+          if (card && dx.view === 'doc') dxAnswer(card, true);
+        }
+      }, true);
+      dx.main.addEventListener('click', function (ev) {
+        var b = ev.target && ev.target.closest ? ev.target.closest('.dx-choice-send') : null;
+        if (!b) return;
+        ev.preventDefault();
+        var card = b.closest('.dx-body .dx-choice');
+        if (card && dx.view === 'doc') dxAnswer(card, true);
       });
       document.addEventListener('selectionchange', dxSelection);
       // how far down the open doc is, kept for when the user comes back to this chat (scroll does not bubble: caught on the way down)
@@ -15747,18 +15767,25 @@
     else if (k === 'tab') { var id = chip.getAttribute('data-target'), t = dx.tabs.filter(function (x) { return x.id === id || x.title.toLowerCase() === String(id).toLowerCase(); })[0]; if (t) dxSwitchTab(t.id); else toast('That tab is not in this doc any more.'); }
     else if (k === 'doc') { var d = chip.getAttribute('data-target'); dxFlush().then(function () { dxOpen(d); }); }
   }
-  /** A pick in a question block: saved in the doc and sent to the agent. */
-  async function dxAnswer(card) {
+  /** A pick, or a written answer (R-138), in a question block: saved in the doc and sent to the agent. fromWrite: the write-in line was sent
+   *  (Enter, Send, or leaving it changed). A question with one answer takes either a pick or a written answer; one with several takes both. */
+  async function dxAnswer(card, fromWrite) {
     var src = card.getAttribute('data-src') || '';
     var m = /^(```|~~~)choice\n([\s\S]*)\n\1$/.exec(src);
     if (!m) return;
     var r = window.__dxMd.blockSpec('choice', m[2]);
     if (!r.spec) return;
     var picked = Array.prototype.slice.call(card.querySelectorAll('input[data-opt]')).filter(function (x) { return x.checked; }).map(function (x) { return x.getAttribute('data-opt'); });
+    var ownEl = card.querySelector('.dx-choice-own');
+    var own = ownEl ? String(ownEl.value || '').trim().slice(0, 2000) : r.spec.note;
+    if (!r.spec.multi) { if (fromWrite && own) picked = []; else if (!fromWrite) own = ''; }
+    if (JSON.stringify(picked) === JSON.stringify(r.spec.answer) && own === r.spec.note) return;   // nothing changed (Enter, then leaving the line)
     var s = JSON.parse(m[2]);
     s.answer = picked; s.by = 'you'; s.at = Date.now();
+    if (own) s.note = own; else delete s.note;
     await dxReplaceAtom(card, m[1] + 'choice\n' + JSON.stringify(s) + '\n' + m[1]);
-    if (picked.length) dxTell('[DX Doc answer] In ' + dxWhere() + ', to "' + r.spec.question + '" the user answered: ' + picked.join(', ') + '.\n\n(The answer is saved in the doc’s question block.)');
+    var said = picked.length && own ? picked.join(', ') + ', and wrote: "' + own + '"' : own ? 'wrote their own answer: "' + own + '"' : picked.join(', ');
+    if (said) dxTell('[DX Doc answer] In ' + dxWhere() + ', to "' + r.spec.question + '" the user answered: ' + said + '.\n\n(The answer is saved in the doc’s question block' + (own ? '; a written answer is its "note"' : '') + '.)');
   }
   /** Approve, or ask for changes: saved in the doc and sent to the agent. */
   async function dxApprove(card, verdict, anchor) {
@@ -17159,6 +17186,9 @@
       '.dx-choice,.dx-approve{margin:10px 0;padding:10px 12px;border:1px solid var(--color-border-2,rgba(0,0,0,.12));border-radius:10px;background:var(--color-bg-2,var(--color-fill-1));cursor:default}',
       '.dx-choice-q{font-weight:600;margin-bottom:6px}.dx-choice-opt{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer}.dx-choice-opt input{cursor:pointer}',
       '.dx-choice-state,.dx-approve-state{font-size:12px;color:var(--color-text-3);margin-top:6px}.dx-choice--answered{border-color:rgba(60,170,90,.5)}',
+      '.dx-choice-write{display:flex;gap:6px;align-items:center;margin-top:6px}',
+      '.dx-choice-own{flex:1;min-width:0;height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--color-border-2,rgba(0,0,0,.15));background:var(--color-bg-1,#fff);color:var(--color-text-1);font:inherit;font-size:13px}',
+      '.dx-choice-own:focus{outline:none;border-color:rgb(var(--primary-6))}',
       '.dx-approve-label{font-weight:600}.dx-approve-row{display:flex;gap:6px;margin-top:8px}.dx-approve--approved{border-color:rgba(60,170,90,.6);background:rgba(60,170,90,.07)}.dx-approve--changes{border-color:rgba(217,119,6,.6)}',
       '.dx-menu .dx-menu-danger{color:var(--color-danger-6,#d33)}',
       '.dx-confirm{align-items:center;max-width:360px;flex-wrap:wrap}.dx-confirm-text{flex:1 1 100%;font-size:12.5px;margin:2px 2px 6px;color:var(--color-text-1)}',

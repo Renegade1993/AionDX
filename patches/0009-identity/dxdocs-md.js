@@ -111,7 +111,10 @@
       if (!String(s.question || '').trim()) return { error: 'it needs "question"' };
       if (!Array.isArray(s.options) || s.options.length < 2 || s.options.some(function (o) { return typeof o !== 'string' || !o.trim(); })) return { error: 'it needs "options": two or more strings' };
       var ans = Array.isArray(s.answer) ? s.answer : s.answer ? [s.answer] : [];
-      return { spec: { question: String(s.question), options: s.options.map(String), multi: !!s.multi, answer: ans.filter(function (a) { return s.options.indexOf(a) >= 0; }), by: s.by ? String(s.by) : '', at: +s.at || 0, note: s.note ? String(s.note) : '' } };
+      // R-138 (November 23rd, 2026: "questions need multiple choices, like you have them, and should always have a additional one where i
+      // write in my own reply"): every question has a write-in line under its options ("other": false leaves it out); what is written there
+      // is the block's "note", saved and sent like a ticked option
+      return { spec: { question: String(s.question), options: s.options.map(String), multi: !!s.multi, answer: ans.filter(function (a) { return s.options.indexOf(a) >= 0; }), by: s.by ? String(s.by) : '', at: +s.at || 0, note: s.note ? String(s.note) : '', other: s.other !== false } };
     }
     var st = s.status || 'open';
     if (['open', 'approved', 'changes'].indexOf(st) < 0) return { error: '"status" is open, approved or changes' };
@@ -125,12 +128,18 @@
     var when = s.at ? ' · ' + dateText(new Date(s.at).toISOString().slice(0, 10)) : '';
     if (kind === 'choice') {
       var name = 'dxq' + (++qn);
-      h.push('<div class="dx-atom dx-choice' + (s.answer.length ? ' dx-choice--answered' : '') + '" contenteditable="false" data-kind="choice" data-src="' + esc(whole) + '">');
+      var said = s.answer.slice();
+      if (s.other && s.note) said.push('“' + s.note + '”');
+      h.push('<div class="dx-atom dx-choice' + (said.length ? ' dx-choice--answered' : '') + '" contenteditable="false" data-kind="choice" data-src="' + esc(whole) + '">');
       h.push('<div class="dx-choice-q">' + inline(s.question) + '</div>');
       s.options.forEach(function (o) {
         h.push('<label class="dx-choice-opt"><input type="' + (s.multi ? 'checkbox' : 'radio') + '" name="' + name + '" data-opt="' + esc(o) + '"' + (s.answer.indexOf(o) >= 0 ? ' checked' : '') + '> <span>' + inline(o) + '</span></label>');
       });
-      h.push('<div class="dx-choice-state">' + (s.answer.length ? 'Answered' + (s.by ? ' by ' + esc(s.by) : '') + when + ': ' + esc(s.answer.join(', ')) : s.multi ? 'Tick any that apply.' : 'Pick one.') + '</div></div>');
+      if (s.other) {
+        h.push('<div class="dx-choice-write"><input type="text" class="dx-choice-own" data-testid="aiondx-dx-choice-own" maxlength="2000" spellcheck="true" placeholder="' +
+          (s.multi ? 'Add your own answer' : 'Or write your own answer') + '" aria-label="Your own answer" value="' + esc(s.note) + '"><button type="button" class="dx-btn dx-choice-send" data-testid="aiondx-dx-choice-send">Send</button></div>');
+      }
+      h.push('<div class="dx-choice-state">' + (said.length ? 'Answered' + (s.by ? ' by ' + esc(s.by) : '') + when + ': ' + esc(said.join(', ')) : s.other ? (s.multi ? 'Tick any that apply, or write your own.' : 'Pick one, or write your own.') : s.multi ? 'Tick any that apply.' : 'Pick one.') + '</div></div>');
     } else {
       h.push('<div class="dx-atom dx-approve dx-approve--' + s.status + '" contenteditable="false" data-kind="approve" data-src="' + esc(whole) + '">');
       h.push('<div class="dx-approve-label">' + inline(s.label) + '</div>');
