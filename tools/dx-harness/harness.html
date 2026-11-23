@@ -368,7 +368,12 @@
         tab.setAttribute('data-testid', 'team-tab-' + c[0]);
         tab.setAttribute('data-team-tab-role', c[1]);
         tab.style.cssText = 'padding:4px 10px;border:1px solid var(--color-border-2);border-radius:6px;cursor:pointer';
-        tab.innerHTML = '<span data-testid="team-tab-name-' + c[0] + '">' + c[2] + '</span>';
+        // the parts AionUi's TeamTabs gives a member's button (upstream TeamTabs.tsx): a teammate's drag handle (shown on hover there), its
+        // name, its status dot, and edit and remove buttons; each has its own test id (November 23rd, 2026: a right-click on the drag
+        // handle saved a lane colour under "drag-<slot>", which this page, with a name only, could not show)
+        var part = function (tid, w) { return '<span data-testid="' + tid + c[0] + '" style="display:inline-block;width:' + w + 'px;height:12px;margin:0 3px;vertical-align:middle;background:rgba(128,128,128,.35);border-radius:3px"></span>'; };
+        tab.innerHTML = (c[1] === 'leader' ? '' : part('team-tab-drag-', 10)) + '<span data-testid="team-tab-name-' + c[0] + '">' + c[2] + '</span>' + part('team-tab-status-', 8) +
+          (c[1] === 'leader' ? '' : part('team-tab-edit-', 12) + part('team-tab-remove-', 12));
         tab.addEventListener('click', function () { localStorage.setItem('team-active-slot-team1', c[0]); });
         tabs.appendChild(tab);
       });

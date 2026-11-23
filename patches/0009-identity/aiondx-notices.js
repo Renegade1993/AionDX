@@ -14,6 +14,7 @@
 //   docs-signin      Claude Docs is on for the chat, and its account has no full sign-in, so Docs cannot load. Action: sign in.
 //   docs-reconnect   Claude Docs is on now, and the running agent started with it off. Action: reconnect.
 //   signin-reconnect Docs is on, the account is signed in now, and the running agent started on the older sign-in. Action: reconnect.
+//   launch-failed    the agent's last start failed (the launcher's record says why). Action: reconnect (Try again).
 //
 // Request (ipc "aiondx:notices"): {op: "check", convIds: [...]} -> {ok, notices}.
 
@@ -80,6 +81,17 @@ function noticesFor(dataDir, convId, opts) {
     title: waiting === 1 ? 'A skill change is waiting for you' : waiting + ' skill changes are waiting for you',
     text: 'New or changed skills' + (theirs && !mine ? ' for ' + path.basename(proj.root) : '') + ' wait in DX Skills until you look at what they do and approve them.',
     action: { op: 'skills', label: 'Review them' } });
+  // November 23rd, 2026: a launch that failed (the launcher adds {failed: {at, error}} to the record; a later launch writes a fresh record
+  // without it). Before this the user saw only "UserAgentDisconnected", and the real error was in the launcher's own log.
+  if (rec.failed && rec.failed.error && Number(rec.failed.at) >= Number(rec.at || 0)) {
+    const tooLong = /ENAMETOOLONG/i.test(rec.failed.error);
+    projectNotice.unshift({ id: 'launch-failed:' + convId + ':' + rec.failed.at, kind: 'launch', conv: convId,
+      title: 'This agent could not start',
+      text: 'Its last start failed: ' + rec.failed.error + '.' + (tooLong
+        ? ' The command that starts it was longer than Windows allows; this AionDX moves the long parts into files, so trying again should work. If it does not, unpin large skills from this chat or team.'
+        : ' Messages sent to it wait or fail until it starts. Trying again starts it fresh with the chat kept.'),
+      action: { op: 'reconnect', label: 'Try again' } });
+  }
   const wanted = docsWanted(reg, rec.project, rec.acct, rec.accountKey);
   if (!wanted) return projectNotice;
   const alive = (o.pidAlive || pidAlive)(rec.pid);

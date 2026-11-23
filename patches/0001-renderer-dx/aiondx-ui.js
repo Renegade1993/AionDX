@@ -2688,8 +2688,28 @@
     });
     return css;
   }
+  /** 0.28.5 saved some lane colours under a part of the member's button ("<team>/drag-<slot>", or status-, edit-, remove-) instead of the
+   *  member: each is moved to its member (unless the member has a colour of its own) and the stray entry removed. */
+  var laneRescueSig = '';
+  function rescueLaneKeys() {
+    var mem = bubblePrefs().members || {};
+    var bad = Object.keys(mem).filter(function (k) { return /^[^/]+\/(?:drag|status|edit|remove)-.+$/.test(k); });
+    if (!bad.length) return;
+    var sig = bad.join('|');
+    if (sig === laneRescueSig) return;   // tried already with this set
+    laneRescueSig = sig;
+    var b = JSON.parse(JSON.stringify(bubblePrefs()));
+    bad.forEach(function (k) {
+      var good = k.replace(/\/(?:drag|status|edit|remove)-/, '/');
+      if (!b.members[good]) b.members[good] = b.members[k];
+      delete b.members[k];
+    });
+    changeThemePrefs({ bubbles: b });
+    console.log('[dx] lane colours: ' + bad.length + ' saved under a part of a member\'s button, moved to the member');
+  }
   function paintLaneDefaults() {
     if (disabled()) return;
+    rescueLaneKeys();
     var r = route();
     // the open team's members, once a minute at most, so its lanes have their colours without waiting for the Loop to read it
     if (r && r.kind === 'team' && (!teamCache[r.id] || !teamCache[r.id].order) && Date.now() - (laneTeamAsked[r.id] || 0) > 60000) {
@@ -3260,7 +3280,10 @@
       if (!n || n.nodeType !== 1) continue;
       if (!row && n.id && n.id.indexOf('message-') === 0 && n.hasAttribute('data-aiondx-kind')) row = n;
       if (!col && n.hasAttribute && n.hasAttribute('data-slot-id')) col = n;
-      if (!tabSlot && n.getAttribute) { var tm = /^team-tab-(?!bar$|name-|failed-)(.+)$/.exec(n.getAttribute('data-testid') || ''); if (tm) tabSlot = tm[1]; }
+      // the member's button itself (it carries data-team-tab-role); its parts (the drag handle, status dot, name, edit and remove buttons) have
+      // test ids of their own, and taking the slot from one of those saved the colour as "drag-<slot>" (0.28.5, November 20th, 2026: "current
+      // color change doesnt work")
+      if (!tabSlot && n.hasAttribute && n.hasAttribute('data-team-tab-role')) { var tm = /^team-tab-(.+)$/.exec(n.getAttribute('data-testid') || ''); if (tm) tabSlot = tm[1]; }
     }
     var r = route();
     var teamId = r && r.kind === 'team' ? r.id : '';
@@ -9653,7 +9676,7 @@
     }
     if (a.state === 'idle') return 'Agent: idle.';
     if (a.state === 'queued') return 'Agent: queued, waiting to start.';
-    if (a.state === 'paused') return 'Agent: paused by the team runtime, usually a provider limit.';
+    if (a.state === 'paused') return 'Agent: paused by the team runtime after its turns kept failing (a provider limit, or an agent that cannot start: the bell says which). A message from you resumes it.';
     if (a.state === 'blocked') return 'Agent: blocked' + (a.detail ? ' (' + a.detail + ')' : '') + '.';
     return 'Agent: status unknown.';
   }
@@ -11984,6 +12007,23 @@
         if (c && c.name) n.who = c.name;
         if (c && c.slot) { n.slot = c.slot; n.team = c.team; }
       });
+      // November 23rd, 2026 (a bug report: a team's lead was paused and its messages dropped while the team looked Ready): a member AionCore
+      // has paused (its turns kept failing, so it dropped their messages and waits for you) or blocked after its agent failed to start
+      if (r.kind === 'team') {
+        var rsP = await getJson('/api/teams/' + encodeURIComponent(r.id) + '/run-state').catch(function () { return null; });
+        var wsP = rsP && rsP.data && Array.isArray(rsP.data.slot_work) ? rsP.data.slot_work : [];
+        wsP.forEach(function (w) {
+          if (!w || !(w.state === 'paused' || (w.state === 'blocked' && w.blocked_reason === 'runtime_failed'))) return;
+          var cP = chats.filter(function (x) { return x.slot === w.slot_id; })[0];
+          if (!cP) return;
+          list.push({ id: 'paused:' + w.slot_id + ':' + w.state, kind: 'paused', conv: cP.conv, who: cP.name, slot: cP.slot, team: cP.team,
+            title: w.state === 'paused' ? 'Paused by the team' : 'Its agent could not start',
+            text: w.state === 'paused'
+              ? 'Its turns failed again and again, so AionCore stopped, dropped the messages it could not deliver, and waits. Send it a message to resume it; resend anything it should still have. If it could not start, the notice above says why.'
+              : 'AionCore could not start its agent, so messages to it wait. Try again from the notice above, or send it a message.',
+            action: null });
+        });
+      }
       // skills waiting in a project are one thing, not one per team member (November 16th, 2026: a card per member)
       var seenSk = {};
       list = list.filter(function (n) { if (n.kind !== 'skills') return true; if (seenSk[n.id]) return false; seenSk[n.id] = 1; n.who = ''; n.slot = null; return true; });
@@ -13747,7 +13787,7 @@
     release: '0.28.6', date: '',
     items: [
       ['Any colour for a lane', 'Right-click a team member\u2019s button for 24 colours, chosen to look as different from each other as possible and to read in light and dark mode, or More colours for any colour at all: a colour field, red, green and blue, hex, or a colour picked from the screen, with how it reads in each mode. Settings > Appearance has the same, and its Dark and Light boxes open it too. Lanes you have not coloured take the new colours in lane order, the lead still blue.'],
-      ['Fixes', 'Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call).'],
+      ['Fixes', 'Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call). A lane colour picked by right-clicking the drag handle or status dot of a member’s button now takes, and colours saved that way before are moved to the member. A team whose agents could not start because of a large pinned skill starts again (the launch was longer than Windows allows), and an agent that cannot start, or a member the team paused, now shows in the bell with the reason.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.5', date: '2026-11-19', items: [

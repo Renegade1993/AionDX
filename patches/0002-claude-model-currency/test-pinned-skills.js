@@ -72,6 +72,37 @@ try {
   check('spawned with no shell, the edit hook runs and lets an ordinary edit through (exit 0)', pr.status === 0, JSON.stringify({ status: pr.status, err: String(pr.stderr || '').slice(0, 300), error: pr.error && pr.error.message }));
   a = run([]);
   check('no system prompt argument from AionCore: one is added', /^Pinned skills:/.test(sp(a) || ''), JSON.stringify(a).slice(0, 300));
+  // November 23rd, 2026 (a bug report: a 33,589-character skill pinned to a team made every member's launch longer than Windows allows,
+  // "spawn ENAMETOOLONG"): over 30,000 characters the added prompt goes in a file, and the launch goes ahead
+  skill(path.join(shared, '.claude', 'skills'), 'huge', 'HUGE START ' + 'x'.repeat(33600) + ' HUGE END');
+  fs.writeFileSync(path.join(data, 'aiondx-skill-pins.json'), JSON.stringify({ 't:team1': ['huge'] }));
+  a = run(['--append-system-prompt', 'AIONCORE TEXT']);
+  const pf = Array.isArray(a) && a.indexOf('--append-system-prompt-file') >= 0 ? a[a.indexOf('--append-system-prompt-file') + 1] : '';
+  let pft = ''; try { pft = fs.readFileSync(pf, 'utf8'); } catch (e) { /* none */ }
+  const lineLen = Array.isArray(a) ? a.reduce((n, x) => n + String(x).length + 3, 0) : -1;
+  check('a pin bigger than Windows allows on a command line: the launch goes ahead, the prompt (AionCore\'s text and the pin) in a file',
+    Array.isArray(a) && sp(a) === null && pf === path.join(data, 'aiondx-launches', 'm1.append-prompt.txt') && pft.startsWith('AIONCORE TEXT\n\nPinned skills:') && /HUGE END/.test(pft) && lineLen < 30000,
+    JSON.stringify({ args: Array.isArray(a) ? a.map((x) => String(x).slice(0, 60)) : a, lineLen, file: pft.length }));
+  const big = JSON.stringify({ mcpServers: { team: { command: 'node', args: ['x'.repeat(31000)] } } });
+  fs.writeFileSync(path.join(data, 'aiondx-skill-pins.json'), JSON.stringify({}));
+  a = run(['--append-system-prompt', 'AIONCORE TEXT', '--mcp-config', big]);
+  const mf = Array.isArray(a) ? a[a.indexOf('--mcp-config') + 1] : '';
+  let mft = ''; try { mft = fs.readFileSync(mf, 'utf8'); } catch (e) { /* none */ }
+  check('an inline MCP config that makes the line too long goes into a file; a short prompt stays as it was', mft === big && sp(a) === 'AIONCORE TEXT', JSON.stringify(Array.isArray(a) ? a.map((x) => String(x).slice(0, 60)) : a));
+  // a launch that fails is written into the chat's launch record (the bell's launch-failed notice reads it)
+  const badExe = path.join(root, 'bad', 'claude.exe');
+  fs.mkdirSync(path.dirname(badExe));
+  fs.writeFileSync(badExe, 'not a program');
+  const cfgFile = path.join(cat, 'claude-account-router.config.json');
+  const cfg0 = fs.readFileSync(cfgFile, 'utf8');
+  fs.writeFileSync(cfgFile, JSON.stringify(Object.assign(JSON.parse(cfg0), { claudeExe: badExe })));
+  run(['--append-system-prompt', 'AIONCORE TEXT']);
+  fs.writeFileSync(cfgFile, cfg0);
+  let lr = null; try { lr = JSON.parse(fs.readFileSync(path.join(data, 'aiondx-launches', 'm1.json'), 'utf8')); } catch (e) { /* none */ }
+  check('a launch that cannot start writes its error into the chat\'s launch record', lr && lr.failed && lr.failed.error && lr.failed.at >= (lr.at || 0), JSON.stringify(lr));
+  a = run(['--append-system-prompt', 'AIONCORE TEXT']);
+  try { lr = JSON.parse(fs.readFileSync(path.join(data, 'aiondx-launches', 'm1.json'), 'utf8')); } catch (e) { lr = null; }
+  check('the next launch that works writes a fresh record without it', Array.isArray(a) && lr && !lr.failed, JSON.stringify(lr));
 } catch (e) {
   check('no exception', false, e.stack);
 } finally {

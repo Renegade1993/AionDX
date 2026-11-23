@@ -642,6 +642,7 @@ function startProxy(opts) {
       child = spawn(opts.exe, opts.args, { env, cwd: opts.cwd, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
     } catch (e) {
       log('could not start claude: ' + e.message);
+      try { if (opts.onStartFail) opts.onStartFail('could not start claude: ' + e.message); } catch (e2) { /* never in the way */ }
       if (tap) tap.close();
       usage.stop();
       resolve(1);
@@ -838,7 +839,7 @@ function startProxy(opts) {
       // The cache record's last write goes out before the exit (bounded at 2 s by stop()).
       cache.stop().then(() => { if (output.writableLength) output.once('drain', done); else done(); }, done);
     };
-    child.on('error', (e) => { log('claude failed to run: ' + e.message); finish(1); });
+    child.on('error', (e) => { log('claude failed to run: ' + e.message); try { if (opts.onStartFail) opts.onStartFail('claude failed to run: ' + e.message); } catch (e2) { /* never in the way */ } finish(1); });
     child.on('close', (code) => finish(typeof code === 'number' ? code : 1));
     child.on('exit', (code) => setTimeout(() => finish(typeof code === 'number' ? code : 1), 2000));
     }

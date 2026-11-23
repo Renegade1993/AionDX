@@ -3790,6 +3790,21 @@ async function pageTarget() {
       await sleep(700);
       const rt = await js(`window.__calls.filter((c) => c.method === 'POST' && /runtime\\/restart$/.test(c.path)).map((c) => c.path)`);
       check(sc, 'and its Reconnect restarts that member through the team', JSON.stringify(rt) === '["/api/teams/team1/agents/slotB/runtime/restart"]', JSON.stringify(rt));
+      // November 23rd, 2026 (a bug report: a team's member could not start, "spawn ENAMETOOLONG", and AionCore paused it while the team
+      // looked Ready): the launcher's failed start and the paused member both show in the bell, naming the member
+      await load('team=1&theme=light');
+      await stub([{ id: 'launch-failed:convB:5', kind: 'launch', conv: 'convB', title: 'This agent could not start', text: 'Its last start failed: could not start claude: spawn ENAMETOOLONG.', action: { op: 'reconnect', label: 'Try again' } }]);
+      await js(`(() => { window.__rsWas = window.__stub.routes['GET /api/teams/team1/run-state']; window.__stub.routes['GET /api/teams/team1/run-state'] = { success: true, data: { slot_work: [{ slot_id: 'slotA', role: 'lead', state: 'idle' }, { slot_id: 'slotB', role: 'teammate', state: 'paused', queued_foreground_count: 0, queued_background_count: 0 }] } }; return 0; })()`);
+      await header();
+      await sleep(2500);
+      await humanClick('#th [data-testid="aiondx-bell"]');
+      await sleep(400);
+      const pz = await js(`[...document.querySelectorAll('.aiondx-bell-item')].map((e) => ({ t: e.querySelector('.aiondx-bell-title').textContent, x: e.querySelector('.aiondx-bell-text').textContent, b: (e.querySelector('.aiondx-bell-act') || {}).textContent || '' }))`);
+      check(sc, 'a member that could not start: its error and Try again; a paused member: what happened and how to resume it, both named',
+        pz && pz.length === 2 && pz[0].t === 'This agent could not start (Worker)' && /ENAMETOOLONG/.test(pz[0].x) && pz[0].b === 'Try again' &&
+        pz[1].t === 'Paused by the team (Worker)' && /Send it a message to resume it/.test(pz[1].x) && pz[1].b === '', JSON.stringify(pz));
+      await shot('bell-paused-light');
+      await js(`(() => { window.__stub.routes['GET /api/teams/team1/run-state'] = window.__rsWas; return 0; })()`);
       await js('(() => { delete window.aiondxNotices; delete window.aiondxSignin; const h = document.getElementById("th"); if (h) h.remove(); return 0; })()');
     }
 
@@ -6327,6 +6342,19 @@ async function pageTarget() {
       await sleep(200);
       check(sc, 'its button takes it at once', (await tabColour('slotB')) === 'rgb(0, 170, 20)', await tabColour('slotB'));
       check(sc, 'the other lane keeps its own', (await tabColour('slotA')) === 'rgb(59, 130, 246)', await tabColour('slotA'));
+      // November 20th, 2026 ("current color change doesnt work"): a right-click on a part of the button (the drag handle, status dot, name, edit
+      // or remove button) saved the colour under that part's name; each must colour the member
+      const partRes = [];
+      for (const [part, sw, hex] of [['drag', 'crimson', '#cd0037'], ['status', 'teal', '#00a591'], ['name', 'gold', '#aa8200'], ['edit', 'rose', '#d77382'], ['remove', 'green', '#00aa14']]) {
+        await rightClick(`[data-testid="team-tab-${part}-slotB"]`);
+        await sleep(200);
+        await humanClick(`[data-testid="aiondx-colour-menu"] .aiondx-lane-swatch[title="${sw}"]`);
+        await sleep(300);
+        const m = await js(`((window.__stub.store['aiondx.theme'] || {}).bubbles || {}).members || {}`);
+        partRes.push([part, (m['team1/slotB'] || {}).dark === hex, Object.keys(m).filter((k) => !/^team1\/slot[AB]$/.test(k))]);
+      }
+      check(sc, 'a right-click on any part of the member\'s button (handle, dot, name, edit, remove) colours the member, under its own name',
+        partRes.every((p) => p[1] && p[2].length === 0), JSON.stringify(partRes));
       await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
       await sleep(200);
       check(sc, 'light mode: the same lane colour', (await tabColour('slotB')) === 'rgb(0, 170, 20)', await tabColour('slotB'));
@@ -6464,6 +6492,16 @@ async function pageTarget() {
       await shot('lanes-panel-short-light');
       await key('Escape', 'Escape', 27);
       await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); localStorage.removeItem('aionui.dx.colours.recent'); return 0; })()`);
+      // colours 0.28.5 saved under a part of the button ("team1/drag-slotA") are moved to the member when the colours are read
+      await js(`(() => { const S = window.__stub.store; const t = JSON.parse(JSON.stringify(S['aiondx.theme'] || {}));
+        t.bubbles = t.bubbles || {}; t.bubbles.members = { 'team1/drag-slotA': { dark: '#14b8a6', light: '#14b8a6' }, 'team1/status-slotB': { dark: '#111111', light: '#111111' }, 'team1/slotB': { dark: '#3366cc', light: '#c04080' } };
+        t.at = Date.now() + 5000; S['aiondx.theme'] = t; return 0; })()`);
+      await js('window.__aionDx.pullNow()');
+      let resc = null;
+      for (let i = 0; i < 10; i++) { await js('window.__aionDx.repaint(); 0'); await sleep(250); resc = await js(`((window.__stub.store['aiondx.theme'] || {}).bubbles || {}).members`); if (resc && !resc['team1/drag-slotA']) break; }
+      check(sc, 'colours saved under a part of a member\'s button are moved to the member, and one the member already has is kept',
+        resc && JSON.stringify(resc['team1/slotA']) === JSON.stringify({ dark: '#14b8a6', light: '#14b8a6' }) && resc['team1/slotB'].dark === '#3366cc' &&
+        Object.keys(resc).filter((k) => /\/(drag|status|edit|remove)-/.test(k)).length === 0, JSON.stringify(resc));
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
     {

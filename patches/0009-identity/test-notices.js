@@ -33,6 +33,15 @@ try {
   launch('c1', { project: null, acct: 'personal', docs: false, fullSignIn: true, signInDir: personal });
   check('Docs off for the account: nothing', N.noticesFor(data, 'c1', alive).length === 0);
 
+  // November 23rd, 2026: a launch that failed (the launcher adds failed to the record): a notice with the error and Try again, shown with Docs
+  // off and with no agent running; a later launch's fresh record has none
+  launch('c1', { project: null, acct: 'personal', docs: false, fullSignIn: true, signInDir: personal, at: 4000, failed: { at: 4100, error: 'could not start claude: spawn ENAMETOOLONG' } });
+  n = N.noticesFor(data, 'c1', dead);
+  check('a failed start: one notice with the real error, what it means, and Try again (a reconnect)', n.length === 1 && n[0].kind === 'launch' && n[0].id === 'launch-failed:c1:4100' &&
+    /spawn ENAMETOOLONG/.test(n[0].text) && /longer than Windows allows/.test(n[0].text) && n[0].action.op === 'reconnect' && n[0].action.label === 'Try again', JSON.stringify(n));
+  launch('c1', { project: null, acct: 'personal', docs: false, fullSignIn: true, signInDir: personal, at: 5000 });
+  check('the next launch: the notice is gone', N.noticesFor(data, 'c1', dead).length === 0);
+
   reg({ personal: 'off', work: 'on' });
   launch('w1', { project: null, acct: 'work', docs: true, fullSignIn: false, signInDir: work });
   n = N.noticesFor(data, 'w1', alive);

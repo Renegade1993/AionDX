@@ -428,6 +428,7 @@ function guardSkills(env) {
   return n;
 }
 
+let LAUNCH_FOR = { dataDir: '', convId: '' };   // the chat this launch is for, so a failed start goes into its launch record
 function handOff(env) {
   const guard = guardFor(args);
   if (guard) { try { guardSkills(env); } catch (e) { routerLog('guard skills: ' + e.message); } }
@@ -437,7 +438,7 @@ function handOff(env) {
     windowsHide: true,
   });
   mirrorBack();
-  if (r.error) { console.error(r.error.message); process.exit(1); }
+  if (r.error) { recordLaunchFailure(LAUNCH_FOR.dataDir, LAUNCH_FOR.convId, r.error.message); console.error(r.error.message); process.exit(1); }
   process.exit(typeof r.status === 'number' ? r.status : 1);
 }
 
@@ -556,6 +557,7 @@ function proxyOff(env, convId, dbPath, usage, cfg) {
     tap: !(cfg && cfg.usageTap === false), approve: !(cfg && cfg.autoApprove === false),   // each can be switched off in the config
     apiBase: String(process.env.AIONDX_BASE_URL || process.env.AIONUI_BASE_URL || '').replace(/\/+$/, ''), apiHeaders: headers, // legacy-name
     log: (m) => routerLog(`conv=${convId} ${m}`),
+    onStartFail: (msg) => recordLaunchFailure(LAUNCH_FOR.dataDir, convId, msg),
   }).then((code) => { mirrorBack(); process.exit(code); }, () => { mirrorBack(); process.exit(1); });
 }
 
@@ -714,6 +716,61 @@ function pinnedSkills(dataDir, convId, teamId, roots, proj) {
   } catch { /* no pins */ }
 }
 
+/** November 23rd, 2026 (a bug report from another PC: every member of a team failed to start with "spawn ENAMETOOLONG", which reached the
+ *  user only as UserAgentDisconnected; a skill of 33,589 characters pinned to the team went onto the command line, and Windows refuses a
+ *  command line over 32,767 characters). Just before the launch the whole command line is measured; over LINE_MAX its big values go into
+ *  files beside the launch record: --append-system-prompt and --system-prompt as their -file forms (Claude Code 2.1.330 takes both; checked
+ *  November 23rd), and an inline --mcp-config JSON as a file path. A launch that fits is left exactly as it was. */
+const LINE_MAX = 30000;
+function commandLength(exe, a) { return String(exe || '').length + 3 + a.reduce((n, x) => n + String(x).length + 3, 0); }
+function fitCommandLine(dataDir, convId) {
+  try {
+    const before = commandLength(RESOLVED.exe, args);
+    if (before <= LINE_MAX) return;
+    const dir = path.join(dataDir || require('os').tmpdir(), 'aiondx-launches');
+    fs.mkdirSync(dir, { recursive: true });
+    const tag = /^[A-Za-z0-9_-]{1,80}$/.test(String(convId || '')) ? convId : 'pid' + process.pid;
+    // what can go into a file: the two prompts (as their -file flags) and each JSON value of --mcp-config (it takes a path as well); the
+    // largest goes first, and moving stops as soon as the line fits
+    const cands = [];
+    for (let i = 0; i < args.length - 1; i++) {
+      const a = String(args[i]);
+      if (a === '--append-system-prompt') cands.push({ i, flag: a, fileFlag: '--append-system-prompt-file', name: '.append-prompt.txt' });
+      else if (a === '--system-prompt') cands.push({ i, flag: a, fileFlag: '--system-prompt-file', name: '.system-prompt.txt' });
+      else if (a === '--mcp-config') {
+        for (let j = i + 1; j < args.length && !/^--/.test(String(args[j])); j++) if (/^\s*\{/.test(String(args[j]))) cands.push({ i: j, flag: a, name: '.mcp-' + j + '.json' });
+      }
+    }
+    cands.forEach((c) => { c.size = String(args[c.fileFlag ? c.i + 1 : c.i]).length; });
+    cands.sort((x, y) => y.size - x.size);
+    const moved = [];
+    for (const c of cands) {
+      if (commandLength(RESOLVED.exe, args) <= LINE_MAX) break;
+      const f = path.join(dir, tag + c.name);
+      if (c.fileFlag) { fs.writeFileSync(f, String(args[c.i + 1]), 'utf8'); args[c.i] = c.fileFlag; args[c.i + 1] = f; }
+      else { fs.writeFileSync(f, String(args[c.i]), 'utf8'); args[c.i] = f; }
+      if (moved.indexOf(c.flag) < 0) moved.push(c.flag);
+    }
+    const after = commandLength(RESOLVED.exe, args);
+    routerLog(`conv=${convId} command line of ${before} characters: ${moved.length ? moved.join(', ') + ' given as files, now ' + after : 'nothing to move'}` +
+      (after > LINE_MAX ? ' (still over ' + LINE_MAX + ')' : ''));
+  } catch (e) { routerLog(`conv=${convId} command line not shortened: ${e.message}`); }
+}
+
+/** A launch that failed, added to the chat's launch record so the app can say what happened (the bell's launch-failed notice). */
+function recordLaunchFailure(dataDir, convId, error) {
+  try {
+    if (!dataDir || !/^[A-Za-z0-9_-]{1,80}$/.test(String(convId || ''))) return;
+    const f = path.join(dataDir, 'aiondx-launches', convId + '.json');
+    let rec = {};
+    try { rec = JSON.parse(fs.readFileSync(f, 'utf8')) || {}; } catch { rec = { v: 1 }; }
+    rec.v = rec.v || 1;
+    rec.failed = { at: Date.now(), error: String(error || 'unknown').slice(0, 400) };
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(rec));
+  } catch { /* never in the way */ }
+}
+
 /** R-112: one small file per chat, <data folder>\aiondx-launches\<conversation id>.json, rewritten at each launch: when it started, the
  *  process that lives as long as the agent (this router), and what the launch got. AionDX's notification bell compares it with the current
  *  settings and offers a reconnect only while the running agent is behind them. Any trouble: no record, and the launch goes on. */
@@ -822,6 +879,8 @@ try {
 
   keepCatalogCurrent(env, cfg);
   try { projectSetup(env, dbPath, convId, facts, label); } catch { /* never in the way of a chat */ }
+  LAUNCH_FOR = { dataDir: dbPath ? path.dirname(path.dirname(dbPath)) : '', convId };
+  fitCommandLine(LAUNCH_FOR.dataDir, convId);
   if (!(cfg && cfg.streamProxy === false) && isStreamSession()) proxyOff(env, convId, dbPath, usageFor(env, cfg, label), cfg);
   else handOff(env);
 } catch (e) {
