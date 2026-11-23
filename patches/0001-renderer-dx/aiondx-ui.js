@@ -899,6 +899,18 @@
       Array.prototype.forEach.call(sider.querySelectorAll('.settings-sider__item[data-settings-id]'), function (it) {
         var k = DXL_SIDER[it.getAttribute('data-settings-id')];
         if (k && it.getAttribute('data-aiondx-c') !== k) { it.setAttribute('data-aiondx-c', k); it.style.setProperty('--dxl-c', dxlColour(k)); }
+        // AionDX's own icon in the page's colour, in place of AionUi's: AionUi's icon-park icons carry their own stroke colour, so colouring
+        // them never took and AionUi's rows stayed grey beside AionDX's coloured ones (November 23rd, 2026: "does this screenshot look like
+        // that ask has been satisfied? or does it look like a bunch of shit has been carelessly slapped over AionUi's settings menu?")
+        if (k && DXL[k]) {
+          var slot = it.firstElementChild;
+          if (slot && !slot.classList.contains('settings-sider__item-label')) {
+            // a row copied from another (Mobile is a copy of Remote's) carries that row's icon: it is redrawn for this row's page
+            var ic = slot.querySelector(':scope > .aiondx-setnav-icon');
+            if (!ic) { ic = document.createElement('span'); ic.className = 'aiondx-setnav-icon'; slot.appendChild(ic); slot.classList.add('aiondx-setnav-slot'); }
+            if (ic.getAttribute('data-for') !== k) { ic.setAttribute('data-for', k); ic.innerHTML = dxlIcon(DXL[k][1], 16); }
+          }
+        }
       });
       Array.prototype.forEach.call(sider.querySelectorAll('.settings-sider__group-header'), function (h) {
         if (!h.classList.contains('aiondx-setnav-head') && h.textContent.trim() === 'Other') h.textContent = 'About';
@@ -931,7 +943,8 @@
     if (!block) {
       block = gEl('div', 'aiondx-setnav');
       block.setAttribute('data-testid', 'aiondx-setnav');
-      block.appendChild(gEl('div', 'settings-sider__group-header aiondx-setnav-head', 'AionDX'));
+      // the whole list is AionDX's: its first group is named for what it holds, not for AionDX (November 23rd, 2026)
+      block.appendChild(gEl('div', 'settings-sider__group-header aiondx-setnav-head', 'Agents and chats'));
       DX_PAGES.forEach(function (pg) {
         var it = gEl('div', 'settings-sider__item aiondx-setnav-item');
         it.setAttribute('data-testid', 'aiondx-setnav-' + pg.id);
@@ -9213,8 +9226,18 @@
     '.aiondx-clog-how{font-size:13px;line-height:1.6;color:var(--color-text-2)}',
     '@media (max-width:1180px){.aiondx-clog-item{grid-template-columns:minmax(0,1fr)}}',
     '.settings-sider .settings-sider__item[data-aiondx-c] svg,.settings-sider .aiondx-setnav-item .aiondx-setnav-icon{color:var(--dxl-c)}',
+    // one look for every row (November 23rd, 2026): AionDX's icon in the page's colour (AionUi's own hidden), one label size and weight
+    '.settings-sider .aiondx-setnav-slot > :not(.aiondx-setnav-icon){display:none !important}',
+    '.settings-sider .aiondx-setnav-slot > .aiondx-setnav-icon{color:var(--dxl-c)}',
+    '.settings-sider .aiondx-setnav-item + .aiondx-setnav-item{margin-top:2px}',
+    // Mobile (patch 0020) is a part of Remote's page: after a click on it, it is the one marked open
+    '.settings-sider.aiondx-on-mobile .settings-sider__item[data-settings-id="webui"]{background:transparent !important;box-shadow:none}',
+    '.settings-sider.aiondx-on-mobile .settings-sider__item[data-settings-id="webui"] .settings-sider__item-label{font-weight:500 !important}',
+    '.settings-sider.aiondx-on-mobile .settings-sider__item[data-settings-id="aiondx-mobile"]{background:rgba(var(--dxl-a-rgb),.14) !important;box-shadow:inset 3px 0 0 var(--dxl-a)}',
+    '.settings-sider.aiondx-on-mobile .settings-sider__item[data-settings-id="aiondx-mobile"] .settings-sider__item-label{font-weight:600 !important}',
+    '.settings-sider .settings-sider__item-label{font-size:14px !important;font-weight:500 !important;color:var(--color-text-1) !important}',
     '.settings-sider .settings-sider__item[class~="!bg-fill-3"],.settings-sider .aiondx-setnav-item--on{background:rgba(var(--dxl-a-rgb),.14) !important;box-shadow:inset 3px 0 0 var(--dxl-a)}',
-    '.settings-sider .settings-sider__item[class~="!bg-fill-3"] .settings-sider__item-label,.settings-sider .aiondx-setnav-item--on .aiondx-setnav-label{font-weight:600}',
+    '.settings-sider .settings-sider__item[class~="!bg-fill-3"] .settings-sider__item-label,.settings-sider .aiondx-setnav-item--on .aiondx-setnav-label{font-weight:600 !important}',
     '.settings-sider.aiondx-on-changelog .settings-sider__item[data-settings-id="about"]{background:transparent !important;box-shadow:none}',
     '.settings-sider.aiondx-on-changelog .settings-sider__item[data-settings-id="about"] .settings-sider__item-label{font-weight:inherit}',
     '.settings-sider .settings-sider__group-header,.settings-sider .aiondx-setnav-head{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--color-text-3)}',
@@ -13838,7 +13861,7 @@
       ['Any colour for a lane', 'Right-click a team member\u2019s button for 24 colours, chosen to look as different from each other as possible and to read in light and dark mode, or More colours for any colour at all: a colour field, red, green and blue, hex, or a colour picked from the screen, with how it reads in each mode. Settings > Appearance has the same, and its Dark and Light boxes open it too. Lanes you have not coloured take the new colours in lane order, the lead still blue.'],
       ['Write your own answer', 'Every question in a DX Doc has a line under its options for your own answer: type it and press Enter or Send, and it is saved in the doc and sent to the agent, like a ticked option. Where you can tick several, your own answer goes with them.'],
       ['New Chat keeps your draft', 'What you type on the New Chat page stays there when you leave the page or close AionDX, the same as in any chat, and is cleared when you send it.'],
-      ['Fixes', 'Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call). A lane colour picked by right-clicking the drag handle or status dot of a member’s button now takes, and colours saved that way before are moved to the member. A team whose agents could not start because of a large pinned skill starts again (the launch was longer than Windows allows), and an agent that cannot start, or a member the team paused, now shows in the bell with the reason.'],
+      ['Fixes', 'The Settings list is one look: every entry has AionDX’s icon in its page’s colour and the same lettering (AionUi’s entries had kept their grey icons), the first group is named Agents and chats, and Mobile shows as the open page when you choose it. Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call). A lane colour picked by right-clicking the drag handle or status dot of a member’s button now takes, and colours saved that way before are moved to the member. A team whose agents could not start because of a large pinned skill starts again (the launch was longer than Windows allows), and an agent that cannot start, or a member the team paused, now shows in the bell with the reason.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.5', date: '2026-11-19', items: [

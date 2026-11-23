@@ -5869,7 +5869,18 @@ async function pageTarget() {
       const page = (pg, theme) => js(`(() => { let w = document.getElementById('dxset-host'); if (!w) { w = document.createElement('div'); w.id = 'dxset-host'; w.className = 'settings-page-wrapper'; w.style.cssText = 'position:fixed;left:200px;top:0;right:0;bottom:0;overflow:auto;z-index:900;background:var(--color-bg-1)';
         const c = document.createElement('div'); c.className = 'settings-page-content'; c.style.cssText = 'max-width:900px;padding:24px'; const own = document.createElement('div'); own.id = 'aionui-agents'; own.textContent = 'AionUi agent list'; c.appendChild(own); w.appendChild(c); document.body.appendChild(w);
         const sd = document.createElement('div'); sd.className = 'settings-sider'; sd.id = 'dxset-sider'; sd.style.cssText = 'position:fixed;left:0;top:0;width:200px;bottom:0;z-index:900;background:var(--color-bg-2);display:flex;flex-direction:column;gap:2px;padding:8px';
-        const hd = document.createElement('div'); hd.className = 'settings-sider__group-header'; hd.textContent = 'AI Core'; sd.appendChild(hd); ['model', 'agent', 'skills', 'appearance', 'system'].forEach((id) => { const it = document.createElement('div'); it.setAttribute('data-settings-id', id); it.className = 'settings-sider__item'; it.textContent = id; sd.appendChild(it); }); document.body.appendChild(sd); }
+        // AionUi's own list as SettingsSider.tsx draws it (November 23rd, 2026: a list of bare names hid that AionUi's icon-park icons, which
+        // carry their own stroke colour, never took the page colours): every group and page, a 22-pixel icon slot with an icon-park-style
+        // icon, and the label in its own box
+        [['AI Core', [['agent', 'Agents'], ['model', 'Model'], ['skills', 'Skills'], ['tools', 'Tools']]], ['Application', [['appearance', 'Appearance'], ['webui', 'Remote'], ['aiondx-mobile', 'Mobile'], ['system', 'System']]],
+          ['Archived', [['archived', 'Archived conversations']]], ['Other', [['about', 'About']]]].forEach(([g, items]) => {
+          const hd = document.createElement('div'); hd.className = 'settings-sider__group-header'; hd.textContent = g; sd.appendChild(hd);
+          items.forEach(([id, label]) => { const it = document.createElement('div'); it.setAttribute('data-settings-id', id); it.className = 'settings-sider__item h-34px rd-8px flex items-center gap-8px cursor-pointer';
+            it.style.cssText = 'height:34px;display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:8px';
+            it.innerHTML = '<span class="size-22px flex items-center justify-center shrink-0 line-height-0" style="width:22px;height:22px;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 48 48" fill="none" class="block leading-none text-t-secondary"><rect x="7" y="7" width="34" height="34" rx="5" stroke="#86909c" stroke-width="3"/></svg></span>' +
+              '<div class="h-24px"><div class="settings-sider__item-label text-14px font-[500]">' + label + '</div></div>';
+            sd.appendChild(it); }); });
+        document.body.appendChild(sd); }
         location.hash = '#/settings/agent' + (${JSON.stringify(pg)} ? '?aiondx=' + ${JSON.stringify(pg)} : ''); return 0; })()`);
       await load('theme=light');
       await js(`(() => { window.__ag = [];
@@ -5884,11 +5895,38 @@ async function pageTarget() {
       await page('');
       await sleep(1500);
       const nav = await js(`(() => { const sd = document.getElementById('dxset-sider'); const theirs = sd.querySelector('[data-settings-id="agent"]');
-        return { theirsHidden: getComputedStyle(theirs).display === 'none', ours: [...sd.querySelectorAll('.aiondx-setnav-item')].map((x) => x.textContent + (x.classList.contains('aiondx-setnav-item--on') ? '*' : '')),
+        return { theirsHidden: getComputedStyle(theirs).display === 'none', ours: [...sd.querySelectorAll('.aiondx-setnav .aiondx-setnav-item')].map((x) => x.textContent + (x.classList.contains('aiondx-setnav-item--on') ? '*' : '')),
           after: (sd.querySelector('.aiondx-setnav') || {}).nextElementSibling === sd.querySelector(':scope > .settings-sider__group-header') }; })()`);
       check(sc, 'the Settings list: AionUi\u2019s Agents entry hidden, an AionDX block above the AI Core group (never inside it) with Agents (open), Chats and drives, Typing, links and voice',
         nav.theirsHidden && nav.after && JSON.stringify(nav.ours) === JSON.stringify(['Agents*', 'Chats and drives', 'Typing, links and voice']), JSON.stringify(nav));
       await clogShot("0.28.3", "AionDX settings", "[data-testid=\"aiondx-setnav\"]");
+      // November 23rd, 2026: one list, all AionDX's: every row shows AionDX's own icon in its page's colour (AionUi's hidden), one label size and
+      // weight (the open page bolder), and the first group is named for what it holds
+      const sideLook = async () => js(`(() => { const sd = document.getElementById('dxset-sider');
+        const rows = [...sd.querySelectorAll('.settings-sider__item')].filter((r) => r.offsetParent && getComputedStyle(r).display !== 'none');
+        return { heads: [...sd.querySelectorAll('.settings-sider__group-header')].map((h) => h.textContent), rows: rows.map((r) => {
+          const svgs = [...r.querySelectorAll('svg')].filter((s) => s.getBoundingClientRect().width > 0);
+          const ours = r.querySelector('.aiondx-setnav-icon svg');
+          const probe = document.createElement('span'); probe.style.color = 'var(--dxl-c)'; r.appendChild(probe); const want = getComputedStyle(probe).color; probe.remove();
+          const lab = r.querySelector('.settings-sider__item-label'); const cs = lab ? getComputedStyle(lab) : null;
+          return { id: r.getAttribute('data-settings-id') || r.getAttribute('data-page') || r.textContent.trim(), icons: svgs.length, ours: !!ours && svgs[0] === ours,
+            colour: ours ? getComputedStyle(ours).color === want && want !== 'rgba(0, 0, 0, 0)' : false, weight: cs && cs.fontWeight, size: cs && cs.fontSize }; }) }; })()`);
+      let lk = await sideLook();
+      const lkBad = (l) => l.rows.filter((r) => r.icons !== 1 || !r.ours || !r.colour || r.size !== '14px' || !(r.weight === '500' || (r.id === 'agents' && r.weight === '600')));
+      check(sc, 'every row of the Settings list: one icon, AionDX’s own, in its page’s colour; one label size and weight (the open page bolder)',
+        lk.rows.length === 14 - 1 && lkBad(lk).length === 0, JSON.stringify(lkBad(lk).length ? lkBad(lk) : lk.rows));
+      check(sc, 'the groups: Agents and chats (AionDX’s pages, named for what they hold), AI Core, Application, Archived, About', JSON.stringify(lk.heads) === JSON.stringify(['Agents and chats', 'AI Core', 'Application', 'Archived', 'About']), JSON.stringify(lk.heads));
+      // the Mobile row is a copy of Remote's (patch 0020), made after AionDX gave Remote its icon: it must get its own
+      await js(`(() => { const sd = document.getElementById('dxset-sider'); sd.querySelector('[data-settings-id="aiondx-mobile"]').remove(); const w = sd.querySelector('[data-settings-id="webui"]');
+        const c = w.cloneNode(true); c.setAttribute('data-settings-id', 'aiondx-mobile'); w.parentNode.insertBefore(c, w.nextSibling); return 0; })()`);
+      let mob = null;
+      for (let i = 0; i < 10 && mob !== 'mobile'; i++) { await js('window.__aionDx.repaint(); 0'); await sleep(250); mob = await js(`(document.querySelector('#dxset-sider [data-settings-id="aiondx-mobile"] .aiondx-setnav-icon') || {}).getAttribute?.('data-for')`); }
+      check(sc, 'a row copied from another (Mobile, from Remote) gets its own page’s icon', mob === 'mobile', String(mob));
+      await shot('settings-list-light');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); return 0; })()`);
+      await sleep(300);
+      await shot('settings-list-dark');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
       const ag = await js(`(() => { const p = document.querySelector('[data-testid="aiondx-dxset-agents"]'); if (!p) return null;
         return { rows: [...p.querySelectorAll('.aiondx-dxset-agent')].map((r) => r.querySelector('.aiondx-skill-name').textContent + ' | ' + r.querySelector('.aiondx-dxset-status').textContent + ' | ' + [...r.querySelectorAll('button')].map((b) => b.textContent).join(',')),
           theirs: getComputedStyle(document.getElementById('aionui-agents')).display, cards: [...p.querySelectorAll('.aiondx-accent-title')].map((t) => t.textContent) }; })()`);

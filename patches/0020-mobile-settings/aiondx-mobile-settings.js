@@ -729,6 +729,15 @@
     }
     item.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation();
+      // Mobile is a part of Remote's page: the list marks Mobile as the open page (not Remote) until another entry is chosen
+      // (November 23rd, 2026; the style is in aiondx-ui.js, .aiondx-on-mobile)
+      var sd = item.closest('.settings-sider');
+      if (sd) {
+        sd.classList.add('aiondx-on-mobile');
+        var off = function (e2) { if (!e2 || !item.contains(e2.target)) { sd.classList.remove('aiondx-on-mobile'); sd.removeEventListener('click', off, true); window.removeEventListener('hashchange', offHash); } };
+        var offHash = function () { if (location.hash.indexOf(ROUTE) !== 0) off(); };
+        setTimeout(function () { sd.addEventListener('click', off, true); window.addEventListener('hashchange', offHash); }, 0);
+      }
       var go = function () { var c = document.getElementById('aiondx-mobile'); if (c) c.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
       if (!onPage()) { location.hash = ROUTE; setTimeout(go, 400); } else go();
     });

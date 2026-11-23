@@ -24,6 +24,8 @@ const only = opt('--only', null);
       // the voice panel's own script, from patch 0011 beside it
       const voice = path.join(path.dirname(path.resolve(script)), '..', '0011-voice', 'aiondx-voice-ui.js');
       if (fs.existsSync(voice)) await app.overrideScript('aiondx-voice-ui.js', voice);
+      const mobile = path.join(path.dirname(path.resolve(script)), '..', '0020-mobile-settings', 'aiondx-mobile-settings.js');
+      if (fs.existsSync(mobile)) await app.overrideScript('aiondx-mobile-settings.js', mobile);
       // the Changelog's pictures, from beside the script (the build copies them in; a staged app from before has none)
       const pics = path.join(path.dirname(path.resolve(script)), 'changelog');
       if (fs.existsSync(pics)) await app.overrideFolder('aiondx-changelog/', pics);
