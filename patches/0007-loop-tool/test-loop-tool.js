@@ -1094,18 +1094,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   tm = await cli(['team', 'colour', 'team one', 'Worker', 'green'], 'convS');
   const th1 = kv['aiondx.theme'];
   check('team colour by name: the member\'s lane in the shared colours, both modes, the rest of the theme kept, a newer time',
-    tm.status === 0 && th1 && th1.bubbles.members && JSON.stringify(th1.bubbles.members['team1/slotW']) === JSON.stringify({ dark: '#22a35a', light: '#22a35a' }) &&
-    th1.accent === '#123456' && th1.bubbles.mine.dark === '#111111' && th1.at > 5 && /Worker's lane in Team One is #22a35a now\./.test(tm.stdout), tm.stdout + JSON.stringify(th1));
+    tm.status === 0 && th1 && th1.bubbles.members && JSON.stringify(th1.bubbles.members['team1/slotW']) === JSON.stringify({ dark: '#00aa14', light: '#00aa14' }) &&
+    th1.accent === '#123456' && th1.bubbles.mine.dark === '#111111' && th1.at > 5 && /Worker's lane in Team One is #00aa14 now\./.test(tm.stdout), tm.stdout + JSON.stringify(th1));
   tm = await cli(['team', 'colour', 'team1', 'lead', '#F0A'], 'convS');
   check('team colour: lead and a short #RGB', tm.status === 0 && kv['aiondx.theme'].bubbles.members['team1/slotL'].dark === '#ff00aa', tm.stdout);
   tm = await cli(['team', 'show', 'team1'], 'convS');
-  check('team show names each lane colour that is set', /Worker: chat convW[^\n]*, lane colour #22a35a/.test(tm.stdout) && /Lead \(lead\)[^\n]*, lane colour #ff00aa/.test(tm.stdout), tm.stdout);
+  check('team show names each lane colour that is set', /Worker: chat convW[^\n]*, lane colour #00aa14/.test(tm.stdout) && /Lead \(lead\)[^\n]*, lane colour #ff00aa/.test(tm.stdout), tm.stdout);
+  // the 24 names (November 19th, 2026), and a name from the first 12 that is not among them gives the nearest new colour
+  tm = await cli(['team', 'colour', 'team1', 'Viewer', 'periwinkle'], 'convS');
+  check('team colour: one of the new names', tm.status === 0 && kv['aiondx.theme'].bubbles.members['team1/slotV'].dark === '#8782c8', tm.stdout);
+  tm = await cli(['team', 'colour', 'team1', 'Viewer', 'Amber'], 'convS');
+  check('team colour: an old name gives the nearest new colour (amber: gold)', tm.status === 0 && kv['aiondx.theme'].bubbles.members['team1/slotV'].dark === '#aa8200', tm.stdout);
   tm = await cli(['team', 'colour', 'team1', 'Worker', 'default'], 'convS');
   check('team colour default: the member\'s own colour removed', tm.status === 0 && !kv['aiondx.theme'].bubbles.members['team1/slotW'] && /default colour again/.test(tm.stdout), tm.stdout);
   tm = await cli(['team', 'colour', 'team1', 'Nobody', 'red'], 'convS');
-  const tmBad = await cli(['team', 'colour', 'team1', 'Worker', 'mauve'], 'convS');
+  const tmBad = await cli(['team', 'colour', 'team1', 'Worker', 'chartreuse'], 'convS');
   check('an unknown member or colour is refused, saying what there is', tm.status === 1 && /No member "Nobody" in Team One\. Its members: Lead, Worker, Viewer\./.test(tm.stdout) &&
-    tmBad.status === 1 && /A colour is #RRGGBB, one of blue, orange/.test(tmBad.stdout), tm.stdout + tmBad.stdout);
+    tmBad.status === 1 && /A colour is #RRGGBB, one of blue, olive, vermilion, [a-z, ]+, sky, denim, or default\./.test(tmBad.stdout), tm.stdout + tmBad.stdout);
   tm = await cli(['team'], 'convS');
   check('team on its own prints the help (and exits 2)', tm.status === 2 && /aiondx team show ID\|NAME/.test(tm.stdout), tm.stdout);
   let cr = await cli(['chat', 'read', 'convL', '--last', '4'], 'convS');

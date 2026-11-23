@@ -2767,7 +2767,7 @@ async function pageTarget() {
       check(sc, "and the member's column and name carry its colour", team && before && team.tint !== before.tint && team.name !== before.name, JSON.stringify([before, team]));
       await rightClick('[data-slot-id="slotB"] .truncate');
       menu = await js(`[...document.querySelectorAll('[data-testid="aiondx-colour-menu"] .arco-dropdown-menu-item')].map(i => i.textContent)`);
-      check(sc, "right-clicking a member's column offers its colour: the palette there, any colour in Settings", JSON.stringify(menu) === JSON.stringify(['Colour of Worker (any colour in Settings)...']) && (await js(`document.querySelectorAll('[data-testid="aiondx-colour-menu"] .aiondx-lane-swatch').length`)) === 12, JSON.stringify(menu));
+      check(sc, "right-clicking a member's column offers its colour: the 24 swatches there, and More colours", JSON.stringify(menu) === JSON.stringify(['Colour of Worker...']) && (await js(`document.querySelectorAll('[data-testid="aiondx-colour-menu"] .aiondx-lane-swatch').length`)) === 24 && (await js(`!!document.querySelector('[data-testid="aiondx-colour-menu"] [data-testid="aiondx-lane-more"]')`)), JSON.stringify(menu));
       await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
     }
 
@@ -3416,10 +3416,14 @@ async function pageTarget() {
       const vis = () => js(`(() => { const b = document.querySelector('#message-m-77 [data-testid="message-status-badge"]'); if (!b) return null; const cs = getComputedStyle(b); return { shown: cs.display !== 'none', text: b.textContent }; })()`);
       let v = await vis();
       check(sc, 'while the message is pending, Unread with Unsend and Edit stays', v && v.shown && /Unread/.test(v.text) && /Unsend/.test(v.text) && /Edit/.test(v.text), JSON.stringify(v));
-      await sleep(6500);
-      await js(`(() => { document.body.appendChild(document.createElement('i')); return 0; })()`);
-      await sleep(800);
-      v = await vis();
+      // the page asks again on its own timer; wait for that (up to 15 s) instead of a fixed time, which sometimes ended just before it
+      // (November 19th, 2026: 1 in 3 runs saw the backend asked once only)
+      for (let i = 0; i < 30; i++) {
+        await sleep(500);
+        await js(`(() => { document.body.appendChild(document.createElement('i')); return 0; })()`);
+        v = await vis();
+        if (v && !v.shown && (await js('window.__rd')) >= 2) break;
+      }
       check(sc, 'once the backend says it was read, the badge with Unsend and Edit goes, without a reload', v && !v.shown && (await js('window.__rd')) >= 2, JSON.stringify([v, await js('window.__rd')]));
     }
 
@@ -3869,23 +3873,25 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.5');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.6');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
+      const NEW286 = ['Any colour for a lane', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.5' && JSON.stringify(c.names) === JSON.stringify(NEW285) &&
-        /^Right-click a team member/.test(c.hows[0]) && /aiondx team colour/.test(c.hows[0]) && /red number on the Docs button/.test(c.hows[2]), JSON.stringify(c));
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.6' && JSON.stringify(c.names) === JSON.stringify(NEW286) &&
+        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /asleep/.test(c.hows[1]), JSON.stringify(c));
+      await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
       const c4 = await card();
-      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW285.concat(NEW284).concat(NEW283).concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
+      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW286.concat(NEW285).concat(NEW284).concat(NEW283).concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 360, JSON.stringify(box));
       // November 16th: with 0.28.0's list the card ran off the top of the window ("CAN'T EVEN SEE THE WHOLE THING"). The whole card must
@@ -3923,7 +3929,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.5 card (with 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 41, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 43, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -5907,7 +5913,7 @@ async function pageTarget() {
           date: c ? (c.querySelector('.aiondx-clog-date') || {}).textContent : '', hidAgents: getComputedStyle(document.getElementById('aionui-agents')).display }; })()`);
       check(sc, 'Settings > About > Changelog: the group renamed About, Changelog after About and marked, every release newest first with all its items, each asking for its picture',
         cl.group === 'About' && cl.next && cl.on && cl.page && JSON.stringify(cl.rels) === JSON.stringify(cl.want) && cl.items === cl.wantItems && cl.items >= 30 &&
-        cl.firstName === 'Lane colours' && /^\.\/aiondx-changelog\/v0-28-5-lane-colours-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
+        cl.firstName === 'Any colour for a lane' && /^\.\/aiondx-changelog\/v0-28-6-any-colour-for-a-lane-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
       await shot('changelog-light');
       await clogShot("0.28.4", "The Changelog", '[data-testid="aiondx-setnav-changelog"]');
       await page('agents');
@@ -6291,28 +6297,39 @@ async function pageTarget() {
       await load('team=1&single=1&theme=dark');
       const tabColour = (slot) => js(`(() => { const n = document.querySelector('[data-testid="team-tab-name-${slot}"]'); return n ? getComputedStyle(n).color : null; })()`);
       let a = null, b = null;
-      for (let i = 0; i < 16 && (a !== 'rgb(59, 130, 246)' || b !== 'rgb(249, 115, 22)'); i++) { await js('window.__aionDx.repaint(); 0'); await sleep(250); a = await tabColour('slotA'); b = await tabColour('slotB'); }
-      check(sc, 'lanes with no colour of their own: the palette in lane order, the lead first (blue, then orange)', a === 'rgb(59, 130, 246)' && b === 'rgb(249, 115, 22)', JSON.stringify([a, b]));
+      for (let i = 0; i < 16 && (a !== 'rgb(59, 130, 246)' || b !== 'rgb(145, 155, 0)'); i++) { await js('window.__aionDx.repaint(); 0'); await sleep(250); a = await tabColour('slotA'); b = await tabColour('slotB'); }
+      check(sc, 'lanes with no colour of their own: the palette in lane order, the lead first (blue, then olive)', a === 'rgb(59, 130, 246)' && b === 'rgb(145, 155, 0)', JSON.stringify([a, b]));
       await rightClick('[data-testid="team-tab-slotB"]');
       await sleep(200);
       const menu = await js(`(() => { const m = document.querySelector('[data-testid="aiondx-colour-menu"]'); if (!m) return null; const r = m.getBoundingClientRect();
         return { items: [...m.querySelectorAll('.arco-dropdown-menu-item')].map((i) => i.textContent), sw: m.querySelectorAll('.aiondx-lane-swatch').length,
-          dflt: !!m.querySelector('.aiondx-lane-default.aiondx-lane-on'), on: (m.querySelector('.aiondx-lane-swatch.aiondx-lane-on') || {}).title || '', inWin: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }; })()`);
-      check(sc, 'right-click a member\'s top button: its colour, 12 swatches and Default, its own colour marked', menu && menu.items[0] === 'Colour of Worker (any colour in Settings)...' && menu.sw === 12 && menu.dflt && menu.on === 'orange' && menu.inWin, JSON.stringify(menu));
+          dflt: !!m.querySelector('.aiondx-lane-default.aiondx-lane-on'), on: (m.querySelector('.aiondx-lane-swatch.aiondx-lane-on') || {}).title || '', inWin: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+          rows: (() => { const sw = [...m.querySelectorAll('.aiondx-lane-swatch')]; return new Set(sw.map((e) => Math.round(e.getBoundingClientRect().top))).size; })(),
+          names: [...m.querySelectorAll('.aiondx-lane-swatch')].map((e) => e.title).join(','), more: !!m.querySelector('[data-testid="aiondx-lane-more"]') }; })()`);
+      check(sc, 'right-click a member\'s top button: its colour, 24 swatches by hue in three rows of eight, Default and More colours, its own colour marked',
+        menu && menu.items[0] === 'Colour of Worker...' && menu.sw === 24 && menu.rows === 3 && /^crimson,vermilion,.*,pink,rose$/.test(menu.names) && menu.dflt && menu.more && menu.on === 'olive' && menu.inWin, JSON.stringify(menu));
+      // every one of the 24 reads as text at 3:1 or better on the white page and on the dark page, and no two are close (the lane order's purpose)
+      const pal = await js(`(() => { const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        const L = (h) => { const n = parseInt(h.slice(1), 16); return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255); };
+        const hexes = [...document.querySelectorAll('[data-testid="aiondx-colour-menu"] .aiondx-lane-swatch')].map((e) => e.getAttribute('data-lane-colour'));
+        const d = L('#1a1a1a'); const bad = hexes.filter((h) => 1.05 / (L(h) + 0.05) < 3 || (L(h) + 0.05) / (d + 0.05) < 3);
+        return { n: new Set(hexes).size, bad }; })()`);
+      check(sc, 'the 24 are all different and each reads at 3:1 or better in light and dark mode', pal && pal.n === 24 && pal.bad.length === 0, JSON.stringify(pal));
       await shot('lanes-menu-dark');
       await clogShot('0.28.5', 'Lane colours', '[data-testid="aiondx-colour-menu"]');
+      await clogShot('0.28.6', 'Any colour for a lane', '[data-testid="aiondx-colour-menu"] [data-testid="aiondx-lane-more"]');
       await humanClick('[data-testid="aiondx-colour-menu"] .aiondx-lane-swatch[title="green"]');
       await sleep(400);
       const th = await js(`(window.__stub.store['aiondx.theme'] || {}).bubbles`);
-      check(sc, 'a swatch colours the lane in both modes, in the shared colours (the store Settings and agents use)', th && th.members && th.members['team1/slotB'] && th.members['team1/slotB'].dark === '#22a35a' && th.members['team1/slotB'].light === '#22a35a', JSON.stringify(th));
+      check(sc, 'a swatch colours the lane in both modes, in the shared colours (the store Settings and agents use)', th && th.members && th.members['team1/slotB'] && th.members['team1/slotB'].dark === '#00aa14' && th.members['team1/slotB'].light === '#00aa14', JSON.stringify(th));
       check(sc, 'and the menu closes', !(await js(`!!document.querySelector('[data-testid="aiondx-colour-menu"]')`)));
       await js('window.__aionDx.repaint(); 0');
       await sleep(200);
-      check(sc, 'its button takes it at once', (await tabColour('slotB')) === 'rgb(34, 163, 90)', await tabColour('slotB'));
+      check(sc, 'its button takes it at once', (await tabColour('slotB')) === 'rgb(0, 170, 20)', await tabColour('slotB'));
       check(sc, 'the other lane keeps its own', (await tabColour('slotA')) === 'rgb(59, 130, 246)', await tabColour('slotA'));
       await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
       await sleep(200);
-      check(sc, 'light mode: the same lane colour', (await tabColour('slotB')) === 'rgb(34, 163, 90)', await tabColour('slotB'));
+      check(sc, 'light mode: the same lane colour', (await tabColour('slotB')) === 'rgb(0, 170, 20)', await tabColour('slotB'));
       await shot('lanes-tabs-light');
       await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); return 0; })()`);
       // Settings > Appearance: each member's row has the palette, the lane's colour marked; Default there puts it back
@@ -6325,14 +6342,128 @@ async function pageTarget() {
         await sleep(250);
         rows = await js(`[...document.querySelectorAll('.aiondx-bubble-row--lane')].map((r) => ({ key: r.getAttribute('data-bubble'), sw: r.querySelectorAll('.aiondx-lane-swatch').length, on: (r.querySelector('.aiondx-lane-on') || {}).title || (r.querySelector('.aiondx-lane-on') || {}).textContent || '' }))`);
       }
-      check(sc, 'Settings: each member, in lane order, with the palette and its colour marked', rows && rows.length === 2 && rows[0].key === 'member:team1/slotA' && rows[0].on === 'blue' && rows[1].key === 'member:team1/slotB' && rows[1].on === 'green' && rows.every((r) => r.sw === 12), JSON.stringify(rows));
+      check(sc, 'Settings: each member, in lane order, with the palette and its colour marked', rows && rows.length === 2 && rows[0].key === 'member:team1/slotA' && rows[0].on === 'blue' && rows[1].key === 'member:team1/slotB' && rows[1].on === 'green' && rows.every((r) => r.sw === 24), JSON.stringify(rows));
       const lr = await js(`(() => { const r = document.querySelector('.aiondx-bubble-row--lane[data-bubble="member:team1/slotB"]'); if (!r) return null; r.scrollIntoView({ block: 'center' }); const b = r.getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height) }; })()`);
-      check(sc, 'the row fits: the palette on its own line, not squeezed', lr && lr.h < 120 && lr.w > 300, JSON.stringify(lr));
+      check(sc, 'the row fits: the palette on its own line, Default and More colours beside it, not squeezed', lr && lr.h < 150 && lr.w > 300, JSON.stringify(lr));
       await shot('lanes-settings-dark');
       await humanClick('.aiondx-bubble-row--lane[data-bubble="member:team1/slotB"] .aiondx-lane-default');
       await sleep(400);
       const th2 = await js(`(window.__stub.store['aiondx.theme'] || {}).bubbles`);
       check(sc, 'Default in Settings: the lane\'s own colour is gone, back to its place in the palette', th2 && !(th2.members || {})['team1/slotB'], JSON.stringify(th2));
+      // ---- the colour panel (November 19th, 2026: "plan a full RGB menu in addition to the quick color selection menu")
+      const key = async (k, code, vk) => { await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k, code, windowsVirtualKeyCode: vk }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk }); await sleep(150); };
+      const panel = () => js(`(() => { const p = document.querySelector('[data-testid="aiondx-colour-panel"]'); if (!p) return null; const r = p.getBoundingClientRect(); const v = (s) => (p.querySelector(s) || {}).value;
+        const w = p.querySelector('[data-testid="aiondx-cpanel-warn"]');
+        return { title: p.querySelector('.aiondx-cpanel-title').textContent, hex: v('[data-testid="aiondx-cpanel-hex"]'), r: v('[data-testid="aiondx-cpanel-r"]'), g: v('[data-testid="aiondx-cpanel-g"]'), b: v('[data-testid="aiondx-cpanel-b"]'),
+          warn: w && !w.hidden ? w.textContent : '', light: p.querySelector('[data-pv="light"] small').textContent, dark: p.querySelector('[data-pv="dark"] small').textContent,
+          sample: p.querySelector('[data-pv="light"] b').textContent, sampleColour: getComputedStyle(p.querySelector('[data-pv="dark"] b')).color,
+          recent: [...p.querySelectorAll('[data-recent]')].map((e) => e.getAttribute('data-recent')), pick: !!p.querySelector('[data-testid="aiondx-cpanel-pick"]'),
+          inWin: r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5, scrolls: p.scrollHeight > p.clientHeight + 1,
+          applyOn: (() => { const a = p.querySelector('[data-testid="aiondx-cpanel-apply"]').getBoundingClientRect(); const e = document.elementFromPoint(a.left + a.width / 2, a.top + a.height / 2); return !!e && p.contains(e); })() }; })()`);
+      const lane = async () => (await js(`((window.__stub.store['aiondx.theme'] || {}).bubbles || {}).members`) || {})['team1/slotB'] || null;
+      const setNum = async (ch, v) => { await humanClick(`[data-testid="aiondx-cpanel-${ch}"]`); await js(`document.querySelector('[data-testid="aiondx-cpanel-${ch}"]').select(); 0`); await send('Input.insertText', { text: String(v) }); await sleep(200); };
+      const setHex = async (v) => { await humanClick('[data-testid="aiondx-cpanel-hex"]'); await js(`document.querySelector('[data-testid="aiondx-cpanel-hex"]').select(); 0`); await send('Input.insertText', { text: v }); await sleep(200); };
+      await js(`localStorage.removeItem('aionui.dx.colours.recent'); document.getElementById('fake-appearance').style.display = 'none'; location.hash = '#/team/team1'; 0`); await sleep(400);   // the team page again, its tabs uncovered
+      await rightClick('[data-testid="team-tab-slotB"]');
+      await sleep(200);
+      await humanClick('[data-testid="aiondx-colour-menu"] [data-testid="aiondx-lane-more"]');
+      await sleep(300);
+      let cp = await panel();
+      check(sc, 'More colours: the menu closes and the colour panel opens on the lane\'s colour, whole in the window', cp && !(await js(`!!document.querySelector('[data-testid="aiondx-colour-menu"]')`)) &&
+        cp.title === 'Colour of Worker' && cp.hex === '#919b00' && cp.r === '145' && cp.g === '155' && cp.b === '0' && cp.sample === 'Worker' && cp.inWin && cp.applyOn && cp.recent.length === 0, JSON.stringify(cp));
+      check(sc, 'it shows how the colour reads in light and dark mode, with no warning at 3:1 or better', cp && /^Light mode \d+\.\d:1$/.test(cp.light) && /^Dark mode \d+\.\d:1$/.test(cp.dark) && cp.warn === '', JSON.stringify(cp));
+      await shot('lanes-panel-dark');
+      await setNum('r', 255);
+      cp = await panel();
+      check(sc, 'typing in Red changes the hex and the preview', cp && cp.r === '255' && cp.hex === '#ff9b00' && cp.sampleColour === 'rgb(255, 155, 0)', JSON.stringify(cp));
+      await setHex('#123456');
+      cp = await panel();
+      check(sc, 'typing a hex sets red, green and blue, and a colour too dark for dark mode says so', cp && cp.r === '18' && cp.g === '52' && cp.b === '86' && /^Hard to read in dark mode/.test(cp.warn), JSON.stringify(cp));
+      await setHex('fe8');
+      cp = await panel();
+      check(sc, 'a short hex works, and a colour too pale for light mode says so', cp && cp.r === '255' && cp.g === '238' && cp.b === '136' && /^Hard to read in light mode/.test(cp.warn), JSON.stringify(cp));
+      // the colour field: its top right corner is full strength and brightness of the hue; the hue bar's left end is red
+      const fr = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-cpanel-field"]').getBoundingClientRect(); return { x: r.right - 4, y: r.top + 4 }; })()`);   // inside the rounded corner
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: fr.x, y: fr.y });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: fr.x, y: fr.y, button: 'left', clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: fr.x, y: fr.y, button: 'left', clickCount: 1 });
+      await sleep(200);
+      cp = await panel();
+      const full = cp && [cp.r, cp.g, cp.b].map(Number);
+      check(sc, 'a click at the colour field\'s top right: full strength and brightness (one channel near 255, one near 0)', full && Math.max(...full) >= 245 && Math.min(...full) <= 8, JSON.stringify(cp));
+      const hb = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-cpanel-hue"]').getBoundingClientRect(); return { x0: r.left + 1, x1: r.left + r.width * 0.75, y: r.top + r.height / 2 }; })()`);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hb.x0, y: hb.y });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: hb.x0, y: hb.y, button: 'left', clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hb.x1, y: hb.y });
+      await sleep(100);
+      cp = await panel();
+      const dragged = cp && [cp.r, cp.g, cp.b].map(Number);
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: hb.x1, y: hb.y, button: 'left', clickCount: 1 });
+      check(sc, 'dragging along the hue bar to three quarters: magenta-blue (blue 255, green near 0)', dragged && dragged[2] >= 245 && dragged[1] <= 8, JSON.stringify(cp));
+      await humanClick('[data-testid="aiondx-cpanel-field"]');
+      const before = (await panel()).hex;
+      await key('ArrowDown', 'ArrowDown', 40);
+      check(sc, 'arrow keys move in the colour field (down: darker)', (await panel()).hex !== before, before + ' ' + (await panel()).hex);
+      await key('Escape', 'Escape', 27);
+      check(sc, 'Esc closes the panel and saves nothing', !(await panel()) && (await lane()) === null, JSON.stringify(await lane()));
+      // again, and Apply
+      await rightClick('[data-testid="team-tab-slotB"]');
+      await sleep(200);
+      await humanClick('[data-testid="aiondx-colour-menu"] [data-testid="aiondx-lane-more"]');
+      await sleep(300);
+      await setHex('#c04080');
+      await humanClick('[data-testid="aiondx-cpanel-apply"]');
+      await sleep(300);
+      let ln = await lane();
+      check(sc, 'Apply: the lane takes it in both modes, and the panel closes', !(await panel()) && ln && ln.dark === '#c04080' && ln.light === '#c04080', JSON.stringify(ln));
+      await js('window.__aionDx.repaint(); 0');
+      await sleep(200);
+      check(sc, 'its button takes it', (await tabColour('slotB')) === 'rgb(192, 64, 128)', await tabColour('slotB'));
+      await rightClick('[data-testid="team-tab-slotB"]');
+      await sleep(200);
+      await humanClick('[data-testid="aiondx-colour-menu"] [data-testid="aiondx-lane-more"]');
+      await sleep(300);
+      cp = await panel();
+      check(sc, 'opened again: it starts on the lane\'s colour, and Recent has the colour made', cp && cp.hex === '#c04080' && JSON.stringify(cp.recent) === JSON.stringify(['#c04080']), JSON.stringify(cp));
+      await setHex('#00ff00');
+      await humanClick('[data-testid="aiondx-cpanel-cancel"]');
+      await sleep(200);
+      check(sc, 'Cancel closes it and keeps the colour the lane had', !(await panel()) && (await lane()).dark === '#c04080', JSON.stringify(await lane()));
+      // Settings: the Dark box opens the panel for dark mode only, and Enter applies
+      await js(`document.getElementById('fake-appearance').style.display = ''; location.hash = '#/settings/appearance'; 0`); await sleep(400);
+      await js(`(() => { const r = document.querySelector('.aiondx-bubble-row--lane[data-bubble="member:team1/slotB"]'); r.scrollIntoView({ block: 'center' }); return 0; })()`);
+      await sleep(200);
+      await humanClick('.aiondx-bubble-row--lane[data-bubble="member:team1/slotB"] .aiondx-bubble-pick[data-mode="dark"]');
+      await sleep(300);
+      cp = await panel();
+      check(sc, 'Settings: the Dark box opens the colour panel (not the browser\'s), on that mode\'s colour', cp && cp.title === 'Worker, dark mode' && cp.hex === '#c04080' && cp.inWin, JSON.stringify(cp));
+      await setHex('#3366cc');
+      await key('Enter', 'Enter', 13);
+      await sleep(300);
+      ln = await lane();
+      check(sc, 'Enter applies it to dark mode only', !(await panel()) && ln && ln.dark === '#3366cc' && ln.light === '#c04080', JSON.stringify(ln));
+      // the look: light and dark at 1500 x 1000, and in a short window, where it scrolls inside itself with Apply reachable
+      await humanClick('.aiondx-bubble-row--lane[data-bubble="member:team1/slotB"] .aiondx-lane-more');
+      await sleep(300);
+      check(sc, 'Settings: More colours under the swatches opens it too', (await panel() || {}).title === 'Colour of Worker', JSON.stringify(await panel()));
+      await shot('lanes-panel-settings-dark');
+      await clogShot('0.28.6', 'Any colour for a lane', '[data-testid="aiondx-colour-panel"]', { text: 'More colours opens a full colour picker.' });
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
+      await sleep(250);
+      await shot('lanes-panel-settings-light');
+      await key('Escape', 'Escape', 27);
+      await js(`document.getElementById('fake-appearance').style.display = 'none'; location.hash = '#/team/team1'; 0`); await sleep(400);
+      await send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 420, deviceScaleFactor: 1, mobile: false });
+      await sleep(300);
+      await rightClick('[data-testid="team-tab-slotB"]');
+      await sleep(200);
+      await humanClick('[data-testid="aiondx-colour-menu"] [data-testid="aiondx-lane-more"]');
+      await sleep(300);
+      cp = await panel();
+      check(sc, 'a short window: the panel stays inside it and scrolls, Apply still reachable', cp && cp.inWin && cp.scrolls, JSON.stringify(cp));
+      await shot('lanes-panel-short-light');
+      await key('Escape', 'Escape', 27);
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); localStorage.removeItem('aionui.dx.colours.recent'); return 0; })()`);
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
     {

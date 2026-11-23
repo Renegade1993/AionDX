@@ -124,7 +124,7 @@ member at its next start. Nothing is pinned unless you or the user pin it; the u
 
 Each member of a team has a lane colour: its button at the top of the team page, its column's name and its messages to teammates.
 `aiondx team colour TEAM MEMBER COLOUR` sets one (the `team_colour` tool does the same): MEMBER is its name, slot id, chat id or
-`lead`; COLOUR is `#RRGGBB`, one of blue, orange, green, purple, amber, pink, teal, red, indigo, lime, sky, brown, or `default` (the
+`lead`; COLOUR is `#RRGGBB`, one of blue, olive, vermilion, magenta, teal, brown, forest, orchid, rose, iris, crimson, orange, green, moss, violet, pink, rust, royal, gold, clay, periwinkle, mauve, sky, denim, or `default` (the
 colour from its place in the team, the lead first). `aiondx team show` lists the colours that are set. The user sets the same colours
 by right-clicking a member's button or in Settings > Appearance; change one only when they ask, or to tell lanes apart.
 

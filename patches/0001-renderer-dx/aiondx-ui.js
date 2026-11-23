@@ -2633,10 +2633,22 @@
   // team-member button on a team as well"). Upstream gives a lane one of 8 pale colours in the order it first saw each member, kept in the
   // page only. A lane with no colour of its own gets one of these twelve, in lane order (the lead first), the same on every PC; a colour
   // set here, in Settings or by an agent (aiondx team colour) is the member's entry in aiondx.theme bubbles.members.
+  // November 19th, 2026 (the user: "please add more colors to that quick color selection menu. try to get the greatest variety and contrast
+  // between the colors"): 24, picked by measurement (.tmp\lane-palette.js in the dev tree). Every one reads as text at 3:1 or better on the
+  // white page and the dark page (#1a1a1a); from the lead's blue, each next is the one farthest (CIEDE2000) from all before it, so this is
+  // also the lane order, and the closest two are 13.7 apart (the old 12: 12.0, four under 3:1 on white). The menu lays them out by hue
+  // (LANE_GRID). The names are the ones `aiondx team colour` takes (aiondx-loop.cs LanePalette, same order).
   var LANE_PALETTE = [
-    { name: 'blue', hex: '#3b82f6' }, { name: 'orange', hex: '#f97316' }, { name: 'green', hex: '#22a35a' }, { name: 'purple', hex: '#a855f7' },
-    { name: 'amber', hex: '#d4a017' }, { name: 'pink', hex: '#ec4899' }, { name: 'teal', hex: '#14b8a6' }, { name: 'red', hex: '#e5484d' },
-    { name: 'indigo', hex: '#6366f1' }, { name: 'lime', hex: '#65a30d' }, { name: 'sky', hex: '#0ea5e9' }, { name: 'brown', hex: '#a16207' }];
+    { name: 'blue', hex: '#3b82f6' }, { name: 'olive', hex: '#919b00' }, { name: 'vermilion', hex: '#ff3700' }, { name: 'magenta', hex: '#c3008c' },
+    { name: 'teal', hex: '#00a591' }, { name: 'brown', hex: '#8c5f1e' }, { name: 'forest', hex: '#00781e' }, { name: 'orchid', hex: '#c36eff' },
+    { name: 'rose', hex: '#d77382' }, { name: 'iris', hex: '#6e5aa5' }, { name: 'crimson', hex: '#cd0037' }, { name: 'orange', hex: '#dc7d00' },
+    { name: 'green', hex: '#00aa14' }, { name: 'moss', hex: '#696e0a' }, { name: 'violet', hex: '#a000ff' }, { name: 'pink', hex: '#ff41b9' },
+    { name: 'rust', hex: '#af4614' }, { name: 'royal', hex: '#1450ff' }, { name: 'gold', hex: '#aa8200' }, { name: 'clay', hex: '#cd7d5f' },
+    { name: 'periwinkle', hex: '#8782c8' }, { name: 'mauve', hex: '#aa69a5' }, { name: 'sky', hex: '#009bd2' }, { name: 'denim', hex: '#0f69aa' }];
+  /** The same 24 by hue, three rows of eight, for the menu and Settings. */
+  var LANE_GRID = ['crimson', 'vermilion', 'clay', 'rust', 'orange', 'brown', 'gold', 'moss',
+    'olive', 'green', 'forest', 'teal', 'sky', 'denim', 'blue', 'periwinkle',
+    'royal', 'iris', 'orchid', 'violet', 'mauve', 'magenta', 'pink', 'rose'];
   /** The colour a lane has when none is set: its place in the team, the lead first. Empty when the team is not known yet. */
   function laneDefault(teamId, slot) {
     var c = teamCache[teamId];
@@ -2691,12 +2703,16 @@
     if (!laneStyleEl || !laneStyleEl.parentNode) { laneStyleEl = document.createElement('style'); laneStyleEl.id = 'aiondx-lane-defaults'; document.head.appendChild(laneStyleEl); }
     laneStyleEl.textContent = css;
   }
-  /** A strip of the palette's swatches for a lane: a click colours it (both modes); Default puts it back. */
+  /** The palette's swatches for a lane, by hue: a click colours it (both modes); Default puts it back; More colours opens the colour panel. */
   function laneSwatches(key, after) {
     var box = document.createElement('div');
     box.className = 'aiondx-lane-swatches';
     box.setAttribute('data-testid', 'aiondx-lane-swatches');
-    LANE_PALETTE.forEach(function (p) {
+    var grid = document.createElement('div');
+    grid.className = 'aiondx-lane-grid';
+    LANE_GRID.forEach(function (name) {
+      var p = LANE_PALETTE.filter(function (q) { return q.name === name; })[0];
+      if (!p) return;
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'aiondx-lane-swatch';
@@ -2705,8 +2721,11 @@
       b.title = p.name;
       b.style.background = p.hex;
       b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); setLane(key, p.hex); if (after) after(); });
-      box.appendChild(b);
+      grid.appendChild(b);
     });
+    box.appendChild(grid);
+    var acts = document.createElement('div');
+    acts.className = 'aiondx-lane-actions';
     var d = document.createElement('button');
     d.type = 'button';
     d.className = 'aiondx-lane-default';
@@ -2714,7 +2733,25 @@
     d.textContent = 'Default';
     d.title = 'Its colour from its place in the team';
     d.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); setLane(key, ''); if (after) after(); });
-    box.appendChild(d);
+    acts.appendChild(d);
+    var more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'aiondx-lane-more';
+    more.setAttribute('data-testid', 'aiondx-lane-more');
+    more.textContent = 'More colours...';
+    more.title = 'Any colour: a colour field, red, green and blue, hex, or one picked from the screen';
+    more.addEventListener('click', function (ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      var r = more.getBoundingClientRect();
+      var parts = key.slice(7).split('/');
+      var e = bubbleEntry(key) || {};
+      var cur = (hexRgb(e.dark) && e.dark) || (hexRgb(e.light) && e.light) || laneDefault(parts[0], parts[1] || '') || LANE_PALETTE[0].hex;
+      if (after) after();
+      openColourPanel({ title: 'Colour of ' + memberName(parts[0], parts[1] || ''), sample: memberName(parts[0], parts[1] || ''), start: cur,
+        x: r.left, y: r.bottom + 4, apply: function (hex) { setLane(key, hex); } });
+    });
+    acts.appendChild(more);
+    box.appendChild(acts);
     return box;
   }
   /** Marks the swatch a lane has now (its own colour, or its default). */
@@ -2730,6 +2767,218 @@
       b.classList.toggle('aiondx-lane-on', on);
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+  }
+  // ---- the colour panel (the user, November 19th, 2026: "the color picker for this is insufficient. plan a full RGB menu in addition to the
+  // quick color selection menu"): a colour field and a hue bar, red, green and blue (slider and number), hex, the colour as text on the light
+  // and the dark page with its contrast, a colour from the screen (Chromium's EyeDropper), and the last 8 colours made here. Nothing is saved
+  // until Apply (or Enter); Cancel, Esc or a click outside leave everything as it was.
+  var COLOUR_RECENT_KEY = KEY_PREFIX + 'colours.recent';
+  var colourPanelEl = null, colourPanelDone = null, colourPanelPicking = false;
+  function rgbHex(c) { return '#' + c.map(function (v) { var s = Math.max(0, Math.min(255, Math.round(v))).toString(16); return s.length < 2 ? '0' + s : s; }).join(''); }
+  function rgbHsv(c) {
+    var r = c[0] / 255, g = c[1] / 255, b = c[2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, h = 0;
+    if (d) { if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4; h *= 60; if (h < 0) h += 360; }
+    return [h, mx ? d / mx : 0, mx];
+  }
+  function hsvRgb(h, s, v) {
+    var c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c, r = 0, g = 0, b = 0;
+    if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; } else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+    return [(r + m) * 255, (g + m) * 255, (b + m) * 255].map(Math.round);
+  }
+  function relLum(c) { var lin = function (v) { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]); }
+  function contrastOn(c, bg) { var a = relLum(c), b = relLum(bg), x = Math.max(a, b), y = Math.min(a, b); return (x + 0.05) / (y + 0.05); }
+  /** '#abc', 'abc', '#aabbcc' or 'rgb(1, 2, 3)' as [r, g, b], else null. */
+  function anyColourRgb(v) {
+    v = String(v || '').trim();
+    var m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(v);
+    if (m) return [m[1], m[2], m[3]].map(function (n) { return Math.max(0, Math.min(255, Number(n))); });
+    if (v.charAt(0) !== '#') v = '#' + v;
+    if (/^#[0-9a-f]{3}$/i.test(v)) v = '#' + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+    return hexRgb(v);
+  }
+  function colourRecent() { try { var a = JSON.parse(localStorage.getItem(COLOUR_RECENT_KEY) || '[]'); return Array.isArray(a) ? a.filter(function (h) { return !!hexRgb(h); }).slice(0, 8) : []; } catch (e) { return []; } }
+  function rememberColour(hex) {
+    var a = colourRecent().filter(function (h) { return h.toLowerCase() !== hex.toLowerCase(); });
+    a.unshift(hex.toLowerCase());
+    try { localStorage.setItem(COLOUR_RECENT_KEY, JSON.stringify(a.slice(0, 8))); } catch (e) { /* full */ }
+  }
+  function closeColourPanel() {
+    if (!colourPanelEl) return;
+    if (colourPanelEl.parentNode) colourPanelEl.parentNode.removeChild(colourPanelEl);
+    colourPanelEl = null;
+    colourPanelDone = null;
+    document.removeEventListener('mousedown', colourPanelOutside, true);
+    document.removeEventListener('keydown', colourPanelKey, true);
+  }
+  function colourPanelOutside(ev) { if (colourPanelEl && !colourPanelPicking && !colourPanelEl.contains(ev.target)) closeColourPanel(); }
+  function colourPanelKey(ev) {
+    if (!colourPanelEl || colourPanelPicking) return;
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeColourPanel(); }
+    else if (ev.key === 'Enter' && colourPanelDone) { ev.preventDefault(); ev.stopPropagation(); colourPanelDone(); }
+  }
+  /** opts: title, sample (the text the preview shows), start (#rrggbb), x and y (where it opens), apply(hex). */
+  function openColourPanel(opts) {
+    closeColourPanel();
+    var c = hexRgb(opts.start) || hexRgb(LANE_PALETTE[0].hex);
+    var hsv = rgbHsv(c);
+    var p = document.createElement('div');
+    p.className = 'aiondx-cpanel';
+    p.setAttribute('role', 'dialog');
+    p.setAttribute('aria-label', opts.title || 'Colour');
+    p.setAttribute('data-testid', 'aiondx-colour-panel');
+    var NAMES = { r: 'Red', g: 'Green', b: 'Blue' };
+    p.innerHTML =
+      '<div class="aiondx-cpanel-title"></div>' +
+      '<div class="aiondx-cpanel-field" data-testid="aiondx-cpanel-field" tabindex="0" role="slider" aria-label="Strength and brightness"><div class="aiondx-cpanel-dot"></div></div>' +
+      '<div class="aiondx-cpanel-hue" data-testid="aiondx-cpanel-hue" tabindex="0" role="slider" aria-label="Hue" aria-valuemin="0" aria-valuemax="360"><div class="aiondx-cpanel-knob"></div></div>' +
+      ['r', 'g', 'b'].map(function (k) {
+        return '<label class="aiondx-cpanel-ch" data-ch="' + k + '"><span>' + NAMES[k] + '</span><input type="range" min="0" max="255" step="1" aria-label="' + NAMES[k] +
+          '"><input type="number" min="0" max="255" step="1" aria-label="' + NAMES[k] + ', 0 to 255" data-testid="aiondx-cpanel-' + k + '"></label>';
+      }).join('') +
+      '<div class="aiondx-cpanel-hexrow"><label><span>Hex</span><input type="text" class="aiondx-cpanel-hex" data-testid="aiondx-cpanel-hex" maxlength="7" spellcheck="false" aria-label="Hex colour"></label>' +
+      (window.EyeDropper ? '<button type="button" class="aiondx-cpanel-pick" data-testid="aiondx-cpanel-pick" title="Take a colour from anywhere on the screen">From screen</button>' : '') + '</div>' +
+      '<div class="aiondx-cpanel-preview"><div class="aiondx-cpanel-pv" data-pv="light"><b></b><small></small></div><div class="aiondx-cpanel-pv" data-pv="dark"><b></b><small></small></div></div>' +
+      '<div class="aiondx-cpanel-warn" data-testid="aiondx-cpanel-warn"></div>' +
+      '<div class="aiondx-cpanel-recent" data-testid="aiondx-cpanel-recent"></div>' +
+      '<div class="aiondx-cpanel-btns"><button type="button" class="aiondx-cpanel-cancel" data-testid="aiondx-cpanel-cancel">Cancel</button>' +
+      '<button type="button" class="aiondx-cpanel-apply" data-testid="aiondx-cpanel-apply">Apply</button></div>';
+    p.querySelector('.aiondx-cpanel-title').textContent = opts.title || 'Colour';
+    var field = p.querySelector('.aiondx-cpanel-field'), dot = p.querySelector('.aiondx-cpanel-dot');
+    var hue = p.querySelector('.aiondx-cpanel-hue'), knob = p.querySelector('.aiondx-cpanel-knob');
+    var hexIn = p.querySelector('.aiondx-cpanel-hex'), warn = p.querySelector('.aiondx-cpanel-warn');
+    var LIGHT = [255, 255, 255], DARK = [26, 26, 26];
+    function paint(from) {
+      var hex = rgbHex(c);
+      field.style.background = 'linear-gradient(to top,#000,rgba(0,0,0,0)),linear-gradient(to right,#fff,rgba(255,255,255,0)),' + rgbHex(hsvRgb(hsv[0], 1, 1));
+      dot.style.left = (hsv[1] * 100) + '%';
+      dot.style.top = ((1 - hsv[2]) * 100) + '%';
+      dot.style.background = hex;
+      knob.style.left = (hsv[0] / 360 * 100) + '%';
+      field.setAttribute('aria-valuetext', Math.round(hsv[1] * 100) + '% strength, ' + Math.round(hsv[2] * 100) + '% brightness');
+      hue.setAttribute('aria-valuenow', String(Math.round(hsv[0])));
+      ['r', 'g', 'b'].forEach(function (k, i) {
+        var row = p.querySelector('.aiondx-cpanel-ch[data-ch="' + k + '"]');
+        var rg = row.querySelector('input[type=range]'), nm = row.querySelector('input[type=number]');
+        var lo = c.slice(), hi = c.slice();
+        lo[i] = 0; hi[i] = 255;
+        rg.style.background = 'linear-gradient(to right,' + rgbHex(lo) + ',' + rgbHex(hi) + ')';
+        if (from !== 'range' + k) rg.value = String(c[i]);
+        if (from !== 'num' + k) nm.value = String(c[i]);
+      });
+      if (from !== 'hex') hexIn.value = hex;
+      var cl = contrastOn(c, LIGHT), cd = contrastOn(c, DARK);
+      [['light', cl], ['dark', cd]].forEach(function (q) {
+        var pv = p.querySelector('[data-pv="' + q[0] + '"]');
+        pv.querySelector('b').textContent = opts.sample || 'Sample text';
+        pv.querySelector('b').style.color = hex;
+        pv.querySelector('small').textContent = (q[0] === 'light' ? 'Light mode ' : 'Dark mode ') + q[1].toFixed(1) + ':1';
+        pv.classList.toggle('aiondx-cpanel-pv--low', q[1] < 3);
+      });
+      var low = [cl < 3 ? 'light' : '', cd < 3 ? 'dark' : ''].filter(Boolean);
+      warn.textContent = low.length ? 'Hard to read in ' + low.join(' and ') + ' mode (under 3:1).' : '';
+      warn.hidden = !low.length;
+    }
+    function setRgb(nc, from) {
+      c = nc.map(function (v) { return Math.max(0, Math.min(255, Math.round(Number(v) || 0))); });
+      var h = rgbHsv(c);
+      hsv = h[1] && h[2] ? h : [hsv[0], h[1], h[2]];   // a grey keeps the hue it had
+      paint(from);
+    }
+    function setHsv(h, s, v, from) {
+      hsv = [h, Math.max(0, Math.min(1, s)), Math.max(0, Math.min(1, v))];
+      c = hsvRgb(hsv[0], hsv[1], hsv[2]);
+      paint(from);
+    }
+    function drag(el, onPos) {
+      el.addEventListener('pointerdown', function (ev) {
+        ev.preventDefault();
+        el.focus();
+        try { el.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic */ }
+        var move = function (e2) {
+          var r = el.getBoundingClientRect();
+          onPos(Math.max(0, Math.min(1, (e2.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e2.clientY - r.top) / r.height)));
+        };
+        move(ev);
+        var up = function () { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+        el.addEventListener('pointermove', move);
+        el.addEventListener('pointerup', up);
+        el.addEventListener('pointercancel', up);
+      });
+    }
+    drag(field, function (x, y) { setHsv(hsv[0], x, 1 - y); });
+    drag(hue, function (x) { setHsv(Math.min(359.9, x * 360), hsv[1], hsv[2]); });
+    field.addEventListener('keydown', function (ev) {
+      var st = ev.shiftKey ? 0.1 : 0.01;
+      var d = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, st], ArrowDown: [0, -st] }[ev.key];
+      if (!d) return;
+      ev.preventDefault();
+      setHsv(hsv[0], hsv[1] + d[0], hsv[2] + d[1]);
+    });
+    hue.addEventListener('keydown', function (ev) {
+      var st = ev.shiftKey ? 10 : 1;
+      var d = { ArrowLeft: -st, ArrowDown: -st, ArrowRight: st, ArrowUp: st }[ev.key];
+      if (d == null) return;
+      ev.preventDefault();
+      setHsv((hsv[0] + d + 360) % 360, hsv[1], hsv[2]);
+    });
+    ['r', 'g', 'b'].forEach(function (k, i) {
+      var row = p.querySelector('.aiondx-cpanel-ch[data-ch="' + k + '"]');
+      var nm = row.querySelector('input[type=number]');
+      row.querySelector('input[type=range]').addEventListener('input', function (ev) { var n = c.slice(); n[i] = Number(ev.target.value) || 0; setRgb(n, 'range' + k); });
+      nm.addEventListener('input', function () { if (nm.value === '' || isNaN(Number(nm.value))) return; var n = c.slice(); n[i] = Number(nm.value); setRgb(n, 'num' + k); });
+      nm.addEventListener('change', function () { paint(''); });
+    });
+    hexIn.addEventListener('input', function () { var n = anyColourRgb(hexIn.value); if (n) setRgb(n, 'hex'); });
+    hexIn.addEventListener('change', function () { paint(''); });
+    var pickBtn = p.querySelector('.aiondx-cpanel-pick');
+    if (pickBtn) pickBtn.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      colourPanelPicking = true;
+      var done = function () { setTimeout(function () { colourPanelPicking = false; }, 0); };
+      try {
+        new window.EyeDropper().open().then(function (r) { var n = anyColourRgb(r && r.sRGBHex); if (n) setRgb(n, ''); done(); }, done);
+      } catch (e) { done(); }
+    });
+    var rec = p.querySelector('.aiondx-cpanel-recent');
+    var recent = colourRecent();
+    if (recent.length) {
+      var lab = document.createElement('span');
+      lab.textContent = 'Recent';
+      rec.appendChild(lab);
+      recent.forEach(function (h) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'aiondx-lane-swatch';
+        b.style.background = h;
+        b.title = h;
+        b.setAttribute('aria-label', 'Recent colour ' + h);
+        b.setAttribute('data-recent', h);
+        b.addEventListener('click', function (ev) { ev.preventDefault(); setRgb(hexRgb(h), ''); });
+        rec.appendChild(b);
+      });
+    } else rec.hidden = true;
+    colourPanelDone = function () {
+      if (document.activeElement === hexIn) { var n = anyColourRgb(hexIn.value); if (n) c = n; }
+      var hex = rgbHex(c);
+      var apply = opts.apply;
+      rememberColour(hex);
+      closeColourPanel();
+      try { if (apply) apply(hex); } catch (e) { console.warn('[dx] colour panel', e); }
+    };
+    p.querySelector('.aiondx-cpanel-apply').addEventListener('click', function (ev) { ev.preventDefault(); if (colourPanelDone) colourPanelDone(); });
+    p.querySelector('.aiondx-cpanel-cancel').addEventListener('click', function (ev) { ev.preventDefault(); closeColourPanel(); });
+    paint('');
+    document.body.appendChild(p);
+    colourPanelEl = p;
+    var w = p.offsetWidth || 280, h = p.offsetHeight || 440;
+    p.style.left = Math.max(8, Math.min(opts.x || 0, window.innerWidth - w - 8)) + 'px';
+    p.style.top = Math.max(8, Math.min(opts.y || 0, window.innerHeight - h - 8)) + 'px';
+    setTimeout(function () {
+      document.addEventListener('mousedown', colourPanelOutside, true);
+      document.addEventListener('keydown', colourPanelKey, true);
+      try { hexIn.focus(); hexIn.select(); } catch (e) { /* gone */ }
+    }, 0);
+    return p;
   }
   function softOn(hex) { return onColour(hex) === '#ffffff' ? 'rgba(255,255,255,.72)' : 'rgba(17,17,17,.68)'; }
   function bubbleDecl(hex) {
@@ -2888,6 +3137,15 @@
         var v = input.value;
         if (timer) clearTimeout(timer);
         timer = setTimeout(function () { timer = null; setBubble(key, mode, v); }, 200);
+      });
+      // AionDX's colour panel in place of the browser's small box (November 19th, 2026: "the color picker for this is insufficient")
+      lab.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var e = bubbleEntry(key) || {};
+        var r = lab.getBoundingClientRect();
+        openColourPanel({ title: label + ', ' + mode + ' mode', sample: label, start: hexRgb(e[mode]) ? e[mode] : input.value,
+          x: r.left, y: r.bottom + 4, apply: function (hex) { setBubble(key, mode, hex); } });
       });
     });
     row.querySelector('.aiondx-bubble-reset').addEventListener('click', function (ev) { ev.preventDefault(); setBubble(key, null); });
@@ -3080,7 +3338,7 @@
       el.className = 'arco-dropdown-menu-item';
       el.setAttribute('role', 'menuitem');
       if (it.key) el.setAttribute('data-colour-key', it.key);
-      el.textContent = it.key && it.key.indexOf('member:') === 0 ? it.label.replace(/\.\.\.$/, '') + ' (any colour in Settings)...' : it.label;
+      el.textContent = it.label;
       el.addEventListener('click', function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
@@ -9024,8 +9282,51 @@
     '.aiondx-bubble-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;transition:box-shadow .3s}',
     // a lane's row: its palette under the name and pickers
     '.aiondx-bubble-row--lane{flex-wrap:wrap}',
-    '.aiondx-bubble-row--lane .aiondx-lane-swatches{flex-basis:100%;margin:2px 0 4px}',
-    '.aiondx-lane-swatches{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 12px 8px}',
+    '.aiondx-bubble-row--lane .aiondx-lane-swatches{flex-basis:100%;margin:2px 0 4px;align-items:flex-end;gap:14px}',
+    '.aiondx-bubble-row--lane .aiondx-lane-actions{flex-basis:auto}',
+    '.aiondx-lane-swatches{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 12px 8px}',
+    '.aiondx-lane-grid{display:grid;grid-template-columns:repeat(8,20px);gap:6px}',
+    '.aiondx-lane-actions{display:flex;align-items:center;gap:6px;flex-basis:100%}',
+    '.aiondx-colour-menu .aiondx-lane-swatches{flex-direction:column;align-items:flex-start}',
+    '.aiondx-lane-more{height:22px;padding:0 8px;border-radius:11px;border:1px solid var(--color-border-2);background:transparent;color:var(--color-text-2);font-size:12px;cursor:pointer}',
+    '.aiondx-lane-more:hover,.aiondx-lane-default:hover{border-color:rgb(var(--primary-6));color:rgb(var(--primary-6))}',
+    '.aiondx-cpanel{position:fixed;z-index:10080;width:280px;max-height:calc(100vh - 16px);overflow:auto;box-sizing:border-box;padding:12px;border-radius:10px;',
+    '  background:var(--color-bg-popup,var(--color-bg-2));border:1px solid var(--color-border-2);box-shadow:0 8px 28px rgba(0,0,0,.28);color:var(--color-text-1);',
+    '  font-size:12px;display:flex;flex-direction:column;gap:9px}',
+    '.aiondx-cpanel [hidden]{display:none !important}',
+    '.aiondx-cpanel-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-cpanel-field{position:relative;flex:none;height:150px;border-radius:6px;cursor:crosshair;touch-action:none;outline:none}',
+    '.aiondx-cpanel-field:focus-visible,.aiondx-cpanel-hue:focus-visible{box-shadow:0 0 0 2px rgb(var(--primary-6))}',
+    '.aiondx-cpanel-dot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #fff;box-sizing:border-box;',
+    '  box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none}',
+    '.aiondx-cpanel-hue{position:relative;flex:none;height:14px;margin:0 4px;border-radius:7px;cursor:pointer;touch-action:none;outline:none;',
+    '  background:linear-gradient(to right,#f00,#ff0 16.66%,#0f0 33.33%,#0ff 50%,#00f 66.66%,#f0f 83.33%,#f00)}',
+    '.aiondx-cpanel-knob{position:absolute;top:-3px;width:8px;height:20px;margin-left:-4px;border-radius:4px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.45);pointer-events:none}',
+    '.aiondx-cpanel-ch{display:grid;grid-template-columns:40px 1fr 54px;align-items:center;gap:8px}',
+    '.aiondx-cpanel-ch span,.aiondx-cpanel-hexrow span,.aiondx-cpanel-recent span{color:var(--color-text-2)}',
+    '.aiondx-cpanel-ch input[type=range]{-webkit-appearance:none;appearance:none;height:10px;border-radius:5px;margin:0;outline:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}',
+    '.aiondx-cpanel-ch input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.45);cursor:pointer}',
+    '.aiondx-cpanel-ch input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 2px rgb(var(--primary-6))}',
+    '.aiondx-cpanel input[type=number],.aiondx-cpanel-hex{box-sizing:border-box;width:100%;height:26px;padding:0 6px;border-radius:5px;border:1px solid var(--color-border-2);',
+    '  background:var(--color-bg-1);color:var(--color-text-1);font:12px Consolas,monospace}',
+    '.aiondx-cpanel-hexrow{display:flex;align-items:center;gap:8px}',
+    '.aiondx-cpanel-hexrow label{display:grid;grid-template-columns:40px 92px;align-items:center;gap:8px}',
+    '.aiondx-cpanel-pick,.aiondx-cpanel-cancel,.aiondx-cpanel-apply{height:26px;padding:0 10px;border-radius:5px;border:1px solid var(--color-border-2);background:transparent;',
+    '  color:var(--color-text-1);font-size:12px;cursor:pointer}',
+    '.aiondx-cpanel-pick{margin-left:auto;white-space:nowrap}',
+    '.aiondx-cpanel-pick:hover,.aiondx-cpanel-cancel:hover{background:var(--color-fill-2)}',
+    '.aiondx-cpanel-preview{display:grid;grid-template-columns:1fr 1fr;gap:6px}',
+    '.aiondx-cpanel-pv{display:flex;flex-direction:column;gap:2px;padding:7px 9px;border-radius:6px;border:1px solid var(--color-border-2);min-width:0}',
+    '.aiondx-cpanel-pv[data-pv=light]{background:#fff}',
+    '.aiondx-cpanel-pv[data-pv=dark]{background:#1a1a1a}',
+    '.aiondx-cpanel-pv b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.aiondx-cpanel-pv[data-pv=light] small{color:#555}',
+    '.aiondx-cpanel-pv[data-pv=dark] small{color:#aaa}',
+    '.aiondx-cpanel-pv.aiondx-cpanel-pv--low small{color:#e5484d;font-weight:600}',
+    '.aiondx-cpanel-warn{color:rgb(var(--danger-6))}',
+    '.aiondx-cpanel-recent{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+    '.aiondx-cpanel-btns{display:flex;justify-content:flex-end;gap:8px}',
+    '.aiondx-cpanel-apply{background:rgb(var(--primary-6));border-color:rgb(var(--primary-6));color:#fff}',
     '.aiondx-lane-swatch{width:20px;height:20px;border-radius:50%;border:2px solid transparent;padding:0;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15);transition:transform .12s}',
     '.aiondx-lane-swatch:hover{transform:scale(1.15)}',
     '.aiondx-lane-swatch.aiondx-lane-on{border-color:var(--color-text-1);box-shadow:0 0 0 2px var(--color-bg-2)}',
@@ -13443,8 +13744,13 @@
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
     // the release being built: its date is set the day it is released (the Changelog shows it)
-    release: '0.28.5', date: '2026-11-19',
+    release: '0.28.6', date: '',
     items: [
+      ['Any colour for a lane', 'Right-click a team member\u2019s button for 24 colours, chosen to look as different from each other as possible and to read in light and dark mode, or More colours for any colour at all: a colour field, red, green and blue, hex, or a colour picked from the screen, with how it reads in each mode. Settings > Appearance has the same, and its Dark and Light boxes open it too. Lanes you have not coloured take the new colours in lane order, the lead still blue.'],
+      ['Fixes', 'Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call).'],
+    ],
+    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
+    earlier: [{ release: '0.28.5', date: '2026-11-19', items: [
       ['Lane colours', 'Right-click a team member\u2019s button at the top of a team to give its lane a colour; its name, its column and its messages to teammates take it. Lanes you have not coloured get distinct colours in lane order, the lead first. Settings > Appearance has the same colours, and a team lead can set them with aiondx team colour.'],
       ['Pictures of any size', 'A big picture in a DX Doc shows (from a smaller copy, with its size), and a click opens it whole, full screen; pictures in chat open full screen too. Right-click a picture: Open in photo viewer, or Open image location.'],
       ['What changed in your docs', 'A red number on the Docs button counts the docs an agent changed since you last had the panel open in that chat. Changed docs and tabs are marked in the panel until you open them.'],
@@ -13455,9 +13761,7 @@
       ['Usage alerts go off once', 'A usage alert now tells its agents once and is then removed, unless it is set for every window (the Every window box when you add one). It never wakes an agent that is idle with its Loop off.'],
       ['Claude Code installs with a meter', 'Installing Claude Code from AionDX shows how much has downloaded, then a notice with a Sign in button when it is ready.'],
       ['Fixes', 'Chat colours says No teams yet when you have none. The Loop sends to a team member\u2019s own chat the team\u2019s way (it was refused). The skills list shows the skills in the folders above a chat, and counts every use. AionDX\u2019s Claude hooks work on a PC without Git for Windows, where they had blocked every file edit. Agents can pipe commands to aioncore from Windows PowerShell.'],
-    ],
-    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
-    earlier: [{ release: '0.28.4', date: '2026-11-17', items: [
+    ] }, { release: '0.28.4', date: '2026-11-17', items: [
       ['Settings, made over', 'Every Settings page has one look: a coloured header, cards with icons, the help under each setting, AionDX’s own switches, and your accent colour (Appearance) on what is on or chosen. Agents shows the agents on this PC first, each with its state in colour.'],
       ['The Changelog', 'Settings > About > Changelog lists everything new in AionDX, release by release, each with a picture of where it is. The What’s new card links to it.'],
       ['Tab colours in your docs', 'A doc’s tab can have a colour: choose one in the tab’s ▾ menu, or ask the agent to colour it.'],
@@ -13741,6 +14045,8 @@
       text: 'What AionDX made of your requests in Claude chats, with the first words of each, on this PC only. Mark each Fit or Did not fit so the notes can be tuned.' },
     { id: 'lanecolour', sel: '[data-testid="team-tab-bar"] [data-team-tab-role="teammate"]', title: 'Lane colours',
       text: 'Right-click a member\u2019s button to give its lane a colour: its name, its column and its messages to teammates take it.' },
+    { id: 'lanemore', sel: '[data-testid="aiondx-lane-more"]', title: 'Any colour',
+      text: 'More colours opens a full colour picker: a colour field, red, green and blue, hex, or a colour from the screen, with how it reads in light and dark mode.' },
     { id: 'accinstall', sel: '[data-testid="aiondx-acc-install"]', title: 'Install Claude Code',
       text: 'Claude Code is not on this PC yet. This runs Anthropic\u2019s own installer, then you sign in in your browser.' },
     { id: 'dxdocs', sel: '[data-testid="aiondx-dx-open"]', title: 'DX Docs',

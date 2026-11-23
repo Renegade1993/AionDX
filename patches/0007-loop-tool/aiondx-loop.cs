@@ -350,7 +350,7 @@ namespace AionDx
                     { "title", "Colour a team member's lane" },
                     { "description",
                         "Sets the colour of one team member's lane: its button at the top of the team page, its column's name and its messages to " +
-                        "teammates. A colour is #RRGGBB, one of blue, orange, green, purple, amber, pink, teal, red, indigo, lime, sky, brown, or " +
+                        "teammates. A colour is #RRGGBB, one of blue, olive, vermilion, magenta, teal, brown, forest, orchid, rose, iris, crimson, orange, green, moss, violet, pink, rust, royal, gold, clay, periwinkle, mauve, sky, denim, or " +
                         "default (the colour from its place in the team). The user sees and changes the same colours by right-clicking the member's " +
                         "button or in Settings > Appearance. Use it when the user asks for lane colours, or to tell lanes apart." },
                     { "inputSchema", new Dictionary<string, object> {
@@ -1512,8 +1512,9 @@ namespace AionDx
             "Usage:\n" +
             "  aiondx team show ID|NAME     a team's layout: its lead first, then each member, with the chat id to read\n" +
             "  aiondx team list             every team that is not archived\n" +
-            "  aiondx team colour TEAM MEMBER COLOUR   a member's lane colour: #RRGGBB, a name (blue, orange, green, purple, amber, pink,\n" +
-            "                               teal, red, indigo, lime, sky, brown), or default; MEMBER is its name, slot id, chat id, or lead\n" +
+            "  aiondx team colour TEAM MEMBER COLOUR   a member's lane colour: #RRGGBB, a name (blue, olive, vermilion, magenta, teal, brown,\n" +
+            "                               forest, orchid, rose, iris, crimson, orange, green, moss, violet, pink, rust, royal, gold,\n" +
+            "                               clay, periwinkle, mauve, sky, denim), or default; MEMBER is its name, slot id, chat id, or lead\n" +
             "ID is the team id, or any member's chat id (a @@ team mention gives the lead's chat id); NAME matches the team's name.\n" +
             "Read a chat with: aiondx chat read CHAT_ID [--last N]";
 
@@ -1568,14 +1569,22 @@ namespace AionDx
         // ---- lane colours (the user, November 17th, 2026: agents colour the lanes too). The colours live in the settings store's aiondx.theme,
         // bubbles.members["<team>/<slot>"] = { dark, light }, the same entry the team page's right-click menu and Settings > Appearance write.
         static readonly string[][] LanePalette = {
-            new[] { "blue", "#3b82f6" }, new[] { "orange", "#f97316" }, new[] { "green", "#22a35a" }, new[] { "purple", "#a855f7" },
-            new[] { "amber", "#d4a017" }, new[] { "pink", "#ec4899" }, new[] { "teal", "#14b8a6" }, new[] { "red", "#e5484d" },
-            new[] { "indigo", "#6366f1" }, new[] { "lime", "#65a30d" }, new[] { "sky", "#0ea5e9" }, new[] { "brown", "#a16207" } };
+            // the renderer's LANE_PALETTE (aiondx-ui.js), same names and order (November 19th, 2026: 24, picked for variety and to read on both pages)
+            new[] { "blue", "#3b82f6" }, new[] { "olive", "#919b00" }, new[] { "vermilion", "#ff3700" }, new[] { "magenta", "#c3008c" },
+            new[] { "teal", "#00a591" }, new[] { "brown", "#8c5f1e" }, new[] { "forest", "#00781e" }, new[] { "orchid", "#c36eff" },
+            new[] { "rose", "#d77382" }, new[] { "iris", "#6e5aa5" }, new[] { "crimson", "#cd0037" }, new[] { "orange", "#dc7d00" },
+            new[] { "green", "#00aa14" }, new[] { "moss", "#696e0a" }, new[] { "violet", "#a000ff" }, new[] { "pink", "#ff41b9" },
+            new[] { "rust", "#af4614" }, new[] { "royal", "#1450ff" }, new[] { "gold", "#aa8200" }, new[] { "clay", "#cd7d5f" },
+            new[] { "periwinkle", "#8782c8" }, new[] { "mauve", "#aa69a5" }, new[] { "sky", "#009bd2" }, new[] { "denim", "#0f69aa" } };
+        // names from the first palette (0.28.5) that are not in this one: the nearest of the new colours
+        static readonly string[][] LaneOldNames = {
+            new[] { "purple", "orchid" }, new[] { "amber", "gold" }, new[] { "red", "crimson" }, new[] { "indigo", "royal" }, new[] { "lime", "green" } };
         /** "" for default (the colour from the member's place in the team). */
         internal static string LaneHex(string c)
         {
             c = (c ?? "").Trim().ToLowerInvariant();
             if (c == "default" || c == "none" || c == "auto") return "";
+            foreach (var o in LaneOldNames) if (o[0] == c) c = o[1];
             foreach (var p in LanePalette) if (p[0] == c) return p[1];
             var m = System.Text.RegularExpressions.Regex.Match(c, "^#?([0-9a-f]{6}|[0-9a-f]{3})$");
             if (!m.Success) throw new ToolError("A colour is #RRGGBB, one of " + string.Join(", ", LanePalette.Select(p => p[0]).ToArray()) + ", or default.");
