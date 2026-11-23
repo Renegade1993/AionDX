@@ -41,7 +41,37 @@ const PATTERNS = [
   ['AWS access key', /\bAKIA[0-9A-Z]{16}\b/g],
   // AionUi's own renderer carries a Firebase web key (public client configuration, in the stock app too); it is not the owner's.
   ['Google API key', /(?<!VITE_FIREBASE_API_KEY:")\bAIza[0-9A-Za-z_-]{35}\b/g],
+  // added November 23rd, 2026 (the user asked after the 0.28.5 release: "no api key leaks?"; a check by hand covered these too)
+  ['OpenAI key', /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}/g],
+  ['OpenAI project key', /\bsk-proj-[A-Za-z0-9_-]{80,}/g],
+  ['Slack token', /\bxox[baprs]-[0-9A-Za-z-]{20,}/g],
+  ['Stripe live key', /\b[sr]k_live_[0-9A-Za-z]{20,}/g],
+  ['Hugging Face token', /\bhf_[A-Za-z0-9]{34,}\b/g],
+  ['Airtable token', /\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b/g],
+  ['GitLab token', /\bglpat-[A-Za-z0-9_-]{20,}/g],
+  ['npm token', /\bnpm_[A-Za-z0-9]{36}\b/g],
 ];
+// The secret values stored on this PC (MCP server keys, Claude and AionDX sign-ins, the launcher's accounts): any of them found in the payload,
+// the files or the history is a leak whatever its format. Gathered once; never printed (a hit names the store it came from, by number).
+const LOCAL_SECRETS = (() => {
+  const os = require('os');
+  const home = os.homedir(), appdata = process.env.APPDATA || '', local = process.env.LOCALAPPDATA || '';
+  const stores = [path.join(home, '.aiondx', 'mcp', 'servers.json'), path.join(home, '.claude', '.credentials.json'), path.join(home, '.claude-work', '.credentials.json'),
+    path.join(appdata, 'AionDX', 'aiondx-account.json'), path.join(home, '.claude.json'), path.join(local, 'AionDX', 'bin', 'claude-account-router.config.json')];
+  const out = [];
+  const take = (v, keyName, inMap, from) => {
+    if (typeof v === 'string') {
+      const s = v.trim().replace(/^Bearer\s+/i, '');
+      if (s.length >= 20 && !/\s/.test(s) && !/^[A-Za-z]:\\|^\/|^https?:\/\/[^@]*$/.test(s) && (inMap || /key|token|secret|password|auth|bearer|credential|refresh|access/i.test(keyName || ''))) out.push({ v: s, from });
+      return;
+    }
+    if (Array.isArray(v)) { v.forEach((x) => take(x, keyName, inMap, from)); return; }
+    if (v && typeof v === 'object') for (const k of Object.keys(v)) take(v[k], k, inMap || /^(env|headers)$/i.test(k), from);
+  };
+  stores.forEach((f, i) => { try { take(JSON.parse(fs.readFileSync(f, 'utf8')), '', false, i + 1); } catch (e) { /* not on this PC */ } });
+  const seen = new Set();
+  return out.filter((x) => (seen.has(x.v) ? false : (seen.add(x.v), true)));
+})();
 // Files that exist to hold a sign-in.
 const SECRET_FILES = /(^|[\\/])(\.git-credentials|\.netrc|_netrc|\.npmrc|hosts\.yml|id_rsa[^\\/]*|id_ed25519[^\\/]*|personal-token[^\\/]*|[^\\/]*\.(pem|pfx|p12|ppk)|\.env(\.[^\\/]*)?|[^\\/]*credentials?[^\\/]*\.json)$/i;
 // These names also exist as harmless files (npm's own .npmrc, a folder of public certificates): they count when their content holds a sign-in.
@@ -60,6 +90,7 @@ function scanBuffer(buf, where) {
     let m, n = 0;
     while ((m = re.exec(text)) && n < 3) { note(where, name, mask(m[0])); n++; }
   }
+  for (const s of LOCAL_SECRETS) if (text.indexOf(s.v) >= 0) note(where, 'a secret value stored on this PC', 'from store ' + s.from + ', ' + s.v.length + ' characters');
 }
 
 function walk(dir, fn) {
@@ -178,6 +209,7 @@ async function githubSide() {
       let files = 0;
       walk(PAYLOAD, (f) => { files++; scanFile(f, 'payload: ' + path.relative(PAYLOAD, f)); });
       out('payload: ' + files + ' files in ' + PAYLOAD);
+      out('secret values from this PC looked for: ' + LOCAL_SECRETS.length);
     } else out('payload: ' + PAYLOAD + ' is not there (build the staged app first); skipped');
     // 2. everything git tracks (and what is waiting to be added)
     const names = git(['ls-files', '--cached', '--others', '--exclude-standard']).split('\n').filter(Boolean);

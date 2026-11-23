@@ -48,7 +48,8 @@ if (!args.includes('--no-whats-new')) {
     // "- **Name** ..." or, without bold (the house style bans bold bullet intros), "- Name: ..."
     const wanted = [...sec[1].matchAll(/^- (?:\*\*([^*]+?)\*\*|([^:\n]{2,80}):\s)/gm)].map((m) => (m[1] || m[2]).replace(/[.:]$/, '').trim()).filter((n) => !/^For agents/i.test(n));
     const ui = fs.readFileSync(path.join(__dirname, '..', 'patches', '0001-renderer-dx', 'aiondx-ui.js'), 'utf8');
-    const wn = /var WHATS_NEW = \{\s*release: '([^']+)',\s*items: \[([\s\S]*?)\n\s*\],/.exec(ui);
+    // comment lines may come before release:, and date: follows it on the same line (0.28.5's check found no list, November 20th, 2026)
+    const wn = /var WHATS_NEW = \{\s*(?:\/\/[^\n]*\n\s*)*release: '([^']+)',[^\n]*\n\s*items: \[([\s\S]*?)\n\s*\],/.exec(ui);
     const version = tag.replace(/^v/, '').replace(/-.*$/, '');
     const names = wn ? [...wn[2].matchAll(/\[\s*'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1].toLowerCase()) : [];
     const missing = wanted.filter((w) => !names.some((n) => n.length > 2 && (w.toLowerCase().includes(n) || n.includes(w.toLowerCase().split(':')[0]))));
