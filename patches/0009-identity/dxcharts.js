@@ -238,7 +238,13 @@
       return parts.join('');
     }
     var horiz = T === 'hbar';
-    if (horiz) padL = 110;
+    var hbarChars = 16;
+    if (horiz) {
+      var longest = 0;
+      spec.x.forEach(function (l) { longest = Math.max(longest, String(l).length); });
+      padL = Math.round(Math.min(W * 0.42, Math.max(110, 16 + longest * 6.4)));
+      hbarChars = padL < W * 0.42 ? Math.max(16, longest) : Math.max(16, Math.floor((padL - 16) / 6.4));
+    }
     var pw = W - padL - padR, ph = H - padT - padB;
     var lo = Infinity, hi = -Infinity, xlo = Infinity, xhi = -Infinity;
     // a waterfall's bars: each from the running total to the next, a total from zero
@@ -296,7 +302,7 @@
       spec.x.forEach(function (lab, i) {
         if (i % every) return;
         var c = (horiz ? padT : padL) + band * (i + 0.5);
-        parts.push(horiz ? '<text class="dx-ch-tick" text-anchor="end" x="' + (padL - 6) + '" y="' + (c + 4).toFixed(1) + '">' + esc(trunc(lab, 16)) + '</text>'
+        parts.push(horiz ? '<text class="dx-ch-tick" text-anchor="end" x="' + (padL - 6) + '" y="' + (c + 4).toFixed(1) + '">' + esc(trunc(lab, hbarChars)) + '<title>' + esc(lab) + '</title></text>'
           : '<text class="dx-ch-tick" text-anchor="middle" x="' + c.toFixed(1) + '" y="' + (padT + ph + 16) + '">' + esc(trunc(lab, Math.max(4, Math.floor(band * every / 6.5)))) + '</text>');
       });
       var zero = vpos(Math.max(lo, Math.min(hi, 0)));
@@ -515,7 +521,7 @@
       out.push(tx(L - 8, T + S, sp.y.low, 'dx-dr-small', 'y.low', 'end', 14, 2) + tx(L - 8, T + 10, sp.y.high, 'dx-dr-small', 'y.high', 'end', 14, 2) + tx(L - 60, T + S / 2, sp.y.label, 'dx-dr-label', 'y.label', 'middle', 14, 3));
       sp.items.forEach(function (it, k) {
         var x = L + it.x * S, y = T + (1 - it.y) * S;
-        out.push('<circle class="dx-dr-dot" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="6"><title>' + esc(it.label) + '</title></circle>' + tx(x + 9, y + 4, it.label, 'dx-dr-item', 'items.' + k + '.label', 'start', 22, 2));
+        out.push('<circle class="dx-dr-dot" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="6"><title>' + esc(it.label) + '</title></circle>' + (it.x > 0.7 ? tx(x - 9, y + 4, it.label, 'dx-dr-item', 'items.' + k + '.label', 'end', 22, 2) : tx(x + 9, y + 4, it.label, 'dx-dr-item', 'items.' + k + '.label', 'start', 22, 2)));
       });
     } else if (sp.type === 'pillars') {
       var n = sp.pillars.length, gap = 14, x0 = 30, wAll = W - 60, pw = (wAll - gap * (n - 1)) / n;
@@ -595,7 +601,11 @@
     if (kind === 'svg') {
       var c = sanitizeSvg(text);
       if (c.error) return '<div class="dx-atom dx-chart dx-chart--bad" contenteditable="false" data-src="' + esc(whole) + '"><b>This drawing could not be shown:</b> ' + esc(c.error) + '.</div>';
-      return '<div class="dx-atom dx-drawing dx-drawing--svg" contenteditable="false" data-kind="svg" data-src="' + esc(whole) + '">' + c.svg + '</div>';
+      // 0.28.6 (the DX Docs pass): an svg drawn small (a viewBox and no width) filled the whole doc's width; it is shown at most twice its size
+      var svgOut = c.svg;
+      var vb = /^<svg\b[^>]*\bviewBox="\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*"/i.exec(svgOut);
+      if (vb && !/^<svg\b[^>]*\swidth=/i.test(svgOut)) svgOut = svgOut.replace(/^<svg\b/i, '<svg style="display:block;width:100%;max-width:' + Math.max(120, Math.round(+vb[1] * 2)) + 'px;height:auto"');
+      return '<div class="dx-atom dx-drawing dx-drawing--svg" contenteditable="false" data-kind="svg" data-src="' + esc(whole) + '">' + svgOut + '</div>';
     }
     var r = parseDrawing(text);
     if (r.error) return '<div class="dx-atom dx-chart dx-chart--bad" contenteditable="false" data-src="' + esc(whole) + '"><b>This drawing could not be drawn:</b> ' + esc(r.error) + '.</div>';

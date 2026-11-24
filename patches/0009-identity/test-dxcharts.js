@@ -81,5 +81,24 @@ check('a block with no svg in it says so', /holds one <svg>/.test(C.sanitizeSvg(
 check('check finds a bad drawing too', JSON.stringify(C.check('## D\n\n```drawing\n{"type":"venn"}\n```\n').map((p) => [p.kind, p.line])) === '[["drawing",3]]');
 check('the extras are checked: a note on an x that is not there, an accent that names nothing',
   /note 1 needs "x"/.test(S({ type: 'bar', x: ['a'], series: [{ name: 's', values: [1] }], notes: [{ x: 'z', text: 'n' }] })) && /"accent" names one series or one x label/.test(S({ type: 'bar', x: ['a'], series: [{ name: 's', values: [1] }], accent: 'q' })));
+// 0.28.6 (the DX Docs pass on the built app): long names in a horizontal bar chart were cut at 16 characters with room to spare, and a
+// 2x2 point near the right edge had its label run out of the box.
+{
+  const long = 'A project with a very long name indeed';
+  const hb = C.toSvg(C.parse(JSON.stringify({ type: 'hbar', title: 'Sizes', columns: ['Project', 'Files'], rows: [[long, 412], ['Short', 90]] })).spec);
+  check('a horizontal bar chart shows a long name in full when the chart has room for it', hb.indexOf('>' + long + '<title>') >= 0, hb.slice(0, 600));
+  const huge = 'x'.repeat(200);
+  const hb2 = C.toSvg(C.parse(JSON.stringify({ type: 'hbar', columns: ['P', 'N'], rows: [[huge, 1], ['b', 2]] })).spec);
+  check('and a name too long for 42% of the width is shortened, the whole name on hover', /x+\u2026<title>x{200}<\/title>/.test(hb2), hb2.slice(0, 400));
+  const q = DR({ type: 'quadrant', quadrants: ['a', 'b', 'c', 'd'], x: { low: 'l', high: 'h' }, y: { low: 'l', high: 'h' }, items: [{ label: 'Right', x: 0.9, y: 0.5 }, { label: 'Left', x: 0.2, y: 0.5 }] });
+  check('a 2x2 point near the right edge has its label on its left; others on their right',
+    /text-anchor="end"[^>]*>Right</.test(q) || /<text[^>]*text-anchor="end"[^>]*>(?:<tspan[^>]*>)?Right/.test(q), q.slice(0, 1500));
+}
+{
+  const sv = C.drawingHtml('svg', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60"><rect x="5" y="5" width="190" height="50"/></svg>', 'x');
+  const sized = C.drawingHtml('svg', '<svg xmlns="http://www.w3.org/2000/svg" width="300" viewBox="0 0 200 60"><rect x="5" y="5" width="190" height="50"/></svg>', 'x');
+  check('an svg drawn small is shown at most twice its size, not across the whole doc; one with its own width keeps it',
+    /<svg style="display:block;width:100%;max-width:400px;height:auto"/.test(sv) && !/max-width/.test(sized), sv.slice(0, 300));
+}
 console.log('\n' + pass + '/' + (pass + fail) + ' passed');
 process.exit(fail ? 1 : 0);
