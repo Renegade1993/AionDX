@@ -2490,6 +2490,72 @@ async function pageTarget() {
       const recB = (await store())['aiondx.agent.conv.convB'];
       const rB = await js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/teams/team1/agents/slotB/runtime/restart').length`);
       check(sc, "a member's switch is keyed to its own chat and restarts it through the team", recB && recB.agent === 'cc33dd44' && rB === 1, JSON.stringify([recB, rB]));
+      // R-139 (2026-11-24): AionCore turns a restart down with 409 for several reasons, told apart by the body's code. Each gets its own
+      // notice, once; a member that is not running is moved with nothing queued; a busy one is retried without notices until it moves.
+      await js(`window.__toastLog = []; if (!window.__toastObs) { window.__toastObs = new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => {
+        if (n.classList && n.classList.contains('aiondx-toast')) window.__toastLog.push(n.querySelector('.aiondx-toast-text').textContent); })));
+        window.__toastObs.observe(document.body, { childList: true, subtree: true }); } 0`);
+      const RST = 'POST /api/teams/team1/agents/slotB/runtime/restart';
+      const refuse = (code, error) => js(`window.__stub.routes[${JSON.stringify(RST)}] = { __status: 409, success: false, code: ${JSON.stringify(code)}, error: ${JSON.stringify(error)} }; 0`);
+      let toAgent = 'aa11bb22';
+      const moveB = async () => {
+        await js('document.querySelectorAll(".aiondx-toast").forEach((t) => t.remove()); document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+        await sleep(200);
+        await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
+        await sleep(300);
+        await humanClick(`.aiondx-acct-menu [data-agent="${toAgent}"]`);
+        await humanClick('.aiondx-acct-menu .aiondx-acct-move');
+        await sleep(500);
+        toAgent = toAgent === 'aa11bb22' ? 'cc33dd44' : 'aa11bb22';
+      };
+      const pulses = async (n) => { for (let i = 0; i < n; i++) { await js('window.__aionDx.moves("retry"); 0'); await js('window.__aionDx.pulseNow()'); await sleep(40); } await sleep(300); };
+      const nRestarts = () => js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/teams/team1/agents/slotB/runtime/restart').length`);
+      const toastsNow = () => js('window.__toastLog.slice()');
+      const resetLog = () => js('window.__toastLog = []; window.__calls.length = 0; 0');
+      // not running
+      await resetLog(); await refuse('TEAM_RUNTIME_NOT_READY', 'Team runtime is not ready');
+      await moveB(); await pulses(20);
+      let tl = await toastsNow(), moves = await js('window.__aionDx.moves()'), nr = await nRestarts();
+      check(sc, "a member that isn't running is moved with one notice and nothing queued, over 20 pulses",
+        tl.length === 1 && /^Moved to Claude Code \(.+\)\. Worker isn't running; it starts there with its next message\.$/.test(tl[0]) && moves.length === 0 && nr === 1, JSON.stringify([tl, moves, nr]));
+      // busy: queued, retried quietly, then moved with one more notice
+      await resetLog(); await refuse('TEAM_MEMBER_BUSY', 'Member is busy');
+      await moveB(); await pulses(20);
+      tl = await toastsNow(); moves = await js('window.__aionDx.moves()'); nr = await nRestarts();
+      check(sc, 'a busy member: one "working" notice, the move queued and retried with no more notices',
+        tl.length === 1 && /Worker is working; it moves when this turn ends\.$/.test(tl[0]) && moves.length === 1 && nr > 2, JSON.stringify([tl, moves, nr]));
+      await js(`window.__stub.routes[${JSON.stringify(RST)}] = { success: true, data: {} }; 0`);
+      await pulses(5);
+      tl = await toastsNow(); moves = await js('window.__aionDx.moves()');
+      check(sc, 'once it is free it moves, with one "Moved" notice and nothing left queued',
+        tl.length === 2 && /^Moved to Claude Code \(.+\)\. The agent restarted and carries on there\.$/.test(tl[1]) && moves.length === 0, JSON.stringify([tl, moves]));
+      // starting
+      await resetLog(); await refuse('TEAM_MEMBER_RUNTIME_STARTING', 'Member runtime is starting');
+      await moveB(); await pulses(20);
+      tl = await toastsNow(); moves = await js('window.__aionDx.moves()');
+      check(sc, 'a member starting up: one "starting" notice over 20 pulses, the move queued',
+        tl.length === 1 && /Worker is starting; it moves once it is up\.$/.test(tl[0]) && moves.length === 1, JSON.stringify([tl, moves]));
+      await js('window.__aionDx.moves(3600001); 0'); await pulses(1);
+      tl = await toastsNow(); moves = await js('window.__aionDx.moves()');
+      check(sc, 'after an hour a queued move gives up with one notice', tl.length === 2 && /^Not moved to .+: Worker stayed busy for an hour\./.test(tl[1]) && moves.length === 0, JSON.stringify([tl, moves]));
+      // failed
+      await resetLog(); await refuse('TEAM_MEMBER_RUNTIME_FAILED', 'spawn ENAMETOOLONG');
+      await moveB(); await pulses(20);
+      tl = await toastsNow(); moves = await js('window.__aionDx.moves()'); nr = await nRestarts();
+      const failBtn = await js(`(() => { const b = [...document.querySelectorAll('.aiondx-toast')].find(t => /could not start/.test(t.textContent)); if (!b) return null;
+        return { sub: (b.querySelector('.aiondx-toast-sub') || {}).textContent, btn: (b.querySelector('.aiondx-toast-action') || {}).textContent }; })()`);
+      check(sc, "a failed start: one notice with AionCore's reason and Try again, nothing queued",
+        tl.length === 1 && /^Worker could not start on Claude Code/.test(tl[0]) && failBtn && failBtn.sub === 'spawn ENAMETOOLONG' && failBtn.btn === 'Try again' && moves.length === 0 && nr === 1, JSON.stringify([tl, failBtn, moves, nr]));
+      await shot('click-test-move-failed');
+      const solo = await js(`[window.__aionDx.moveRefusal(409, { code: 'CONFLICT', error: 'conversation c1 runtime is not ready to restart' }),
+        window.__aionDx.moveRefusal(409, { code: 'runtime_restarting', error: 'Conversation runtime is restarting' }), window.__aionDx.moveRefusal(404, null),
+        window.__aionDx.moveRefusal(409, { code: 'CONFLICT', error: 'something else' })]`);
+      check(sc, "a solo chat that isn't running reads as not running, a restarting one as starting, no session as not running",
+        JSON.stringify(solo) === '["cold","starting","cold","other"]', JSON.stringify(solo));
+      await humanClick('.aiondx-toast .aiondx-toast-action');
+      await sleep(500);
+      check(sc, 'and Try again restarts it once more', (await nRestarts()) === 2, String(await nRestarts()));
+      await js(`window.__stub.routes[${JSON.stringify(RST)}] = { success: true, data: { recovered: true } }; 0`);
       // Not a Claude chat: new chats only.
       await load('theme=light&backend=gemini');
       await sleep(600);

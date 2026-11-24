@@ -2135,6 +2135,14 @@
       el.addEventListener('click', go);
       el.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') go(ev); });
     }
+    if (place && place.action && place.action.label) {
+      var act = document.createElement('button');
+      act.type = 'button';
+      act.className = 'aiondx-toast-action';
+      act.textContent = place.action.label;
+      act.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); remove(); try { place.action.run(); } catch (e) { console.log('[dx] notice action', e); } });
+      el.querySelector('.aiondx-toast-body').appendChild(act);
+    }
     toastBox.appendChild(el);
     // stay: a notice that must not slip by (a chat that came in but cannot be opened) stays until clicked
     if (place && place.stay) { el.classList.add('aiondx-toast--stay'); el.title = 'Click to close'; if (!place.href) el.addEventListener('click', remove); }
@@ -2163,7 +2171,7 @@
     return p;
   }
   /** A notice about target t: "{who}" in the text becomes the member's name, or "this chat". */
-  function notify(t, text, sub) {
+  function notify(t, text, sub, opts) {
     var show = function (p) {
       var member = t.kind === 'team' ? ((p && p.names[t.slotId]) || 'this member') : 'this chat';
       var where = t.kind === 'team'
@@ -2172,7 +2180,8 @@
       toast(text.replace(/\{who\}/g, member), sub, {
         where: where,
         href: t.kind === 'team' ? '#/team/' + t.teamId : '#/conversation/' + t.convId,
-        slot: t.kind === 'team' ? t.slotId : null
+        slot: t.kind === 'team' ? t.slotId : null,
+        action: opts && opts.action, stay: !!(opts && opts.stay)
       });
     };
     placeOf(t).then(show, function () { show(null); });
@@ -6152,23 +6161,55 @@
     await restartForMove(t, convId, a.name);
   }
   /** The restart that makes a move take effect, only while the agent is between turns: a restart cancels
-   *  whatever turn is running (a Loop nudge or a queued message may have started one since the menu opened). */
-  async function restartForMove(t, convId, name) {
-    if (await agentBusyNow(t, convId)) {
-      pendingMoves[t.key] = { t: t, convId: convId, name: name, at: Date.now() };
-      notify(t, 'Saved: ' + name + '. {who} is working; it moves as soon as this turn ends.', '');
-      return;
-    }
-    delete pendingMoves[t.key];
+   *  whatever turn is running (a Loop nudge or a queued message may have started one since the menu opened).
+   *  AionCore turns a restart down with 409 for several reasons, told apart by the body's code (aionui-team routes.rs;
+   *  aionui-conversation service.rs restart_runtime), and AionDX answers each its own way (R-139, 2026-11-24):
+   *    not running (TEAM_RUNTIME_NOT_READY; a solo chat's CONFLICT "runtime is not ready to restart"; 404 no session)
+   *        nothing to restart: the saved choice applies at its next start. One notice, nothing queued.
+   *    busy (TEAM_MEMBER_BUSY) or starting (TEAM_MEMBER_RUNTIME_STARTING, runtime_restarting)
+   *        queued, retried each pulse once idle, with no further notice until it has moved (or gives up after an hour).
+   *    failed (TEAM_MEMBER_RUNTIME_FAILED): the reason, with Try again.
+   *  quiet: a retry from the queue, which says nothing unless the move is done or cannot be. */
+  async function restartForMove(t, convId, name, quiet) {
+    var queue = function (why) {
+      var had = !!pendingMoves[t.key];
+      pendingMoves[t.key] = { t: t, convId: convId, name: name, at: had ? pendingMoves[t.key].at : Date.now() };
+      if (quiet || had) return;
+      notify(t, why === 'starting'
+        ? 'Saved: ' + name + '. {who} is starting; it moves once it is up.'
+        : 'Saved: ' + name + '. {who} is working; it moves when this turn ends.', '');
+    };
+    if (await agentBusyNow(t, convId)) { queue('busy'); return; }
     var r = t.kind === 'conv'
       ? await postJson('/api/conversations/' + convId + '/runtime/restart', {})
       : await postJson('/api/teams/' + t.teamId + '/agents/' + encodeURIComponent(t.slotId) + '/runtime/restart', {});
-    if (r && r.ok) notify(t, 'Moved to ' + name + '. The agent restarted and carries on there.', '');
-    else if (r && r.status === 409) {
-      pendingMoves[t.key] = { t: t, convId: convId, name: name, at: Date.now() };
-      notify(t, 'Saved: ' + name + '. {who} is busy; it moves as soon as it is free.', '');
+    if (r && r.ok) { delete pendingMoves[t.key]; notify(t, 'Moved to ' + name + '. The agent restarted and carries on there.', ''); return; }
+    var body = null;
+    try { body = r ? await r.json() : null; } catch (e) { body = null; }
+    var why = moveRefusal(r ? r.status : 0, body);
+    if (why === 'busy' || why === 'starting') { queue(why); return; }
+    delete pendingMoves[t.key];
+    if (why === 'cold') { notify(t, 'Moved to ' + name + '. {who} isn\'t running; it starts there with its next message.', ''); return; }
+    var reason = body && (body.error || body.message) ? String(body.error || body.message) : (r ? 'error ' + r.status : 'no answer from AionCore');
+    if (why === 'failed') {
+      notify(t, '{who} could not start on ' + name + '.', reason, { stay: true, action: { label: 'Try again', run: function () {
+        restartForMove(t, convId, name).catch(function (e) { console.log('[dx] move retry', e); }); } } });
+      return;
     }
-    else notify(t, 'Saved: ' + name + ' from its next start. The restart did not go through' + (r ? ' (' + r.status + ')' : '') + '; Reconnect agent restarts it.', '');
+    notify(t, 'Saved: ' + name + ' from its next start. The restart did not go through (' + reason + ').', '',
+      { action: { label: 'Try again', run: function () { restartForMove(t, convId, name).catch(function () {}); } } });
+  }
+  /** Why AionCore turned a restart down: 'cold' | 'busy' | 'starting' | 'failed' | 'other'. */
+  function moveRefusal(status, body) {
+    var code = body && body.code ? String(body.code) : '';
+    var msg = body && (body.error || body.message) ? String(body.error || body.message) : '';
+    if (status === 404) return 'cold';
+    if (code === 'TEAM_RUNTIME_NOT_READY') return 'cold';
+    if (code === 'TEAM_MEMBER_BUSY') return 'busy';
+    if (code === 'TEAM_MEMBER_RUNTIME_STARTING' || code === 'runtime_restarting') return 'starting';
+    if (code === 'TEAM_MEMBER_RUNTIME_FAILED') return 'failed';
+    if (status === 409 && /not ready to restart/i.test(msg)) return 'cold';
+    return 'other';
   }
   async function agentBusyNow(t, convId) {
     if (t.kind === 'conv') {
@@ -6183,15 +6224,20 @@
     }
     return false;
   }
-  /** Each pulse: a move waiting for its agent to finish is applied once it has (for up to an hour). */
+  /** Each pulse: a move waiting for its agent to finish is retried, quietly, once it is idle (for up to an hour). */
   function applyPendingMoves() {
     Object.keys(pendingMoves).forEach(function (k) {
       var m = pendingMoves[k];
-      if (Date.now() - m.at > 3600000) { delete pendingMoves[k]; return; }
+      if (Date.now() - m.at > 3600000) {
+        delete pendingMoves[k];
+        notify(m.t, 'Not moved to ' + m.name + ': {who} stayed busy for an hour. It moves at its next start.', '');
+        return;
+      }
       var live = agentLive[k];
-      if (!live || live.state !== 'idle' || m.running) return;
+      if (!live || live.state !== 'idle' || m.running || Date.now() - (m.tried || 0) < 9000) return;
       m.running = true;
-      restartForMove(m.t, m.convId, m.name).catch(function () {}).then(function () { if (pendingMoves[k]) pendingMoves[k].running = false; });
+      m.tried = Date.now();
+      restartForMove(m.t, m.convId, m.name, true).catch(function () {}).then(function () { if (pendingMoves[k]) pendingMoves[k].running = false; });
     });
   }
 
@@ -8775,6 +8821,8 @@
     '.aiondx-toast-icon svg{display:block;width:100%;height:100%}',
     '.aiondx-toast-body{display:flex;flex-direction:column;font-size:14px;color:var(--color-text-1)}',
     '.aiondx-toast-sub{font-size:12px;line-height:18px;color:var(--color-text-3)}',
+    '.aiondx-toast-action{align-self:flex-start;margin-top:6px;padding:2px 10px;border-radius:6px;border:1px solid var(--color-border-2);background:var(--color-bg-2);color:rgb(var(--primary-6));font-size:12px;line-height:18px;cursor:pointer}',
+    '.aiondx-toast-action:hover{background:var(--color-fill-2)}',
     // Where a notice happened, and a click that opens it.
     '.aiondx-toast-where{font-size:12px;line-height:18px;font-weight:600;color:var(--color-text-2)}',
     '.aiondx-toasts .aiondx-toast--link{cursor:pointer}',
@@ -17745,6 +17793,8 @@
     heldWakes: function () { return heldWakes; },
     heldStarts: function () { var o = {}; Object.keys(heldStarts).forEach(function (k) { o[k] = heldStarts[k].length; }); return o; },
     accounts: function () { return { rec: accountsRec, prefs: accountPrefs, agents: agentPrefs, list: agentList.all }; },
+    moveRefusal: function (status, body) { return moveRefusal(status, body); },
+    moves: function (age) { return Object.keys(pendingMoves).map(function (k) { var m = pendingMoves[k]; if (age === 'retry') m.tried = 0; else if (age) m.at -= age; return k; }); },
     usage: function () { return { acct: usageAcct, conv: usageConv }; },
     statedResetMs: function (text, at) { return statedResetMs(text, at); },
     ctxColour: function (pct) { return ctxColour(pct); },
