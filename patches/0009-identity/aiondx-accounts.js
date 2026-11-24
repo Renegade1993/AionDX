@@ -222,6 +222,63 @@ function create(opts) {
     return { ok: true, accounts: out };
   }
 
+  /** Whether a folder's saved sign-in still works, from the file alone (no key is read out, no network): 'ok' with the kind of key,
+   *  'expiring' (a sign-in key with no renewal, good until expiresAt), or 'signed-out'. */
+  function keyState(dir, tokenFile) {
+    const tok = (() => { try { return TOKEN_RE.test(fs.readFileSync(tokenFile, 'utf8').trim()); } catch { return false; } })();
+    const cred = dir ? (((readJson(path.join(dir, '.credentials.json')) || {}).claudeAiOauth) || null) : null;
+    const now = Date.now();
+    if (cred && cred.refreshToken && !(Number(cred.refreshTokenExpiresAt) > 0 && Number(cred.refreshTokenExpiresAt) < now)) {
+      return { state: 'ok', key: 'full', until: Number(cred.refreshTokenExpiresAt) || 0, plan: cred.subscriptionType || '' };
+    }
+    if (tok) return { state: 'ok', key: 'token', until: 0, plan: '' };
+    if (cred && cred.accessToken && Number(cred.expiresAt) > now) return { state: 'expiring', key: 'full', until: Number(cred.expiresAt), plan: cred.subscriptionType || '' };
+    return { state: 'signed-out', key: cred ? 'full' : '', until: 0, plan: '' };
+  }
+
+  /** Every Claude account on this PC, once each (the launcher's names for one folder are one account), with whether its sign-in still
+   *  works: this PC's own Claude sign-in first, then the launcher's accounts. For Settings' Claude accounts and the chats' account menu. */
+  function status() {
+    const dir = routerDir();
+    const cfg = dir ? readJson(path.join(dir, 'claude-account-router.config.json')) : null;
+    const seen = {};
+    const out = [];
+    const own = path.join(home, '.claude');
+    const add = (id, a) => {
+      const folder = path.resolve((a && a.configDir) || own).toLowerCase();
+      if (seen[folder]) { if (NAME_RE.test(id) && !/^[0-9a-f]{8}$/.test(id) && /^[0-9a-f]{8}$/.test(seen[folder].id)) seen[folder].id = id; return; }
+      const k = keyState((a && a.configDir) || own, (a && a.tokenFile) || '');
+      const e = { id, label: (a && a.label) || id, folder: (a && a.configDir) || own, added: !!(a && a.addedBy === 'aiondx'), kind: a && a.signIn === 'token' ? 'token' : 'full',
+        own: !a || path.resolve(a.configDir || own).toLowerCase() === own.toLowerCase(), state: k.state, key: k.key, until: k.until, plan: k.plan };
+      seen[folder] = e;
+      out.push(e);
+    };
+    const accs = (cfg && cfg.accounts) || {};
+    const ownEntry = Object.keys(accs).find((id) => accs[id] && path.resolve(accs[id].configDir || own).toLowerCase() === own.toLowerCase());
+    add(ownEntry || 'default', ownEntry ? accs[ownEntry] : null);
+    for (const [id, a] of Object.entries(accs)) if (a && NAME_RE.test(id)) add(id, a);
+    return { ok: true, accounts: out, launcher: !!dir };
+  }
+
+  /** Takes an account AionDX added out of the launcher's list. Its folder (and the sign-in in it) is left where it is. */
+  function remove(req) {
+    const name = String(req.name || '');
+    if (!NAME_RE.test(name)) return { ok: false, error: 'Which account?' };
+    const dir = routerDir();
+    if (!dir) return { ok: false, error: 'AionDX’s Claude launcher is not installed.' };
+    const file = path.join(dir, 'claude-account-router.config.json');
+    const cfg = readJson(file);
+    if (!cfg || !cfg.accounts || !cfg.accounts[name]) return { ok: false, error: 'There is no account called "' + name + '".' };
+    if (cfg.accounts[name].addedBy !== 'aiondx') return { ok: false, error: 'That account was set up outside AionDX, so AionDX leaves it alone.' };
+    const folder = cfg.accounts[name].configDir || '';
+    delete cfg.accounts[name];
+    if (cfg.defaultAccount === name) delete cfg.defaultAccount;
+    fs.copyFileSync(file, file + '.bak-accounts');
+    fs.writeFileSync(file + '.tmp', JSON.stringify(cfg, null, 2));
+    fs.renameSync(file + '.tmp', file);
+    return { ok: true, name, folder };
+  }
+
   async function handle(req) {
     const op = req && req.op;
     if (op === 'start') return start(req);
@@ -231,6 +288,8 @@ function create(opts) {
     if (op === 'verify') return verify(req);
     if (op === 'save') return save(req);
     if (op === 'list') return list();
+    if (op === 'status') return status();
+    if (op === 'remove') return remove(req);
     return { ok: false, error: 'unknown request' };
   }
   return { handle, folderOf, tokenFileOf };

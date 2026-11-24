@@ -107,7 +107,7 @@ namespace AionDx
             return dx;
         }
 
-        const string Version = "1.15.0";
+        const string Version = "1.16.0";
         const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aiondx-ui.js HOLD_MIN)
         const long HoldMax = 240;      // aiondx-ui.js HOLD_MIN_MAX
         const long ResumeWarmMaxMs = 50 * 60000;   // aiondx-ui.js RESUME_WARM_MAX_MS
@@ -723,6 +723,7 @@ namespace AionDx
             "  aiondx setup scan | apply --all ...   bring the other AI apps' setup into AionDX (aiondx setup help)\n" +
             "  aiondx github [status | repos | create NAME [--public]]   the user's GitHub, through git's own sign-in (aiondx github help)\n" +
             "  aiondx usage [--all]        your Claude account's 5-hour and weekly usage, resets, and whether a limit is reached\n" +
+            "  aiondx accounts [add | move --to NAME [--member NAME]]   the user's Claude accounts: which are signed in, add one, move a chat to one\n" +
             "  aiondx usage alert --at 80  alert the team lead (or all, or you) the moment usage crosses 80% (see aiondx usage help)\n" +
             "  aiondx member list|set|replace|assistants   (team lead) read and change what each member runs on: agent, model, effort, mode (aiondx member help)\n" +
             "  aiondx config list|get|set|reset   every AionDX option and how to change it (aiondx config help): links, spelling, Stop timing, voice, long chats\n" +
@@ -1059,6 +1060,9 @@ namespace AionDx
                 if (r == 0) r = Math.Max(Long(five, "reset"), Long(week, "reset"));
                 if (r * 1000 > NowMs())
                     sb.Append("  This account cannot make requests until ").Append(Hhmm(r * 1000)).Append(" (").Append(Until(r)).Append("). Do not retry before then; tell the user.\n");
+                // AionDX 0.28.6 item 12: another Claude account can carry on in the meantime
+                sb.Append("  Another Claude account can carry on until then: aiondx accounts lists the user's accounts and moves this chat to one\n" +
+                          "  (aiondx accounts move --to NAME, with the user's yes); with only one account, aiondx accounts add opens Add account for them.\n");
             }
             return sb.ToString();
         }
@@ -2334,6 +2338,74 @@ namespace AionDx
             catch (Exception e) { o.WriteLine("The usage command failed: " + e.Message); return 1; }
         }
 
+        // ------------------------------------------------------------------ Claude accounts (1.16.0, AionDX 0.28.6)
+        //
+        // The user, November 24th, 2026: "make sure an agent working in AionDX can easily help a user figure out that it's possible and how
+        // to set it up". AionDX's window does the work, so the agent and the user's own buttons do the same thing: this writes a request
+        // (aiondx.accounts.req.<id>) and waits for the window's answer (aiondx.accounts.res.<id>). No key is ever read or printed.
+
+        const string AccountsHelp =
+            "Usage:\n" +
+            "  aiondx accounts                 every Claude account on this PC, whether it is signed in, which one this chat runs on,\n" +
+            "                                  and the names it can move to\n" +
+            "  aiondx accounts add             opens AionDX's Add account window for the user: they name the account, pick what it may do,\n" +
+            "                                  and sign in in their browser. No key reaches you.\n" +
+            "  aiondx accounts move --to NAME [--member NAME]\n" +
+            "                                  moves this chat (or, as team lead, a member) to that account, as its agent button does. Ask the\n" +
+            "                                  user first. A chat that moves itself moves when its turn ends; it keeps its memory of the chat.\n" +
+            "Users can do all of this themselves: the agent button just left of the model picker in any Claude chat or team member\n" +
+            "(\"+ Add account\" at the end of its list), and Settings > Account.";
+
+        static int AccountsCli(string[] args, StreamWriter o)
+        {
+            if (args.Length > 1 && (args[1] == "help" || args[1] == "--help" || args[1] == "-h")) { o.WriteLine(AccountsHelp); return 0; }
+            try
+            {
+                bool bare = args.Length < 2 || args[1].StartsWith("--", StringComparison.Ordinal);
+                string op = bare ? "list" : args[1];
+                if (op != "list" && op != "add" && op != "move") throw new ToolError("Unknown accounts command " + op + ".\n" + AccountsHelp);
+                string to = null, member = null;
+                for (int i = bare ? 1 : 2; i < args.Length; i++)
+                {
+                    string x = args[i], inline = null;
+                    int eq = x.IndexOf('=');
+                    if (x.StartsWith("--", StringComparison.Ordinal) && eq > 0) { inline = x.Substring(eq + 1); x = x.Substring(0, eq); }
+                    if (x == "--to") to = inline ?? Next(args, ref i, x);
+                    else if (x == "--member") member = inline ?? Next(args, ref i, x);
+                    else throw new ToolError("Unknown option " + args[i] + ".\n" + AccountsHelp);
+                }
+                if (op == "move" && string.IsNullOrWhiteSpace(to)) throw new ToolError("--to is required: the account's name, as aiondx accounts lists it.");
+                var ctx = LoadContext();
+                var t = ctx.Self;
+                if (!string.IsNullOrWhiteSpace(member)) t = Resolve(ctx, member, op == "move")[0];
+                string id = Guid.NewGuid().ToString("N").Substring(0, 12);
+                var req = new Dictionary<string, object> {
+                    { "op", op }, { "at", NowMs() }, { "conv", t.ConvId }, { "kind", t.Kind }, { "team", t.TeamId }, { "slot", t.SlotId },
+                    { "self", t == ctx.Self }, { "member", t != ctx.Self } };
+                if (to != null) req["to"] = to;
+                Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { "aiondx.accounts.req." + id, req } }));
+                string resKey = "aiondx.accounts.res." + id;
+                int waitMs = 20000;
+                int.TryParse(Environment.GetEnvironmentVariable("AIONDX_ACCOUNTS_WAIT_MS") ?? "", out waitMs);
+                if (waitMs <= 0) waitMs = 20000;
+                for (int n = 0; n * 500 < waitMs; n++)
+                {
+                    Thread.Sleep(500);
+                    var res = Sub(Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(resKey), null) as Dictionary<string, object>, resKey);
+                    if (res == null) continue;
+                    Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { resKey, null } }));
+                    o.WriteLine((Str(res, "text") ?? "").TrimEnd());
+                    Log("cli accounts " + op + " ok");
+                    return 0;
+                }
+                Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { "aiondx.accounts.req." + id, null } }));
+                throw new ToolError("AionDX's window did not answer within " + (waitMs / 1000) + " seconds. It answers while AionDX is open; " +
+                    "until then the user can do the same from any Claude chat's agent button or Settings > Account.");
+            }
+            catch (ToolError e) { o.WriteLine(e.Message); return 1; }
+            catch (Exception e) { o.WriteLine("The accounts command failed: " + e.Message); return 1; }
+        }
+
         // ------------------------------------------------------------------ GitHub, through git's own sign-in (1.9.0)
         //
         // a request of 2026-09-26. This PC's git signs in to GitHub through Git Credential Manager (the system git
@@ -2725,6 +2797,7 @@ namespace AionDx
             if (args[0] == "asks") return AsksCli(args, o);
             if (args[0] == "show") return ShowCli(args, o);
             if (args[0] == "usage") return UsageCli(args, o);
+            if (args[0] == "accounts" || args[0] == "account") return AccountsCli(args, o);
             if (args[0] == "config") return ConfigCli(args, o);
             if (args[0] == "member") return MemberCli(args, o);
             if (args[0] == "team") return TeamCli(args, o);

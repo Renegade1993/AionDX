@@ -1,6 +1,6 @@
 ---
 name: aiondx-loop
-description: The AionDX Loop, the button that keeps an AionDX chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. Also use it whenever the user asks for a document, report, plan, proposal or anything to keep: make it a DX Doc (dxdoc_create, then dxdoc_update section by section), which the user watches being written in the chat's sidebar; and when a message starts [DX Doc comment]. Also use it when the user @@-mentions a team (its line in the sessions block ends [team]) or asks you to read another of their chats: aiondx team show gives the team's layout, lead first, and aiondx chat read reads any chat. It is the only keep-warm mechanism: do not write a script that pokes agents.
+description: The AionDX Loop, the button that keeps an AionDX chat working and its prompt cache warm, shared with you. Use it to switch your Loop off when your work is finished or you are waiting on the user, to switch it on before a long list of work, to keep your cache warm through a long wait (hold), to be woken at a set time when told to hold or slow down until then (resume at), to change the message it sends you, or to compact your context. Also use it when the user mentions the Loop, as a team lead when a message must reach a teammate ahead of its queue (priority messages), when a teammate must be stopped and stay stopped (agent_stop; interrupt and shutdown do not stop one), and whenever the user asks you to use, add or fetch one of their MCP servers or its access credentials: they live in the AionDX MCP file, which no chat loads, and you reach a server for one command at a time (aiondx mcp list, tools, call). Also use it whenever the user asks you to push to their GitHub, make a GitHub repository, or anything about "my github": git on this PC is already signed in, so no token or GitHub MCP is needed (aiondx github shows the account and how to push; aiondx github create NAME makes a repository). Also use it before a long job and whenever a message says a limit was hit: it shows your Claude account's usage (aiondx usage). Also use it when the user asks for a picture, a screenshot, a link, a folder or an installer in chat ("show me", "link me to", "open that folder"): aiondx show PATH prints the exact Markdown for a picture or a one-click button for a file or folder. Also use it to set a usage alert (aiondx usage alert --at 80) so a team lead or an agent is told the moment the account's usage crosses a threshold, instead of finding out at its next look. Also use it whenever the user asks for a document, report, plan, proposal or anything to keep: make it a DX Doc (dxdoc_create, then dxdoc_update section by section), which the user watches being written in the chat's sidebar; and when a message starts [DX Doc comment]. Also use it when the user @@-mentions a team (its line in the sessions block ends [team]) or asks you to read another of their chats: aiondx team show gives the team's layout, lead first, and aiondx chat read reads any chat. Also use it when the user asks about having more than one Claude account (personal and work, a second plan), moving a chat or team member to another account, or runs out of usage on one: aiondx accounts lists them, opens Add account for the user and moves a chat. It is the only keep-warm mechanism: do not write a script that pokes agents.
 ---
 
 # The AionDX Loop
@@ -191,7 +191,27 @@ shows them to you:
 the same summary. Look before a long job that would spend a lot, and when the usage is over about 70%, say so and
 plan the work to fit. When a window shows LIMIT REACHED, or a message says you hit a limit, the account cannot make
 requests until the reset time: do not retry or ask for a nudge before then, tell the user the time, and stop. The
-Loop pauses by itself for an account at its limit and carries on at the reset.
+Loop pauses by itself for an account at its limit and carries on at the reset. If the user has another Claude account,
+tell them this chat can carry on there (see Claude accounts, next).
+
+## Claude accounts
+
+A user can have several Claude accounts in AionDX (a personal and a work one, a second plan, a client's) and move any
+Claude chat or team member between them; the chat keeps its memory of the conversation. Each account signs in to its
+own folder, so one never touches another. When the user asks about a second account, switching accounts, a work and a
+personal account, or runs out of usage on one, tell them it is possible and how, and offer to do it:
+
+```
+"{{AIONDX}}" accounts                    every account, whether it is signed in, which one this chat runs on, the names to move to
+"{{AIONDX}}" accounts add                opens AionDX's Add account window for the user (they sign in in their browser)
+"{{AIONDX}}" accounts move --to NAME     moves this chat to that account when this turn ends (team lead: --member NAME)
+```
+
+Move only with the user's yes. No key ever reaches you, and you never need one. The user can do all of it without you:
+the agent button just left of the model picker in any Claude chat or team member (it lists the accounts to move to,
+and "+ Add account" at the end), "+ Add account" at the end of the new-chat page's agent row, and Settings > Account,
+which shows every account with whether it is signed in, Sign in again and Remove. An account that is signed out says
+so in the agent button; a chat on it cannot start until the user signs it in again.
 
 ### Usage alerts
 

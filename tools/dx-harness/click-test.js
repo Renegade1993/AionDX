@@ -1556,6 +1556,7 @@ async function pageTarget() {
       let ub = await urBolt();
       check(sc, 'an Unread message in a solo Claude chat has the answer-now bolt, left of its bubble, saying what a press does',
         ub && ub.left && ub.shown && /reads it after the step it is running/.test(ub.title) && /stop that step/.test(ub.title), JSON.stringify(ub));
+      await clogShot('0.28.6', 'Answer a message now', '#message-m-77 [data-testid="aiondx-answer-now"]');
       await js(`(() => { const R = window.__stub.routes; const c = R['GET /api/conversations/harness1'].data;
         c.runtime = Object.assign({}, c.runtime || {}, { is_processing: true, state: 'running', turn_id: 'turn_N' });
         R['POST /api/conversations/harness1/cancel'] = () => { c.runtime.is_processing = false; c.runtime.state = 'idle'; return { success: true }; };
@@ -1688,6 +1689,18 @@ async function pageTarget() {
       check(sc, 'the Loop stays on', (await label('')) === 'Loop · On');
       await js('window.__aionDx.tickNow()');
       check(sc, 'still none on the next check', (await posts('/api/conversations/harness1/messages')).length === 0);
+      // 0.28.6 item 12: the chat on screen says once that its account is at its limit, with the ways out
+      for (let i = 0; i < 5; i++) { await js('window.__aionDx.repaint()'); await sleep(150); }
+      const lt = await js(`[...document.querySelectorAll('.aiondx-toast')].filter((t) => /limit until/.test(t.textContent)).map((t) => ({ text: t.querySelector('.aiondx-toast-text').textContent,
+        sub: (t.querySelector('.aiondx-toast-sub') || {}).textContent, btns: [...t.querySelectorAll('.aiondx-toast-action')].map((b) => b.textContent) }))`);
+      check(sc, 'a chat whose account hits its limit says so once, until when, with "Move to another account" (no add button without the app\u2019s main process)',
+        lt.length === 1 && /^this chat\u2019s Claude account is at its 5-hour limit until \d\d:\d\d\.$/.test(lt[0].text) && lt[0].sub === 'Another of your accounts can carry on now.' &&
+        JSON.stringify(lt[0].btns) === '["Move to another account"]', JSON.stringify(lt));
+      await shot('click-test-limit-notice');
+      await humanClick('.aiondx-toast .aiondx-toast-action');
+      await sleep(400);
+      check(sc, 'and Move to another account opens the chat\u2019s agent menu', await js(`!!document.querySelector('.aiondx-acct-menu')`));
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
       // The reset passes.
       await putStore('aiondx.usage.acct.k9', { label: 'Main', at: Date.now() - 20000, status: 'rejected',
         five_hour: { u: 1, reset: nowS - 120, status: 'rejected' }, seven_day: { u: 0.4, reset: nowS + 3 * 86400, status: 'allowed' } });
@@ -4029,12 +4042,12 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW286 = ['Any colour for a lane', 'Write your own answer', 'New Chat keeps your draft', 'Fixes'];
+      const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.6' && JSON.stringify(c.names) === JSON.stringify(NEW286) &&
-        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /your own answer/.test(c.hows[1]) && /New Chat page/.test(c.hows[2]) && /asleep/.test(c.hows[3]), JSON.stringify(c));
+        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /your own answer/.test(c.hows[1]) && /lightning bolt/.test(c.hows[2]) && /\+ Add account/.test(c.hows[3]) && /New Chat page/.test(c.hows[4]) && /asleep/.test(c.hows[5]), JSON.stringify(c));
       await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
@@ -4078,7 +4091,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 45, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 47, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -4115,7 +4128,7 @@ async function pageTarget() {
       t = await tip();
       check(sc, 'and after a reload the Loop tip stays away', !t || t.id !== 'aiondx-coach-loop', JSON.stringify(t));
       // the Docs link tip, on a page with a doc link, once the others are done
-      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','sched','bolt','menu','dxdocs','dxcharts','dxedit','dxsuggest','dxexport','add-account','groups','dxskills','skills','places','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
+      await js(`(() => { const d = {}; ['bell','loop','ctx3','account','account2','answernow','sched','bolt','menu','dxdocs','dxcharts','dxedit','dxsuggest','dxexport','add-account','groups','dxskills','skills','places','drive','signin'].forEach((k) => { d[k] = 1; }); localStorage.setItem('aionui.dx.tips.done', JSON.stringify(d)); return 0; })()`);
       await load('theme=light&tips=1&keepls=1');
       await sleep(2600);
       t = await tip();
@@ -4249,7 +4262,76 @@ async function pageTarget() {
       await sleep(4200);
       check(sc, 'a key that does not check out adds nothing and says why, with Try again', /The account was not added/.test(await js(`document.querySelector('[data-testid="aiondx-accdlg"]').textContent`)) &&
         /does not accept the saved key/.test(await js(`document.querySelector('[data-testid="aiondx-accdlg"]').textContent`)) && !(await js('window.__ac')).some((x) => x[0] === 'save'));
-      await js(`(() => { document.querySelector('.aiondx-accdlg-cancel').click(); const r = document.getElementById('trow'); if (r) r.remove(); delete window.aiondxAccounts; location.hash = '#/conversation/harness1'; return 0; })()`);
+      await js(`(() => { document.querySelector('.aiondx-accdlg-cancel').click(); const r = document.getElementById('trow'); if (r) r.remove(); return 0; })()`);
+
+      // 0.28.6 item 12: Settings > Account lists every Claude account with whether it is signed in; the chats' account menu adds one too.
+      await js(`(() => {
+        window.__acctList = [
+          { id: 'personal', label: 'Personal (Pro)', folder: 'D:\\\\acct\\\\.claude', added: false, kind: 'full', own: true, state: 'ok', key: 'full', until: new Date(2026, 11, 13).getTime(), plan: 'pro' },
+          { id: 'client-b', label: 'Client B', folder: 'D:\\\\acct\\\\.claude-client-b', added: true, kind: 'full', own: false, state: 'signed-out', key: 'full', until: 0, plan: '' }];
+        window.aiondxAccounts.status = () => { window.__ac.push(['status']); return Promise.resolve({ ok: true, accounts: window.__acctList, launcher: true }); };
+        window.aiondxAccounts.remove = (n) => { window.__ac.push(['remove', n]); window.__acctList = window.__acctList.filter((a) => a.id !== n); return Promise.resolve({ ok: true, name: n, folder: 'D:\\\\acct\\\\.claude-' + n }); };
+        window.__ac.length = 0;
+        const w = document.createElement('div'); w.id = 'acct-host'; w.className = 'settings-page-wrapper';
+        const c = document.createElement('div'); c.className = 'settings-page-content'; const own = document.createElement('div'); own.textContent = 'AionUi account card'; c.appendChild(own);
+        w.appendChild(c); document.body.appendChild(w); location.hash = '#/settings/account'; return 0; })()`);
+      await sleep(900);
+      await js('window.__aionDx.repaint()');
+      await sleep(400);
+      const rows = await js(`[...document.querySelectorAll('[data-testid="aiondx-claude-accounts"] .aiondx-acct-row')].map((r) => ({ id: r.getAttribute('data-account'),
+        text: r.querySelector('.aiondx-acct-row-text').textContent, state: r.querySelector('[data-testid="aiondx-acct-state"]').textContent,
+        again: !!r.querySelector('[data-testid="aiondx-acct-again"]'), remove: !!r.querySelector('[data-testid="aiondx-acct-remove"]') }))`);
+      check(sc, "Settings > Account lists each Claude account under AionUi's card, with whether it is signed in",
+        rows.length === 2 && rows[0].id === 'personal' && rows[0].state === 'Signed in' && /This PC\u2019s own Claude sign-in\. Renews itself until December 13th\./.test(rows[0].text) && !rows[0].remove &&
+        rows[1].id === 'client-b' && rows[1].state === 'Signed out' && rows[1].again && rows[1].remove, JSON.stringify(rows));
+      check(sc, 'and "+ Add account" under the list', await js(`!!document.querySelector('[data-testid="aiondx-claude-accounts"] [data-testid="aiondx-acct-add"]')`) &&
+        (await js(`document.querySelector('#acct-host .settings-page-content').lastElementChild.getAttribute('data-testid')`)) === 'aiondx-claude-accounts');
+      await shot('click-test-claude-accounts-light');
+      await clogShot('0.28.6', 'More than one Claude account', '[data-testid="aiondx-claude-accounts"]');
+      await humanClick('[data-account="client-b"] [data-testid="aiondx-acct-again"]');
+      await sleep(300);
+      const ag = await js(`(() => { const d = document.querySelector('[data-testid="aiondx-accdlg"]'); return d ? { h: d.querySelector('.aiondx-accdlg-h').textContent, name: d.querySelector('.aiondx-accdlg-name').value, ro: d.querySelector('.aiondx-accdlg-name').readOnly } : null; })()`);
+      check(sc, 'Sign in again opens the dialog for that account, its name fixed', ag && ag.h === 'Sign in again: Client B' && ag.name === 'Client B' && ag.ro, JSON.stringify(ag));
+      await humanClick('[data-testid="aiondx-accdlg-go"]');
+      await sleep(400);
+      const st2 = (await js('window.__ac')).filter((x) => x[0] === 'start');
+      check(sc, 'and signs it in to the same folder name, with no "already an account" refusal', st2.length === 1 && st2[0][1].name === 'client-b', JSON.stringify(st2));
+      await js(`(() => { window.aiondxAccounts.cancel(); const c = document.querySelector('.aiondx-accdlg-cancel'); if (c) c.click(); return 0; })()`);
+      await sleep(200);
+      await humanClick('[data-account="client-b"] [data-testid="aiondx-acct-remove"]');
+      await sleep(200);
+      check(sc, 'Remove asks once more on the button', (await js(`document.querySelector('[data-account="client-b"] [data-testid="aiondx-acct-remove"]').textContent`)) === 'Remove it? Yes' &&
+        !(await js('window.__ac')).some((x) => x[0] === 'remove'));
+      await humanClick('[data-account="client-b"] [data-testid="aiondx-acct-remove"]');
+      await sleep(900);
+      const left = await js(`fetch('/api/settings/client?keys=aiondx.accounts').then((r) => r.json()).then((j) => j.data['aiondx.accounts'].accounts.map((a) => a.id))`);
+      check(sc, 'then takes it out of the launcher and the shared list, and its row goes', (await js('window.__ac')).some((x) => x[0] === 'remove' && x[1] === 'client-b') && left.indexOf('client-b') < 0 &&
+        !(await js(`!!document.querySelector('[data-account="client-b"]')`)), JSON.stringify(left));
+      await js(`(() => { document.getElementById('acct-host').remove(); return 0; })()`);
+      // the chat's account menu: "+ Add account" at the end of its agents, and an added account that is signed out says so
+      await js(`(() => { window.__acctList.push({ id: 'client-c', label: 'Client C', folder: 'x', added: true, kind: 'full', own: false, state: 'signed-out', key: 'full', until: 0, plan: '' }); return 0; })()`);
+      await load('theme=light');
+      await putStore('aiondx.accounts', { v: 1, accounts: [{ id: 'client-c', label: 'Client C', kind: 'full', added: true }], at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await js(`(() => { window.aiondxAccounts = { status: () => Promise.resolve({ ok: true, accounts: [{ id: 'client-c', label: 'Client C', added: true, kind: 'full', state: 'signed-out', key: 'full', until: 0 }] }),
+        list: () => Promise.resolve({ ok: true, accounts: [] }), start: (o) => { (window.__ac = window.__ac || []).push(['start', o]); return Promise.resolve({ ok: true, url: '' }); }, poll: () => Promise.resolve({ ok: true, state: 'running' }), cancel: () => Promise.resolve({ ok: true }) }; return 0; })()`);
+      await js('window.__aionDx.repaint()');
+      await sleep(600);
+      await humanClick('[data-testid="aiondx-account"]');
+      await sleep(300);
+      await js('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); 0');
+      await sleep(200);
+      await humanClick('[data-testid="aiondx-account"]');
+      await sleep(400);
+      const mi = await js(`(() => { const m = document.querySelector('.aiondx-acct-menu'); if (!m) return null; const items = [...m.querySelectorAll('[data-group="here"] .arco-dropdown-menu-item')];
+        return items.map((i) => i.querySelector('.aiondx-item-title').textContent + ' | ' + i.querySelector('.aiondx-item-desc').textContent); })()`);
+      check(sc, 'a Claude chat\'s account menu ends its agents with "+ Add account"', mi && mi[mi.length - 1] === '+ Add account | Sign in another Claude account; then move this chat to it here', JSON.stringify(mi));
+      check(sc, 'an added account that is signed out says so in the menu', mi && mi.some((x) => x === 'Claude Code (Client C) | Signed out: click to sign in again'), JSON.stringify(mi));
+      await shot('click-test-acct-menu-add');
+      await humanClick('.aiondx-acct-menu [data-testid="aiondx-acct-menu-add"]');
+      await sleep(300);
+      check(sc, '"+ Add account" in the menu opens the add dialog', (await js(`(document.querySelector('[data-testid="aiondx-accdlg"] .aiondx-accdlg-h') || {}).textContent`)) === 'Add a Claude account');
+      await js(`(() => { const c = document.querySelector('.aiondx-accdlg-cancel'); if (c) c.click(); delete window.aiondxAccounts; location.hash = '#/conversation/harness1'; return 0; })()`);
     }
 
     // ---- DX Docs: a wide panel at the chat's right edge, like the Claude app's (R-121, 2026-11-13) ----

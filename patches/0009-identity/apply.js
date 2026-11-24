@@ -871,7 +871,9 @@ else {
     '  cancel: () => electron.ipcRenderer.invoke("aiondx:accounts", { op: "cancel" }),\n' +
     '  verify: (name, kind) => electron.ipcRenderer.invoke("aiondx:accounts", { op: "verify", name, kind }),\n' +
     '  save: (o) => electron.ipcRenderer.invoke("aiondx:accounts", Object.assign({}, o, { op: "save" })),\n' +
-    '  list: () => electron.ipcRenderer.invoke("aiondx:accounts", { op: "list" })\n' +
+    '  list: () => electron.ipcRenderer.invoke("aiondx:accounts", { op: "list" }),\n' +
+    '  status: () => electron.ipcRenderer.invoke("aiondx:accounts", { op: "status" }),\n' +
+    '  remove: (name) => electron.ipcRenderer.invoke("aiondx:accounts", { op: "remove", name })\n' +
     '});\n' + anchor);
   notes.push('preload: aiondxAccounts');
 }

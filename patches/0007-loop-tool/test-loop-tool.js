@@ -42,6 +42,8 @@ const check = (name, ok, detail) => results.push({ name, ok: !!ok, detail: detai
 // ---------------------------------------------------------------- the stand-in API
 
 const kv = {};                 // /api/settings/client
+let acctWindow = true;         // whether the stand-in AionDX window answers `aiondx accounts`
+const acctReqs = [];
 const requests = [];
 const TOKEN = 'tok-good';
 const teams = [{
@@ -220,6 +222,12 @@ server = http.createServer((req, res) => {
       }
       if (req.method === 'PUT') {
         for (const [k, v] of Object.entries(entry.body || {})) { if (v === null) delete kv[k]; else kv[k] = v; }
+        // a stand-in for AionDX's window answering `aiondx accounts` (it answers a moment later, as the window's own pull does)
+        if (acctWindow) for (const [k, v] of Object.entries(entry.body || {})) {
+          if (!k.startsWith('aiondx.accounts.req.') || !v) continue;
+          acctReqs.push(v);
+          setTimeout(() => { delete kv[k]; kv['aiondx.accounts.res.' + k.slice(20)] = { text: 'WINDOW ' + v.op + ' conv=' + v.conv + ' kind=' + v.kind + (v.to ? ' to=' + v.to : '') + (v.self ? ' self' : ''), at: Date.now() }; }, 700);
+        }
         return reply(res, 200, { success: true });
       }
     }
@@ -845,6 +853,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('a chat with no reading is told why: which launcher started its Claude, or that this is not a Claude chat (2026-10-12)', uc.status === 0 && /^No usage reading for this chat yet\./.test(uc.stdout) && /(launcher|No Claude Code process was found above this one)/.test(uc.stdout), uc.stdout);
   uc = await cli(['usage', '--all'], 'convS');
   check('--all adds the other accounts', /another account \(second account\)/.test(uc.stdout) && /5-hour window: 12% used/.test(uc.stdout) && /main \(Plan A\)/.test(uc.stdout), uc.stdout);
+  // aiondx accounts (1.16.0): the window answers through the settings store; the tool prints its answer and clears both keys
+  let ac = await cli(['accounts'], 'convS');
+  check('aiondx accounts asks AionDX\'s window for the list and prints its answer, exit 0', ac.status === 0 && ac.stdout.trim() === 'WINDOW list conv=convS kind=conv self' &&
+    !Object.keys(kv).some((k) => k.startsWith('aiondx.accounts.')), ac.stdout + ac.stderr);
+  ac = await cli(['accounts', 'move', '--to', 'Client B'], 'convS');
+  check('accounts move --to names the account and this chat as moving itself', ac.status === 0 && ac.stdout.trim() === 'WINDOW move conv=convS kind=conv to=Client B self', ac.stdout);
+  ac = await cli(['accounts', 'add'], 'convS');
+  check('accounts add asks the window to open Add account', ac.status === 0 && /^WINDOW add/.test(ac.stdout), ac.stdout);
+  ac = await cli(['accounts', 'move'], 'convS');
+  check('move without --to is refused, exit 1', ac.status === 1 && /--to is required/.test(ac.stdout), ac.stdout);
+  ac = await cli(['accounts', 'move', '--to', 'x', '--member', 'Worker'], 'convL');
+  check('a lead moves a member by name: its chat and slot go in the request', ac.status === 0 && /^WINDOW move conv=convW kind=team to=x$/.test(ac.stdout.trim()) && acctReqs[acctReqs.length - 1].slot === 'slotW', ac.stdout + JSON.stringify(acctReqs[acctReqs.length - 1]));
+  acctWindow = false;
+  ac = await run(CLI, ['accounts'], Object.assign({}, cliEnv('convS'), { AIONDX_ACCOUNTS_WAIT_MS: '1500' }));
+  check('with no window to answer, it says so and what the user can do instead, exit 1, and clears its request', ac.status === 1 && /did not answer within 1 seconds/.test(ac.stdout) &&
+    /agent button or Settings > Account/.test(ac.stdout) && !Object.keys(kv).some((k) => k.startsWith('aiondx.accounts.')), ac.stdout);
+  acctWindow = true;
   uc = await cli(['usage', '--bogus'], 'convS');
   check('an unknown option is refused with the usage, exit 1', uc.status === 1 && /Unknown option --bogus/.test(uc.stdout) && /Usage:/.test(uc.stdout), uc.stdout);
   kv['aiondx.usage.acct.acctA'] = Object.assign({}, kv['aiondx.usage.acct.acctA'], { status: 'rejected', five_hour: { u: 1.02, reset: nowS + 3900, status: 'rejected' } });
