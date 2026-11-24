@@ -865,6 +865,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('move without --to is refused, exit 1', ac.status === 1 && /--to is required/.test(ac.stdout), ac.stdout);
   ac = await cli(['accounts', 'move', '--to', 'x', '--member', 'Worker'], 'convL');
   check('a lead moves a member by name: its chat and slot go in the request', ac.status === 0 && /^WINDOW move conv=convW kind=team to=x$/.test(ac.stdout.trim()) && acctReqs[acctReqs.length - 1].slot === 'slotW', ac.stdout + JSON.stringify(acctReqs[acctReqs.length - 1]));
+  // R-134 (1.16.0): a chat becomes a team's lead, a team goes back to chats; the window does it when the turn ends
+  ac = await cli(['team', 'create', '--from', 'current', '--name', 'Ops team'], 'convS');
+  check('aiondx team create --from current asks the window to make this chat a lead, by name', ac.status === 0 && /^WINDOW maketeam conv=convS kind=conv self$/.test(ac.stdout.trim()) && acctReqs[acctReqs.length - 1].name === 'Ops team', ac.stdout);
+  ac = await cli(['team', 'create', '--from', 'current'], 'convS');
+  check('team create without --name is refused', ac.status === 1 && /--name is required/.test(ac.stdout), ac.stdout);
+  ac = await cli(['team', 'create', '--name', 'x'], 'convW');
+  check('a chat already in a team cannot be made a team', ac.status === 1 && /already in a team/.test(ac.stdout), ac.stdout);
+  ac = await cli(['team', 'dissolve'], 'convL');
+  check('the lead can turn its team back into chats', ac.status === 0 && /^WINDOW dissolve conv=convL kind=team self$/.test(ac.stdout.trim()), ac.stdout);
+  ac = await cli(['team', 'dissolve'], 'convW');
+  check('a member cannot', ac.status === 1 && /Only the team's lead/.test(ac.stdout), ac.stdout);
   acctWindow = false;
   ac = await run(CLI, ['accounts'], Object.assign({}, cliEnv('convS'), { AIONDX_ACCOUNTS_WAIT_MS: '1500' }));
   check('with no window to answer, it says so and what the user can do instead, exit 1, and clears its request', ac.status === 1 && /did not answer within 1 seconds/.test(ac.stdout) &&

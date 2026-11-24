@@ -11975,6 +11975,11 @@
         }
         toast(ok === ts.length ? 'Restarted.' : 'Restarted ' + ok + ' of ' + ts.length + '.', 'Whatever was running ended. The session and its context carry on.');
       } });
+    // R-134 (0.28.6): a chat becomes a team's lead in place, and a team goes back to separate chats (AionCore patch core-0025)
+    if (!team && ts.length) out.push({ id: 'maketeam', icon: SVG_X_RESTART, label: 'Make this a team\u2026',
+      run: function () { var c = key.slice(2); askGroupName('Make this chat a team', ((groupCache[key] && groupCache[key].name) || 'New') + ' team', 'Make the team', function (name) { makeTeamFromChat(c, name).catch(function (e) { toast('Not made into a team.', String(e && e.message || e)); }); }, '__rename__'); } });
+    if (team) out.push({ id: 'dissolve', icon: SVG_X_ARCHIVE, danger: true, label: 'Turn back into separate chats\u2026',
+      run: function () { openDissolveDialog(key.slice(2)).catch(function (e) { toast('Not changed.', String(e && e.message || e)); }); } });
     if (cacheBridge()) out.push({ id: 'disk', icon: SVG_X_DISK, label: 'Clear disk caches\u2026',
       run: function () {
         var c = key.charAt(0) === 'c' ? key.slice(2) : (ts[0] && ts[0].convId);
@@ -12048,6 +12053,119 @@
       }
     }
     acts.forEach(function (a) { m.appendChild(actionLine('aiondx-xitem' + (a.danger ? ' aiondx-xitem--danger' : ''), a.icon, a.label, a.confirm, a.run, 'aiondx-menu-' + a.id)); });
+  }
+  // ---- R-134: chat to team and back (0.28.6). The TEP chat's package (November 18th, 2026): "i want the ability for conversations to
+  // convert to teams, and potentially vice versa". AionCore patch core-0025 does the work: POST /api/teams/from-conversation keeps the chat's
+  // id, history, folder, agent and model and makes it the lead; POST /api/teams/{id}/dissolve hands every member back as a plain chat.
+  async function makeTeamFromChat(convId, name) {
+    var g = await getJson('/api/conversations/' + encodeURIComponent(convId));
+    if (g.data && convBusy(g.data)) { toast('Not yet: this chat is working.', 'Make it a team when it has stopped; its agent restarts as the lead.'); return; }
+    var r = await postJson('/api/teams/from-conversation', { conversation_id: convId, name: name });
+    if (r.status === 404 || r.status === 405) { toast('This AionCore cannot make a chat into a team yet.', 'It comes with AionDX 0.28.6.'); return; }
+    var j = null;
+    try { j = await r.json(); } catch (e) { j = null; }
+    if (!r.ok) { toast('Not made into a team.', (j && (j.error || j.message)) || ('HTTP ' + r.status)); return; }
+    var t = j ? unwrap(j) : null;
+    if (!t || !t.id) { toast('The team was made, but AionDX could not read its id.', 'It is in the Teams list.'); return; }
+    if (groupsState.items['c:' + convId]) { var gid = groupsState.items['c:' + convId]; assignGroup('c:' + convId, null); assignGroup('t:' + t.id, gid); }
+    location.hash = '#/team/' + t.id;
+    toast('This chat now leads "' + name + '".', 'Same history and folder. Its agent starts as the lead with your next message. Add members with + on the team page, or ask the lead to.');
+    schedule();
+  }
+  var dissolveDlg = null;
+  async function openDissolveDialog(teamId) {
+    var g = await getJson('/api/teams/' + encodeURIComponent(teamId));
+    var d = g && g.data ? g.data : null;
+    var rows = d ? (d.assistants || d.agents || []) : [];
+    if (!rows.length) { toast('Could not read the team.', g && g.err ? 'HTTP ' + g.err : ''); return; }
+    if (dissolveDlg && dissolveDlg.parentNode) dissolveDlg.parentNode.removeChild(dissolveDlg);
+    var el = document.createElement('div');
+    el.className = 'aiondx-welcome-backdrop aiondx-accdlg-backdrop';
+    el.innerHTML = '<div class="aiondx-welcome aiondx-accdlg" role="dialog" aria-modal="true" data-testid="aiondx-dissolve-dlg">' +
+      '<h2 class="aiondx-accdlg-h"></h2><p class="aiondx-accdlg-p">Every member becomes a chat of its own again, with its history and folder. Nothing is deleted. What each member had waiting (its queue, its messages and the team\u2019s tasks) is written to a DX Doc in the lead\u2019s chat first.</p>' +
+      '<div class="aiondx-dissolve-rows"></div><div class="aiondx-accdlg-err" role="alert"></div>' +
+      '<div class="aiondx-accdlg-btns"><button type="button" class="arco-btn arco-btn-secondary aiondx-accdlg-cancel">Cancel</button>' +
+      '<button type="button" class="arco-btn arco-btn-primary aiondx-dissolve-go" data-testid="aiondx-dissolve-go">Turn into chats</button></div></div>';
+    el.querySelector('h2').textContent = 'Turn "' + (d.name || 'this team') + '" back into chats';
+    var box = el.querySelector('.aiondx-dissolve-rows');
+    rows.forEach(function (a) {
+      var lead = isLeadRole(String(a.role || ''));
+      var lab = document.createElement('label');
+      lab.className = 'aiondx-accdlg-check';
+      lab.innerHTML = '<input type="checkbox" class="aiondx-dissolve-archive"> <span></span>';
+      lab.querySelector('span').textContent = (a.name || a.slot_id) + (lead ? ' (lead): stays a chat' : ': archive it instead of keeping it as a chat');
+      var cb = lab.querySelector('input');
+      cb.setAttribute('data-slot', a.slot_id || '');
+      cb.setAttribute('data-conv', a.conversation_id || '');
+      if (lead) { cb.disabled = true; cb.checked = false; }
+      box.appendChild(lab);
+    });
+    el.querySelector('.aiondx-accdlg-cancel').addEventListener('click', function () { el.remove(); });
+    el.querySelector('.aiondx-dissolve-go').addEventListener('click', function () {
+      var archive = [].slice.call(box.querySelectorAll('input:checked')).map(function (x) { return x.getAttribute('data-conv'); });
+      el.querySelector('.aiondx-dissolve-go').disabled = true;
+      dissolveTeam(teamId, d, rows, archive).then(function () { el.remove(); }, function (e) {
+        el.querySelector('.aiondx-dissolve-go').disabled = false;
+        el.querySelector('.aiondx-accdlg-err').textContent = 'Not changed: ' + (e && e.message ? e.message : e);
+      });
+    });
+    document.body.appendChild(el);
+    dissolveDlg = el;
+  }
+  /** What the team had in flight, as a DX Doc in the lead's chat (best-effort: the dissolve goes ahead without it, and says so). */
+  async function dissolveSnapshot(teamId, team, rows) {
+    var lead = rows.filter(function (a) { return isLeadRole(String(a.role || '')); })[0] || rows[0];
+    if (!window.aiondxDx || !lead || !lead.conversation_id) return false;
+    var names = {};
+    rows.forEach(function (a) { names[a.slot_id] = a.name || a.slot_id; });
+    var rs = await getJson('/api/teams/' + encodeURIComponent(teamId) + '/run-state');
+    var mb = await getJson('/api/teams/' + encodeURIComponent(teamId) + '/mailbox?limit=400');
+    var tk = await getJson('/api/teams/' + encodeURIComponent(teamId) + '/tasks');
+    var mails = Array.isArray(mb.data) ? mb.data : ((mb.data && mb.data.messages) || []);
+    var tasks = Array.isArray(tk.data) ? tk.data : ((tk.data && tk.data.tasks) || []);
+    var work = (rs.data && rs.data.slot_work) || [];
+    var sections = [];
+    rows.forEach(function (a) {
+      var w = work.filter(function (x) { return x && x.slot_id === a.slot_id; })[0] || {};
+      var unread = mails.filter(function (m) { return m && m.to_agent_id === a.slot_id && !m.read; });
+      var lines = ['State: ' + (w.state || 'unknown') + (w.queued_foreground_count ? ', ' + w.queued_foreground_count + ' waiting in its queue' : '') + '.'];
+      lines.push('Its chat: ' + a.conversation_id);
+      if (unread.length) {
+        lines.push('');
+        lines.push('Messages it had not read:');
+        unread.forEach(function (m) { lines.push('- from ' + (names[m.from_agent_id] || m.from_agent_id) + ': ' + String(m.content || '').replace(/\s+/g, ' ').slice(0, 1500)); });
+      }
+      sections.push({ heading: (a.name || a.slot_id) + (isLeadRole(String(a.role || '')) ? ' (lead)' : ''), body: lines.join('\n') });
+    });
+    var open = tasks.filter(function (t) { return t && !/^(done|completed|cancel)/i.test(String(t.status || '')); });
+    sections.push({ heading: 'Open tasks', body: open.length ? open.map(function (t) { return '- ' + (t.subject || t.title || t.id) + ' (' + (t.status || 'open') + (t.owner ? ', ' + (names[t.owner] || t.owner) : '') + ')'; }).join('\n') : 'None.' });
+    var w2 = await window.aiondxDx.call('where', { convId: lead.conversation_id, teamId: '', workspace: '' });
+    if (!w2 || !w2.ok || !w2.docsDir) return false;
+    var c = await window.aiondxDx.call('create', { docsDir: w2.docsDir, title: 'Team ' + (team.name || '') + ': what was in flight ' + new Date().toISOString().slice(0, 16).replace('T', ' '), sections: sections });
+    return !!(c && c.ok);
+  }
+  async function dissolveTeam(teamId, team, rows, archive) {
+    var saved = false;
+    try { saved = await dissolveSnapshot(teamId, team, rows); } catch (e) { saved = false; }
+    var r = await postJson('/api/teams/' + encodeURIComponent(teamId) + '/dissolve', {});
+    if (r.status === 404 || r.status === 405) throw new Error('this AionCore cannot turn a team back into chats yet');
+    var j = null;
+    try { j = await r.json(); } catch (e) { j = null; }
+    if (!r.ok) throw new Error((j && (j.error || j.message)) || ('HTTP ' + r.status));
+    var out = j ? unwrap(j) : null;
+    var archived = 0;
+    for (var i = 0; i < archive.length; i++) {
+      var a = await postJson('/api/sidebar/conversation/' + encodeURIComponent(archive[i]) + '/archive', {}).catch(function () { return null; });
+      if (a && a.ok) archived++;
+    }
+    var lead = rows.filter(function (a) { return isLeadRole(String(a.role || '')); })[0];
+    var gid = groupsState.items['t:' + teamId];
+    if (gid && out && out.members) out.members.forEach(function (m) { if (archive.indexOf(m.conversation_id) < 0) assignGroup('c:' + m.conversation_id, gid); });
+    if (gid) assignGroup('t:' + teamId, null);
+    if (lead && lead.conversation_id) location.hash = '#/conversation/' + lead.conversation_id;
+    toast('"' + (team.name || 'The team') + '" is separate chats again.', ((out && out.members) ? out.members.length : rows.length) + ' chats kept' + (archived ? ', ' + archived + ' archived' : '') + '. ' +
+      (saved ? 'What was in flight is in a DX Doc in the lead\u2019s chat.' : 'What was in flight could not be written to a doc.'));
+    schedule();
   }
   function groupLineText(it) {
     var key = it.getAttribute('data-gkey'), cur = key && groupsState.items[key] ? groupById(groupsState.items[key]) : null;
@@ -14032,6 +14150,7 @@
       ['Write your own answer', 'Every question in a DX Doc has a line under its options for your own answer: type it and press Enter or Send, and it is saved in the doc and sent to the agent, like a ticked option. Where you can tick several, your own answer goes with them.'],
       ['Answer a message now', 'A message of yours the agent has but has not read yet (Unread) has a lightning bolt beside it. Press it to stop the step the agent is on: your message starts its next turn at once. Messages still waiting in a team member’s queue keep their bolt, which puts them first.'],
       ['More than one Claude account', 'Click the agent button just left of the model picker in any Claude chat or team member: + Add account signs in another Claude account in your browser, and picking an account moves the chat there with its memory. Settings > Account lists every account and whether it is signed in, with Sign in again and Remove. When an account hits its limit, the notice offers another. Agents can do the same for you (aiondx accounts).'],
+      ['A chat becomes a team, and back', 'In a chat’s menu, Make this a team: the chat becomes the team’s lead with the same history and folder, and you add members on the team page. In a team’s menu, Turn back into separate chats: each member keeps its history as a chat of its own, or is archived if you tick it. Agents can do it for you on your word.'],
       ['New Chat keeps your draft', 'What you type on the New Chat page stays there when you leave the page or close AionDX, the same as in any chat, and is cleared when you send it.'],
       ['Fixes', 'The Settings list is one look: every entry has AionDX’s icon in its page’s colour and the same lettering (AionUi’s entries had kept their grey icons), the first group is named Agents and chats, and Mobile shows as the open page when you choose it. Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call). A lane colour picked by right-clicking the drag handle or status dot of a member’s button now takes, and colours saved that way before are moved to the member. A team whose agents could not start because of a large pinned skill starts again (the launch was longer than Windows allows), and an agent that cannot start, or a member the team paused, now shows in the bell with the reason. Moving an agent that is not running to another account moves it at once (it said it was busy, again and again).'],
     ],
@@ -17755,6 +17874,7 @@
   async function acctAnswer(q) {
     if (!window.aiondxAccounts) return 'This AionDX window cannot manage accounts (it runs without AionDX’s main process).';
     var convId = String(q.conv || '');
+    if (q.op === 'maketeam' || q.op === 'dissolve') return teamOpAsked(q);
     if (q.op === 'add') {
       openAccDlg();
       return 'The Add account window is open in AionDX. The user names the account, picks what it may do, and signs in in their browser; no key reaches you. Once added, it is in every Claude chat’s agent button and in Settings > Account.';
@@ -17799,6 +17919,34 @@
       return 'Moving it to ' + a.name + ': it restarts between turns and carries on with its memory of the chat. The user sees a notice when it has moved.';
     }
     return 'Unknown request "' + q.op + '".';
+  }
+  // R-134 from an agent (aiondx team create / dissolve): done once the asking chat's turn has ended, since the change restarts its agent.
+  var teamOps = [];
+  function teamOpAsked(q) {
+    if (q.op === 'maketeam' && !String(q.name || '').trim()) return Promise.resolve('Not done: the team needs a name.');
+    teamOps.push({ q: q, at: Date.now() });
+    if (!teamOps.timer) teamOps.timer = setInterval(teamOpsTick, 3000);
+    return Promise.resolve(q.op === 'maketeam'
+      ? 'Saved: when this turn ends, this chat becomes the lead of "' + q.name + '", with the same history and folder. Its agent restarts as the lead with the next message; then add members with team_spawn_agent (or the user adds them on the team page). The user sees a notice.'
+      : 'Saved: when this turn ends, the team goes back to separate chats, each with its history. What was in flight is written to a DX Doc in this chat first. The user sees a notice.');
+  }
+  async function teamOpsTick() {
+    if (!teamOps.length) { clearInterval(teamOps.timer); teamOps.timer = null; return; }
+    var op = teamOps[0];
+    if (op.running) return;
+    if (Date.now() - op.at > 3600000) { teamOps.shift(); toast(op.q.op === 'maketeam' ? 'Not made into a team: the chat stayed busy for an hour.' : 'The team was not turned back into chats: its lead stayed busy for an hour.', ''); return; }
+    var g = await getJson('/api/conversations/' + encodeURIComponent(op.q.conv));
+    if (!g.data || convBusy(g.data)) return;
+    op.running = true;
+    try {
+      if (op.q.op === 'maketeam') await makeTeamFromChat(op.q.conv, String(op.q.name).trim());
+      else {
+        var tg = await getJson('/api/teams/' + encodeURIComponent(op.q.team));
+        var d = tg && tg.data ? tg.data : null;
+        if (d) await dissolveTeam(op.q.team, d, d.assistants || d.agents || [], []);
+      }
+    } catch (e) { toast('Not done.', String(e && e.message || e)); }
+    teamOps.shift();
   }
   async function removeClaudeAccount(a) {
     var r = await window.aiondxAccounts.remove(a.id);
@@ -18103,6 +18251,9 @@
     heldStarts: function () { var o = {}; Object.keys(heldStarts).forEach(function (k) { o[k] = heldStarts[k].length; }); return o; },
     accounts: function () { return { rec: accountsRec, prefs: accountPrefs, agents: agentPrefs, list: agentList.all }; },
     moveRefusal: function (status, body) { return moveRefusal(status, body); },
+    menuActionIds: function (key) { return menuActions(key).map(function (x) { return x.id; }); },
+    makeTeam: function (conv, name) { return makeTeamFromChat(conv, name); },
+    dissolveDialog: function (teamId) { return openDissolveDialog(teamId); },
     moves: function (age) { return Object.keys(pendingMoves).map(function (k) { var m = pendingMoves[k]; if (age === 'retry') m.tried = 0; else if (age) m.at -= age; return k; }); },
     usage: function () { return { acct: usageAcct, conv: usageConv }; },
     statedResetMs: function (text, at) { return statedResetMs(text, at); },

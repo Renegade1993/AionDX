@@ -1,0 +1,321 @@
+diff --git a/crates/aionui-api-types/src/lib.rs b/crates/aionui-api-types/src/lib.rs
+index 0b598267..c0c63432 100644
+--- a/crates/aionui-api-types/src/lib.rs
++++ b/crates/aionui-api-types/src/lib.rs
+@@ -205,7 +205,7 @@ pub use system::{
+     FeedbackDiagnosticsResponse, SystemSettingsResponse, UpdateClientPreferencesRequest, UpdateSettingsRequest,
+ };
+ pub use team::{
+-    AddAgentRequest, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamRequest, InterruptTeamAgentRequest,
++    AddAgentRequest, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamFromConversationRequest, CreateTeamRequest, DissolveTeamResponse, DissolvedTeamMember, InterruptTeamAgentRequest,
+     SteerTeamAgentRequest, TeamSteerAgentResponse, TeamSteerOutcome,
+     PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest, ReplaceAgentRequest, SendAgentMessageRequest, SendTeamMessageRequest,
+     TeamActivityCursor, TeamActivityItemResponse, TeamActivityKind, TeamActivityPageResponse, TeamAgentInput,
+diff --git a/crates/aionui-api-types/src/team.rs b/crates/aionui-api-types/src/team.rs
+index d672c139..af63fa00 100644
+--- a/crates/aionui-api-types/src/team.rs
++++ b/crates/aionui-api-types/src/team.rs
+@@ -110,6 +110,35 @@ pub struct CreateTeamRequest {
+     pub workspace: Option<String>,
+ }
+ 
++/// AionDX core-0025: request body for `POST /api/teams/from-conversation`. An existing solo conversation becomes the
++/// lead of a new team, keeping its id, history, folder, agent and model. Members are added afterwards with
++/// `POST /api/teams/{id}/agents`.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct CreateTeamFromConversationRequest {
++    pub conversation_id: String,
++    pub name: String,
++    /// The lead's name in the team; the conversation's own name when omitted.
++    #[serde(default)]
++    pub lead_name: Option<String>,
++}
++
++/// AionDX core-0025: one conversation a dissolved team handed back as a plain conversation.
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++pub struct DissolvedTeamMember {
++    pub slot_id: String,
++    pub name: String,
++    pub role: String,
++    pub conversation_id: String,
++}
++
++/// AionDX core-0025: answer to `POST /api/teams/{id}/dissolve`. Every member's conversation is kept, as a plain one.
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++pub struct DissolveTeamResponse {
++    pub team_id: String,
++    pub members: Vec<DissolvedTeamMember>,
++}
++
+ /// Request body for `PATCH /api/teams/:id/name`.
+ #[derive(Debug, Deserialize)]
+ pub struct RenameTeamRequest {
+diff --git a/crates/aionui-app/src/router/team_conversation_adapters.rs b/crates/aionui-app/src/router/team_conversation_adapters.rs
+index 3518438e..b381a84a 100644
+--- a/crates/aionui-app/src/router/team_conversation_adapters.rs
++++ b/crates/aionui-app/src/router/team_conversation_adapters.rs
+@@ -507,6 +507,18 @@ impl TeamConversationProvisioningPort for TeamConversationAdapters {
+         })
+     }
+ 
++    async fn conversation_name_and_extra(
++        &self,
++        user_id: &str,
++        conversation_id: &str,
++    ) -> Result<Option<(String, serde_json::Value)>, TeamError> {
++        let Some(row) = self.conversation_repo.get(user_id, conversation_id).await? else {
++            return Ok(None);
++        };
++        let extra: serde_json::Value = serde_json::from_str(&row.extra).unwrap_or_else(|_| serde_json::json!({}));
++        Ok(Some((row.name.clone(), extra)))
++    }
++
+     async fn conversation_workspace(&self, conversation_id: &str) -> Result<Option<String>, TeamError> {
+         let Some(user_id) = self.owner_user_id(conversation_id).await? else {
+             return Ok(None);
+diff --git a/crates/aionui-team/src/provisioning.rs b/crates/aionui-team/src/provisioning.rs
+index e0dbf5ab..57bd2913 100644
+--- a/crates/aionui-team/src/provisioning.rs
++++ b/crates/aionui-team/src/provisioning.rs
+@@ -100,6 +100,15 @@ pub trait TeamConversationProvisioningPort: Send + Sync {
+ 
+     async fn conversation_workspace(&self, conversation_id: &str) -> Result<Option<String>, TeamError>;
+ 
++    /// AionDX core-0025: the conversation's name and parsed `extra`, when `user_id` owns it.
++    async fn conversation_name_and_extra(
++        &self,
++        _user_id: &str,
++        _conversation_id: &str,
++    ) -> Result<Option<(String, serde_json::Value)>, TeamError> {
++        Ok(None)
++    }
++
+     async fn conversation_assistant_id(&self, conversation_id: &str) -> Result<Option<String>, TeamError>;
+ 
+     async fn create_team_temp_workspace(&self, user_id: &str, team_id: &str) -> Result<String, TeamError>;
+diff --git a/crates/aionui-team/src/routes.rs b/crates/aionui-team/src/routes.rs
+index bd15042e..f7966b64 100644
+--- a/crates/aionui-team/src/routes.rs
++++ b/crates/aionui-team/src/routes.rs
+@@ -10,7 +10,8 @@ use axum::routing::{get, post, put};
+ 
+ use aionui_ai_agent::ActiveLeaseRegistry;
+ use aionui_api_types::{
+-    AddAgentRequest, ApiResponse, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamRequest,
++    AddAgentRequest, ApiResponse, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamFromConversationRequest,
++    CreateTeamRequest, DissolveTeamResponse,
+     GetConfigOptionsResponse, InterruptTeamAgentRequest, PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest, ReplaceAgentRequest,
+     SendAgentMessageRequest, SendTeamMessageRequest, SetConfigOptionRequest, SetConfigOptionResponse, SetModeRequest,
+     SetModelRequest, SteerTeamAgentRequest, TeamSteerAgentResponse, TeamActivityPageResponse, TeamAgentResponse, TeamContextResetAvailability,
+@@ -181,6 +182,9 @@ pub fn team_routes(state: TeamRouterState) -> Router {
+     let lifecycle_authority: Arc<dyn crate::lifecycle_guard::LifecycleAuthority> = state.service.clone();
+     Router::new()
+         .route("/api/teams", post(create_team).get(list_teams))
++        // AionDX core-0025: a chat becomes a team's lead in place, and a team goes back to plain chats
++        .route("/api/teams/from-conversation", post(create_team_from_conversation))
++        .route("/api/teams/{id}/dissolve", post(dissolve_team))
+         .route("/api/teams/{id}", get(get_team).delete(remove_team))
+         .route("/api/teams/{id}/run-state", get(get_run_state))
+         .route("/api/teams/{id}/mailbox", get(list_mailbox))
+@@ -248,6 +252,25 @@ async fn create_team(
+     Ok((StatusCode::CREATED, Json(ApiResponse::ok(team))))
+ }
+ 
++async fn create_team_from_conversation(
++    State(state): State<TeamRouterState>,
++    Extension(user): Extension<CurrentUser>,
++    body: Result<Json<CreateTeamFromConversationRequest>, JsonRejection>,
++) -> Result<(StatusCode, Json<ApiResponse<TeamResponse>>), ApiError> {
++    let Json(req) = body.map_err(ApiError::from)?;
++    let team = state.service.create_team_from_conversation(&user.id, req).await?;
++    Ok((StatusCode::CREATED, Json(ApiResponse::ok(team))))
++}
++
++async fn dissolve_team(
++    State(state): State<TeamRouterState>,
++    Extension(user): Extension<CurrentUser>,
++    Path(id): Path<String>,
++) -> Result<Json<ApiResponse<DissolveTeamResponse>>, ApiError> {
++    let out = state.service.dissolve_team(&user.id, &id).await?;
++    Ok(Json(ApiResponse::ok(out)))
++}
++
+ async fn list_teams(
+     State(state): State<TeamRouterState>,
+     Extension(user): Extension<CurrentUser>,
+diff --git a/crates/aionui-team/src/service.rs b/crates/aionui-team/src/service.rs
+index 1ccd15e4..42b40487 100644
+--- a/crates/aionui-team/src/service.rs
++++ b/crates/aionui-team/src/service.rs
+@@ -9,7 +9,8 @@ use std::sync::{Arc, RwLock, Weak};
+ use aionui_ai_agent::{ActiveLeaseRegistry, AgentError, AgentInstance, IWorkerTaskManager, IdleCleanupCoordinator};
+ use aionui_api_types::ChatFileRef;
+ use aionui_api_types::{
+-    AddAgentRequest, AssistantMcpBindingChanged, CreateTeamRequest, GetConfigOptionsResponse, ReplaceAgentRequest,
++    AddAgentRequest, AssistantMcpBindingChanged, CreateTeamFromConversationRequest, CreateTeamRequest, DissolveTeamResponse,
++    DissolvedTeamMember, GetConfigOptionsResponse, ReplaceAgentRequest,
+     InterruptTeamAgentRequest, SetConfigOptionRequest, SetConfigOptionResponse, SteerTeamAgentRequest, TeamActivityCursor,
+     TeamActivityPageResponse, TeamAgentResponse, TeamAgentRuntimeStatus, TeamContextResetAvailability,
+     TeamContextResetResponse, TeamContextResetRuntimeStatus, TeamContextResetStatus, TeamInterruptAgentResponse,
+@@ -841,6 +842,160 @@ impl TeamSessionService {
+         self.build_team_response(user_id, &team).await
+     }
+ 
++    /// AionDX core-0025: an existing solo conversation becomes the lead of a new team, in place: same conversation id,
++    /// history, folder, agent and model. Its `extra` gets the team markers a new lead's has (teamId, slot_id, role);
++    /// nothing else in it changes. The agent process, if running, is stopped so its next start comes up with the team
++    /// tools (they are given at launch); its Claude session is resumed as on any restart. Members are added afterwards.
++    pub async fn create_team_from_conversation(
++        &self,
++        user_id: &str,
++        req: CreateTeamFromConversationRequest,
++    ) -> Result<TeamResponse, TeamError> {
++        let conversation_id = req.conversation_id.trim().to_owned();
++        let name = req.name.trim().to_owned();
++        if conversation_id.is_empty() {
++            return Err(TeamError::InvalidRequest("conversation_id is required".into()));
++        }
++        if name.is_empty() {
++            return Err(TeamError::InvalidRequest("a team name is required".into()));
++        }
++        let (conv_name, extra) = self
++            .conversation_port
++            .conversation_name_and_extra(user_id, &conversation_id)
++            .await?
++            .ok_or_else(|| TeamError::InvalidRequest(format!("conversation {conversation_id} was not found")))?;
++        if extra
++            .get("teamId")
++            .and_then(serde_json::Value::as_str)
++            .is_some_and(|v| !v.trim().is_empty())
++        {
++            return Err(TeamError::InvalidRequest("that conversation already belongs to a team".into()));
++        }
++        let field = |k: &str| {
++            extra
++                .get(k)
++                .and_then(serde_json::Value::as_str)
++                .map(str::trim)
++                .filter(|v| !v.is_empty())
++                .map(str::to_owned)
++        };
++        let backend = field("backend").ok_or_else(|| {
++            TeamError::InvalidRequest("that conversation has no agent backend, so it cannot lead a team".into())
++        })?;
++        let workspace = field("workspace").ok_or_else(|| {
++            TeamError::InvalidRequest("that conversation has no working folder, so it cannot lead a team".into())
++        })?;
++        let model = field("current_model_id").unwrap_or_default();
++        let assistant_id = match self.conversation_port.conversation_assistant_id(&conversation_id).await {
++            Ok(Some(id)) => Some(id),
++            _ => field("assistant_id").or_else(|| field("agent_id")),
++        };
++        let lead_name = req
++            .lead_name
++            .as_deref()
++            .map(str::trim)
++            .filter(|v| !v.is_empty())
++            .map(str::to_owned)
++            .unwrap_or_else(|| if conv_name.trim().is_empty() { "Lead".to_owned() } else { conv_name.trim().to_owned() });
++
++        let team_id = generate_id();
++        let slot_id = generate_id();
++        let now = now_ms();
++        let lead = TeamAgent {
++            slot_id: slot_id.clone(),
++            name: lead_name,
++            role: TeammateRole::Lead,
++            conversation_id: conversation_id.clone(),
++            backend,
++            model,
++            assistant_id,
++            status: None,
++            conversation_type: None,
++            cli_path: None,
++        };
++        // Mark the conversation first: a team row whose lead is not marked would be refused by the runtime.
++        self.conversation_port
++            .patch_runtime_config(
++                &conversation_id,
++                serde_json::json!({ "teamId": team_id, "slot_id": slot_id, "role": TeammateRole::Lead.to_string() }),
++            )
++            .await?;
++        let agents = vec![lead];
++        let (project_id, folder_id) = self.resolve_binding_best_effort(user_id, &workspace).await;
++        let row = TeamRow {
++            id: team_id.clone(),
++            user_id: user_id.to_owned(),
++            name: name.clone(),
++            workspace: workspace.clone(),
++            workspace_mode: "shared".into(),
++            agents: serde_json::to_string(&agents)?,
++            lead_agent_id: Some(slot_id.clone()),
++            session_mode: None,
++            agents_version: "1.0.1".into(),
++            created_at: now,
++            updated_at: now,
++            project_id,
++            folder_id,
++        };
++        if let Err(e) = self.repo.create_team(&row).await {
++            let _ = self
++                .conversation_port
++                .patch_runtime_config(&conversation_id, serde_json::json!({ "teamId": null, "slot_id": null, "role": null }))
++                .await;
++            return Err(e.into());
++        }
++        // The running process (if any) has no team tools: end it, so the next message starts it as the lead.
++        let _ = tokio::time::timeout(
++            std::time::Duration::from_secs(3),
++            self.task_manager.kill_and_wait(&conversation_id, Some(AgentKillReason::RuntimeRestart)),
++        )
++        .await;
++        let team = Team {
++            id: team_id,
++            name,
++            workspace,
++            agents,
++            lead_agent_id: Some(slot_id),
++            created_at: now,
++            updated_at: now,
++        };
++        info!(team_id = %team.id, conversation_id = %conversation_id, "Team created from a conversation (core-0025)");
++        self.broadcast_team_created(user_id, &team.id, &team.name);
++        self.build_team_response(user_id, &team).await
++    }
++
++    /// AionDX core-0025: a team goes back to plain conversations. Its runtime and every member's process stop; each
++    /// member's conversation (the lead's too) keeps its id, history and folder and loses only the team markers; the
++    /// team's mailbox, tasks and row go. Nothing is deleted from any conversation. Archiving is the caller's choice.
++    pub async fn dissolve_team(&self, user_id: &str, team_id: &str) -> Result<DissolveTeamResponse, TeamError> {
++        let team = self.load_owned_team(user_id, team_id).await?;
++        self.stop_team_runtime_and_agents(team_id, &team, AgentKillReason::TeamDeleted)
++            .await;
++        let mut members = Vec::with_capacity(team.agents.len());
++        for agent in &team.agents {
++            self.conversation_port
++                .patch_runtime_config(
++                    &agent.conversation_id,
++                    serde_json::json!({ "teamId": null, "slot_id": null, "role": null }),
++                )
++                .await?;
++            members.push(DissolvedTeamMember {
++                slot_id: agent.slot_id.clone(),
++                name: agent.name.clone(),
++                role: agent.role.to_string(),
++                conversation_id: agent.conversation_id.clone(),
++            });
++        }
++        self.repo.delete_mailbox_by_team(user_id, team_id).await?;
++        self.repo.delete_tasks_by_team(user_id, team_id).await?;
++        self.repo.delete_team(user_id, team_id).await?;
++        self.remove_team_order_row(user_id, team_id).await;
++        self.add_agent_locks.remove(team_id);
++        info!(team_id = %team_id, members = members.len(), "Team dissolved into plain conversations (core-0025)");
++        self.broadcast_team_removed(user_id, team_id);
++        Ok(DissolveTeamResponse { team_id: team_id.to_owned(), members })
++    }
++
+     pub async fn list_teams(&self, user_id: &str) -> Result<Vec<TeamResponse>, TeamError> {
+         let rows = self.repo.list_teams_by_user(user_id).await?;
+         let mut teams = Vec::with_capacity(rows.len());

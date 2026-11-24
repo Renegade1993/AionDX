@@ -1519,6 +1519,10 @@ namespace AionDx
             "  aiondx team colour TEAM MEMBER COLOUR   a member's lane colour: #RRGGBB, a name (blue, olive, vermilion, magenta, teal, brown,\n" +
             "                               forest, orchid, rose, iris, crimson, orange, green, moss, violet, pink, rust, royal, gold,\n" +
             "                               clay, periwinkle, mauve, sky, denim), or default; MEMBER is its name, slot id, chat id, or lead\n" +
+            "  aiondx team create --from current --name NAME   this chat becomes the lead of a new team, keeping its id, history and folder\n" +
+            "                               (once this turn ends; ask the user first). Add members afterwards.\n" +
+            "  aiondx team dissolve         (lead) the team goes back to separate chats, each with its history; what was in flight goes to a\n" +
+            "                               DX Doc in the lead's chat (once this turn ends; ask the user first)\n" +
             "ID is the team id, or any member's chat id (a @@ team mention gives the lead's chat id); NAME matches the team's name.\n" +
             "Read a chat with: aiondx chat read CHAT_ID [--last N]";
 
@@ -1663,6 +1667,40 @@ namespace AionDx
                 {
                     if (args.Length < 5) throw new ToolError("Name the team, the member and the colour: aiondx team colour TEAM MEMBER COLOUR.\n" + TeamHelp);
                     o.WriteLine(TeamColour(args[2], args[3], string.Join(" ", args.Skip(4))));
+                    return 0;
+                }
+                if (sub == "create" || sub == "dissolve")
+                {
+                    // R-134 (AionDX 0.28.6): this chat becomes a team's lead in place, or the team goes back to separate chats. AionDX's window
+                    // does it once this chat's turn has ended (the agent restarts as part of it), so the command returns at once.
+                    string name = null, from = null;
+                    for (int i = 2; i < args.Length; i++)
+                    {
+                        string x = args[i], inline = null;
+                        int eq = x.IndexOf('=');
+                        if (x.StartsWith("--", StringComparison.Ordinal) && eq > 0) { inline = x.Substring(eq + 1); x = x.Substring(0, eq); }
+                        if (x == "--name") name = inline ?? Next(args, ref i, x);
+                        else if (x == "--from") from = inline ?? Next(args, ref i, x);
+                        else throw new ToolError("Unknown option " + args[i] + ".\n" + TeamHelp);
+                    }
+                    var ctxT = LoadContext();
+                    var me = ctxT.Self;
+                    if (sub == "create")
+                    {
+                        if (from != null && from != "current") throw new ToolError("--from takes current (this chat).");
+                        if (string.IsNullOrWhiteSpace(name)) throw new ToolError("--name is required: aiondx team create --from current --name NAME.");
+                        if (me.Kind == "team") throw new ToolError("This chat is already in a team (" + (me.TeamName ?? me.TeamId) + ").");
+                    }
+                    else
+                    {
+                        if (me.Kind != "team") throw new ToolError("This chat is not in a team.");
+                        if (me.Role != "lead") throw new ToolError("Only the team's lead can turn the team back into chats.");
+                    }
+                    string rid = Guid.NewGuid().ToString("N").Substring(0, 12);
+                    var rq = new Dictionary<string, object> { { "op", sub == "create" ? "maketeam" : "dissolve" }, { "at", NowMs() }, { "conv", me.ConvId },
+                        { "kind", me.Kind }, { "team", me.TeamId }, { "slot", me.SlotId }, { "self", true } };
+                    if (name != null) rq["name"] = name;
+                    o.WriteLine(AskWindow(rid, rq, "the user can do it from the chat's or the team's menu."));
                     return 0;
                 }
                 if (sub != "show") throw new ToolError("Unknown team command \"" + args[1] + "\".\n" + TeamHelp);
@@ -2356,6 +2394,26 @@ namespace AionDx
             "Users can do all of this themselves: the agent button just left of the model picker in any Claude chat or team member\n" +
             "(\"+ Add account\" at the end of its list), and Settings > Account.";
 
+        /** Asks AionDX's window to do something (aiondx.accounts.req.<id>) and returns its answer (aiondx.accounts.res.<id>). */
+        static string AskWindow(string id, Dictionary<string, object> req, string instead)
+        {
+            Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { "aiondx.accounts.req." + id, req } }));
+            string resKey = "aiondx.accounts.res." + id;
+            int waitMs = 20000;
+            int.TryParse(Environment.GetEnvironmentVariable("AIONDX_ACCOUNTS_WAIT_MS") ?? "", out waitMs);
+            if (waitMs <= 0) waitMs = 20000;
+            for (int n = 0; n * 500 < waitMs; n++)
+            {
+                Thread.Sleep(500);
+                var res = Sub(Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(resKey), null) as Dictionary<string, object>, resKey);
+                if (res == null) continue;
+                Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { resKey, null } }));
+                return (Str(res, "text") ?? "").TrimEnd();
+            }
+            Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { "aiondx.accounts.req." + id, null } }));
+            throw new ToolError("AionDX's window did not answer within " + (waitMs / 1000) + " seconds. It answers while AionDX is open; until then " + instead);
+        }
+
         static int AccountsCli(string[] args, StreamWriter o)
         {
             if (args.Length > 1 && (args[1] == "help" || args[1] == "--help" || args[1] == "-h")) { o.WriteLine(AccountsHelp); return 0; }
@@ -2383,24 +2441,9 @@ namespace AionDx
                     { "op", op }, { "at", NowMs() }, { "conv", t.ConvId }, { "kind", t.Kind }, { "team", t.TeamId }, { "slot", t.SlotId },
                     { "self", t == ctx.Self }, { "member", t != ctx.Self } };
                 if (to != null) req["to"] = to;
-                Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { "aiondx.accounts.req." + id, req } }));
-                string resKey = "aiondx.accounts.res." + id;
-                int waitMs = 20000;
-                int.TryParse(Environment.GetEnvironmentVariable("AIONDX_ACCOUNTS_WAIT_MS") ?? "", out waitMs);
-                if (waitMs <= 0) waitMs = 20000;
-                for (int n = 0; n * 500 < waitMs; n++)
-                {
-                    Thread.Sleep(500);
-                    var res = Sub(Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(resKey), null) as Dictionary<string, object>, resKey);
-                    if (res == null) continue;
-                    Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { resKey, null } }));
-                    o.WriteLine((Str(res, "text") ?? "").TrimEnd());
-                    Log("cli accounts " + op + " ok");
-                    return 0;
-                }
-                Api("PUT", "/api/settings/client", Json.Serialize(new Dictionary<string, object> { { "aiondx.accounts.req." + id, null } }));
-                throw new ToolError("AionDX's window did not answer within " + (waitMs / 1000) + " seconds. It answers while AionDX is open; " +
-                    "until then the user can do the same from any Claude chat's agent button or Settings > Account.");
+                o.WriteLine(AskWindow(id, req, "the user can do the same from any Claude chat's agent button or Settings > Account."));
+                Log("cli accounts " + op + " ok");
+                return 0;
             }
             catch (ToolError e) { o.WriteLine(e.Message); return 1; }
             catch (Exception e) { o.WriteLine("The accounts command failed: " + e.Message); return 1; }

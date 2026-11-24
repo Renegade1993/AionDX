@@ -103,6 +103,33 @@ const waitDone = async () => { for (let i = 0; i < 100; i++) { const p = await H
     check('a second sign-in while one runs is refused', (await H({ op: 'start', name: 'other', kind: 'full' })).ok === false);
     await H({ op: 'cancel' });
     check('cancel ends it', ((await waitDone()) || {}).state === 'failed');
+
+    // status and remove (0.28.6 item 12): every account once, whether its sign-in still works, read from the saved file alone
+    const cfgF = path.join(router, 'claude-account-router.config.json');
+    const cfgS = JSON.parse(fs.readFileSync(cfgF, 'utf8'));
+    const mk = (dir, cred) => { fs.mkdirSync(dir, { recursive: true }); if (cred) fs.writeFileSync(path.join(dir, '.credentials.json'), JSON.stringify({ claudeAiOauth: cred })); };
+    mk(path.join(home, '.claude'), { accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() + 3600000, refreshTokenExpiresAt: Date.now() + 20 * 86400000, subscriptionType: 'pro' });
+    mk(path.join(home, '.claude-old'), { accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() - 1000, refreshTokenExpiresAt: Date.now() - 1000 });
+    mk(path.join(home, '.claude-tok'), null);
+    fs.writeFileSync(path.join(home, '.claude-tok', 'aiondx-oauth-token'), 'sk-ant-oat01-' + 'x'.repeat(40));
+    cfgS.accounts.ab12cd34 = { label: 'personal (Pro)', configDir: path.join(home, '.claude') };
+    cfgS.accounts.old = { label: 'Old', configDir: path.join(home, '.claude-old'), addedBy: 'aiondx' };
+    cfgS.accounts.tok = { label: 'Tok', configDir: path.join(home, '.claude-tok'), tokenFile: path.join(home, '.claude-tok', 'aiondx-oauth-token'), signIn: 'token', addedBy: 'aiondx' };
+    fs.writeFileSync(cfgF, JSON.stringify(cfgS));
+    const st = await H({ op: 'status' });
+    const byId = {};
+    (st.accounts || []).forEach((x) => { byId[x.id] = x; });
+    check('status lists each folder once, under its plain name, this PC\'s own sign-in first',
+      st.ok && st.accounts[0].id === 'personal' && st.accounts[0].own && !byId.ab12cd34 && st.accounts.filter((x) => x.own).length === 1, JSON.stringify(st.accounts));
+    check('a renewing sign-in reads as signed in, with how long it renews', byId.personal.state === 'ok' && byId.personal.key === 'full' && byId.personal.until > Date.now());
+    check('one whose renewal ran out reads as signed out', byId.old && byId.old.state === 'signed-out' && byId.old.added, JSON.stringify(byId.old));
+    check('a long-lived key reads as signed in, chats only', byId.tok && byId.tok.state === 'ok' && byId.tok.key === 'token', JSON.stringify(byId.tok));
+    check('no key or token is in the answer', !/sk-ant|accessToken|refreshToken/.test(JSON.stringify(st)));
+    const rmOwn = await H({ op: 'remove', name: 'personal' });
+    check('remove leaves an account set up outside AionDX alone', rmOwn.ok === false && /outside AionDX/.test(rmOwn.error), JSON.stringify(rmOwn));
+    const rm = await H({ op: 'remove', name: 'old' });
+    const after = JSON.parse(fs.readFileSync(cfgF, 'utf8'));
+    check('remove takes an added account out of the launcher, keeps its folder, and leaves a backup', rm.ok && !after.accounts.old && fs.existsSync(path.join(home, '.claude-old', '.credentials.json')) && fs.existsSync(cfgF + '.bak-accounts'), JSON.stringify(rm));
   } catch (e) {
     check('no exception', false, e.stack);
   } finally {

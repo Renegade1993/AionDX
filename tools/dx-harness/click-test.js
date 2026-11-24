@@ -4042,12 +4042,12 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'New Chat keeps your draft', 'Fixes'];
+      const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'A chat becomes a team, and back', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.6' && JSON.stringify(c.names) === JSON.stringify(NEW286) &&
-        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /your own answer/.test(c.hows[1]) && /lightning bolt/.test(c.hows[2]) && /\+ Add account/.test(c.hows[3]) && /New Chat page/.test(c.hows[4]) && /asleep/.test(c.hows[5]), JSON.stringify(c));
+        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /your own answer/.test(c.hows[1]) && /lightning bolt/.test(c.hows[2]) && /\+ Add account/.test(c.hows[3]) && /Make this a team/.test(c.hows[4]) && /New Chat page/.test(c.hows[5]) && /asleep/.test(c.hows[6]), JSON.stringify(c));
       await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
@@ -4091,7 +4091,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 47, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 48, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -6824,6 +6824,64 @@ async function pageTarget() {
         resc && JSON.stringify(resc['team1/slotA']) === JSON.stringify({ dark: '#14b8a6', light: '#14b8a6' }) && resc['team1/slotB'].dark === '#3366cc' &&
         Object.keys(resc).filter((k) => /\/(drag|status|edit|remove)-/.test(k)).length === 0, JSON.stringify(resc));
       await send('Emulation.clearDeviceMetricsOverride', {});
+    }
+    // ---- R-134 (0.28.6): a chat becomes a team's lead in place, and a team goes back to separate chats (AionCore core-0025) ----
+    {
+      const sc = 'chatteam';
+      await load('theme=light');
+      await sleep(500);
+      const ids = await js(`[window.__aionDx.menuActionIds('c:harness1'), window.__aionDx.menuActionIds('t:team1')]`);
+      check(sc, 'a chat\u2019s menu offers Make this a team, a team\u2019s offers Turn back into separate chats', ids[0].includes('maketeam') && !ids[0].includes('dissolve') && ids[1].includes('dissolve') && !ids[1].includes('maketeam'), JSON.stringify(ids));
+      await js(`(() => { const R = window.__stub.routes; R['POST /api/teams/from-conversation'] = { __status: 201, success: true, data: { id: 'teamN', name: 'Harness team' } };
+        window.__calls.length = 0; document.querySelectorAll('.aiondx-toast').forEach((t) => t.remove()); return 0; })()`);
+      await js(`window.__aionDx.makeTeam('harness1', 'Harness team')`);
+      await sleep(300);
+      const mk = await posts('/api/teams/from-conversation');
+      check(sc, 'Make this a team asks AionCore to make this chat the lead, by its id, with the name given', mk.length === 1 && mk[0].body.conversation_id === 'harness1' && mk[0].body.name === 'Harness team', JSON.stringify(mk));
+      check(sc, 'then opens the new team and says the chat keeps its history and folder', (await js('location.hash')) === '#/team/teamN' && /^This chat now leads "Harness team"\./.test((await toasts())[0] || '') && /Same history and folder/.test((await toasts())[0] || ''), JSON.stringify([await js('location.hash'), await toasts()]));
+      // a chat that is working is not changed
+      await load('theme=light');
+      await js(`(() => { const R = window.__stub.routes; const c = R['GET /api/conversations/harness1'].data; c.runtime = Object.assign({}, c.runtime || {}, { is_processing: true, state: 'running', turn_id: 't9' });
+        R['POST /api/teams/from-conversation'] = { __status: 201, success: true, data: { id: 'teamN' } }; window.__calls.length = 0; return 0; })()`);
+      await js(`window.__aionDx.makeTeam('harness1', 'Harness team')`);
+      await sleep(200);
+      check(sc, 'a chat that is working is left alone until it stops, and told so', (await posts('/api/teams/from-conversation')).length === 0 && /^Not yet: this chat is working\./.test((await toasts())[0] || ''), JSON.stringify(await toasts()));
+      // an AionCore without the route
+      await load('theme=light');
+      await js(`(() => { window.__calls.length = 0; return 0; })()`);
+      await js(`window.__aionDx.makeTeam('harness1', 'Harness team')`);
+      await sleep(200);
+      check(sc, 'an AionCore without the route says it cannot yet', /^This AionCore cannot make a chat into a team yet\./.test((await toasts())[0] || ''), JSON.stringify(await toasts()));
+      // back into chats: one dialog, a choice per member, the lead always kept; what was in flight goes to a DX Doc first
+      await load('team=1&theme=light');
+      await sleep(600);
+      await js(`(() => { const R = window.__stub.routes; window.__dxc = [];
+        window.aiondxDx = { call: (op, a) => { window.__dxc.push([op, a]); return Promise.resolve(op === 'where' ? { ok: true, docsDir: 'D:\\\\docs' } : { ok: true }); } };
+        R['GET /api/teams/team1/mailbox'] = { success: true, data: [ { id: 'mbx', team_id: 'team1', from_agent_id: 'slotA', to_agent_id: 'slotB', msg_type: 'message', content: 'check the logs', read: false, created_at: Date.now() } ] };
+        R['GET /api/teams/team1/tasks'] = { success: true, data: [ { id: 'k1', subject: 'Fix the build', status: 'in_progress', owner: 'slotB' } ] };
+        R['POST /api/teams/team1/dissolve'] = { success: true, data: { team_id: 'team1', members: [ { slot_id: 'slotA', name: 'Lead', role: 'lead', conversation_id: 'convA' }, { slot_id: 'slotB', name: 'Worker', role: 'teammate', conversation_id: 'convB' } ] } };
+        R['POST /api/sidebar/conversation/convB/archive'] = { success: true };
+        window.__calls.length = 0; return 0; })()`);
+      await js(`window.__aionDx.dissolveDialog('team1')`);
+      await sleep(400);
+      const dl = await js(`(() => { const d = document.querySelector('[data-testid="aiondx-dissolve-dlg"]'); if (!d) return null;
+        return { h: d.querySelector('h2').textContent, rows: [...d.querySelectorAll('.aiondx-dissolve-rows label')].map((l) => ({ text: l.textContent.trim(), off: l.querySelector('input').disabled })) }; })()`);
+      check(sc, 'Turn back into chats asks first, with a choice per member and the lead always kept as a chat',
+        dl && dl.h === 'Turn "Harness Team" back into chats' && dl.rows.length === 2 && dl.rows[0].off && /Lead \(lead\): stays a chat/.test(dl.rows[0].text) && !dl.rows[1].off && /Worker: archive it/.test(dl.rows[1].text), JSON.stringify(dl));
+      await shot('click-test-dissolve-light');
+      await clogShot('0.28.6', 'A chat becomes a team, and back', '[data-testid="aiondx-dissolve-dlg"]');
+      await humanClick('[data-testid="aiondx-dissolve-dlg"] .aiondx-dissolve-rows label:nth-child(2) input');
+      await humanClick('[data-testid="aiondx-dissolve-go"]');
+      await sleep(900);
+      const dxc = await js('window.__dxc');
+      const made = dxc.filter((x) => x[0] === 'create')[0];
+      check(sc, 'what each member had waiting and the open tasks go to a DX Doc in the lead\u2019s chat first',
+        dxc[0][0] === 'where' && dxc[0][1].convId === 'convA' && made && /^Team Harness Team: what was in flight/.test(made[1].title) &&
+        made[1].sections.some((x) => x.heading === 'Worker' && /from Lead: check the logs/.test(x.body)) && made[1].sections.some((x) => x.heading === 'Open tasks' && /Fix the build \(in_progress, Worker\)/.test(x.body)), JSON.stringify(dxc).slice(0, 600));
+      const order = await js(`window.__calls.filter((c) => c.method === 'POST').map((c) => c.path)`);
+      check(sc, 'then the team is dissolved, and only the member you ticked is archived', JSON.stringify(order) === JSON.stringify(['/api/teams/team1/dissolve', '/api/sidebar/conversation/convB/archive']), JSON.stringify(order));
+      check(sc, 'and the lead\u2019s chat opens, with a notice of what was kept', (await js('location.hash')) === '#/conversation/convA' && /^"Harness Team" is separate chats again\.\s?2 chats kept, 1 archived\. What was in flight is in a DX Doc/.test((await toasts()).join(' | ')), JSON.stringify([await js('location.hash'), await toasts()]));
+      await js('delete window.aiondxDx; 0');
     }
     {
       const sc = 'alerts';
