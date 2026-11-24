@@ -1544,6 +1544,52 @@ async function pageTarget() {
       await js('window.__aionDx.pullNow()');
       await sleep(400);
       check(sc, 'if the agent had already taken it, Edit puts nothing in the box', (await js(`document.querySelector('[data-testid="sendbox-input"]').value`)) === '' && /^Too late to unsend/.test((await toasts())[0] || ''), JSON.stringify([await toasts()]));
+      // Answer this now (0.28.6 item 1, choice A): a bolt on an Unread message the chat holds. Its press takes the message back, stops the
+      // running step, and sends it again, so it starts the agent's next turn.
+      await load('theme=light');
+      await js('window.__aionDx.repaint()');
+      await sleep(400);
+      await js('window.__aionDx.repaint()');
+      const urBolt = () => js(`(() => { const b = document.querySelector('#message-m-77 [data-testid="aiondx-answer-now"]'); if (!b) return null; const r = b.getBoundingClientRect();
+        const c = document.querySelector('#message-m-77 [data-testid="message-text-content"]').parentElement.getBoundingClientRect();
+        return { title: b.title, left: r.right <= c.left, shown: r.width > 0 }; })()`);
+      let ub = await urBolt();
+      check(sc, 'an Unread message in a solo Claude chat has the answer-now bolt, left of its bubble, saying what a press does',
+        ub && ub.left && ub.shown && /reads it after the step it is running/.test(ub.title) && /stop that step/.test(ub.title), JSON.stringify(ub));
+      await js(`(() => { const R = window.__stub.routes; const c = R['GET /api/conversations/harness1'].data;
+        c.runtime = Object.assign({}, c.runtime || {}, { is_processing: true, state: 'running', turn_id: 'turn_N' });
+        R['POST /api/conversations/harness1/cancel'] = () => { c.runtime.is_processing = false; c.runtime.state = 'idle'; return { success: true }; };
+        window.__calls.length = 0; document.querySelectorAll('.aiondx-toast').forEach(t => t.remove()); return 0; })()`);
+      await humanClick('#message-m-77 [data-testid="aiondx-answer-now"]');
+      await sleep(400);
+      const nreq = (await store())['aiondx.unsend.req.' + MSG];
+      check(sc, 'pressing it first takes the message back from Claude\'s queue', nreq && nreq.conv === 'harness1' && nreq.messageId === 'm-77', JSON.stringify(nreq));
+      check(sc, 'and stops nothing until it is back', (await js(`window.__calls.filter(c => c.path === '/api/conversations/harness1/cancel').length`)) === 0);
+      await putStore('aiondx.unsend.result.' + MSG, { cancelled: true, conv: 'harness1', messageId: 'm-77', at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await sleep(1800);
+      const seq = await js(`window.__calls.filter(c => c.method === 'POST' && ['/api/conversations/harness1/cancel', '/api/conversations/harness1/messages'].includes(c.path)).map(c => c.path.split('/').pop() + ':' + JSON.stringify(c.body))`);
+      check(sc, 'once back, the running step is cancelled by its turn id, then the same text is sent again', seq.length === 2 && seq[0] === 'cancel:{"turn_id":"turn_N"}' && /^messages:\{"content":".+"\}$/.test(seq[1]) && seq[1].indexOf(JSON.stringify(shown).slice(1, -1)) > 0, JSON.stringify([seq, shown]));
+      let nt = await toasts();
+      check(sc, 'with one notice that it stopped and is answering, and no "Unsent" notice', nt.length === 1 && /^this chat stopped its step and is answering your message now\./i.test(nt[0]), JSON.stringify(nt));
+      await shot('click-test-answer-now');
+      // Read already: nothing is stopped.
+      await load('theme=light');
+      await js('window.__aionDx.repaint()');
+      await sleep(400);
+      await js('window.__aionDx.repaint()');
+      await js(`(() => { window.__calls.length = 0; document.querySelectorAll('.aiondx-toast').forEach(t => t.remove()); return 0; })()`);
+      await humanClick('#message-m-77 [data-testid="aiondx-answer-now"]');
+      await sleep(300);
+      await putStore('aiondx.unsend.result.' + MSG, { cancelled: false, conv: 'harness1', messageId: 'm-77', at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await sleep(600);
+      nt = await toasts();
+      check(sc, 'if Claude read it meanwhile, nothing is stopped or sent again, and it says so',
+        (await js(`window.__calls.filter(c => c.method === 'POST' && ['/api/conversations/harness1/cancel', '/api/conversations/harness1/messages'].includes(c.path)).length`)) === 0 && nt.length === 1 && /has read that message already, so nothing was stopped\./.test(nt[0]), JSON.stringify(nt));
+      // A message marked read loses its bolt.
+      await js(`(() => { document.getElementById('message-m-77').setAttribute('data-aiondx-read', '1'); return 0; })()`);
+      check(sc, 'a message that has been read shows no bolt', !(await js(`(() => { const b = document.querySelector('#message-m-77 [data-testid="aiondx-answer-now"]'); return !!b && b.getBoundingClientRect().width > 0; })()`)));
       // And nothing waits above the box any more.
       await load('team=1&theme=light');
       await js('window.__aionDx.pulseNow()');
@@ -2574,7 +2620,7 @@ async function pageTarget() {
       await load('theme=light&sends=1');
       await sleep(500);
       check(sc, "a solo chat has no Respond now tick box: its agent reads a message at its next step already", !(await js(`!!document.querySelector('.aiondx-rn')`)));
-      check(sc, 'and an Unread message has no bolt', !(await js(`!!document.querySelector('#message-m-77 .aiondx-rn-bolt')`)));
+      check(sc, 'and an Unread message has no queue bolt (its bolt is "answer this now", in the unsend section)', !(await js(`!!document.querySelector('#message-m-77 .aiondx-rn-bolt:not(.aiondx-ur-bolt)')`)));
 
       await load('team=1&theme=light&sends=1');
       await sleep(700);
@@ -2676,6 +2722,28 @@ async function pageTarget() {
       await js('window.__aionDx.scanQueues()');
       await sleep(300);
       check(sc, 'an AionCore that does not list the queue gets no bolts', !(await js(`!!document.querySelector('.aiondx-rn-bolt')`)));
+      // 0.28.6 item 1: a message the member's chat already holds (Unread, handed into its running turn) gets the answer-now bolt; its
+      // press takes it back, stops the member's step, and sends it to the member again.
+      await js(`(() => { const R = window.__stub.routes; const row = document.getElementById('message-b-9');
+        const bd = document.createElement('div'); bd.setAttribute('data-testid', 'message-status-badge'); bd.textContent = 'Unread'; row.appendChild(bd);
+        R['GET /api/conversations/convB/messages/b-9'] = { success: true, data: { id: 'b-9', msg_id: 'b8b8b8b8-0000-4000-8000-000000000008', status: 'pending', position: 'right' } };
+        const c = R['GET /api/conversations/convB'].data; c.runtime = { is_processing: true, state: 'running', turn_id: 'turn_B' };
+        R['POST /api/conversations/convB/cancel'] = () => { c.runtime.is_processing = false; c.runtime.state = 'idle'; return { success: true }; };
+        window.__calls.length = 0; document.querySelectorAll('.aiondx-toast').forEach(t => t.remove()); return 0; })()`);
+      await js('window.__aionDx.scanQueues()');
+      await sleep(500);
+      await js('window.__aionDx.scanQueues()');
+      await sleep(300);
+      check(sc, "a member's Unread message its chat holds gets the answer-now bolt", await js(`!!document.querySelector('#message-b-9 [data-testid="aiondx-answer-now"]')`));
+      await humanClick('#message-b-9 [data-testid="aiondx-answer-now"]');
+      await sleep(400);
+      await putStore('aiondx.unsend.result.b8b8b8b8-0000-4000-8000-000000000008', { cancelled: true, conv: 'convB', messageId: 'b-9', at: Date.now() });
+      await js('window.__aionDx.pullNow()');
+      await sleep(1800);
+      const tc = await posts('/api/conversations/convB/cancel'), tm = await posts('/api/teams/team1/agents/slotB/messages');
+      check(sc, "its press stops the member's step by its turn id and sends the message to the member again",
+        tc.length === 1 && tc[0].body.turn_id === 'turn_B' && tm.length === 1 && tm[0].body.content === 'check the logs first', JSON.stringify([tc, tm]));
+      check(sc, 'and says the member is answering it now', /^Worker stopped its step and is answering your message now\./.test((await toasts())[0] || ''), JSON.stringify(await toasts()));
       // The bolt is found by the text of your message, not by ids and not in the member's last 40 messages (a request of 2026-10-02): the row the page shows for a message you just sent has an id of its
       // own until the chat is read again, and a busy member writes more than 40 messages in a few minutes.
       await load('team=1&theme=light&sends=1');
@@ -6733,6 +6801,6 @@ async function pageTarget() {
   } catch (e) {
     // the details too: a run that ends in an error is the one that most needs them (November 13th, 2026)
     for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.scenario.padEnd(13)} ${r.name}${r.ok || !r.detail ? '' : `   [${r.detail}]`}`);
-    finish(2, `ERROR: ${e.message}`);
+    finish(2, `ERROR: ${e.message}` + (process.env.DX_STACK ? '\n' + e.stack : ''));
   }
 })();

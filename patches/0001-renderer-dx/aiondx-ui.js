@@ -8235,6 +8235,62 @@
     b.disabled = !!rnBusy[t.key + '/' + mailboxId];
     return b;
   }
+  /** Item 1 of 0.28.6 (2026-11-24): a bolt on every message of yours an agent's chat holds unread. Claude reads such a message after the
+   *  step it is running (a long command can take minutes). Pressing it (your choice A): the message is taken back from Claude's queue
+   *  (as Unsend does), the running step is stopped, and the message is sent again at once, so it starts the agent's next turn. Anything
+   *  else waiting stays queued. If Claude has read it in the meantime, nothing is stopped. */
+  function placeUnreadBolt(row, t, convId) {
+    var content = row.querySelector('[data-testid="message-text-content"]');
+    var host = content && content.parentElement;
+    if (!host) return null;
+    var b = host.querySelector(':scope > .aiondx-ur-bolt');
+    if (!b) {
+      b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'aiondx-rn-bolt aiondx-ur-bolt';
+      b.setAttribute('data-testid', 'aiondx-answer-now');
+      b.innerHTML = ICON_BOLT;
+      b.title = 'Answer this now: the agent has this message and reads it after the step it is running. Press to stop that step; your message starts its next turn at once.';
+      b.setAttribute('aria-label', 'Answer this now');
+      onPress(b, function () { answerNow(b._t, b._conv, b._row).catch(function (e) { console.log('[dx] answer now', e); }); });
+      host.appendChild(b);
+    }
+    if (!host.classList.contains('aiondx-rn-host')) host.classList.add('aiondx-rn-host');
+    b._t = t; b._conv = convId; b._row = row;
+    b.disabled = !!unsendPending[row.id.slice('message-'.length)];
+    return b;
+  }
+  async function answerNow(t, convId, row) {
+    var mid = row.id.slice('message-'.length);
+    if (unsendPending[mid]) return;
+    var c = row.querySelector('[data-testid="message-text-content"]');
+    var text = c ? String(c.innerText || c.textContent || '').replace(/\r/g, '').trim() : '';
+    if (!text) { notify(t, 'Could not answer it now: the message text was not found.', ''); return; }
+    unsendEdits[mid] = { text: text, convId: convId, key: t.key, at: Date.now(), now: t };
+    await unsendMessage(convId, mid);
+  }
+  /** The message is out of Claude's queue: stop the running step, wait for the turn to end (10 seconds at most), send it again. */
+  async function answerNowSend(t, convId, text) {
+    var g = await getJson('/api/conversations/' + convId);
+    var turn = g.data && g.data.runtime && convBusy(g.data) ? g.data.runtime.turn_id : null;
+    if (turn) {
+      var c = await postJson('/api/conversations/' + convId + '/cancel', { turn_id: turn });
+      if (c && c.ok) {
+        for (var i = 0; i < 20; i++) {
+          await new Promise(function (r) { setTimeout(r, 500); });
+          var s2 = await getJson('/api/conversations/' + convId);
+          if (!(s2.data && convBusy(s2.data))) break;
+        }
+      }
+    }
+    var r = t.kind === 'team' ? await sendAsUsual(t, text) : await postJson('/api/conversations/' + convId + '/messages', { content: text });
+    if (!r || !r.ok) {
+      notify(t, 'Could not send it again (HTTP ' + (r && r.status) + '). Your text: ' + text.slice(0, 300), '', { stay: true });
+      return;
+    }
+    if (t.kind === 'conv') applyUserSent(t, text);
+    notify(t, turn ? '{who} stopped its step and is answering your message now.' : '{who} is answering your message now.', '"' + quoteOf(text) + '"');
+  }
   function normText(x) { return String(x || '').replace(/\s+/g, ' ').trim(); }
   /** Where a member's messages are on screen: its column, or the whole page when it is the member in front in the single view. */
   function rnContainer(t) {
@@ -8368,13 +8424,15 @@
         return;
       }
       delete unsendPending[mid];
+      var nowPress = unsendEdits[mid] && unsendEdits[mid].now;
       if (!r.cancelled) delete unsendEdits[mid];
       // Shown once: the router's answer can go from the store (the struck-through row keeps its mark here).
       unsendShown[p.msgId] = r;
       var drop = {};
       drop[UNSEND_RES + p.msgId] = null;
       putPrefs(drop);
-      if (r.cancelled) { notify(convTarget(p.conv), 'Unsent. The agent never saw it.', ''); finishEdit(mid); }
+      if (r.cancelled) { if (!nowPress) notify(convTarget(p.conv), 'Unsent. The agent never saw it.', ''); finishEdit(mid); }
+      else if (nowPress) notify(nowPress, '{who} has read that message already, so nothing was stopped.', '');
       else notify(convTarget(p.conv), 'Too late to unsend: the agent had already picked it up.', r.error ? String(r.error) : '');
     });
   }
@@ -8430,7 +8488,7 @@
     if (r.kind !== 'conv') return;
     var info = convInfo[r.id];
     if (!info || Date.now() - info.at > CONV_INFO_MS) loadConvInfo(r.id);
-    if (info && info.backend === 'claude') unsendButtons(document, r.id, null);
+    if (info && info.backend === 'claude') unsendButtons(document, r.id, null, undefined, convTarget(r.id));
     Object.keys(unsendResults).forEach(function (msgId) {
       var res = unsendResults[msgId];
       if (!res || !res.cancelled || res.conv !== r.id || !res.messageId) return;
@@ -8440,9 +8498,10 @@
   }
   /** An Unsend button in every "Unread" badge inside scope. queued (a team member's waiting messages, matched to their bubbles) is
    *  { row element -> { t, id: mailbox id } }: those are taken back from the team's queue; the others are the member's own chat messages. */
-  function unsendButtons(scope, convId, queued, chatToo) {
+  function unsendButtons(scope, convId, queued, chatToo, who) {
     var badges = scope.querySelectorAll('[data-testid="message-status-badge"]');
     for (var rb = 0; rb < badges.length; rb++) { var rr = badges[rb].closest('[id^="message-"]'); if (rr) checkStillUnread(rr, convId); }
+    var liveUr = [];
     for (var i = 0; i < badges.length; i++) {
       var badge = badges[i];
       var row = badge.closest('[id^="message-"]');
@@ -8451,7 +8510,13 @@
       if (queued) for (var q = 0; q < queued.length; q++) if (queued[q].row === row) { mine = queued[q]; break; }
       if (!mine && chatToo === false) continue;   // a message not in the queue, in a chat that is not Claude's: nothing to take back
       unsendButton(badge, row, convId, mine);
+      // The agent's chat holds it (handed into its running turn) and Claude reads it after its current step: a bolt to answer it now.
+      if (!mine && who && row.getAttribute('data-aiondx-read') !== '1' && row.getAttribute('data-aiondx-unsent') !== '1') {
+        var ub = placeUnreadBolt(row, who, convId);
+        if (ub) liveUr.push(ub);
+      }
     }
+    [].slice.call(scope.querySelectorAll('.aiondx-ur-bolt')).forEach(function (b) { if (liveUr.indexOf(b) < 0 && b.parentNode) b.parentNode.removeChild(b); });
     // A message waiting in a team member's queue is drawn without an Unread badge (the member's chat does not hold it yet): its
     // Unsend sits in a line of its own under the bubble. Found 2026-10-10 in the real app; a badge was all the first version looked for.
     var live = [];
@@ -8545,6 +8610,7 @@
     var e = unsendEdits[mid];
     if (!e) return;
     delete unsendEdits[mid];
+    if (e.now) { answerNowSend(e.now, e.convId, e.text).catch(function (x) { console.log('[dx] answer now send', x); }); return; }
     var ts = targets().filter(function (x) {
       if (e.key) return x.key === e.key;
       if (x.kind === 'conv') return x.convId === e.convId;
@@ -8564,7 +8630,7 @@
     if (!tc) return;
     Object.keys(tc.map).forEach(function (slotId) {
       var convId = tc.map[slotId];
-      var t = { kind: 'team', key: 'team:' + r.id + ':' + slotId, teamId: r.id, slotId: slotId, role: '' };
+      var t = { kind: 'team', key: 'team:' + r.id + ':' + slotId, teamId: r.id, slotId: slotId, role: (tc.roles && tc.roles[slotId]) || '', convId: convId };
       var scope = rnContainer(t);
       if (!scope || !convId) return;
       var info = convInfo[convId];
@@ -8579,7 +8645,7 @@
         [].slice.call(scope.querySelectorAll('.aiondx-unsend-foot')).forEach(function (f) { if (f.parentNode) f.parentNode.removeChild(f); });
         return;
       }
-      unsendButtons(scope, convId, queued, claude);
+      unsendButtons(scope, convId, queued, claude, t);
     });
     Object.keys(teamUnsent).forEach(function (id) {
       var el = document.getElementById('message-' + id);
@@ -9331,6 +9397,7 @@
     '.aiondx-unsend-foot .aiondx-unsend[disabled]{color:var(--color-text-3);cursor:default;text-decoration:none}',
     '[data-aiondx-unsent] .aiondx-unsend-foot{display:none}',
     '[data-aiondx-read="1"] [data-testid="message-status-badge"]{display:none !important}',
+    '[data-aiondx-read="1"] .aiondx-ur-bolt,[data-aiondx-unsent="1"] .aiondx-ur-bolt{display:none !important}',
     '[data-aiondx-unsent] [data-testid="message-text-content"] > *{text-decoration:line-through;opacity:.5}',
     '[data-aiondx-unsent] [data-testid="message-status-badge"]{display:none}',
     '[data-aiondx-unsent] [data-testid="message-text-content"]::after{content:"Unsent";display:block;margin-top:2px;',
