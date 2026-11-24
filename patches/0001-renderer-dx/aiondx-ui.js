@@ -18192,15 +18192,29 @@
     if (/^delete(ContentBackward|ContentForward|WordBackward|WordForward|SoftLineBackward|SoftLineForward)$/.test(type)) return 'del';
     return 'other';
   }
+  function undoWhere() { return String(location.hash || '').split('?')[0]; }
   function undoState(ta) {
     var h = undoHist.get(ta);
-    if (!h) { h = { stack: [{ v: ta.value, s: ta.selectionStart, e: ta.selectionEnd }], i: 0, at: 0, kind: '', applying: false }; undoHist.set(ta, h); }
+    if (!h) { h = { stack: [{ v: ta.value, s: ta.selectionStart, e: ta.selectionEnd }], i: 0, at: 0, kind: '', applying: false, where: undoWhere() }; undoHist.set(ta, h); }
     return h;
   }
-  /** What the history last knew against what the box holds: a difference is the page's own change, and starts the history again. */
+  /** What the history last knew against what the box holds: a difference is a change made without an edit the history saw. A paste is
+   *  one (November 24th, 2026: AionUi's box takes every text paste over and writes the text in itself, with no input event, so a paste
+   *  used to start the history again and Ctrl+Z then did nothing), as are voice, an @@ name picked, a message taken back: each is its own
+   *  step on top of what was typed. A box emptied (a send) or another chat in the same box starts the history again, so Ctrl+Z never
+   *  puts back a message already sent or another chat's text. */
   function undoSync(ta) {
     var h = undoState(ta);
-    if (h.stack[h.i].v !== ta.value) { h.stack = [{ v: ta.value, s: ta.selectionStart, e: ta.selectionEnd }]; h.i = 0; h.at = 0; h.kind = ''; }
+    if (h.stack[h.i].v === ta.value && h.where === undoWhere()) return h;
+    var snap = { v: ta.value, s: ta.selectionStart, e: ta.selectionEnd };
+    if (!ta.value || h.where !== undoWhere()) { h.stack = [snap]; h.i = 0; }
+    else {
+      h.stack.length = h.i + 1;
+      h.stack.push(snap);
+      if (h.stack.length > UNDO_LIMIT) h.stack.shift();
+      h.i = h.stack.length - 1;
+    }
+    h.where = undoWhere(); h.at = 0; h.kind = '';
     return h;
   }
   function undoApply(ta, h, to, how) {
