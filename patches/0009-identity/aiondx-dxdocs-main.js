@@ -357,6 +357,21 @@ function install(electron) {
       const W = Math.min(1600, Math.max(200, size[0])), H = Math.min(6000, Math.max(80, size[1]));
       w.setContentSize(W, H);
       await new Promise((r) => setTimeout(r, 250));
+      // 0.28.6 (the DX Docs pass): Windows keeps a window no taller than the screen, so a whole doc came back as its first 600 px.
+      // Chromium's own screenshot draws past the visible part; the frame grab below stays for when it cannot.
+      if (H > 600) {
+        try {
+          const dbg = w.webContents.debugger;
+          if (!dbg.isAttached()) dbg.attach('1.3');
+          const r = await dbg.sendCommand('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: W, height: H, scale: 1 } });
+          try { dbg.detach(); } catch { /* gone with the window */ }
+          const full = r && r.data ? electron.nativeImage.createFromBuffer(Buffer.from(r.data, 'base64')) : null;
+          if (full && !full.isEmpty() && full.getSize().height >= Math.min(H, 600) + 1) {
+            const fz = full.getSize();
+            return { png: full.toPNG(), width: fz.width, height: fz.height };
+          }
+        } catch { /* the frame grab below */ }
+      }
       let img = await new Promise((resolve) => {
         const to = setTimeout(() => resolve(null), 4000);
         w.webContents.once('paint', (_e, _dirty, image) => { clearTimeout(to); resolve(image); });

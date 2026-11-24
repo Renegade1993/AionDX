@@ -34,7 +34,7 @@ const only = opt('--only', null);
     for (let i = 0; i < 60; i++) { if (await app.js('!!document.querySelector("#root") && document.readyState === "complete"')) break; await sleep(500); }
     await sleep(4000);
     // a fresh profile's Welcome dialog and tip bubbles would cover the pages
-    await app.js(`(() => { const s = document.createElement('style'); s.textContent = '.aiondx-welcome-backdrop,.aiondx-coach{display:none !important}'; document.head.appendChild(s); return 0; })()`);
+    await app.js(`(() => { const s = document.createElement('style'); s.textContent = '.aiondx-welcome-backdrop,.aiondx-coach{display:none !important}.aiondx-coach-target{outline:none !important}'; document.head.appendChild(s); return 0; })()`);
     // past the Welcome screen of a fresh profile: straight to Settings
     await app.js("location.hash = '#/settings/model'; 0");
     await sleep(2500);

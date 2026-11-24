@@ -28,6 +28,10 @@ echo ==== second pc >> "%OUT%"
 node tools\test-live-second-pc.js >> "%OUT%" 2>&1
 echo ==== big files and folders >> "%OUT%"
 node tools\test-live-biglinks.js >> "%OUT%" 2>&1
+echo ==== chat to team and back >> "%OUT%"
+node tools\test-live-chatteam.js >> "%OUT%" 2>&1
+echo ==== swap a member >> "%OUT%"
+node tools\test-live-swap.js >> "%OUT%" 2>&1
 echo ==== look >> "%OUT%"
 node tools\test-live-look.js >> "%OUT%" 2>&1
 echo ==== click >> "%OUT%"

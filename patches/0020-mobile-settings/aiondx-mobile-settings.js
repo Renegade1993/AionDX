@@ -123,11 +123,11 @@
     s.id = 'aiondx-mobile-style';
     s.textContent = [
       '.aiondx-mobile-card [hidden],.aiondx-mobile-dialog [hidden]{display:none !important}',
-      '.aiondx-mobile-card{margin:0 0 16px;padding:16px 20px;border-radius:12px;background:var(--color-fill-1, var(--bg-2));color:var(--color-text-1)}',
+      '.aiondx-mobile-card{margin:0 0 16px;padding:16px 18px;border-radius:14px;background:var(--color-bg-2);border:1px solid var(--color-border-2);box-shadow:0 1px 2px rgba(0,0,0,.05);color:var(--color-text-1)}',
       '.aiondx-mobile-title{font-size:16px;font-weight:500;margin:0 0 4px}',
       '.aiondx-mobile-desc,.aiondx-mobile-hint{font-size:12px;color:var(--color-text-3)}',
       '.aiondx-mobile-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 0}',
-      '.aiondx-mobile-label{font-size:14px}',
+      '.aiondx-mobile-label{font-size:14px;font-weight:500}',
       '.aiondx-mobile-status{font-size:12px;color:var(--color-text-2);padding:2px 0 8px}',
       '.aiondx-mobile-status ul{margin:4px 0 0;padding-left:18px}',
       '.aiondx-mobile-error{color:rgb(var(--danger-6));font-size:12px;padding:4px 0}',

@@ -816,7 +816,9 @@
   var DXL_HEAD = {
     appearance: ['Appearance', 'Themes and fonts, and AionDX’s colours: the accent, the backdrop, the context ring and the chat bubbles.'],
     webui: ['Remote and mobile', 'Use AionDX from your phone or a browser on another device: pairing, the address it is reached at, and who may use it.'],
-    system: ['System', 'Language, start-up, timeouts, notifications, folders and the in-app browser.']
+    system: ['System', 'Language, start-up, timeouts, notifications, folders and the in-app browser.'],
+    about: ['About', 'The version you run, its updates, and where to get help or tell us about a problem.'],
+    account: ['Account', 'You on this PC, and every Claude account your chats and teams can run on.']
   };
   var DXL_SVG = {
     robot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4M9.5 13h.01M14.5 13h.01M10 16.5h4"/>',
@@ -9412,8 +9414,25 @@
     '.settings-page-content[data-aiondx-page] h1{display:flex;align-items:center;font-size:22px !important;font-weight:650 !important;line-height:1.25 !important;color:var(--color-text-1)}',
     '.settings-page-content[data-aiondx-page] h1::before{content:"";flex:0 0 auto;width:44px;height:44px;margin-right:16px;border-radius:12px;box-shadow:0 6px 18px color-mix(in srgb,var(--dxl-c) 32%,transparent)}',
     '.settings-page-content[data-aiondx-page] .bg-1.sticky{padding-bottom:16px;background-image:linear-gradient(90deg,var(--dxl-a),rgba(var(--dxl-a-rgb),.35) 35%,transparent 75%);background-size:100% 2px;background-position:left bottom;background-repeat:no-repeat}',
-    '.settings-page-content[data-aiondx-page] .bg-2.rd-12px,.settings-page-content[data-aiondx-page] .bg-2.rd-16px{background:var(--color-bg-2) !important;border:1px solid var(--color-border-2);border-radius:14px !important;box-shadow:0 1px 2px rgba(0,0,0,.05)}',
+    '.settings-page-content[data-aiondx-page="account"] > .space-y-20px > h2:first-child{display:none}',
+    '.settings-page-content[data-aiondx-page] .text-t-tertiary{color:var(--color-text-3) !important}',
+    // AionUi's header (SettingsPageHeader): its line goes under the title, beside the tile, as on AionDX's pages
+    '.settings-page-content[data-aiondx-page] .bg-1.sticky > p.mt-8px{margin-left:60px !important;margin-top:2px !important}',
+    '.settings-page-content[data-aiondx-page="account"] > .aiondx-claude-accts{margin-top:20px}',
+    // inputs and selects on AionUi's cards, now white, keep a visible box
+    '.settings-page-content[data-aiondx-page] .bg-2 .arco-select-view,.settings-page-content[data-aiondx-page] .bg-2 .arco-input-inner-wrapper,.settings-page-content[data-aiondx-page] .bg-2 .arco-input-group > .arco-input,.settings-page-content[data-aiondx-page] .bg-2 .arco-textarea{background:var(--color-fill-2) !important;border:1px solid var(--color-border-2) !important;border-radius:8px}',
+    '.settings-page-content[data-aiondx-page] .bg-2.rd-12px,.settings-page-content[data-aiondx-page] .bg-2.rd-16px,.settings-page-content[data-aiondx-page] .bg-2.rd-20px{background:var(--color-bg-2) !important;border:1px solid var(--color-border-2);border-radius:14px !important;box-shadow:0 1px 2px rgba(0,0,0,.05)}',
     '.settings-page-content[data-aiondx-page="appearance"] .space-y-16px > div:not(.aiondx-dxl-card){background:var(--color-bg-2);border:1px solid var(--color-border-2);border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.05)}',
+    // 0.28.6 item 10: AionUi's rows (PreferenceRow: a text-14px text-2 name, a text-12px tertiary line) read as AionDX's rows
+    '.settings-page-content[data-aiondx-page] .justify-between.gap-24px.py-12px > .flex-1 > .text-14px.text-2,.settings-page-content[data-aiondx-page] .arco-collapse-item-header-title .text-14px.text-2,.settings-page-content[data-aiondx-page] .arco-form-item-label > label{font-size:14px !important;font-weight:500 !important;color:var(--color-text-1) !important;letter-spacing:normal !important}',
+    '.settings-page-content[data-aiondx-page] .justify-between.gap-24px.py-12px > .flex-1 > .text-12px{font-size:12.5px !important;line-height:1.5 !important;color:var(--color-text-3) !important;letter-spacing:normal !important}',
+    // About: AionUi's centred column under AionDX's header, its update box and links as AionDX cards
+    '.settings-page-content[data-aiondx-page="about"] .max-w-500px{max-width:none !important;margin:0 !important}',
+    '.settings-page-content[data-aiondx-page="about"] .max-w-500px > .items-center.pb-24px{align-items:flex-start !important;padding-top:16px}',
+    '.settings-page-content[data-aiondx-page="about"] .max-w-500px > .items-center.pb-24px > *{text-align:left !important}',
+    '.settings-page-content[data-aiondx-page="about"] .bg-fill-2.rounded-lg{background:var(--color-bg-2) !important;border:1px solid var(--color-border-2);border-radius:14px !important;max-width:420px !important;box-shadow:0 1px 2px rgba(0,0,0,.05)}',
+    '.settings-page-content[data-aiondx-page="about"] .max-w-500px > .gap-4px.pt-8px{background:var(--color-bg-2);border:1px solid var(--color-border-2);border-radius:14px;padding:6px !important;box-shadow:0 1px 2px rgba(0,0,0,.05)}',
+    '.settings-page-content[data-aiondx-page="about"] .arco-divider{display:none}',
     '.settings-page-content[data-aiondx-page] .arco-switch-checked{background-color:var(--dxl-a) !important}',
     '.settings-page-content[data-aiondx-page] .arco-btn-primary:not(.arco-btn-disabled):not(.arco-btn-status-danger){background-color:var(--dxl-a);border-color:var(--dxl-a);color:var(--aiondx-accent-ink,#fff)}',
     '.settings-page-content[data-aiondx-page] input[type="checkbox"]{accent-color:var(--dxl-a)}',
@@ -14658,6 +14677,8 @@
       '.aiondx-coach-text{position:relative;margin-bottom:8px}',
       '.aiondx-coach-ok{position:relative;background:#fff!important;color:rgb(var(--primary-6,22,93,255))!important;border:0!important}',
       '.aiondx-coach-target{outline:2px solid rgb(var(--primary-6,22,93,255));outline-offset:2px;border-radius:6px}',
+      // a block in the Settings list scrolls in a box that clips an outline drawn outside it: drawn inside, all four sides show
+      '.settings-sider .aiondx-coach-target{outline-offset:-2px}',
     ].join('\n');
     document.head.appendChild(st);
     setInterval(function () { if (document.visibilityState === 'visible') coachRun(); }, 700);
