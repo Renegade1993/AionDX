@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-19.1';
+  var BUILD = '2026-11-24.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -14163,7 +14163,7 @@
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
     // the release being built: its date is set the day it is released (the Changelog shows it)
-    release: '0.28.6', date: '',
+    release: '0.28.6', date: '2026-11-24',
     items: [
       ['Any colour for a lane', 'Right-click a team member\u2019s button for 24 colours, chosen to look as different from each other as possible and to read in light and dark mode, or More colours for any colour at all: a colour field, red, green and blue, hex, or a colour picked from the screen, with how it reads in each mode. Settings > Appearance has the same, and its Dark and Light boxes open it too. Lanes you have not coloured take the new colours in lane order, the lead still blue.'],
       ['Write your own answer', 'Every question in a DX Doc has a line under its options for your own answer: type it and press Enter or Send, and it is saved in the doc and sent to the agent, like a ticked option. Where you can tick several, your own answer goes with them.'],
