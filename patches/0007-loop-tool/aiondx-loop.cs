@@ -107,7 +107,7 @@ namespace AionDx
             return dx;
         }
 
-        const string Version = "1.16.0";
+        const string Version = "1.16.1";
         const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aiondx-ui.js HOLD_MIN)
         const long HoldMax = 240;      // aiondx-ui.js HOLD_MIN_MAX
         const long ResumeWarmMaxMs = 50 * 60000;   // aiondx-ui.js RESUME_WARM_MAX_MS
@@ -1521,8 +1521,11 @@ namespace AionDx
             "                               clay, periwinkle, mauve, sky, denim), or default; MEMBER is its name, slot id, chat id, or lead\n" +
             "  aiondx team create --from current --name NAME   this chat becomes the lead of a new team, keeping its id, history and folder\n" +
             "                               (once this turn ends; ask the user first). Add members afterwards.\n" +
-            "  aiondx team dissolve         (lead) the team goes back to separate chats, each with its history; what was in flight goes to a\n" +
-            "                               DX Doc in the lead's chat (once this turn ends; ask the user first)\n" +
+            "  aiondx team dissolve [--leave MEMBER[,MEMBER]] [--delete-left]\n" +
+            "                               (lead) the team goes back to separate chats, each with its history; what was in flight goes to a\n" +
+            "                               DX Doc in the lead's chat (once this turn ends; ask the user first). --leave names the members\n" +
+            "                               (name or slot id) left behind with the team instead of kept: they are archived, or deleted with\n" +
+            "                               their history with --delete-left (ask the user which). The lead is always kept.\n" +
             "ID is the team id, or any member's chat id (a @@ team mention gives the lead's chat id); NAME matches the team's name.\n" +
             "Read a chat with: aiondx chat read CHAT_ID [--last N]";
 
@@ -1674,6 +1677,8 @@ namespace AionDx
                     // R-134 (AionDX 0.28.6): this chat becomes a team's lead in place, or the team goes back to separate chats. AionDX's window
                     // does it once this chat's turn has ended (the agent restarts as part of it), so the command returns at once.
                     string name = null, from = null;
+                    var leave = new List<string>();
+                    bool deleteLeft = false;
                     for (int i = 2; i < args.Length; i++)
                     {
                         string x = args[i], inline = null;
@@ -1681,8 +1686,12 @@ namespace AionDx
                         if (x.StartsWith("--", StringComparison.Ordinal) && eq > 0) { inline = x.Substring(eq + 1); x = x.Substring(0, eq); }
                         if (x == "--name") name = inline ?? Next(args, ref i, x);
                         else if (x == "--from") from = inline ?? Next(args, ref i, x);
+                        else if (x == "--leave" && sub == "dissolve")
+                            leave.AddRange((inline ?? Next(args, ref i, x)).Split(',').Select(s => s.Trim()).Where(s => s.Length > 0));
+                        else if (x == "--delete-left" && sub == "dissolve" && inline == null) deleteLeft = true;
                         else throw new ToolError("Unknown option " + args[i] + ".\n" + TeamHelp);
                     }
+                    if (deleteLeft && leave.Count == 0) throw new ToolError("--delete-left needs --leave MEMBER: name the members left behind.");
                     var ctxT = LoadContext();
                     var me = ctxT.Self;
                     if (sub == "create")
@@ -1700,6 +1709,7 @@ namespace AionDx
                     var rq = new Dictionary<string, object> { { "op", sub == "create" ? "maketeam" : "dissolve" }, { "at", NowMs() }, { "conv", me.ConvId },
                         { "kind", me.Kind }, { "team", me.TeamId }, { "slot", me.SlotId }, { "self", true } };
                     if (name != null) rq["name"] = name;
+                    if (leave.Count > 0) { rq["leave"] = leave.Cast<object>().ToList(); rq["left"] = deleteLeft ? "delete" : "archive"; }
                     o.WriteLine(AskWindow(rid, rq, "the user can do it from the chat's or the team's menu."));
                     return 0;
                 }

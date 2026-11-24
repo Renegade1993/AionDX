@@ -4035,25 +4035,32 @@ async function pageTarget() {
           hows: [...c.querySelectorAll('.aiondx-whatsnew-how')].map((e) => e.textContent) }; })()`);
       await load('theme=light');
       await sleep(2600);
-      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.6');
+      check(sc, 'a brand-new install (nothing saved yet) shows no card, and marks this release seen', !(await card()) && (await js(`localStorage.getItem('aionui.dx.whatsnew.seen')`)) === '0.28.7');
       await js(`(() => { localStorage.removeItem('aionui.dx.whatsnew.seen'); localStorage.setItem('aionui.dx.someSetting', '1'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(2600);
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
+      const NEW287 = ['Keep some lanes, leave the rest'];
       const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'A chat becomes a team, and back', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
-      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.6' && JSON.stringify(c.names) === JSON.stringify(NEW286) &&
-        /^Right-click a team member/.test(c.hows[0]) && /More colours/.test(c.hows[0]) && /your own answer/.test(c.hows[1]) && /lightning bolt/.test(c.hows[2]) && /\+ Add account/.test(c.hows[3]) && /Make this a team/.test(c.hows[4]) && /New Chat page/.test(c.hows[5]) && /asleep/.test(c.hows[6]), JSON.stringify(c));
+      check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.7' && JSON.stringify(c.names) === JSON.stringify(NEW287) &&
+        /Keep box for every lane/.test(c.hows[0]) && /left behind with the team/.test(c.hows[0]), JSON.stringify(c));
+      await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.28.5'); return 0; })()`);
+      await load('theme=light&keepls=1');
+      await sleep(3600);
+      const c6 = await card();
+      check(sc, 'someone updating from 0.28.5 sees 0.28.7’s and 0.28.6’s, each saying how to use it', c6 && JSON.stringify(c6.names) === JSON.stringify(NEW287.concat(NEW286)) &&
+        /^Right-click a team member/.test(c6.hows[1]) && /More colours/.test(c6.hows[1]) && /your own answer/.test(c6.hows[2]) && /lightning bolt/.test(c6.hows[3]) && /\+ Add account/.test(c6.hows[4]) && /Make this a team/.test(c6.hows[5]) && /New Chat page/.test(c6.hows[6]) && /asleep/.test(c6.hows[7]), JSON.stringify(c6));
       await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
       const c4 = await card();
-      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW286.concat(NEW285).concat(NEW284).concat(NEW283).concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
+      check(sc, 'someone updating from 0.27.4 sees everything new since, newest first', c4 && JSON.stringify(c4.names) === JSON.stringify(NEW287.concat(NEW286).concat(NEW285).concat(NEW284).concat(NEW283).concat(NEW281).concat(NEW28).concat(['Type in your docs', 'Suggestions', 'Export to Word', 'Charts and diagrams', 'Ask for a DX Doc', 'Compaction by itself', 'DX Docs', 'More Claude accounts'])), JSON.stringify(c4));
       const box = await js(`(() => { const r = document.querySelector('[data-testid="aiondx-whatsnew"]').getBoundingClientRect(); return { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), w: Math.round(r.width) }; })()`);
       check(sc, 'it sits in the bottom right corner, small', box.right === 16 && box.bottom === 16 && box.w === 360, JSON.stringify(box));
       // November 16th: with 0.28.0's list the card ran off the top of the window ("CAN'T EVEN SEE THE WHOLE THING"). The whole card must
@@ -4091,7 +4098,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.6 card (with 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 48, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 49, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -6207,7 +6214,7 @@ async function pageTarget() {
           date: c ? (c.querySelector('.aiondx-clog-date') || {}).textContent : '', hidAgents: getComputedStyle(document.getElementById('aionui-agents')).display }; })()`);
       check(sc, 'Settings > About > Changelog: the group renamed About, Changelog after About and marked, every release newest first with all its items, each asking for its picture',
         cl.group === 'About' && cl.next && cl.on && cl.page && JSON.stringify(cl.rels) === JSON.stringify(cl.want) && cl.items === cl.wantItems && cl.items >= 30 &&
-        cl.firstName === 'Any colour for a lane' && /^\.\/aiondx-changelog\/v0-28-6-any-colour-for-a-lane-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
+        cl.firstName === 'Keep some lanes, leave the rest' && /^\.\/aiondx-changelog\/v0-28-7-keep-some-lanes-leave-the-rest-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
       await shot('changelog-light');
       await clogShot("0.28.4", "The Changelog", '[data-testid="aiondx-setnav-changelog"]');
       await page('agents');
@@ -6865,24 +6872,77 @@ async function pageTarget() {
         window.__calls.length = 0; return 0; })()`);
       await js(`window.__aionDx.dissolveDialog('team1')`);
       await sleep(400);
-      const dl = await js(`(() => { const d = document.querySelector('[data-testid="aiondx-dissolve-dlg"]'); if (!d) return null;
-        return { h: d.querySelector('h2').textContent, rows: [...d.querySelectorAll('.aiondx-dissolve-rows label')].map((l) => ({ text: l.textContent.trim(), off: l.querySelector('input').disabled })) }; })()`);
-      check(sc, 'Turn back into chats asks first, with a choice per member and the lead always kept as a chat',
-        dl && dl.h === 'Turn "Harness Team" back into chats' && dl.rows.length === 2 && dl.rows[0].off && /Lead \(lead\): stays a chat/.test(dl.rows[0].text) && !dl.rows[1].off && /Worker: archive it/.test(dl.rows[1].text), JSON.stringify(dl));
-      await shot('click-test-dissolve-light');
-      await clogShot('0.28.6', 'A chat becomes a team, and back', '[data-testid="aiondx-dissolve-dlg"]');
+      // November 24th, 2026 (the user): a Keep box per lane, the lead's too; the lanes left behind are archived, or deleted if chosen
+      const dlg = () => js(`(() => { const d = document.querySelector('[data-testid="aiondx-dissolve-dlg"]'); if (!d) return null;
+        const go = d.querySelector('[data-testid="aiondx-dissolve-go"]');
+        return { h: d.querySelector('h2').textContent, rows: [...d.querySelectorAll('.aiondx-dissolve-rows label')].map((l) => ({ text: l.textContent.trim(), on: l.querySelector('input').checked, off: l.querySelector('input').disabled })),
+          left: getComputedStyle(d.querySelector('[data-testid="aiondx-dissolve-left"]')).display !== 'none', leftH: d.querySelector('.aiondx-dissolve-left-h').textContent,
+          go: go.textContent, goOff: go.disabled, red: go.classList.contains('arco-btn-status-danger'), err: d.querySelector('.aiondx-accdlg-err').textContent }; })()`);
+      let dl = await dlg();
+      check(sc, 'Turn back into chats asks first, with a Keep box for every lane, the lead’s too, all ticked',
+        dl && dl.h === 'Turn "Harness Team" back into chats' && dl.rows.length === 2 && dl.rows.every((r) => r.on && !r.off) &&
+        dl.rows[0].text === 'Lead (lead): kept as a chat' && dl.rows[1].text === 'Worker: kept as a chat' && !dl.left && dl.go === 'Turn into chats', JSON.stringify(dl));
       await humanClick('[data-testid="aiondx-dissolve-dlg"] .aiondx-dissolve-rows label:nth-child(2) input');
+      dl = await dlg();
+      check(sc, 'unticking a lane leaves it behind with the team, archived unless you choose delete',
+        dl.rows[1].text === 'Worker: left behind, archived' && dl.left && dl.leftH === 'The lane left behind:' && !dl.goOff && dl.go === 'Turn into chats', JSON.stringify(dl));
+      await humanClick('[data-testid="aiondx-dissolve-left"] input[value="delete"]');
+      dl = await dlg();
+      check(sc, 'choosing delete says so on the lane and on the button', dl.rows[1].text === 'Worker: left behind, deleted' && dl.go === 'Turn into chats and delete 1' && dl.red, JSON.stringify(dl));
+      await shot('click-test-dissolve-light');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); return 0; })()`);
+      await sleep(250);
+      await shot('click-test-dissolve-dark');
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
+      await clogShot('0.28.7', 'Keep some lanes, leave the rest', '[data-testid="aiondx-dissolve-dlg"]');
+      await humanClick('[data-testid="aiondx-dissolve-dlg"] .aiondx-dissolve-rows label:nth-child(1) input');
+      dl = await dlg();
+      check(sc, 'with no lane kept the button is off and says why', dl.goOff && /^Keep at least one lane\./.test(dl.err) && dl.leftH === 'The 2 lanes left behind:', JSON.stringify(dl));
+      await humanClick('[data-testid="aiondx-dissolve-dlg"] .aiondx-dissolve-rows label:nth-child(1) input');
+      await humanClick('[data-testid="aiondx-dissolve-left"] input[value="archive"]');
+      dl = await dlg();
+      check(sc, 'and ticking the lead again turns it back on, archiving the lane left behind', !dl.goOff && !dl.red && dl.err === '' && dl.rows[0].on && !dl.rows[1].on && dl.rows[1].text === 'Worker: left behind, archived', JSON.stringify(dl));
       await humanClick('[data-testid="aiondx-dissolve-go"]');
       await sleep(900);
       const dxc = await js('window.__dxc');
       const made = dxc.filter((x) => x[0] === 'create')[0];
       check(sc, 'what each member had waiting and the open tasks go to a DX Doc in the lead\u2019s chat first',
         dxc[0][0] === 'where' && dxc[0][1].convId === 'convA' && made && /^Team Harness Team: what was in flight/.test(made[1].title) &&
-        made[1].sections.some((x) => x.heading === 'Worker' && /from Lead: check the logs/.test(x.body)) && made[1].sections.some((x) => x.heading === 'Open tasks' && /Fix the build \(in_progress, Worker\)/.test(x.body)), JSON.stringify(dxc).slice(0, 600));
+        made[1].sections.some((x) => x.heading === 'Worker (left behind)' && /from Lead: check the logs/.test(x.body)) && made[1].sections.some((x) => x.heading === 'Open tasks' && /Fix the build \(in_progress, Worker\)/.test(x.body)), JSON.stringify(dxc).slice(0, 600));
       const order = await js(`window.__calls.filter((c) => c.method === 'POST').map((c) => c.path)`);
-      check(sc, 'then the team is dissolved, and only the member you ticked is archived', JSON.stringify(order) === JSON.stringify(['/api/teams/team1/dissolve', '/api/sidebar/conversation/convB/archive']), JSON.stringify(order));
-      check(sc, 'and the lead\u2019s chat opens, with a notice of what was kept', (await js('location.hash')) === '#/conversation/convA' && /^"Harness Team" is separate chats again\.\s?2 chats kept, 1 archived\. What was in flight is in a DX Doc/.test((await toasts()).join(' | ')), JSON.stringify([await js('location.hash'), await toasts()]));
-      await js('delete window.aiondxDx; 0');
+      check(sc, 'then the team is dissolved, and only the lane left behind is archived', JSON.stringify(order) === JSON.stringify(['/api/teams/team1/dissolve', '/api/sidebar/conversation/convB/archive']), JSON.stringify(order));
+      check(sc, 'and the lead\u2019s chat opens, with a notice of what was kept', (await js('location.hash')) === '#/conversation/convA' && /^"Harness Team" is separate chats again\.\s?1 chat kept, 1 archived\. What was in flight is in a DX Doc in the lead\u2019s chat\./.test((await toasts()).join(' | ')), JSON.stringify([await js('location.hash'), await toasts()]));
+      // the lead left behind and deleted: the doc goes to the kept lane's chat, which opens
+      await load('team=1&theme=light');
+      await sleep(600);
+      await js(`(() => { const R = window.__stub.routes; window.__dxc = [];
+        window.aiondxDx = { call: (op, a) => { window.__dxc.push([op, a]); return Promise.resolve(op === 'where' ? { ok: true, docsDir: 'D:\\\\docs' } : { ok: true }); } };
+        R['POST /api/teams/team1/dissolve'] = { success: true, data: { team_id: 'team1', members: [] } };
+        R['DELETE /api/conversations/convA'] = { success: true };
+        window.__calls.length = 0; document.querySelectorAll('.aiondx-toast').forEach((t) => t.remove()); return 0; })()`);
+      await js(`window.__aionDx.dissolveDialog('team1')`);
+      await sleep(400);
+      await humanClick('[data-testid="aiondx-dissolve-dlg"] .aiondx-dissolve-rows label:nth-child(1) input');
+      await humanClick('[data-testid="aiondx-dissolve-left"] input[value="delete"]');
+      await humanClick('[data-testid="aiondx-dissolve-go"]');
+      await sleep(900);
+      const dxc2 = await js('window.__dxc');
+      const made2 = dxc2.filter((x) => x[0] === 'create')[0];
+      check(sc, 'leaving the lead behind writes the doc to the kept lane\u2019s chat, the lead marked left behind',
+        dxc2[0] && dxc2[0][1].convId === 'convB' && made2 && made2[1].sections.some((x) => x.heading === 'Lead (lead) (left behind)'), JSON.stringify(dxc2).slice(0, 400));
+      const calls2 = await js(`window.__calls.filter((c) => c.method === 'POST' || c.method === 'DELETE').map((c) => c.method + ' ' + c.path)`);
+      check(sc, 'then the team is dissolved and the lead\u2019s chat deleted, nothing archived', JSON.stringify(calls2) === JSON.stringify(['POST /api/teams/team1/dissolve', 'DELETE /api/conversations/convA']), JSON.stringify(calls2));
+      check(sc, 'and the kept chat opens, the notice saying one was deleted', (await js('location.hash')) === '#/conversation/convB' && /1 chat kept, 1 deleted\. What was in flight is in a DX Doc in Worker\u2019s chat\./.test((await toasts()).join(' | ')), JSON.stringify([await js('location.hash'), await toasts()]));
+      // an agent leaves a lane behind by name (aiondx team dissolve --leave): a wrong name is refused at once, the lead cannot be
+      await js(`(() => { window.__calls.length = 0; return 0; })()`);
+      const ask = (q) => js(`window.__aionDx.acctAnswer(${JSON.stringify(q)})`);
+      const bad = await ask({ op: 'dissolve', conv: 'convA', team: 'team1', kind: 'team', self: true, leave: ['Nobody'], left: 'archive' });
+      check(sc, 'an agent naming a member the team does not have is told the members', /^Not done: no member named "Nobody"\. The members are "Lead", "Worker"\./.test(bad), bad);
+      const lead = await ask({ op: 'dissolve', conv: 'convA', team: 'team1', kind: 'team', self: true, leave: ['Lead'], left: 'archive' });
+      check(sc, 'and one leaving itself (the lead) behind is refused', /^Not done: the lead \(this chat\) is always kept/.test(lead), lead);
+      const ok = await ask({ op: 'dissolve', conv: 'convA', team: 'team1', kind: 'team', self: true, leave: ['worker'], left: 'delete' });
+      check(sc, 'a member named in any case is saved to be deleted when the turn ends', /Left behind with the team and deleted with their history: Worker\./.test(ok), ok);
+      await js('window.__aionDx.clearTeamOps(); delete window.aiondxDx; 0');
     }
     {
       const sc = 'alerts';

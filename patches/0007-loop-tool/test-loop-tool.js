@@ -873,7 +873,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ac = await cli(['team', 'create', '--name', 'x'], 'convW');
   check('a chat already in a team cannot be made a team', ac.status === 1 && /already in a team/.test(ac.stdout), ac.stdout);
   ac = await cli(['team', 'dissolve'], 'convL');
-  check('the lead can turn its team back into chats', ac.status === 0 && /^WINDOW dissolve conv=convL kind=team self$/.test(ac.stdout.trim()), ac.stdout);
+  check('the lead can turn its team back into chats', ac.status === 0 && /^WINDOW dissolve conv=convL kind=team self$/.test(ac.stdout.trim()) && !('leave' in acctReqs[acctReqs.length - 1]), ac.stdout);
+  // November 24th, 2026: lanes can be left behind with the team (archived, or deleted with --delete-left)
+  ac = await cli(['team', 'dissolve', '--leave', 'Worker, slotX', '--leave=Third'], 'convL');
+  check('dissolve --leave names the members left behind (comma list, repeatable), archived by default',
+    ac.status === 0 && JSON.stringify(acctReqs[acctReqs.length - 1].leave) === JSON.stringify(['Worker', 'slotX', 'Third']) && acctReqs[acctReqs.length - 1].left === 'archive', ac.stdout + JSON.stringify(acctReqs[acctReqs.length - 1]));
+  ac = await cli(['team', 'dissolve', '--leave', 'Worker', '--delete-left'], 'convL');
+  check('and --delete-left asks for them to be deleted', ac.status === 0 && acctReqs[acctReqs.length - 1].left === 'delete', JSON.stringify(acctReqs[acctReqs.length - 1]));
+  ac = await cli(['team', 'dissolve', '--delete-left'], 'convL');
+  check('--delete-left without --leave is refused', ac.status === 1 && /--delete-left needs --leave/.test(ac.stdout), ac.stdout);
+  ac = await cli(['team', 'create', '--name', 'x', '--leave', 'Worker'], 'convS');
+  check('--leave belongs to dissolve only', ac.status === 1 && /Unknown option --leave/.test(ac.stdout), ac.stdout);
   ac = await cli(['team', 'dissolve'], 'convW');
   check('a member cannot', ac.status === 1 && /Only the team's lead/.test(ac.stdout), ac.stdout);
   acctWindow = false;

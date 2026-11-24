@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-24.1';
+  var BUILD = '2026-11-24.2';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -8984,6 +8984,10 @@
     '.aiondx-accdlg-inline{display:flex;gap:16px;align-items:center;font-size:13px;color:var(--color-text-2)}',
     '.aiondx-accdlg-check{display:flex;gap:8px;align-items:center;margin:8px 0 0;font-size:13px;color:var(--color-text-2);cursor:pointer}',
     '.aiondx-accdlg-hint{font-size:12px;color:var(--color-text-3)}',
+    '.aiondx-dissolve-row{gap:0}.aiondx-dissolve-row input{margin-right:8px}.aiondx-dissolve-name{color:var(--color-text-1);font-weight:500}',
+    '.aiondx-dissolve-row--left .aiondx-dissolve-name{color:var(--color-text-3);text-decoration:line-through}.aiondx-dissolve-row--left .aiondx-dissolve-state{color:rgb(var(--orange-6,247,114,52))}',
+    '.aiondx-dissolve-left{margin-top:12px;padding:8px 12px 10px;border:1px solid var(--color-border-2);border-radius:8px}',
+    '.aiondx-dissolve-left-h{font-size:13px;font-weight:600;color:var(--color-text-1)}',
     '.aiondx-accdlg-p{font-size:13px;line-height:1.5;color:var(--color-text-2);margin:0 0 10px}',
     '.aiondx-accdlg-list{margin:0 0 12px;padding-left:18px;font-size:13px;line-height:1.55;color:var(--color-text-2)}',
     '.aiondx-accdlg-err{min-height:16px;margin-top:8px;font-size:12.5px;color:rgb(var(--danger-6))}',
@@ -12100,9 +12104,16 @@
     if (dissolveDlg && dissolveDlg.parentNode) dissolveDlg.parentNode.removeChild(dissolveDlg);
     var el = document.createElement('div');
     el.className = 'aiondx-welcome-backdrop aiondx-accdlg-backdrop';
+    // November 24th, 2026 (K): "the user should have an option about which lanes they want retained (turned into a standalone chat) and which
+    // they want to abandon/leave behind with the team". One Keep box per lane, the lead's too; the lanes left behind are archived (Settings >
+    // Archived brings one back) or, if chosen, deleted.
     el.innerHTML = '<div class="aiondx-welcome aiondx-accdlg" role="dialog" aria-modal="true" data-testid="aiondx-dissolve-dlg">' +
-      '<h2 class="aiondx-accdlg-h"></h2><p class="aiondx-accdlg-p">Every member becomes a chat of its own again, with its history and folder. Nothing is deleted. What each member had waiting (its queue, its messages and the team\u2019s tasks) is written to a DX Doc in the lead\u2019s chat first.</p>' +
-      '<div class="aiondx-dissolve-rows"></div><div class="aiondx-accdlg-err" role="alert"></div>' +
+      '<h2 class="aiondx-accdlg-h"></h2><p class="aiondx-accdlg-p">Tick the lanes to keep: each becomes a chat of its own, with its history and folder. The ones you untick are left behind with the team. What each lane had waiting (its queue, its messages and the team\u2019s tasks) is written to a DX Doc in a kept chat first.</p>' +
+      '<div class="aiondx-dissolve-rows"></div>' +
+      '<div class="aiondx-dissolve-left" data-testid="aiondx-dissolve-left"><div class="aiondx-dissolve-left-h"></div>' +
+      '<label class="aiondx-accdlg-check"><input type="radio" name="aiondx-dissolve-left" value="archive" checked> Archive them (Settings &gt; Archived brings one back)</label>' +
+      '<label class="aiondx-accdlg-check"><input type="radio" name="aiondx-dissolve-left" value="delete"> Delete them, with their history</label></div>' +
+      '<div class="aiondx-accdlg-err" role="alert"></div>' +
       '<div class="aiondx-accdlg-btns"><button type="button" class="arco-btn arco-btn-secondary aiondx-accdlg-cancel">Cancel</button>' +
       '<button type="button" class="arco-btn arco-btn-primary aiondx-dissolve-go" data-testid="aiondx-dissolve-go">Turn into chats</button></div></div>';
     el.querySelector('h2').textContent = 'Turn "' + (d.name || 'this team') + '" back into chats';
@@ -12110,21 +12121,42 @@
     rows.forEach(function (a) {
       var lead = isLeadRole(String(a.role || ''));
       var lab = document.createElement('label');
-      lab.className = 'aiondx-accdlg-check';
-      lab.innerHTML = '<input type="checkbox" class="aiondx-dissolve-archive"> <span></span>';
-      lab.querySelector('span').textContent = (a.name || a.slot_id) + (lead ? ' (lead): stays a chat' : ': archive it instead of keeping it as a chat');
+      lab.className = 'aiondx-accdlg-check aiondx-dissolve-row';
+      lab.innerHTML = '<input type="checkbox" class="aiondx-dissolve-keep" checked> <span class="aiondx-dissolve-name"></span><span class="aiondx-dissolve-state"></span>';
+      lab.querySelector('.aiondx-dissolve-name').textContent = (a.name || a.slot_id) + (lead ? ' (lead)' : '');
       var cb = lab.querySelector('input');
       cb.setAttribute('data-slot', a.slot_id || '');
       cb.setAttribute('data-conv', a.conversation_id || '');
-      if (lead) { cb.disabled = true; cb.checked = false; }
       box.appendChild(lab);
     });
+    var go = el.querySelector('.aiondx-dissolve-go');
+    function dissolveChoices() {
+      var all = [].slice.call(box.querySelectorAll('input.aiondx-dissolve-keep'));
+      var kept = all.filter(function (x) { return x.checked; }), left = all.filter(function (x) { return !x.checked; });
+      var del = !!el.querySelector('input[name="aiondx-dissolve-left"][value="delete"]:checked');
+      all.forEach(function (x) {
+        var st = x.parentNode.querySelector('.aiondx-dissolve-state');
+        st.textContent = x.checked ? ': kept as a chat' : (del ? ': left behind, deleted' : ': left behind, archived');
+        x.parentNode.classList.toggle('aiondx-dissolve-row--left', !x.checked);
+      });
+      var lw = el.querySelector('.aiondx-dissolve-left');
+      lw.style.display = left.length ? '' : 'none';
+      lw.querySelector('.aiondx-dissolve-left-h').textContent = left.length === 1 ? 'The lane left behind:' : 'The ' + left.length + ' lanes left behind:';
+      go.disabled = !kept.length;
+      el.querySelector('.aiondx-accdlg-err').textContent = kept.length ? '' : 'Keep at least one lane. To remove the whole team, use Delete in its menu.';
+      go.textContent = del && left.length ? 'Turn into chats and delete ' + left.length : 'Turn into chats';
+      go.classList.toggle('arco-btn-status-danger', !!(del && left.length));
+      return { kept: kept.map(function (x) { return x.getAttribute('data-conv'); }), left: left.map(function (x) { return x.getAttribute('data-conv'); }), del: del };
+    }
+    el.addEventListener('change', dissolveChoices);
+    dissolveChoices();
     el.querySelector('.aiondx-accdlg-cancel').addEventListener('click', function () { el.remove(); });
-    el.querySelector('.aiondx-dissolve-go').addEventListener('click', function () {
-      var archive = [].slice.call(box.querySelectorAll('input:checked')).map(function (x) { return x.getAttribute('data-conv'); });
-      el.querySelector('.aiondx-dissolve-go').disabled = true;
-      dissolveTeam(teamId, d, rows, archive).then(function () { el.remove(); }, function (e) {
-        el.querySelector('.aiondx-dissolve-go').disabled = false;
+    go.addEventListener('click', function () {
+      var ch = dissolveChoices();
+      if (!ch.kept.length) return;
+      go.disabled = true;
+      dissolveTeam(teamId, d, rows, { left: ch.left, del: ch.del }).then(function () { el.remove(); }, function (e) {
+        go.disabled = false;
         el.querySelector('.aiondx-accdlg-err').textContent = 'Not changed: ' + (e && e.message ? e.message : e);
       });
     });
@@ -12132,8 +12164,9 @@
     dissolveDlg = el;
   }
   /** What the team had in flight, as a DX Doc in the lead's chat (best-effort: the dissolve goes ahead without it, and says so). */
-  async function dissolveSnapshot(teamId, team, rows) {
-    var lead = rows.filter(function (a) { return isLeadRole(String(a.role || '')); })[0] || rows[0];
+  async function dissolveSnapshot(teamId, team, rows, left) {
+    var keptRows = rows.filter(function (a) { return (left || []).indexOf(a.conversation_id) < 0; });
+    var lead = keptRows.filter(function (a) { return isLeadRole(String(a.role || '')); })[0] || keptRows[0];
     if (!window.aiondxDx || !lead || !lead.conversation_id) return false;
     var names = {};
     rows.forEach(function (a) { names[a.slot_id] = a.name || a.slot_id; });
@@ -12154,7 +12187,7 @@
         lines.push('Messages it had not read:');
         unread.forEach(function (m) { lines.push('- from ' + (names[m.from_agent_id] || m.from_agent_id) + ': ' + String(m.content || '').replace(/\s+/g, ' ').slice(0, 1500)); });
       }
-      sections.push({ heading: (a.name || a.slot_id) + (isLeadRole(String(a.role || '')) ? ' (lead)' : ''), body: lines.join('\n') });
+      sections.push({ heading: (a.name || a.slot_id) + (isLeadRole(String(a.role || '')) ? ' (lead)' : '') + ((left || []).indexOf(a.conversation_id) >= 0 ? ' (left behind)' : ''), body: lines.join('\n') });
     });
     var open = tasks.filter(function (t) { return t && !/^(done|completed|cancel)/i.test(String(t.status || '')); });
     sections.push({ heading: 'Open tasks', body: open.length ? open.map(function (t) { return '- ' + (t.subject || t.title || t.id) + ' (' + (t.status || 'open') + (t.owner ? ', ' + (names[t.owner] || t.owner) : '') + ')'; }).join('\n') : 'None.' });
@@ -12163,27 +12196,34 @@
     var c = await window.aiondxDx.call('create', { docsDir: w2.docsDir, title: 'Team ' + (team.name || '') + ': what was in flight ' + new Date().toISOString().slice(0, 16).replace('T', ' '), sections: sections });
     return !!(c && c.ok);
   }
-  async function dissolveTeam(teamId, team, rows, archive) {
+  /** opt: { left: [conversation ids left behind with the team], del: delete them (else archive them) }. At least one lane is kept. */
+  async function dissolveTeam(teamId, team, rows, opt) {
+    var left = (opt && opt.left) || [], del = !!(opt && opt.del);
+    var keptRows = rows.filter(function (a) { return left.indexOf(a.conversation_id) < 0; });
+    if (!keptRows.length) throw new Error('keep at least one lane');
     var saved = false;
-    try { saved = await dissolveSnapshot(teamId, team, rows); } catch (e) { saved = false; }
+    try { saved = await dissolveSnapshot(teamId, team, rows, left); } catch (e) { saved = false; }
     var r = await postJson('/api/teams/' + encodeURIComponent(teamId) + '/dissolve', {});
     if (r.status === 404 || r.status === 405) throw new Error('this AionCore cannot turn a team back into chats yet');
     var j = null;
     try { j = await r.json(); } catch (e) { j = null; }
     if (!r.ok) throw new Error((j && (j.error || j.message)) || ('HTTP ' + r.status));
-    var out = j ? unwrap(j) : null;
-    var archived = 0;
-    for (var i = 0; i < archive.length; i++) {
-      var a = await postJson('/api/sidebar/conversation/' + encodeURIComponent(archive[i]) + '/archive', {}).catch(function () { return null; });
-      if (a && a.ok) archived++;
+    var done = 0, missed = 0;
+    for (var i = 0; i < left.length; i++) {
+      var a = await (del
+        ? fetch(apiUrl('/api/conversations/' + encodeURIComponent(left[i])), { method: 'DELETE', credentials: 'include', headers: { 'x-csrf-token': csrf() } })
+        : postJson('/api/sidebar/conversation/' + encodeURIComponent(left[i]) + '/archive', {})).catch(function () { return null; });
+      if (a && a.ok) done++; else missed++;
     }
-    var lead = rows.filter(function (a) { return isLeadRole(String(a.role || '')); })[0];
+    var lead = keptRows.filter(function (a) { return isLeadRole(String(a.role || '')); })[0] || keptRows[0];
     var gid = groupsState.items['t:' + teamId];
-    if (gid && out && out.members) out.members.forEach(function (m) { if (archive.indexOf(m.conversation_id) < 0) assignGroup('c:' + m.conversation_id, gid); });
+    if (gid) keptRows.forEach(function (m) { if (m.conversation_id) assignGroup('c:' + m.conversation_id, gid); });
     if (gid) assignGroup('t:' + teamId, null);
     if (lead && lead.conversation_id) location.hash = '#/conversation/' + lead.conversation_id;
-    toast('"' + (team.name || 'The team') + '" is separate chats again.', ((out && out.members) ? out.members.length : rows.length) + ' chats kept' + (archived ? ', ' + archived + ' archived' : '') + '. ' +
-      (saved ? 'What was in flight is in a DX Doc in the lead\u2019s chat.' : 'What was in flight could not be written to a doc.'));
+    var kept = keptRows.length;
+    toast('"' + (team.name || 'The team') + '" is separate chats again.', kept + (kept === 1 ? ' chat' : ' chats') + ' kept' +
+      (done ? ', ' + done + (del ? ' deleted' : ' archived') : '') + (missed ? ', ' + missed + ' could not be ' + (del ? 'deleted' : 'archived') + ' (still in the list)' : '') + '. ' +
+      (saved ? 'What was in flight is in a DX Doc in ' + (isLeadRole(String(lead.role || '')) ? 'the lead\u2019s chat' : (lead.name || 'a kept') + '\u2019s chat') + '.' : 'What was in flight could not be written to a doc.'), missed ? { stay: true } : undefined);
     schedule();
   }
   function groupLineText(it) {
@@ -14163,8 +14203,12 @@
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
     // the release being built: its date is set the day it is released (the Changelog shows it)
-    release: '0.28.6', date: '2026-11-24',
+    release: '0.28.7', date: '',
     items: [
+      ['Keep some lanes, leave the rest', 'In a team’s menu, Turn back into separate chats has a Keep box for every lane, the lead’s too. Ticked lanes become chats of their own; the ones you untick are left behind with the team, archived (Settings > Archived brings one back) or, if you choose, deleted. Agents can do it for you on your word.'],
+    ],
+    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
+    earlier: [{ release: '0.28.6', date: '2026-11-24', items: [
       ['Any colour for a lane', 'Right-click a team member\u2019s button for 24 colours, chosen to look as different from each other as possible and to read in light and dark mode, or More colours for any colour at all: a colour field, red, green and blue, hex, or a colour picked from the screen, with how it reads in each mode. Settings > Appearance has the same, and its Dark and Light boxes open it too. Lanes you have not coloured take the new colours in lane order, the lead still blue.'],
       ['Write your own answer', 'Every question in a DX Doc has a line under its options for your own answer: type it and press Enter or Send, and it is saved in the doc and sent to the agent, like a ticked option. Where you can tick several, your own answer goes with them.'],
       ['Answer a message now', 'A message of yours the agent has but has not read yet (Unread) has a lightning bolt beside it. Press it to stop the step the agent is on: your message starts its next turn at once. Messages still waiting in a team member’s queue keep their bolt, which puts them first.'],
@@ -14172,9 +14216,7 @@
       ['A chat becomes a team, and back', 'In a chat’s menu, Make this a team: the chat becomes the team’s lead with the same history and folder, and you add members on the team page. In a team’s menu, Turn back into separate chats: each member keeps its history as a chat of its own, or is archived if you tick it. Agents can do it for you on your word.'],
       ['New Chat keeps your draft', 'What you type on the New Chat page stays there when you leave the page or close AionDX, the same as in any chat, and is cleared when you send it.'],
       ['Fixes', 'The Settings list is one look: every entry has AionDX’s icon in its page’s colour and the same lettering (AionUi’s entries had kept their grey icons), the first group is named Agents and chats, and Mobile shows as the open page when you choose it. Scheduled tasks that came due while the PC was asleep now run when it wakes (AionCore refused the wake call). A lane colour picked by right-clicking the drag handle or status dot of a member’s button now takes, and colours saved that way before are moved to the member. A team whose agents could not start because of a large pinned skill starts again (the launch was longer than Windows allows), and an agent that cannot start, or a member the team paused, now shows in the bell with the reason. Moving an agent that is not running to another account moves it at once (it said it was busy, again and again).'],
-    ],
-    // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
-    earlier: [{ release: '0.28.5', date: '2026-11-19', items: [
+    ] }, { release: '0.28.5', date: '2026-11-19', items: [
       ['Lane colours', 'Right-click a team member\u2019s button at the top of a team to give its lane a colour; its name, its column and its messages to teammates take it. Lanes you have not coloured get distinct colours in lane order, the lead first. Settings > Appearance has the same colours, and a team lead can set them with aiondx team colour.'],
       ['Pictures of any size', 'A big picture in a DX Doc shows (from a smaller copy, with its size), and a click opens it whole, full screen; pictures in chat open full screen too. Right-click a picture: Open in photo viewer, or Open image location.'],
       ['What changed in your docs', 'A red number on the Docs button counts the docs an agent changed since you last had the panel open in that chat. Changed docs and tabs are marked in the panel until you open them.'],
@@ -17893,9 +17935,10 @@
     return '- ' + a.label + ' (' + a.id + '): ' + w[0].toLowerCase() + '. ' + w[1] + (a.own ? ' This PC’s own Claude sign-in.' : a.added ? ' Added in AionDX.' : '');
   }
   async function acctAnswer(q) {
+    // team changes need no account bridge (they work in the browser, WebUI, too)
+    if (q.op === 'maketeam' || q.op === 'dissolve') return teamOpAsked(q);
     if (!window.aiondxAccounts) return 'This AionDX window cannot manage accounts (it runs without AionDX’s main process).';
     var convId = String(q.conv || '');
-    if (q.op === 'maketeam' || q.op === 'dissolve') return teamOpAsked(q);
     if (q.op === 'add') {
       openAccDlg();
       return 'The Add account window is open in AionDX. The user names the account, picks what it may do, and signs in in their browser; no key reaches you. Once added, it is in every Claude chat’s agent button and in Settings > Account.';
@@ -17943,13 +17986,30 @@
   }
   // R-134 from an agent (aiondx team create / dissolve): done once the asking chat's turn has ended, since the change restarts its agent.
   var teamOps = [];
-  function teamOpAsked(q) {
-    if (q.op === 'maketeam' && !String(q.name || '').trim()) return Promise.resolve('Not done: the team needs a name.');
+  async function teamOpAsked(q) {
+    if (q.op === 'maketeam' && !String(q.name || '').trim()) return 'Not done: the team needs a name.';
+    var leftWords = '';
+    if (q.op === 'dissolve' && Array.isArray(q.leave) && q.leave.length) {
+      // the lanes to leave behind, by name or member id, checked now so the agent hears about a wrong name in this turn
+      var tg = await getJson('/api/teams/' + encodeURIComponent(q.team));
+      var rows = tg && tg.data ? (tg.data.assistants || tg.data.agents || []) : [];
+      if (!rows.length) return 'Not done: AionDX could not read the team.';
+      var picked = [], unknown = [];
+      q.leave.forEach(function (w) {
+        var s = String(w || '').trim().toLowerCase();
+        var m = rows.filter(function (a) { return String(a.slot_id || '').toLowerCase() === s || String(a.name || '').trim().toLowerCase() === s; })[0];
+        if (!m) unknown.push(w); else if (picked.indexOf(m) < 0) picked.push(m);
+      });
+      if (unknown.length) return 'Not done: no member named ' + unknown.map(function (x) { return '"' + x + '"'; }).join(', ') + '. The members are ' + rows.map(function (a) { return '"' + (a.name || a.slot_id) + '"'; }).join(', ') + '.';
+      if (picked.some(function (a) { return a.conversation_id === q.conv || isLeadRole(String(a.role || '')); })) return 'Not done: the lead (this chat) is always kept when it asks. The user can leave the lead behind from the team’s menu.';
+      q.leaveConvs = picked.map(function (a) { return a.conversation_id; });
+      leftWords = ' Left behind with the team and ' + (q.left === 'delete' ? 'deleted with their history' : 'archived (Settings > Archived brings one back)') + ': ' + picked.map(function (a) { return a.name || a.slot_id; }).join(', ') + '.';
+    }
     teamOps.push({ q: q, at: Date.now() });
     if (!teamOps.timer) teamOps.timer = setInterval(teamOpsTick, 3000);
-    return Promise.resolve(q.op === 'maketeam'
+    return q.op === 'maketeam'
       ? 'Saved: when this turn ends, this chat becomes the lead of "' + q.name + '", with the same history and folder. Its agent restarts as the lead with the next message; then add members with team_spawn_agent (or the user adds them on the team page). The user sees a notice.'
-      : 'Saved: when this turn ends, the team goes back to separate chats, each with its history. What was in flight is written to a DX Doc in this chat first. The user sees a notice.');
+      : 'Saved: when this turn ends, the team goes back to separate chats, each with its history.' + leftWords + ' What was in flight is written to a DX Doc in this chat first. The user sees a notice.';
   }
   async function teamOpsTick() {
     if (!teamOps.length) { clearInterval(teamOps.timer); teamOps.timer = null; return; }
@@ -17964,7 +18024,7 @@
       else {
         var tg = await getJson('/api/teams/' + encodeURIComponent(op.q.team));
         var d = tg && tg.data ? tg.data : null;
-        if (d) await dissolveTeam(op.q.team, d, d.assistants || d.agents || [], []);
+        if (d) await dissolveTeam(op.q.team, d, d.assistants || d.agents || [], { left: op.q.leaveConvs || [], del: op.q.left === 'delete' });
       }
     } catch (e) { toast('Not done.', String(e && e.message || e)); }
     teamOps.shift();
@@ -18275,6 +18335,8 @@
     menuActionIds: function (key) { return menuActions(key).map(function (x) { return x.id; }); },
     makeTeam: function (conv, name) { return makeTeamFromChat(conv, name); },
     dissolveDialog: function (teamId) { return openDissolveDialog(teamId); },
+    acctAnswer: function (q) { return acctAnswer(q); },
+    clearTeamOps: function () { teamOps.length = 0; if (teamOps.timer) { clearInterval(teamOps.timer); teamOps.timer = null; } },
     moves: function (age) { return Object.keys(pendingMoves).map(function (k) { var m = pendingMoves[k]; if (age === 'retry') m.tried = 0; else if (age) m.at -= age; return k; }); },
     usage: function () { return { acct: usageAcct, conv: usageConv }; },
     statedResetMs: function (text, at) { return statedResetMs(text, at); },

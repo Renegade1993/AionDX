@@ -456,10 +456,16 @@ history kept. Do either only on the user's yes; AionDX does it when your turn en
 "{{AIONDX}}" team create --from current --name NAME   this chat becomes the lead of a new team NAME; add members afterwards
 "{{AIONDX}}" team dissolve                             (lead) the team goes back to separate chats; what was in flight is
                                                        written to a DX Doc in the lead's chat first
+"{{AIONDX}}" team dissolve --leave Worker,Tester       the same, but the members named (name or slot id) are left behind with
+                                                       the team: archived (Settings > Archived brings one back)
+"{{AIONDX}}" team dissolve --leave Tester --delete-left    left behind and deleted with their history
 ```
 
-The user can do the same from the chat's menu (Make this a team) or the team's menu (Turn back into separate chats,
-with a choice per member to keep it as a chat or archive it).
+Before dissolving, ask the user which lanes to keep as chats and, if any are left behind, whether to archive or delete
+them. You (the lead) are always kept when you ask; a wrong member name is refused with the list of members.
+
+The user can do the same from the chat's menu (Make this a team) or the team's menu (Turn back into separate chats:
+a Keep box for every lane, the lead's too, and for the lanes left behind, Archive or Delete).
 
 ## When
 
