@@ -54,7 +54,8 @@ const VERSION_RE = /^\d+\.\d+\.\d+/;
     await app.js(`location.hash = '#/settings/about'; 0`);
     await sleep(2000);
     const about = await app.js(`(() => {
-      const t = [...document.querySelectorAll('h1,h2,h3,.arco-typography')].map((e) => e.textContent.trim()).filter(Boolean);
+      // the page's own title; AionDX's page header above it (0.28.6: "About", with the page's tile) is not the product's name
+      const t = [...document.querySelectorAll('h1,h2,h3,.arco-typography')].filter((e) => !e.closest('.aiondx-dxl-head')).map((e) => e.textContent.trim()).filter(Boolean);
       const v = [...document.querySelectorAll('span')].map((e) => e.textContent.trim()).find((x) => /^v\\d+\\.\\d+\\.\\d+/.test(x)) || '';
       const rows = [...document.querySelectorAll('.cursor-pointer.group')].map((e) => e.textContent.trim()).filter((x) => /documentation|update log|issue|bug|contact|website/i.test(x));
       return { title: t[0] || '', version: v, rows, text: document.body.innerText };

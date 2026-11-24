@@ -5498,8 +5498,9 @@ async function pageTarget() {
       await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (m) m.remove(); for (const k in (window.__aionDx.ctx ? window.__aionDx.ctx() : {})) {} return 0; })()`);
       await js(`(() => { window.__aionDx.forgetCtx && window.__aionDx.forgetCtx(); return 0; })()`);
       await humanClick('.context-usage-indicator');
-      await sleep(900);
-      const rd = await js(`document.querySelector('[data-testid="aiondx-ctxmenu"] .aiondx-ctxmenu-read').textContent`);
+      let rd = '';
+      // the reading comes from AionCore after the menu opens: wait for it (a fixed 900 ms failed under load, November 24th)
+      for (let i = 0; i < 40 && !/%/.test(rd); i++) { await sleep(100); rd = await js(`(document.querySelector('[data-testid="aiondx-ctxmenu"] .aiondx-ctxmenu-read') || {}).textContent || ''`); }
       check(sc, 'with no reading taken yet, the menu asks AionCore and shows the count', /^85\.0% of the context window used \(850K of 1000K\)/.test(rd), rd);
       await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (m) m.remove(); window.__aionDx.setOption('compact.auto', true); localStorage.removeItem('aionui.dx.options'); return 0; })()`);
     }
