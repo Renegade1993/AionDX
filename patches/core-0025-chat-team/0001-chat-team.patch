@@ -145,7 +145,7 @@ index bd15042e..f7966b64 100644
      State(state): State<TeamRouterState>,
      Extension(user): Extension<CurrentUser>,
 diff --git a/crates/aionui-team/src/service.rs b/crates/aionui-team/src/service.rs
-index 1ccd15e4..42b40487 100644
+index 1ccd15e4..980b25f4 100644
 --- a/crates/aionui-team/src/service.rs
 +++ b/crates/aionui-team/src/service.rs
 @@ -9,7 +9,8 @@ use std::sync::{Arc, RwLock, Weak};
@@ -319,3 +319,96 @@ index 1ccd15e4..42b40487 100644
      pub async fn list_teams(&self, user_id: &str) -> Result<Vec<TeamResponse>, TeamError> {
          let rows = self.repo.list_teams_by_user(user_id).await?;
          let mut teams = Vec::with_capacity(rows.len());
+@@ -3347,7 +3502,7 @@ mod tests {
+         IWorkerTaskManager, IdleCleanupCoordinator,
+     };
+     use aionui_api_types::{
+-        AddAgentRequest, ConfigOptionConfirmation, SetConfigOptionRequest, SetConfigOptionResponse,
++        AddAgentRequest, ConfigOptionConfirmation, CreateTeamFromConversationRequest, SetConfigOptionRequest, SetConfigOptionResponse,
+         TeamContextResetAvailability, TeamContextResetRuntimeStatus, TeamContextResetStatus, TeamRunTargetRole,
+     };
+     use aionui_common::{AgentKillReason, AgentType, ConversationStatus, TimestampMs, now_ms};
+@@ -3665,6 +3820,61 @@ mod tests {
+         }
+     }
+ 
++    // AionDX core-0025: a team goes back to plain chats with nothing deleted, and a plain chat becomes a team's lead in place.
++    #[tokio::test]
++    async fn dissolve_then_make_a_team_from_the_former_lead_in_place() {
++        let (svc, _repo, _task_manager, conv_repo) = setup_with_factory_metadata_team_repo_and_conversation_repo();
++        let created = svc
++            .create_team("user-test", single_agent_team_request("Round Trip"))
++            .await
++            .unwrap();
++        let lead_conv = created
++            .assistants
++            .iter()
++            .find(|a| a.role == "lead")
++            .map(|a| a.conversation_id.clone())
++            .expect("a lead");
++        assert_eq!(conv_repo.get_extra(&lead_conv).unwrap()["teamId"], created.id.as_str());
++
++        let out = svc.dissolve_team("user-test", &created.id).await.unwrap();
++        assert_eq!(out.members.len(), 1);
++        assert_eq!(out.members[0].conversation_id, lead_conv);
++        let extra = conv_repo.get_extra(&lead_conv).expect("the conversation is kept");
++        assert!(extra["teamId"].is_null(), "the team marker is gone: {extra}");
++        assert!(svc.get_team("user-test", &created.id).await.is_err(), "the team row is gone");
++
++        let other = svc
++            .create_team_from_conversation(
++                "user-other",
++                CreateTeamFromConversationRequest { conversation_id: lead_conv.clone(), name: "Not yours".into(), lead_name: None },
++            )
++            .await;
++        assert!(other.is_err(), "another user's chat is refused");
++
++        let made = svc
++            .create_team_from_conversation(
++                "user-test",
++                CreateTeamFromConversationRequest { conversation_id: lead_conv.clone(), name: "Again".into(), lead_name: Some("Boss".into()) },
++            )
++            .await
++            .unwrap();
++        assert_eq!(made.name, "Again");
++        assert_eq!(made.assistants.len(), 1);
++        assert_eq!(made.assistants[0].conversation_id, lead_conv, "the same chat leads");
++        assert_eq!(made.assistants[0].role, "lead");
++        let extra = conv_repo.get_extra(&lead_conv).unwrap();
++        assert_eq!(extra["teamId"], made.id.as_str());
++        assert_eq!(extra["role"], "lead");
++
++        let twice = svc
++            .create_team_from_conversation(
++                "user-test",
++                CreateTeamFromConversationRequest { conversation_id: lead_conv.clone(), name: "Twice".into(), lead_name: None },
++            )
++            .await;
++        assert!(twice.is_err(), "a chat already in a team is refused");
++    }
++
+     #[tokio::test]
+     async fn session_has_slow_monitor() {
+         let (svc, _repo, _task_manager, _conv_repo) = setup_with_factory_metadata_team_repo_and_conversation_repo();
+diff --git a/crates/aionui-team/src/test_utils.rs b/crates/aionui-team/src/test_utils.rs
+index c3ceb00a..b449239d 100644
+--- a/crates/aionui-team/src/test_utils.rs
++++ b/crates/aionui-team/src/test_utils.rs
+@@ -1030,6 +1030,17 @@ pub(crate) mod workspace_harness {
+             Ok(TeamMcpSnapshotResolution::default())
+         }
+ 
++        async fn conversation_name_and_extra(
++            &self,
++            user_id: &str,
++            conversation_id: &str,
++        ) -> Result<Option<(String, serde_json::Value)>, TeamError> {
++            if self.repo.owner_user_id(conversation_id).await?.as_deref() != Some(user_id) {
++                return Ok(None);
++            }
++            Ok(self.repo.get_extra(conversation_id).map(|extra| (String::new(), extra)))
++        }
++
+         async fn conversation_workspace(&self, conversation_id: &str) -> Result<Option<String>, TeamError> {
+             Ok(self.repo.get_extra(conversation_id).and_then(|extra| {
+                 extra
