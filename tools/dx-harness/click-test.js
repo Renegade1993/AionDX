@@ -2803,15 +2803,17 @@ async function pageTarget() {
       await typeKeys('the quick brown fox');
       check(sc, 'typed one letter at a time', (await val()) === 'the quick brown fox', await val());
       await ctrl('z');
-      check(sc, 'one Ctrl+Z undoes the whole burst', (await val()) === '', await val());
+      check(sc, 'one Ctrl+Z undoes the last word, as in other programs (November 24th, 2026)', (await val()) === 'the quick brown ', await val());
+      await clogShot('0.28.7', 'Ctrl+Z as in other programs', '[data-testid="sendbox-input"]');
       await ctrl('y');
       check(sc, 'Ctrl+Y puts it back', (await val()) === 'the quick brown fox', await val());
       await ctrl('z', true);
       check(sc, 'and Ctrl+Shift+Z is the same as Ctrl+Y: it is already the latest, so nothing changes', (await val()) === 'the quick brown fox', await val());
-      await ctrl('z');
+      for (let i = 0; i < 4; i++) await ctrl('z');
+      check(sc, 'four words, four presses to an empty box', (await val()) === '', await val());
       await typeKeys('one');
       await sleep(1150);
-      await typeKeys(' two');
+      await typeKeys('two');
       await ctrl('z');
       check(sc, 'a pause of over a second ends a step', (await val()) === 'one', await val());
       await ctrl('z');
@@ -4042,7 +4044,7 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW287 = ['Keep some lanes, leave the rest'];
+      const NEW287 = ['Keep some lanes, leave the rest', 'Ctrl+Z as in other programs'];
       const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'A chat becomes a team, and back', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
@@ -4054,7 +4056,7 @@ async function pageTarget() {
       await sleep(3600);
       const c6 = await card();
       check(sc, 'someone updating from 0.28.5 sees 0.28.7’s and 0.28.6’s, each saying how to use it', c6 && JSON.stringify(c6.names) === JSON.stringify(NEW287.concat(NEW286)) &&
-        /^Right-click a team member/.test(c6.hows[1]) && /More colours/.test(c6.hows[1]) && /your own answer/.test(c6.hows[2]) && /lightning bolt/.test(c6.hows[3]) && /\+ Add account/.test(c6.hows[4]) && /Make this a team/.test(c6.hows[5]) && /New Chat page/.test(c6.hows[6]) && /asleep/.test(c6.hows[7]), JSON.stringify(c6));
+        /Ctrl\+Z takes back/.test(c6.hows[1]) && /^Right-click a team member/.test(c6.hows[NEW287.length]) && /More colours/.test(c6.hows[NEW287.length]) && /your own answer/.test(c6.hows[NEW287.length + 1]) && /lightning bolt/.test(c6.hows[NEW287.length + 2]) && /\+ Add account/.test(c6.hows[NEW287.length + 3]) && /Make this a team/.test(c6.hows[NEW287.length + 4]) && /New Chat page/.test(c6.hows[NEW287.length + 5]) && /asleep/.test(c6.hows[NEW287.length + 6]), JSON.stringify(c6));
       await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
@@ -4098,7 +4100,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 49, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 50, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }

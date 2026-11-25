@@ -5,7 +5,7 @@
  *   a misspelled word   suggestions, "Add to dictionary"
  *   a link              Open link in browser, Copy link
  *   a picture           Copy image, Open in photo viewer, Open image location
- *   a text box          Cut, Copy, Paste, Select all
+ *   a text box          Undo, Redo, Cut, Copy, Paste, Select all (the message box's Undo and Redo use the page's own history: undoState)
  *   selected text       Copy
  * buildTemplate() is pure (it takes what it needs in `deps`) so tests can run it without Electron. The wiring is install(), called from the helper
  * block in apply.js; it is also the only place that touches Electron.
@@ -20,7 +20,8 @@ const fs = require('fs');
 
 const SUGGESTIONS = 5;
 
-/** The labels and actions for one right-click. deps: { wc, clipboard, shell, imagePath, openExternal }. */
+/** The labels and actions for one right-click. deps: { wc, clipboard, shell, imagePath, openExternal, undo }; undo is the page's answer for
+ *  the focused box ({ own, canUndo, canRedo }): own means the message box, whose Undo and Redo are the page's own history. */
 function buildTemplate(params, deps) {
   params = params || {};
   deps = deps || {};
@@ -64,6 +65,16 @@ function buildTemplate(params, deps) {
   }
 
   if (params.isEditable) {
+    const u = deps.undo && deps.undo.own ? deps.undo : null;
+    const step = (dir) => { try { wc.executeJavaScript('(function(){try{var d=window.__aionDx;return !!(d&&d.undoStep&&d.undoStep(' + dir + '));}catch(e){return false;}})()'); } catch (e) { /* the page went */ } };
+    if (u) {
+      out.push({ label: 'Undo', accelerator: 'CmdOrCtrl+Z', enabled: !!u.canUndo, click: () => step(-1) });
+      out.push({ label: 'Redo', accelerator: 'CmdOrCtrl+Y', enabled: !!u.canRedo, click: () => step(1) });
+    } else {
+      out.push({ role: 'undo', label: 'Undo', enabled: !!f.canUndo });
+      out.push({ role: 'redo', label: 'Redo', enabled: !!f.canRedo });
+    }
+    out.push({ type: 'separator' });
     out.push({ role: 'cut', label: 'Cut', enabled: !!f.canCut });
     out.push({ role: 'copy', label: 'Copy', enabled: !!f.canCopy });
     out.push({ role: 'paste', label: 'Paste', enabled: !!f.canPaste });
@@ -86,6 +97,19 @@ function askPage(wc, x, y, ms) {
       const code = '(function(){try{var d=window.__aionDx;return d&&d.imagePathAt?d.imagePathAt(' + (Number(x) | 0) + ',' + (Number(y) | 0) + '):"";}catch(e){return "";}})()';
       Promise.resolve(wc.executeJavaScript(code)).then((v) => { clearTimeout(timer); finish(v); }, () => { clearTimeout(timer); finish(''); });
     } catch (e) { clearTimeout(timer); finish(''); }
+  });
+}
+
+/** The page's undo state for the focused box: { own, canUndo, canRedo }, or { own: false } (any other box, no answer within `ms`). */
+function askUndo(wc, ms) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v && typeof v === 'object' && v.own ? v : { own: false }); } };
+    const timer = setTimeout(() => finish(null), ms || 300);
+    try {
+      const code = '(function(){try{var d=window.__aionDx;return d&&d.undoMenu?d.undoMenu():null;}catch(e){return null;}})()';
+      Promise.resolve(wc.executeJavaScript(code)).then((v) => { clearTimeout(timer); finish(v); }, () => { clearTimeout(timer); finish(null); });
+    } catch (e) { clearTimeout(timer); finish(null); }
   });
 }
 
@@ -131,7 +155,8 @@ function install(electron) {
       wc.on('context-menu', (_e, params) => {
         const run = async () => {
           const imagePath = params && params.mediaType === 'image' ? await askPage(wc, params.x, params.y, 400) : '';
-          const items = buildTemplate(params, { wc, clipboard: electron.clipboard, shell: electron.shell, imagePath, openExternal: (u) => electron.shell.openExternal(u),
+          const undo = params && params.isEditable ? await askUndo(wc, 300) : null;
+          const items = buildTemplate(params, { wc, undo, clipboard: electron.clipboard, shell: electron.shell, imagePath, openExternal: (u) => electron.shell.openExternal(u),
             openPicture: (p, src) => openPicture(electron.shell, p, src) });
           const testFile = process.env.AIONDX_MENU_TEST_FILE;
           if (testFile) {
@@ -148,4 +173,4 @@ function install(electron) {
   } catch (e) { /* the menu is a convenience */ }
 }
 
-module.exports = { buildTemplate, askPage, setupSpellcheck, install, openPicture };
+module.exports = { buildTemplate, askPage, askUndo, setupSpellcheck, install, openPicture };

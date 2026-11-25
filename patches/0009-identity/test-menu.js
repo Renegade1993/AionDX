@@ -6,7 +6,7 @@
  *   node patches\0009-identity\test-menu.js
  */
 'use strict';
-const { buildTemplate, askPage, setupSpellcheck } = require('./aiondx-menu');
+const { buildTemplate, askPage, askUndo, setupSpellcheck } = require('./aiondx-menu');
 
 let pass = 0, fail = 0;
 const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (ok || detail === undefined ? '' : '   [' + String(detail).slice(0, 300) + ']')); };
@@ -25,10 +25,23 @@ const click = (t, label) => { const i = t.find((x) => x.label === label); log.le
   check('selected text: Copy', JSON.stringify(labels(buildTemplate({ selectionText: ' some words ' }, deps()))) === JSON.stringify(['Copy']));
   check('blank selection: no menu', buildTemplate({ selectionText: '   ' }, deps()) === null);
   let t = buildTemplate({ isEditable: true, editFlags: { canCut: true, canCopy: false, canPaste: true, canSelectAll: true } }, deps());
-  check('a text box: Cut, Copy, Paste, a line, Select all', JSON.stringify(labels(t)) === JSON.stringify(['Cut', 'Copy', 'Paste', 'separator', 'Select all']) && t[0].enabled === true && t[1].enabled === false, JSON.stringify(labels(t)));
+  check('a text box: Undo, Redo, a line, Cut, Copy, Paste, a line, Select all', JSON.stringify(labels(t)) === JSON.stringify(['Undo', 'Redo', 'separator', 'Cut', 'Copy', 'Paste', 'separator', 'Select all']) && t[3].enabled === true && t[4].enabled === false, JSON.stringify(labels(t)));
+  check('any other box: Undo and Redo are the browser’s own, greyed as it says', t[0].role === 'undo' && t[1].role === 'redo' && t[0].enabled === false && t[1].enabled === false);
+  t = buildTemplate({ isEditable: true, editFlags: { canUndo: true, canRedo: false } }, deps());
+  check('and enabled when the browser has a step', t[0].enabled === true && t[1].enabled === false);
+  {
+    const ran = [];
+    t = buildTemplate({ isEditable: true, editFlags: { canUndo: false } }, deps({ undo: { own: true, canUndo: true, canRedo: false }, wc: { executeJavaScript: (c) => { ran.push(c); return Promise.resolve(true); } } }));
+    check('the message box: Undo and Redo from the page’s own history (not the browser’s greyed one)', !t[0].role && t[0].label === 'Undo' && t[0].enabled === true && t[1].enabled === false && t[0].accelerator === 'CmdOrCtrl+Z');
+    t[0].click(); t[1].click();
+    check('its Undo asks the page for a step back, Redo for a step forward', ran.length === 2 && ran[0].indexOf("undoStep(-1)") >= 0 && ran[1].indexOf("undoStep(1)") >= 0, JSON.stringify(ran));
+    check('askUndo: the page’s answer', (await askUndo({ executeJavaScript: () => Promise.resolve({ own: true, canUndo: true, canRedo: true }) }, 200)).canRedo === true);
+    check('askUndo: no answer in time is any other box', (await askUndo({ executeJavaScript: () => new Promise(() => {}) }, 50)).own === false);
+    check('askUndo: a page without the hook is any other box', (await askUndo({ executeJavaScript: () => Promise.resolve(null) }, 200)).own === false);
+  }
 
   t = buildTemplate({ isEditable: true, misspelledWord: 'helo', dictionarySuggestions: ['hello', 'help', 'hole', 'halo', 'hell', 'heel', 'held'], editFlags: {} }, deps());
-  check('a misspelled word: up to five suggestions, Add to dictionary, then the text box entries', JSON.stringify(labels(t).slice(0, 8)) === JSON.stringify(['hello', 'help', 'hole', 'halo', 'hell', 'Add to dictionary', 'separator', 'Cut']), JSON.stringify(labels(t)));
+  check('a misspelled word: up to five suggestions, Add to dictionary, then the text box entries', JSON.stringify(labels(t).slice(0, 8)) === JSON.stringify(['hello', 'help', 'hole', 'halo', 'hell', 'Add to dictionary', 'separator', 'Undo']), JSON.stringify(labels(t)));
   check('a suggestion replaces the word', JSON.stringify(click(t, 'help')) === JSON.stringify(['replace:help']));
   check('Add to dictionary teaches the word', JSON.stringify(click(t, 'Add to dictionary')) === JSON.stringify(['learn:helo']));
   t = buildTemplate({ isEditable: true, misspelledWord: 'zzqx', dictionarySuggestions: [], editFlags: {} }, deps());

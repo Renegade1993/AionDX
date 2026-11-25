@@ -38,14 +38,20 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
 
       await clearBox();
       await typeKeys('the quick brown fox jumps');
-      check(label + ': a sentence typed at one go is undone by one Ctrl+Z', (await (async () => { await ctrl('z'); return val(); })()) === '', await val());
-      await ctrl('y');
-      check(label + ': and Ctrl+Y puts it back', (await val()) === 'the quick brown fox jumps', await val());
       await ctrl('z');
+      check(label + ': typing is undone a word at a time (as in other programs)', (await val()) === 'the quick brown fox ', await val());
+      await ctrl('z');
+      check(label + ': and the word before it next', (await val()) === 'the quick brown ', await val());
+      await ctrl('y');
+      check(label + ': Ctrl+Y puts a word back', (await val()) === 'the quick brown fox ', await val());
+      await ctrl('y');
+      check(label + ': and the next', (await val()) === 'the quick brown fox jumps', await val());
+      for (let i = 0; i < 5; i++) await ctrl('z');
+      check(label + ': five words, five presses to an empty box', (await val()) === '', await val());
       await ctrl('z');
       check(label + ': another Ctrl+Z has nothing further to undo, and changes nothing', (await val()) === '', await val());
       await ctrl('z', true);
-      check(label + ': Ctrl+Shift+Z redoes too', (await val()) === 'the quick brown fox jumps', await val());
+      check(label + ': Ctrl+Shift+Z redoes too', (await val()) === 'the ', await val());
 
       await clearBox();
       await typeKeys('abc');
@@ -77,7 +83,7 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
       await ctrl('z');
       check(label + ': after the page empties the box, Ctrl+Z does not put the old text back', (await val()) === '', await val());
       await typeKeys('new text');
-      await ctrl('z');
+      await ctrl('z'); await ctrl('z'); await ctrl('z');
       check(label + ': and the next typing undoes only itself', (await val()) === '', await val());
 
       // A paste. AionUi's box takes a text paste over and writes the text in itself with no input event (its PasteService); sent here
@@ -97,7 +103,7 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
       await ctrl('y'); await ctrl('y');
       check(label + ': Ctrl+Y twice puts both back', (await val()) === 'before PASTED', await val());
       await app.js(`(() => { const t = ${TA}; t.setSelectionRange(t.value.length, t.value.length); return 0; })()`);
-      await typeKeys(' after');
+      await typeKeys('after');
       await ctrl('z');
       check(label + ': typing after a paste is its own step', (await val()) === 'before PASTED', await val());
       // the page writing text in (voice, an @@ name picked, a message taken back): its own step too
@@ -105,6 +111,36 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
       await sleep(200);
       await ctrl('z');
       check(label + ': text the page put in (voice, an @@ name) is undone by one Ctrl+Z', (await val()) === 'before PASTED', await val());
+
+      // a caret moved (arrow keys, a click) ends the step: the edit there is undone on its own
+      await clearBox();
+      await typeKeys('one two');
+      for (let i = 0; i < 3; i++) await app.key('ArrowLeft');
+      await typeKeys('X');
+      check(label + ': typing after the caret was moved', (await val()) === 'one Xtwo', await val());
+      await ctrl('z');
+      check(label + ': is undone on its own', (await val()) === 'one two', await val());
+
+      // undo of a deletion brings the text back selected, as it was
+      await clearBox();
+      await typeKeys('keep this');
+      await sleep(1200);
+      await app.js(`(() => { const t = ${TA}; t.setSelectionRange(5, 9); return 0; })()`);
+      await app.key('Delete');
+      check(label + ': a selected word deleted', (await val()) === 'keep ', await val());
+      await ctrl('z');
+      const sel = await app.js(`(() => { const t = ${TA}; return [t.value, t.selectionStart, t.selectionEnd]; })()`);
+      check(label + ': Ctrl+Z brings it back, selected again', sel[0] === 'keep this' && sel[1] === 5 && sel[2] === 9, JSON.stringify(sel));
+
+      // the right-click menu's Undo and Redo (patch 0009) ask the page through these
+      await clearBox();
+      await typeKeys('menu words');
+      const ms = await app.js('window.__aionDx.undoMenu()');
+      check(label + ': the right-click menu learns the box has a step to undo and none to redo', ms && ms.own === true && ms.canUndo === true && ms.canRedo === false, JSON.stringify(ms));
+      await app.js('window.__aionDx.undoStep(-1)');
+      check(label + ': its Undo takes a word back out', (await val()) === 'menu ', await val());
+      await app.js('window.__aionDx.undoStep(1)');
+      check(label + ': its Redo puts it back', (await val()) === 'menu words', await val());
     }
     // another chat in the same box: its text is a new start, never a step on top of the first chat's
     const conv2 = await app.js(`(async () => {
@@ -119,6 +155,8 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
     await app.js(`location.hash = '#/conversation/${conv.id}'; 0`);
     await sleep(3000);
     await app.js(`(${BOX}).focus(); 0`);
+    await app.js(`(() => { const t = ${BOX}; const d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); d.set.call(t, ''); t.dispatchEvent(new Event('input', { bubbles: true })); t.focus(); return 0; })()`);
+    await sleep(300);
     for (const ch of 'first chat') await app.key(ch);
     await app.js(`location.hash = '#/conversation/${conv2}'; 0`);
     await sleep(3000);
@@ -128,6 +166,14 @@ const check = (name, ok, detail) => { if (ok) pass++; else fail++; console.log((
     await sleep(120);
     const v2 = await app.js(`(${BOX}).value`);
     check('in another chat, Ctrl+Z does not bring the first chat\'s text in', v2 !== 'first chat' && v2.indexOf('first chat') < 0, v2);
+    await app.js(`location.hash = '#/conversation/${conv.id}'; 0`);
+    await sleep(3000);
+    const back = await app.js(`(${BOX}).value`);
+    await app.js(`(${BOX}).focus(); 0`);
+    await app.key('z', { ctrl: true });
+    await sleep(120);
+    const v1 = await app.js(`(${BOX}).value`);
+    check('back in the first chat, its own history is still there (Ctrl+Z takes its last word out)', back === 'first chat' && v1 === 'first ', JSON.stringify([back, v1]));
 
     // a different text field is left to the browser
     await app.js(`(() => { document.querySelectorAll('#probe-ta').forEach((e) => e.remove()); const t = document.createElement('textarea'); t.id = 'probe-ta'; t.style.cssText = 'position:fixed;left:0;top:0;width:300px;height:60px;z-index:99999'; document.documentElement.appendChild(t); t.focus(); return 0; })()`);

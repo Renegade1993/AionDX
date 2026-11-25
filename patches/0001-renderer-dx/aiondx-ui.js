@@ -14206,6 +14206,7 @@
     release: '0.28.7', date: '',
     items: [
       ['Keep some lanes, leave the rest', 'In a team’s menu, Turn back into separate chats has a Keep box for every lane, the lead’s too. Ticked lanes become chats of their own; the ones you untick are left behind with the team, archived (Settings > Archived brings one back) or, if you choose, deleted. Agents can do it for you on your word.'],
+      ['Ctrl+Z as in other programs', 'In the message box, Ctrl+Z takes back the last word you typed, a paste, or text put in by voice or an @@ name, and brings deleted text back selected; Ctrl+Y or Ctrl+Shift+Z puts it back. Right-click the box for Undo and Redo too. Each chat keeps its own history until you send.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.6', date: '2026-11-24', items: [
@@ -18171,50 +18172,61 @@
       function (e) { say('The update was not installed: ' + String(e && e.message || e) + '.'); });
   };
 
-  // ---------------------------------------------------------------- Ctrl+Z in the message box (build 2026-10-02.1)
+  // ---------------------------------------------------------------- Ctrl+Z in the message box (build 2026-10-02.1; November 24th, 2026)
 
-  // a request of 2026-10-02. In AionUi's box Chromium records one undo
-  // step per character: the page changes the DOM beside the box on every keystroke (React redraws the highlight layer, and rewrites the
-  // textarea's own child text), and Chromium ends its typing command whenever the DOM changes under it. A sentence needed as many
-  // presses of Ctrl+Z as it had characters (measured in the built app, tools\probe-undo*.js: 43 presses for 43 characters; 1 for a
-  // bare textarea). So the two message boxes (a chat's, the new-chat page's) keep their own history, taken from the input events:
-  // typing and deleting in one burst (no pause over a second) is one step, a paste, a cut or a line break is its own, Ctrl+Z steps
-  // back, Ctrl+Y and Ctrl+Shift+Z forward. A change the page makes itself (a send emptying the box, a draft put back, a restore) starts
-  // a new history from that text, so Ctrl+Z never puts back what was already sent.
+  // In AionUi's box Chromium records one undo step per character: the page changes the DOM beside the box on every keystroke (React
+  // redraws the highlight layer, and rewrites the textarea's own child text), and Chromium ends its typing command whenever the DOM
+  // changes under it (measured in the built app, tools\probe-undo*.js: 43 presses for 43 characters; 1 for a bare textarea). So the two
+  // message boxes (a chat's, the new-chat page's) keep their own history, built to do what Ctrl+Z does in other programs (K, November
+  // 24th, 2026: "ctrl+z should do everything it does in every other application"):
+  //   - typing is undone a word at a time (a word and the spaces after it, as in VS Code); a pause over a second, a switch between typing
+  //     and deleting, or a caret moved by a click or the arrow keys also starts a new step;
+  //   - a paste, a cut, a drag, a spelling fix, a line break, and text the page writes in itself (AionUi takes every text paste over and
+  //     writes it with no input event; voice, an @@ name picked, a message taken back) are each one step;
+  //   - undo puts the selection back as it was before the change (deleted text comes back selected); redo puts the caret after it;
+  //   - Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, the right-click menu's Undo and Redo (patch 0009 asks undoMenu/undoStep below) and the Edit
+  //     menu's all use this history;
+  //   - each chat keeps its own history in the box, also across a visit to another chat; a send that empties the box starts it again,
+  //     so Ctrl+Z never puts back a message already sent.
   var UNDO_PAUSE_MS = 1000;
   var UNDO_LIMIT = 300;
-  var undoHist = typeof WeakMap === 'function' ? new WeakMap() : null;
+  // chat (and which box on its page) -> history: AionUi builds a new box when a chat is opened again, so the history is kept by chat
+  var undoHist = {}, undoKeys = [];
+  var UNDO_CHATS = 60;
   function undoBox(el) {
     return !!(el && el.tagName === 'TEXTAREA' && el.closest && el.closest('[data-testid="sendbox-input"], [data-testid="guid-input"]'));
   }
   function undoKind(type) {
-    if (/^insert(Text|CompositionText|ReplacementText)$/.test(type)) return 'ins';
+    if (/^insert(Text|CompositionText)$/.test(type)) return 'ins';
     if (/^delete(ContentBackward|ContentForward|WordBackward|WordForward|SoftLineBackward|SoftLineForward)$/.test(type)) return 'del';
     return 'other';
   }
   function undoWhere() { return String(location.hash || '').split('?')[0]; }
   function undoState(ta) {
-    var h = undoHist.get(ta);
-    if (!h) { h = { stack: [{ v: ta.value, s: ta.selectionStart, e: ta.selectionEnd }], i: 0, at: 0, kind: '', applying: false, where: undoWhere() }; undoHist.set(ta, h); }
+    var boxes = document.querySelectorAll('[data-testid="sendbox-input"] textarea, textarea[data-testid="sendbox-input"], [data-testid="guid-input"] textarea, textarea[data-testid="guid-input"]');
+    var k = undoWhere() + '|' + Math.max(0, Array.prototype.indexOf.call(boxes, ta));
+    var h = undoHist[k];
+    if (!h) {
+      h = undoHist[k] = { stack: [{ v: ta.value, s: ta.selectionStart, e: ta.selectionEnd }], i: 0, at: 0, kind: '', space: false, pre: null, applying: false };
+      undoKeys.push(k);
+      if (undoKeys.length > UNDO_CHATS) delete undoHist[undoKeys.shift()];
+    }
     return h;
   }
-  /** What the history last knew against what the box holds: a difference is a change made without an edit the history saw. A paste is
-   *  one (November 24th, 2026: AionUi's box takes every text paste over and writes the text in itself, with no input event, so a paste
-   *  used to start the history again and Ctrl+Z then did nothing), as are voice, an @@ name picked, a message taken back: each is its own
-   *  step on top of what was typed. A box emptied (a send) or another chat in the same box starts the history again, so Ctrl+Z never
-   *  puts back a message already sent or another chat's text. */
+  /** What the history last knew against what the box holds: a difference is a change made without an edit the history saw (a paste,
+   *  voice, an @@ name, a message taken back, a draft put back), and is its own step. An emptied box (a send) starts the history again. */
   function undoSync(ta) {
     var h = undoState(ta);
-    if (h.stack[h.i].v === ta.value && h.where === undoWhere()) return h;
+    if (h.stack[h.i].v === ta.value) return h;
     var snap = { v: ta.value, s: ta.selectionStart, e: ta.selectionEnd };
-    if (!ta.value || h.where !== undoWhere()) { h.stack = [snap]; h.i = 0; }
+    if (!ta.value) { h.stack = [snap]; h.i = 0; }
     else {
       h.stack.length = h.i + 1;
       h.stack.push(snap);
       if (h.stack.length > UNDO_LIMIT) h.stack.shift();
       h.i = h.stack.length - 1;
     }
-    h.where = undoWhere(); h.at = 0; h.kind = '';
+    h.at = 0; h.kind = '';
     return h;
   }
   function undoApply(ta, h, to, how) {
@@ -18232,11 +18244,35 @@
     h.at = 0;
     h.kind = '';
   }
+  /** One step back (dir -1) or forward (+1) in the box that has the focus. True when the box is one of ours (whether or not it moved). */
+  function undoStepIn(ta, dir) {
+    if (!undoBox(ta) || disabled()) return false;
+    var h = undoSync(ta);
+    var to = h.i + dir;
+    if (to >= 0 && to < h.stack.length) undoApply(ta, h, to, dir < 0 ? 'historyUndo' : 'historyRedo');
+    return true;
+  }
+  /** For the right-click menu: whether the focused box is ours, and whether it has a step to undo or redo. */
+  function undoMenuState() {
+    var ta = document.activeElement;
+    if (!undoBox(ta) || disabled()) return { own: false };
+    var h = undoSync(ta);
+    return { own: true, canUndo: h.i > 0, canRedo: h.i < h.stack.length - 1 };
+  }
   function watchUndo() {
-    if (!undoHist) return;
-    // Before an edit: the text as it stands is the starting point if the page changed it since the last one.
     window.addEventListener('beforeinput', function (ev) {
-      if (undoBox(ev.target) && ev.inputType !== 'historyUndo' && ev.inputType !== 'historyRedo') undoSync(ev.target);
+      var ta = ev.target;
+      if (!undoBox(ta)) return;
+      if (ev.inputType === 'historyUndo' || ev.inputType === 'historyRedo') {
+        // the Edit menu's Undo or Redo (Ctrl+Z itself is taken at keydown, below)
+        if (ev.cancelable && !disabled()) { ev.preventDefault(); undoStepIn(ta, ev.inputType === 'historyUndo' ? -1 : 1); }
+        return;
+      }
+      // The text as it stands is the starting point if the page changed it since the last edit; a caret moved since then ends the step.
+      var h = undoSync(ta);
+      var last = h.stack[h.i];
+      if (last.s !== ta.selectionStart || last.e !== ta.selectionEnd) h.kind = '';
+      h.pre = { s: ta.selectionStart, e: ta.selectionEnd };
     }, true);
     window.addEventListener('input', function (ev) {
       var ta = ev.target;
@@ -18246,15 +18282,22 @@
       if (h.applying) return;
       var kind = undoKind(ev.inputType);
       var now = Date.now();
+      var data = typeof ev.data === 'string' ? ev.data : '';
+      var space = kind === 'ins' && /^\s+$/.test(data);
+      // a word typed after a space starts a step, as a word is the unit of typing to undo
+      var newWord = kind === 'ins' && h.kind === 'ins' && h.space && !space && data !== '';
       var snap = { v: ta.value, s: ta.selectionStart, e: ta.selectionEnd };
       if (h.i < h.stack.length - 1) h.stack.length = h.i + 1;                      // an edit after an undo ends the redo line
-      if (kind !== 'other' && kind === h.kind && now - h.at < UNDO_PAUSE_MS && h.i > 0) h.stack[h.i] = snap;   // the same burst
+      if (kind !== 'other' && kind === h.kind && !newWord && now - h.at < UNDO_PAUSE_MS && h.i > 0) h.stack[h.i] = snap;   // the same step
       else {
+        if (h.pre) { h.stack[h.i].s = h.pre.s; h.stack[h.i].e = h.pre.e; }       // undo puts the selection back as it was before
         h.stack.push(snap);
         if (h.stack.length > UNDO_LIMIT) h.stack.shift();
         h.i = h.stack.length - 1;
       }
+      h.pre = null;
       h.kind = kind;
+      h.space = space;
       h.at = now;
     }, true);
     window.addEventListener('keydown', function (ev) {
@@ -18263,13 +18306,9 @@
       var undo = k === 'z' && !ev.shiftKey;
       var redo = (k === 'z' && ev.shiftKey) || (k === 'y' && !ev.shiftKey);
       if (!undo && !redo) return;
-      var ta = ev.target;
-      if (!undoBox(ta) || disabled()) return;
-      var h = undoSync(ta);
-      var to = undo ? h.i - 1 : h.i + 1;
+      if (!undoBox(ev.target) || disabled()) return;
       ev.preventDefault();                                   // the browser's own history is the per-character one
-      if (to < 0 || to >= h.stack.length) return;            // nothing further that way
-      undoApply(ta, h, to, undo ? 'historyUndo' : 'historyRedo');
+      undoStepIn(ev.target, undo ? -1 : 1);
     }, true);
   }
 
@@ -18350,6 +18389,9 @@
     makeTeam: function (conv, name) { return makeTeamFromChat(conv, name); },
     dissolveDialog: function (teamId) { return openDissolveDialog(teamId); },
     acctAnswer: function (q) { return acctAnswer(q); },
+    // the right-click menu (patch 0009): the message box's own Undo and Redo
+    undoMenu: function () { return undoMenuState(); },
+    undoStep: function (dir) { return undoStepIn(document.activeElement, dir < 0 ? -1 : 1); },
     clearTeamOps: function () { teamOps.length = 0; if (teamOps.timer) { clearInterval(teamOps.timer); teamOps.timer = null; } },
     moves: function (age) { return Object.keys(pendingMoves).map(function (k) { var m = pendingMoves[k]; if (age === 'retry') m.tried = 0; else if (age) m.at -= age; return k; }); },
     usage: function () { return { acct: usageAcct, conv: usageConv }; },
