@@ -5502,6 +5502,15 @@ async function pageTarget() {
       await sleep(400);
       check(sc, 'a chat compacted already, AionCore still giving the size before: not compacted again', !(JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0));
       await js(`(() => { delete window.__stub.store['aiondx.ctx.conv.harness1']; return 0; })()`);
+      // replies after that compaction: AionCore's count still says 85% (it stays at the size before, measured November 26th), the launcher
+      // measured the last call at 15%: not compacted again (it used to be, each time the cache ran out)
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 280000, until: Date.now() + 20000, tailUntil: Date.now() + 20000, ttl: '5m', ctx: 150000 });
+      await js('window.__aionDx.tickNow()');
+      await sleep(400);
+      await js('window.__aionDx.autoCompactNow()');
+      await sleep(400);
+      check(sc, 'AionCore stuck at 85% but the last call measured 15%: not compacted', !(JSON.parse(await js(`localStorage.getItem('aionui.dx.harness1') || '{}'`)).compactAt > 0));
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 280000, until: Date.now() + 20000, tailUntil: Date.now() + 20000, ttl: '5m' });
       await js('window.__aionDx.tickNow()');
       await sleep(300);
       await js(`(() => { const m = document.querySelector('[data-testid="aiondx-ctxmenu"]'); if (m) m.remove(); for (const k in (window.__aionDx.ctx ? window.__aionDx.ctx() : {})) {} return 0; })()`);
@@ -5851,11 +5860,22 @@ async function pageTarget() {
       await js('window.__aionDx.pullNow()');
       rg = await again();
       check(sc, 'a reply measured after the compaction (the launcher\'s record) ends the estimate', rg && !/Compacted at/.test(rg.title) && /43\.3% of the context window used/.test(rg.title), JSON.stringify(rg));
-      await js(`(() => { const w = ${cacheWas}; if (w) window.__stub.store['aiondx.cache.conv.harness1'] = w; else delete window.__stub.store['aiondx.cache.conv.harness1']; return 0; })()`);
-      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.last_token_usage = { total_tokens: 26000 }; return 0; })()`);
+      // AionCore's count stays at the size before also after replies (measured on this PC, November 26th): the launcher's measurement of the
+      // last call is the chat's size
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 60000, until: Date.now() + 3000000, tailUntil: Date.now() + 3000000, ttl: '1h', ctx: 30000 });
+      await js('window.__aionDx.pullNow()');
+      rg = await again();
+      check(sc, 'the ring shows the launcher\'s measured size of the last call (30K), not AionCore\'s stale 86.5K', rg && !/Compacted at/.test(rg.title) && /15\.0% of the context window used \(30K of 200K\)/.test(rg.title) && Math.abs(1 - Number(rg.off) / Number(rg.dash) - 0.15) < 0.01, JSON.stringify(rg));
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 1000, until: Date.now() + 3600000, tailUntil: Date.now() + 3600000, ttl: '1h', ctx: 26000 });
+      await js('window.__aionDx.pullNow()');
+      // the sections share the page: an earlier one may have left a stand-in for AionCore's count, which the next reply moves too
+      const usageWas = await js(`JSON.stringify(window.__stub.routes['GET /api/conversations/harness1/usage'] || null)`);
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.last_token_usage = { total_tokens: 26000 }; if (window.__stub.routes['GET /api/conversations/harness1/usage']) window.__stub.routes['GET /api/conversations/harness1/usage'] = { success: true, data: { used: 26000, size: 200000 } }; return 0; })()`);
       rg = await again();
       check(sc, 'the next reply\'s count replaces the estimate', rg && /13\.0% of the context window used \(26K of 200K\)/.test(rg.title) && !/Compacted at/.test(rg.title), JSON.stringify(rg));
       await js(`(() => { delete window.__stub.store['aiondx.ctx.conv.harness1']; const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.last_token_usage = { total_tokens: 84000 }; return 0; })()`);
+      await js(`(() => { const u = ${usageWas}; if (u) window.__stub.routes['GET /api/conversations/harness1/usage'] = u; return 0; })()`);
+      await js(`(() => { const w = ${cacheWas}; if (w) window.__stub.store['aiondx.cache.conv.harness1'] = w; else delete window.__stub.store['aiondx.cache.conv.harness1']; return 0; })()`);
       await js('window.__aionDx.pullNow()');
       rg = await again();
       check(sc, 'the snowflake\'s hover keeps the ring\'s reading (how full the chat is) above the cache line', rg && rg.snow && /^[^\n]*(context window used|tokens used|No context count)/.test(rg.snowTitle), JSON.stringify(rg));

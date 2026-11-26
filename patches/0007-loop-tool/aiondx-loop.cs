@@ -2036,15 +2036,22 @@ namespace AionDx
                 var d = Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(keys), null) as Dictionary<string, object>;
                 var rec = d != null && d.ContainsKey("aiondx.cache.conv." + convId) ? d["aiondx.cache.conv." + convId] as Dictionary<string, object> : null;
                 if (rec != null) { until = Long(rec, "until"); at = Long(rec, "at"); }
-                // After a compaction AionCore keeps the size from before until a reply measures the new one. The launcher's estimate
-                // (aiondx.ctx.conv.<chat>) stands while no call after the compaction is measured and AionCore's count has not fallen
-                // below the size before: the same rule as the context ring (November 26th, 2026).
+                // The same rule as the context ring (November 26th, 2026). After a compaction AionCore's count stays at the size before,
+                // also after replies, so a Claude chat's size is the launcher's measurement of its last call (aiondx.cache.conv.<chat>.ctx),
+                // and the launcher's estimate (aiondx.ctx.conv.<chat>) while no call after the compaction has been measured.
                 var cx = d != null && d.ContainsKey("aiondx.ctx.conv." + convId) ? d["aiondx.ctx.conv." + convId] as Dictionary<string, object> : null;
                 long cAt = cx != null ? Long(cx, "at") : 0, cTok = cx != null ? Long(cx, "tokens") : 0, cPre = cx != null ? Long(cx, "pre") : 0;
-                if (cTok > 0 && cPre > 0 && !(at > cAt + 2000) && used >= cPre * 0.98)
+                long mCtx = rec != null ? Long(rec, "ctx") : 0;
+                bool since = at > 0 ? at > cAt + 2000 : used < cPre * 0.98;
+                if (cTok > 0 && cPre > 0 && !since)
                 {
-                    r["measuredUsed"] = used; r["used"] = cTok; r["estimated"] = true; r["compactedAt"] = cAt; r["compactedFrom"] = cPre;
+                    r["serverUsed"] = used; r["used"] = cTok; r["estimated"] = true; r["compactedAt"] = cAt; r["compactedFrom"] = cPre;
                     r["pct"] = size > 0 ? Math.Round(cTok * 1000.0 / size) / 10.0 : -1.0;
+                }
+                else if (mCtx > 0)
+                {
+                    r["serverUsed"] = used; r["used"] = mCtx; r["measuredAt"] = at;
+                    r["pct"] = size > 0 ? Math.Round(mCtx * 1000.0 / size) / 10.0 : -1.0;
                 }
                 var opts = d != null && d.ContainsKey("aiondx.options") ? d["aiondx.options"] as Dictionary<string, object> : null;
                 var vals = opts != null && opts.ContainsKey("values") ? opts["values"] as Dictionary<string, object> : null;

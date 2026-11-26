@@ -6468,17 +6468,28 @@
   // contexts"): the estimate used to be dropped after 24 hours, and whenever AionCore's count was more than 2% away from the size before, so a
   // chat opened the next day, or one whose count the compaction call itself had moved up, showed nearly full again (measured: 880K, 912K and
   // 420K of 1,000K in chats compacted the day before). Now the estimate stands while no call after the compaction has been measured (the
-  // launcher's cache record, aiondx.cache.conv.<chat>.at) and AionCore's count is not below the size before (a count that fell is a new one).
+  // launcher's cache record, aiondx.cache.conv.<chat>.at).
+  // Also measured that day: after a compaction AionCore's count stops following the chat at all. It stays at the size before however many
+  // replies come (912,907 against 158,112 measured on the last call; 880,504 against 201,458), in every compacted chat where the two
+  // differed. So for a Claude chat the size is the launcher's own measurement of its last call (aiondx.cache.conv.<chat>.ctx: what was read
+  // from the cache, written to it and sent new), AionCore's count only where the launcher has none. The automatic compaction reads the same
+  // number: on AionCore's it compacted a chat a fifth full again each time its cache ran out.
   var CTX_COMPACT = 'aiondx.ctx.conv.';
   var ctxCompact = {};
   var ctxCompactLoaded = false;
-  function compactView(info) {
-    var r = info && info.convId ? ctxCompact[info.convId] : null;
-    if (!r || !(Number(r.tokens) > 0) || !(Number(r.pre) > 0)) return null;
-    var c = cacheConv[info.convId];
-    if (c && Number(c.at) > Number(r.at) + 2000) return null;            // a reply after the compaction was measured
-    return Number(info.used) >= Number(r.pre) * 0.98 ? r : null;         // AionCore still has the size before (or the compaction call's)
+  /** { used, est } for a chat: the estimate after a compaction no call has been measured since (est is its record), else the launcher's
+   *  measured size of the last call, else AionCore's count (used). */
+  function ctxMeasured(convId, used) {
+    var r = convId ? ctxCompact[convId] : null, c = convId ? cacheConv[convId] : null;
+    var cAt = c ? Number(c.at) || 0 : 0, cCtx = c ? Number(c.ctx) || 0 : 0;
+    if (r && Number(r.tokens) > 0 && Number(r.pre) > 0) {
+      var since = cAt > 0 ? cAt > Number(r.at) + 2000 : Number(used) < Number(r.pre) * 0.98;
+      if (!since) return { used: Number(r.tokens), est: r };
+    }
+    if (cCtx > 0) return { used: cCtx, est: null };
+    return { used: Number(used) || 0, est: null };
   }
+  function compactView(info) { return info && info.convId ? ctxMeasured(info.convId, info.used).est : null; }
   /** A compaction that just finished, said once where the chat is on screen: the agent's own report would cost a turn; the launcher's
    *  numbers cost nothing. */
   function compactedNotice(convId, r) {
@@ -11075,6 +11086,8 @@
       // busy: this chat's own conversation has a turn in flight. The cache state reads this, not the team's run-state, which can disagree
       // with the conversation (2026-11-11: a team lead idle for 22 minutes showed no cache state at all).
       var busy = convBusy(d);
+      // a Claude chat's size: the launcher's measurement of its last call (AionCore's count stops after a compaction)
+      if (ctxProvider(d) === 'claude') { var cm = ctxMeasured(convId, used); if (!cm.est) used = cm.used; }
       var info = { used: used, limit: limit, updatedAt: Number(d.modified_at) || old.updatedAt || 0, provider: ctxProvider(d), cost: cost || old.cost || null, busy: busy, convId: convId };
       ctxInfo[k] = info;
       try { localStorage.setItem('aiondx.ctx.' + convId, JSON.stringify(info)); } catch (er) {}
@@ -14231,7 +14244,7 @@
     items: [
       ['Keep some lanes, leave the rest', 'In a team’s menu, Turn back into separate chats has a Keep box for every lane, the lead’s too. Ticked lanes become chats of their own; the ones you untick are left behind with the team, archived (Settings > Archived brings one back) or, if you choose, deleted. Agents can do it for you on your word.'],
       ['Ctrl+Z as in other programs', 'In the message box, Ctrl+Z takes back the last word you typed, a paste, or text put in by voice or an @@ name, and brings deleted text back selected; Ctrl+Y or Ctrl+Shift+Z puts it back. Right-click the box for Undo and Redo too. Each chat keeps its own history until you send.'],
-      ['The context ring after a compaction', 'When a chat compacts, a notice says how big it is now and how big it was, and the context ring shows the new size at once, an estimate until the next reply measures it. It no longer goes back to nearly full the next day. Agents read the same number (aiondx context) and say it in their first reply after a compaction.'],
+      ['The context ring after a compaction', 'When a chat compacts, a notice says how big it is now and how big it was, and the context ring shows the new size at once. A Claude chat’s ring now shows the size AionDX measures on every reply: after a compaction it no longer sticks at the size before, and a chat is no longer compacted again because of that old number. Agents read the same number (aiondx context) and say it in their first reply after a compaction.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.6', date: '2026-11-24', items: [
@@ -14797,8 +14810,8 @@
         var g = await getJson('/api/conversations/' + encodeURIComponent(convId) + '/usage');
         var u = g && g.data;
         // AionCore keeps the size from before a compaction until the next reply; the launcher's estimate after it wins while that holds
-        var cmpd = u ? compactView({ convId: convId, used: Number(u.used) }) : null;
-        if (u && cmpd) u = { used: Number(cmpd.tokens), size: u.size };
+        var cmpd = u ? ctxMeasured(convId, Number(u.used)) : null;
+        if (u && cmpd) u = { used: cmpd.used, size: u.size };
         if (!u || !(Number(u.size) > 0) || Number(u.used) / Number(u.size) < 0.5) { autoAsked[convId] = Number(rec.at); continue; }
         autoAsked[convId] = Number(rec.at);
         s.compactAt = Date.now();
@@ -14850,7 +14863,7 @@
       getJson('/api/conversations/' + encodeURIComponent(convId) + '/usage').then(function (g) {
         var u = g && g.data;
         if (!ctxMenuEl || ctxMenuEl !== m) return;
-        var fresh = u && Number(u.used) > 0 ? { used: Number(u.used), limit: Number(u.size) || 0, cost: u.cost && Number(u.cost.amount) > 0 ? { amount: Number(u.cost.amount), currency: String(u.cost.currency || 'USD') } : null } : null;
+        var fresh = u && Number(u.used) > 0 ? { used: ctxMeasured(convId, Number(u.used)).est ? Number(u.used) : ctxMeasured(convId, Number(u.used)).used, limit: Number(u.size) || 0, cost: u.cost && Number(u.cost.amount) > 0 ? { amount: Number(u.cost.amount), currency: String(u.cost.currency || 'USD') } : null } : null;
         m.querySelector('.aiondx-ctxmenu-read').textContent = fresh ? ctxReading(fresh, compactView({ convId: convId, used: fresh.used })) +(cl ? '\n' + cl : '') : 'No context count yet for this chat (it starts after its first reply).';
       }, function () {});
     }
