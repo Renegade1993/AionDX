@@ -107,7 +107,7 @@ namespace AionDx
             return dx;
         }
 
-        const string Version = "1.16.1";
+        const string Version = "1.16.2";
         const long HoldDefault = 45;   // minutes of short replies the Loop keeps the cache warm through (aiondx-ui.js HOLD_MIN)
         const long HoldMax = 240;      // aiondx-ui.js HOLD_MIN_MAX
         const long ResumeWarmMaxMs = 50 * 60000;   // aiondx-ui.js RESUME_WARM_MAX_MS
@@ -2032,10 +2032,20 @@ namespace AionDx
             bool auto = true;
             try
             {
-                var keys = "aiondx.cache.conv." + convId + ",aiondx.options";
+                var keys = "aiondx.cache.conv." + convId + ",aiondx.ctx.conv." + convId + ",aiondx.options";
                 var d = Api("GET", "/api/settings/client?keys=" + Uri.EscapeDataString(keys), null) as Dictionary<string, object>;
                 var rec = d != null && d.ContainsKey("aiondx.cache.conv." + convId) ? d["aiondx.cache.conv." + convId] as Dictionary<string, object> : null;
                 if (rec != null) { until = Long(rec, "until"); at = Long(rec, "at"); }
+                // After a compaction AionCore keeps the size from before until a reply measures the new one. The launcher's estimate
+                // (aiondx.ctx.conv.<chat>) stands while no call after the compaction is measured and AionCore's count has not fallen
+                // below the size before: the same rule as the context ring (November 26th, 2026).
+                var cx = d != null && d.ContainsKey("aiondx.ctx.conv." + convId) ? d["aiondx.ctx.conv." + convId] as Dictionary<string, object> : null;
+                long cAt = cx != null ? Long(cx, "at") : 0, cTok = cx != null ? Long(cx, "tokens") : 0, cPre = cx != null ? Long(cx, "pre") : 0;
+                if (cTok > 0 && cPre > 0 && !(at > cAt + 2000) && used >= cPre * 0.98)
+                {
+                    r["measuredUsed"] = used; r["used"] = cTok; r["estimated"] = true; r["compactedAt"] = cAt; r["compactedFrom"] = cPre;
+                    r["pct"] = size > 0 ? Math.Round(cTok * 1000.0 / size) / 10.0 : -1.0;
+                }
                 var opts = d != null && d.ContainsKey("aiondx.options") ? d["aiondx.options"] as Dictionary<string, object> : null;
                 var vals = opts != null && opts.ContainsKey("values") ? opts["values"] as Dictionary<string, object> : null;
                 if (vals != null && vals.ContainsKey("compact.auto") && vals["compact.auto"] is bool) auto = (bool)vals["compact.auto"];
@@ -2050,7 +2060,11 @@ namespace AionDx
             long used = Long(c, "used"), size = Long(c, "size");
             double pct = c["pct"] is double ? (double)c["pct"] : -1;
             var sb = new StringBuilder();
-            if (used <= 0) sb.Append("Context: no count yet for this chat (it starts after its first reply).");
+            bool est = c.ContainsKey("estimated") && c["estimated"] is bool && (bool)c["estimated"];
+            if (est)
+                sb.Append("Context: about " + (used / 1000) + "K" + (size > 0 ? " of " + (size / 1000) + "K tokens, " + pct.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "% full" : " tokens") +
+                    ", compacted at " + Hhmm(Long(c, "compactedAt")) + " from " + (Long(c, "compactedFrom") / 1000) + "K (an estimate until the next reply measures it).");
+            else if (used <= 0) sb.Append("Context: no count yet for this chat (it starts after its first reply).");
             else if (size > 0) sb.Append("Context: " + (used / 1000) + "K of " + (size / 1000) + "K tokens, " + pct.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "% full.");
             else sb.Append("Context: " + (used / 1000) + "K tokens; the window size is not known.");
             long until = Long(c, "cacheUntil"), at = Long(c, "lastCall");

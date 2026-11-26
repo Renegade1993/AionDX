@@ -310,6 +310,11 @@ is good, and whether AionDX compacts it by itself. `loop status` shows the same 
 a few minutes before the cache runs out, while the Loop is off and no turn is running (the user can switch that off by clicking the
 context ring). If it says automatic compaction is off, compact now with `"{{AIONDX}}" loop set --compact --note "over half full"`.
 
+Right after a compaction (your context starts with a summary of the earlier conversation), the reading is the launcher's estimate,
+"Context: about 25K of 1000K tokens, ... compacted at 14:02 from 912K (an estimate until the next reply measures it)"; the ring shows the
+same. Report back: the first reply you write after a compaction starts with that one line from `"{{AIONDX}}" context`, so the user
+sees the compaction worked. Do not compact again on a near-full count that says it is from before the compaction.
+
 ## Telling another chat something
 
 ```

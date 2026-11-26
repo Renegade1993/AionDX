@@ -990,6 +990,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('loop status carries the same context line', /\nContext: 123K of 200K tokens, 61\.7% full\./.test(ls.stdout), ls.stdout);
     const ctool = await solo.rpc('tools/call', { name: 'context_status', arguments: {} });
     check('the context_status tool answers the same', /^Context: 123K of 200K tokens/.test(ctool.result.content[0].text), JSON.stringify(ctool));
+    // After a compaction AionCore keeps the size from before (123,456 here) until a reply is measured; the launcher's estimate stands until then
+    // (November 26th, 2026: chats compacted the day before read nearly full)
+    kv['aiondx.ctx.conv.convS'] = { v: 1, at: now - 30 * 3600000, pre: 123456, post: 9000, fixed: 3000, tokens: 12000, estimated: true };
+    kv['aiondx.cache.conv.convS'] = { v: 1, at: now - 31 * 3600000, until: now - 30 * 3600000, ttl: '1h' };
+    cx = await cli(['context'], 'convS');
+    check('after a compaction, a day and more ago with no reply since: the estimate, said to be one, not the size before',
+      cx.status === 0 && /^Context: about 12K of 200K tokens, 6\.0% full, compacted at \d\d:\d\d from 123K \(an estimate until the next reply measures it\)\./.test(cx.stdout) && !/Over half full/.test(cx.stdout), cx.stdout);
+    cx = await cli(['context', '--json'], 'convS');
+    cj = null; try { cj = JSON.parse(cx.stdout); } catch (e) { /* shown below */ }
+    check('and --json gives the estimate with the measured count beside it', cj && cj.used === 12000 && cj.estimated === true && cj.measuredUsed === 123456 && cj.pct === 6, cx.stdout);
+    kv['aiondx.cache.conv.convS'] = { v: 1, at: now - 60000, until: now + 3000000, ttl: '1h' };
+    cx = await cli(['context'], 'convS');
+    check('a reply measured after the compaction: AionCore\'s count again', /^Context: 123K of 200K tokens, 61\.7% full\./.test(cx.stdout), cx.stdout);
+    delete kv['aiondx.ctx.conv.convS'];
     delete kv['aiondx.cache.conv.convS'];
     let sd = await cli(['send', '--to', 'convL', '--message', 'Plan is in DX Docs.'], 'convS');
     const sent = requests.filter((q) => q.path === '/api/runtime/session-messages/send').pop();

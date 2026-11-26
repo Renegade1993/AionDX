@@ -4044,7 +4044,7 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW287 = ['Keep some lanes, leave the rest', 'Ctrl+Z as in other programs'];
+      const NEW287 = ['Keep some lanes, leave the rest', 'Ctrl+Z as in other programs', 'The context ring after a compaction'];
       const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'A chat becomes a team, and back', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
@@ -4100,7 +4100,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 50, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 51, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -5828,6 +5828,30 @@ async function pageTarget() {
       rg = await again();
       check(sc, 'right after a compaction the meter shows the estimate (23K, 11.5%) and says it is one',
         rg && Math.abs(1 - Number(rg.off) / Number(rg.dash) - 0.115) < 0.01 && /^Compacted at \d\d:\d\d: about 23K now \(11\.5% of 200K\), down from 84K\. An estimate until the next reply measures it\./.test(rg.title), JSON.stringify(rg));
+      // November 26th, 2026: the compaction is said once where the chat is on screen, from the launcher's numbers (no agent turn)
+      let ctxT = (await toasts()).filter((x) => /compacted: about/.test(x));
+      await clogShot('0.28.7', 'The context ring after a compaction', '.aiondx-toasts .aiondx-toast');
+      check(sc, 'a compaction that just finished is said once: the size now and the size before', ctxT.length === 1 && /^this chat compacted: about 23K tokens now, down from 84K\./.test(ctxT[0]), JSON.stringify(ctxT));
+      await js('window.__aionDx.pullNow()');
+      await sleep(300);
+      check(sc, 'and not again at the next read of the store', (await toasts()).filter((x) => /compacted: about/.test(x)).length === 1);
+      // the estimate stays until a reply after the compaction is measured: a day and more later it still shows (it used to go after 24 hours
+      // and the ring read the size before), and so does a count the compaction call itself moved above the size before
+      const cacheWas = await js(`JSON.stringify(window.__stub.store['aiondx.cache.conv.harness1'] || null)`);
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 31 * 3600000, until: Date.now() - 30 * 3600000, tailUntil: Date.now() - 30 * 3600000, ttl: '1h' });
+      await putStore('aiondx.ctx.conv.harness1', { v: 1, at: Date.now() - 30 * 3600000, pre: 84000, post: 3000, fixed: 20000, tokens: 23000, estimated: true });
+      await js('window.__aionDx.pullNow()');
+      rg = await again();
+      check(sc, 'a day and more after the compaction, with no reply since, the meter still shows the estimate', rg && /^Compacted at \d\d:\d\d: about 23K now/.test(rg.title), JSON.stringify(rg));
+      check(sc, 'and an old compaction is not announced', (await toasts()).filter((x) => /compacted: about 23K/.test(x)).length <= 1);
+      await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.last_token_usage = { total_tokens: 86500 }; return 0; })()`);
+      rg = await again();
+      check(sc, 'a count above the size before (the compaction call\'s own) still shows the estimate', rg && /^Compacted at \d\d:\d\d: about 23K now/.test(rg.title), JSON.stringify(rg));
+      await putStore('aiondx.cache.conv.harness1', { v: 1, at: Date.now() - 60000, until: Date.now() + 3000000, tailUntil: Date.now() + 3000000, ttl: '1h' });
+      await js('window.__aionDx.pullNow()');
+      rg = await again();
+      check(sc, 'a reply measured after the compaction (the launcher\'s record) ends the estimate', rg && !/Compacted at/.test(rg.title) && /43\.3% of the context window used/.test(rg.title), JSON.stringify(rg));
+      await js(`(() => { const w = ${cacheWas}; if (w) window.__stub.store['aiondx.cache.conv.harness1'] = w; else delete window.__stub.store['aiondx.cache.conv.harness1']; return 0; })()`);
       await js(`(() => { const r = window.__stub.routes['GET /api/conversations/harness1']; r.data.extra.last_token_usage = { total_tokens: 26000 }; return 0; })()`);
       rg = await again();
       check(sc, 'the next reply\'s count replaces the estimate', rg && /13\.0% of the context window used \(26K of 200K\)/.test(rg.title) && !/Compacted at/.test(rg.title), JSON.stringify(rg));

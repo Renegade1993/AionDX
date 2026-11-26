@@ -6437,8 +6437,11 @@
     usageAcct = a;
     usageConv = c;
     cacheConv = cc;
-    var newCompact = Object.keys(cx).some(function (id) { return !ctxCompact[id] || ctxCompact[id].at !== cx[id].at; });
+    var fresh = Object.keys(cx).filter(function (id) { return !ctxCompact[id] || ctxCompact[id].at !== cx[id].at; });
+    var newCompact = fresh.length > 0;
     ctxCompact = cx;
+    if (ctxCompactLoaded) fresh.forEach(function (id) { try { compactedNotice(id, cx[id]); } catch (e) { console.log('[dx] compaction notice', e); } });
+    ctxCompactLoaded = true;
     if (newCompact) { ctxAsk = {}; try { renderSched(); } catch (e) {} }
     cacheAcct = ca;
     try { checkCacheLength(ca); } catch (e) { console.log('[dx] cache length check failed', e); }
@@ -6460,13 +6463,34 @@
   // reading only sets it.
   // The size after a compaction (R-103, 2026-11-12): the launcher writes aiondx.ctx.conv.<chat> = { at, pre, post, fixed, tokens } when Claude
   // reports a finished compaction (claude-stream-proxy.js, readShare). AionCore keeps the size from before until the next reply measures the new
-  // one, so the meter used to show the old size. While the chat's count still equals the size before (within 2%), the meter shows the estimate.
+  // one, so the meter used to show the old size. The meter shows the estimate until a reply after the compaction is measured.
+  // November 26th, 2026 (K: "not seeing an updated context meter after compactions ... it looks like the agent is reloading with near-full
+  // contexts"): the estimate used to be dropped after 24 hours, and whenever AionCore's count was more than 2% away from the size before, so a
+  // chat opened the next day, or one whose count the compaction call itself had moved up, showed nearly full again (measured: 880K, 912K and
+  // 420K of 1,000K in chats compacted the day before). Now the estimate stands while no call after the compaction has been measured (the
+  // launcher's cache record, aiondx.cache.conv.<chat>.at) and AionCore's count is not below the size before (a count that fell is a new one).
   var CTX_COMPACT = 'aiondx.ctx.conv.';
   var ctxCompact = {};
+  var ctxCompactLoaded = false;
   function compactView(info) {
     var r = info && info.convId ? ctxCompact[info.convId] : null;
-    if (!r || !(Number(r.tokens) > 0) || !(Number(r.pre) > 0) || Date.now() - Number(r.at) > 86400000) return null;
-    return Math.abs(Number(info.used) - Number(r.pre)) <= Math.max(500, Number(r.pre) * 0.02) ? r : null;
+    if (!r || !(Number(r.tokens) > 0) || !(Number(r.pre) > 0)) return null;
+    var c = cacheConv[info.convId];
+    if (c && Number(c.at) > Number(r.at) + 2000) return null;            // a reply after the compaction was measured
+    return Number(info.used) >= Number(r.pre) * 0.98 ? r : null;         // AionCore still has the size before (or the compaction call's)
+  }
+  /** A compaction that just finished, said once where the chat is on screen: the agent's own report would cost a turn; the launcher's
+   *  numbers cost nothing. */
+  function compactedNotice(convId, r) {
+    if (!r || !(Number(r.tokens) > 0) || !(Number(r.at) > 0) || Date.now() - Number(r.at) > 5 * 60000) return;
+    var t = targets().filter(function (x) {
+      if (x.kind === 'conv') return x.convId === convId;
+      return !!(teamCache[x.teamId] && teamCache[x.teamId].map[x.slotId] === convId);
+    })[0];
+    if (!t) return;
+    var k = function (n) { n = Number(n) || 0; return n >= 1000 ? Math.round(n / 1000) + 'K' : String(n); };
+    notify(t, '{who} compacted: about ' + k(r.tokens) + ' tokens now, down from ' + k(r.pre) + '.',
+      'The context ring shows this until the next reply measures it.');
   }
   var CACHE_ACCT = 'aiondx.cache.acct.';
   var CACHE_SEEN = 'aiondx.dx.cacheLen.';
@@ -14207,6 +14231,7 @@
     items: [
       ['Keep some lanes, leave the rest', 'In a team’s menu, Turn back into separate chats has a Keep box for every lane, the lead’s too. Ticked lanes become chats of their own; the ones you untick are left behind with the team, archived (Settings > Archived brings one back) or, if you choose, deleted. Agents can do it for you on your word.'],
       ['Ctrl+Z as in other programs', 'In the message box, Ctrl+Z takes back the last word you typed, a paste, or text put in by voice or an @@ name, and brings deleted text back selected; Ctrl+Y or Ctrl+Shift+Z puts it back. Right-click the box for Undo and Redo too. Each chat keeps its own history until you send.'],
+      ['The context ring after a compaction', 'When a chat compacts, a notice says how big it is now and how big it was, and the context ring shows the new size at once, an estimate until the next reply measures it. It no longer goes back to nearly full the next day. Agents read the same number (aiondx context) and say it in their first reply after a compaction.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.6', date: '2026-11-24', items: [
