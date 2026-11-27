@@ -2252,6 +2252,7 @@ async function pageTarget() {
         ' | top: ' + (await js(`(() => { const e = document.querySelector('[data-testid="aiondx-accent"] .aiondx-swatch[data-color="#a78bfa"]'); const r = e.getBoundingClientRect(); const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return t ? t.tagName + '#' + t.id + ' ' + t.outerHTML.slice(0, 200) + ' parent ' + (t.parentElement ? t.parentElement.tagName + '#' + t.parentElement.id + '.' + t.parentElement.className : '') + ' | swatch ' + JSON.stringify([r.left, r.top, r.width, r.height]) : 'none'; })()`)));
       const stored = (await store())['aiondx.theme'];
       check(sc, 'the choice goes to the settings store', stored && stored.accent === '#a78bfa' && stored.dividers === true, JSON.stringify(stored));
+      await clogShot('0.28.7', 'Your accent under every theme', '[data-testid="aiondx-accent"]');
       check(sc, 'the chosen swatch is marked', await js(`document.querySelector('.aiondx-swatch[data-color="#a78bfa"]').getAttribute('aria-checked') === 'true'`));
       await js(`(() => { const e = document.querySelector(${JSON.stringify('[data-testid="aiondx-accent"] .aiondx-accent-dividers')}); if (e) e.scrollIntoView({ block: 'center' }); return 0; })()`); await sleep(150); await humanClick('[data-testid="aiondx-accent"] .aiondx-accent-dividers');
       const css2 = await js("(document.getElementById('aiondx-accent-vars') || {}).textContent || ''");
@@ -2260,6 +2261,81 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       const kept = await js("(document.getElementById('aiondx-accent-vars') || {}).textContent || ''");
       check(sc, 'after a reload the choice applies at once, before the store answers', /--aiondx-accent:#a78bfa/.test(kept), kept);
+    }
+
+    // ---- the accent under every theme, and the AionDX theme kept through AionUi's light/dark switch (2026-11-26) ----
+    {
+      const sc = 'themekeep';
+      await load('theme=dark');
+      await js(`(() => { localStorage.removeItem('aionui.dx.theme.last'); localStorage.removeItem('aionui.dx.theme.repaired'); return 0; })()`);
+      await putStore('aiondx.provisioned', { v: 2, at: Date.now(), did: [] });
+      await putStore('aiondx.theme', { dividers: true, accent: '#e63333', at: Date.now() + 1000 });
+      await js('window.__aionDx.pullNow()');
+      await sleep(400);
+      // K's machine: AionUi's own Dark theme, a red accent that showed nowhere
+      const p6 = await js(`getComputedStyle(document.body).getPropertyValue('--primary-6').trim()`);
+      check(sc, 'under AionUi\'s own Dark theme the accent is the main colour (Arco primary-6 230, 51, 51)', p6.replace(/\s/g, '') === '230,51,51', p6);
+      const prim = await js(`getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()`);
+      check(sc, 'and AionUi\'s own --primary token', /#e63333/i.test(prim) || /var\(--aiondx-accent\)/.test(prim), prim);
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
+      await sleep(700);
+      const p6l = await js(`getComputedStyle(document.body).getPropertyValue('--primary-6').trim()`);
+      check(sc, 'under AionUi\'s own Light theme it is the deeper shade that reads on white (161, 36, 36)', p6l.replace(/\s/g, '') === '161,36,36', p6l);
+      await js(`(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.body.setAttribute('arco-theme', 'dark'); return 0; })()`);
+      // the switch: AionUi's light/dark button puts its own Light in place of AionDX Dark; AionDX selects AionDX Light instead
+      const DARK = { id: 'aiondx-dark', name: 'AionDX Dark', appearance: 'dark', builtin: false, tokens: {}, css: '' };
+      const LIGHT = { id: 'aiondx-light', name: 'AionDX Light', appearance: 'light', builtin: false, tokens: {}, css: '' };
+      await js(`(() => { window.__emits = []; window.electronAPI = { emit: (n, d) => { window.__emits.push({ n: n, d: d }); return Promise.resolve(); } }; return 0; })()`);
+      await putStore('theme.userThemes', [DARK, LIGHT]);
+      await putStore('theme.activeId', 'aiondx-dark');
+      await js('window.__aionDx.pullNow()');
+      await sleep(300);
+      await putStore('theme.activeId', 'light');
+      await js('window.__aionDx.pullNow()');
+      await sleep(600);
+      let st = await store();
+      let em = await js('window.__emits');
+      check(sc, 'AionUi\'s switch from AionDX Dark to its own Light: AionDX Light is chosen and saved instead', st['theme.activeId'] === 'aiondx-light', st['theme.activeId']);
+      check(sc, 'and applied the way AionUi switches, through the main process (theme:set-active)', em.length === 1 && em[0].n === 'subscribe-theme:set-active' && em[0].d && em[0].d.data && em[0].d.data.id === 'aiondx-light' && !!em[0].d.id, JSON.stringify(em));
+      check(sc, 'without a notice', !(await toasts()).some((x) => /Your theme is/.test(x)));
+      // the light/dark button shows on every Settings page, the Appearance page too: pressed there, it still keeps the AionDX family
+      const hashWas = await js('location.hash');
+      await js(`(() => { location.hash = '#/settings/appearance'; return 0; })()`);
+      await sleep(200);
+      await putStore('theme.activeId', 'dark');
+      await js('window.__aionDx.pullNow()');
+      await sleep(600);
+      check(sc, 'the light/dark button pressed on the Appearance page: AionDX Dark, not AionUi\'s own', (await store())['theme.activeId'] === 'aiondx-dark' && (await js('window.__emits.length')) === 2, (await store())['theme.activeId']);
+      // a built-in theme picked from the gallery (a click on its card) stays as chosen
+      await js(`(() => { const c = document.createElement('div'); c.setAttribute('data-testid', 'theme-card-light'); c.id = 'fake-card'; c.textContent = 'Light';
+        c.style.cssText = 'position:fixed;left:20px;top:20px;width:120px;height:60px;z-index:99999;background:#fff'; document.body.appendChild(c); return 0; })()`);
+      await humanClick('#fake-card');
+      await putStore('theme.activeId', 'light');
+      await js('window.__aionDx.pullNow()');
+      await sleep(600);
+      check(sc, 'a built-in theme picked from the gallery is left as chosen', (await store())['theme.activeId'] === 'light' && (await js('window.__emits.length')) === 2, (await store())['theme.activeId']);
+      await js(`(() => { document.getElementById('fake-card').remove(); location.hash = ${JSON.stringify(hashWas || '')}; return 0; })()`);
+      await sleep(200);
+      await js('window.__aionDx.pullNow()');
+      await sleep(600);
+      check(sc, 'and stays when you leave the page', (await store())['theme.activeId'] === 'light' && (await js('window.__emits.length')) === 2);
+      await putStore('theme.activeId', 'dark');
+      // a machine that lost its AionDX theme before this build (nothing remembered, set up with the themes): back once, with a notice
+      await js('window.__aionDx.themeUnpick()');
+      await js(`(() => { localStorage.removeItem('aionui.dx.theme.last'); localStorage.removeItem('aionui.dx.theme.repaired'); return 0; })()`);
+      await putStore('aiondx.provisioned', { v: 2, at: Date.now(), did: ['themes'] });
+      await js('window.__aionDx.pullNow()');
+      await sleep(700);
+      check(sc, 'a machine that lost AionDX Dark to the switch earlier gets it back once', (await store())['theme.activeId'] === 'aiondx-dark' && (await js('window.__emits.length')) === 3, (await store())['theme.activeId']);
+      const tt = (await toasts()).filter((x) => /Your theme is/.test(x));
+      check(sc, 'with a notice that says what happened', tt.length === 1 && /^Your theme is AionDX Dark again, with your accent\.AionUi’s light\/dark switch had put its own Dark theme in its place\./.test(tt[0]), JSON.stringify(tt));
+      await js(`(() => { localStorage.removeItem('aionui.dx.theme.last'); return 0; })()`);
+      await putStore('theme.activeId', 'dark');
+      await js('window.__aionDx.pullNow()');
+      await sleep(600);
+      check(sc, 'only once', (await store())['theme.activeId'] === 'dark' && (await js('window.__emits.length')) === 3);
+      await js(`(() => { delete window.electronAPI; return 0; })()`);
+      for (const k of ['theme.userThemes', 'theme.activeId', 'aiondx.provisioned', 'aiondx.theme']) await js(`(() => { delete window.__stub.store[${JSON.stringify(k)}]; return 0; })()`);
     }
 
 
@@ -4044,7 +4120,7 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW287 = ['Keep some lanes, leave the rest', 'Ctrl+Z as in other programs', 'The context ring after a compaction'];
+      const NEW287 = ['Keep some lanes, leave the rest', 'Ctrl+Z as in other programs', 'The context ring after a compaction', 'Your accent under every theme'];
       const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'A chat becomes a team, and back', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
@@ -4100,7 +4176,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 51, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 52, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }

@@ -34,6 +34,10 @@ echo ==== swap a member >> "%OUT%"
 node tools\test-live-swap.js >> "%OUT%" 2>&1
 echo ==== look >> "%OUT%"
 node tools\test-live-look.js >> "%OUT%" 2>&1
+echo ==== theme and accent >> "%OUT%"
+node tools\test-live-theme.js >> "%OUT%" 2>&1
+echo ==== undo >> "%OUT%"
+node tools\test-live-undo.js >> "%OUT%" 2>&1
 echo ==== click >> "%OUT%"
 node tools\dx-harness\click-test.js >> "%OUT%" 2>&1
 echo ==== cleanup >> "%OUT%"

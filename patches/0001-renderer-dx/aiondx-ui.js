@@ -1704,6 +1704,7 @@
     takeDrafts(g.data);
     takeSched(g.data);
     provision(g.data).catch(function () {});
+    try { themeKeep(g.data); } catch (e) { console.log('[dx] theme keep', e); }
     takeWelcome(g.data);
     if (!sharedReady) { sharedReady = true; migrate(); }
     Object.keys(shared).forEach(function (k) { var t = targetOfKey(k); if (t) applyShared(t, shared[k]); });
@@ -2352,6 +2353,17 @@
       var strong = rgb.map(function (c) { return Math.round(c * 0.7); });
       css += 'html:root{--aiondx-accent:' + p.accent.toLowerCase() + ' !important;--aiondx-accent-rgb:' + rgb.join(', ') +
         ' !important;--aiondx-accent-strong-rgb:' + strong.join(', ') + ' !important;--aiondx-accent-ink:' + onColour(p.accent) + ' !important}';
+      // The accent you chose colours AionUi's own main colour under every theme (November 26th, 2026: K, "my accent color is set to
+      // red...where is the accent color?"). Only the AionDX themes wired it in, and AionUi's light/dark switch puts its own Light or
+      // Dark in their place (themeKeep, below), under which the accent reached nothing but AionDX's few own controls.
+      css += "html body[arco-theme='dark']{--primary-5:var(--aiondx-accent-rgb) !important;--primary-6:var(--aiondx-accent-rgb) !important;" +
+          '--primary-7:var(--aiondx-accent-rgb) !important;--arcoblue-6:var(--aiondx-accent-rgb) !important}' +
+        "html body[arco-theme='light']{--primary-5:var(--aiondx-accent-strong-rgb) !important;--primary-6:var(--aiondx-accent-strong-rgb) !important;" +
+          '--primary-7:var(--aiondx-accent-strong-rgb) !important;--arcoblue-6:var(--aiondx-accent-strong-rgb) !important}' +
+        "html:root[data-theme='dark']{--primary:var(--aiondx-accent) !important;--brand:var(--aiondx-accent) !important;" +
+          '--brand-hover:color-mix(in srgb, var(--aiondx-accent) 70%, #ffffff) !important}' +
+        "html:root[data-theme='light']{--primary:rgb(var(--aiondx-accent-strong-rgb)) !important;--brand:rgb(var(--aiondx-accent-strong-rgb)) !important;" +
+          '--brand-hover:color-mix(in srgb, var(--aiondx-accent) 80%, #000000) !important}';
     }
     ['dark', 'light'].forEach(function (mode) {
       var hex = p && p[mode === 'dark' ? 'bgDark' : 'bgLight'];
@@ -7347,6 +7359,80 @@
         if (w && w.ok) { did.push('themes'); needReload(); } else failed.push('themes');
       }
     }
+  }
+
+  // ---------------------------------------------------------------- the AionDX theme stays through a light/dark switch (2026-11-26)
+
+  // AionUi's light/dark switch (the sidebar's button, and the Light/Dark choice) always selects AionUi's own built-in Light or Dark
+  // theme (ThemeContext: appearance === 'dark' ? DARK_THEME_ID : LIGHT_THEME_ID). So one press took a machine out of AionDX Dark for
+  // good, and with it the accent, the backdrop and the dividers: K's machine had been on the built-in Dark since November 16th, 2026,
+  // with a red accent that showed nowhere. Now, when the active theme goes from an AionDX theme to a built-in Light, Dark or System,
+  // AionDX selects the AionDX theme of that mode instead, the way AionUi itself switches (the main process's theme:set-active relay,
+  // which every window applies at once), and saves it. A theme picked in the Appearance page's gallery (a click on a card, or in a
+  // dialog over that page, such as deleting a theme) is left as chosen. The light/dark button shows on every Settings page, the
+  // Appearance page too, so the page alone says nothing. A machine that lost its AionDX theme before this build gets it back once,
+  // with a notice.
+  var THEME_LAST_KEY = KEY_PREFIX + 'theme.last';
+  var THEME_REPAIRED_KEY = KEY_PREFIX + 'theme.repaired';
+  var themeKeepBusy = false;
+  var themePickedAt = 0;
+  function themePickedRecently() { return Date.now() - themePickedAt < 15000; }
+  function aiondxThemeFor(list, mode) {
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === 'aiondx-' + mode) return list[i];
+    return null;
+  }
+  function themeSwitchTo(theme) {
+    var api = window.electronAPI;
+    if (!api || typeof api.emit !== 'function') return false;
+    try { api.emit('subscribe-theme:set-active', { id: 'aiondx-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), data: theme }); }
+    catch (e) { return false; }
+    return true;
+  }
+  function themeKeep(data) {
+    if (themeKeepBusy || disabled()) return;
+    var active = typeof data['theme.activeId'] === 'string' ? data['theme.activeId'] : '';
+    var list = Array.isArray(data['theme.userThemes']) ? data['theme.userThemes'] : [];
+    if (!active || !aiondxThemeFor(list, 'dark')) return;
+    var last = '';
+    try { last = localStorage.getItem(THEME_LAST_KEY) || ''; } catch (e) { return; }
+    var builtin = active === 'dark' || active === 'light' || active === 'system';
+    var mode = active === 'system' ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : active;
+    var fromOurs = /^aiondx-/.test(last);
+    var prov = data[PROVISION_KEY];
+    // before this build nothing was remembered: a machine set up with the AionDX themes that is on a built-in one now lost it to the switch
+    var lostBefore = !last && builtin && prov && Array.isArray(prov.did) && prov.did.indexOf('themes') >= 0 && !localStorage.getItem(THEME_REPAIRED_KEY);
+    if (builtin && (fromOurs || lostBefore) && !themePickedRecently()) {
+      var th = aiondxThemeFor(list, mode);
+      if (!th) return;
+      themeKeepBusy = true;
+      var body = {};
+      body['theme.activeId'] = th.id;
+      Promise.resolve(putPrefs(body)).then(function (r) {
+        if (!r || !r.ok) return;
+        themeSwitchTo(th);
+        try { localStorage.setItem(THEME_LAST_KEY, th.id); localStorage.setItem(THEME_REPAIRED_KEY, '1'); } catch (e) {}
+        console.log('[dx] theme: ' + active + ' -> ' + th.id + (lostBefore ? ' (repaired once)' : ' (kept through the light/dark switch)'));
+        if (lostBefore) toast('Your theme is ' + (th.name || 'AionDX') + ' again' + (themePrefs && hexRgb(themePrefs.accent) ? ', with your accent.' : '.'),
+          'AionUi\u2019s light/dark switch had put its own ' + (mode === 'dark' ? 'Dark' : 'Light') + ' theme in its place. It keeps the AionDX theme now. Settings > Appearance has every theme.');
+      }).catch(function () {}).then(function () { themeKeepBusy = false; });
+      return;
+    }
+    try { localStorage.setItem(THEME_LAST_KEY, active); } catch (e) {}
+  }
+  // The switch itself changes the page's mode attribute at once; the store is read again then rather than at the next 3-second read.
+  function watchThemeSwitch() {
+    window.addEventListener('click', function (ev) {
+      var el = ev.target && ev.target.closest ? ev.target : null;
+      if (!el) return;
+      var onAppearance = String(location.hash || '').indexOf('#/settings/appearance') === 0;
+      if (el.closest('[data-testid^="theme-card-"]') || (onAppearance && el.closest('.arco-modal'))) themePickedAt = Date.now();
+    }, true);
+    if (typeof MutationObserver !== 'function') return;
+    var timer = null;
+    new MutationObserver(function () {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () { timer = null; pullShared().catch(function () {}); }, 500);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   }
 
   // ---------------------------------------------------------------- Welcome to AionDX (build 2026-09-26.1)
@@ -14245,6 +14331,7 @@
       ['Keep some lanes, leave the rest', 'In a team’s menu, Turn back into separate chats has a Keep box for every lane, the lead’s too. Ticked lanes become chats of their own; the ones you untick are left behind with the team, archived (Settings > Archived brings one back) or, if you choose, deleted. Agents can do it for you on your word.'],
       ['Ctrl+Z as in other programs', 'In the message box, Ctrl+Z takes back the last word you typed, a paste, or text put in by voice or an @@ name, and brings deleted text back selected; Ctrl+Y or Ctrl+Shift+Z puts it back. Right-click the box for Undo and Redo too. Each chat keeps its own history until you send.'],
       ['The context ring after a compaction', 'When a chat compacts, a notice says how big it is now and how big it was, and the context ring shows the new size at once. A Claude chat’s ring now shows the size AionDX measures on every reply: after a compaction it no longer sticks at the size before, and a chat is no longer compacted again because of that old number. Agents read the same number (aiondx context) and say it in their first reply after a compaction.'],
+      ['Your accent under every theme', 'The accent you choose in Settings > Appearance now colours links, buttons and switches under every theme, AionUi’s own Light and Dark too. The light/dark button on the Settings pages keeps the AionDX theme: it used to put AionUi’s own Light or Dark in its place, which hid the accent. Where that happened, the AionDX theme comes back once by itself.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.6', date: '2026-11-24', items: [
@@ -18358,6 +18445,7 @@
     watchDrafts();
     watchRespondNow();
     watchUndo();
+    watchThemeSwitch();
     watchPermissionHover();
     watchAcctHover();
     loadGroups();
@@ -18429,6 +18517,7 @@
     acctAnswer: function (q) { return acctAnswer(q); },
     // the right-click menu (patch 0009): the message box's own Undo and Redo
     undoMenu: function () { return undoMenuState(); },
+    themeUnpick: function () { themePickedAt = 0; },
     undoStep: function (dir) { return undoStepIn(document.activeElement, dir < 0 ? -1 : 1); },
     clearTeamOps: function () { teamOps.length = 0; if (teamOps.timer) { clearInterval(teamOps.timer); teamOps.timer = null; } },
     moves: function (age) { return Object.keys(pendingMoves).map(function (k) { var m = pendingMoves[k]; if (age === 'retry') m.tried = 0; else if (age) m.at -= age; return k; }); },
