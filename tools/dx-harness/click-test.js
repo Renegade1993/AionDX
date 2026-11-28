@@ -2263,6 +2263,30 @@ async function pageTarget() {
       check(sc, 'after a reload the choice applies at once, before the store answers', /--aiondx-accent:#a78bfa/.test(kept), kept);
     }
 
+    // ---- a missed scheduled task can be run from its notice (2026-11-28) ----
+    {
+      const sc = 'missedtask';
+      await load('theme=dark');
+      await js(`(() => { window.__stub.routes['GET /api/cron/jobs'] = { success: true, data: [
+          { id: 'job-other', name: 'Office purchase list daily price check', metadata: { conversation_id: 'elsewhere' } },
+          { id: 'job-here', name: 'Office purchase list daily price check', metadata: { conversation_id: 'harness1' } } ] };
+        window.__stub.routes['POST /api/cron/jobs/job-here/run'] = { success: true };
+        const row = document.createElement('div'); row.className = 'bg-message-tips rd-8px p-x-12px p-y-8px'; row.id = 'fake-missed';
+        row.textContent = 'Scheduled task "Office purchase list daily price check" was missed while the system was unavailable. It was not run automatically.';
+        (document.querySelector('[data-testid="message-list-content"]') || document.body).appendChild(row); window.__calls.length = 0; return 0; })()`);
+      await js('window.__aionDx.repaint()');
+      await sleep(400);
+      check(sc, 'the missed-task notice gets a Run the task now button', (await js(`(document.querySelector('#fake-missed [data-testid="aiondx-run-task"]') || {}).textContent || ''`)) === 'Run the task now');
+      await shot('click-test-missed-task');
+      await clogShot('0.28.7', 'Run a missed task', '#fake-missed');
+      await humanClick('#fake-missed [data-testid="aiondx-run-task"]');
+      await sleep(600);
+      const runs = await js(`window.__calls.filter(c => c.method === 'POST' && /\\/api\\/cron\\/jobs\\/.*\\/run$/.test(c.path)).map(c => c.path)`);
+      check(sc, 'pressed, it runs this chat\'s task of that name through AionCore\'s run-now route', JSON.stringify(runs) === JSON.stringify(['/api/cron/jobs/job-here/run']), JSON.stringify(runs));
+      check(sc, 'and says it started', (await js(`document.querySelector('#fake-missed [data-testid="aiondx-run-task"]').textContent`)) === 'Started' && (await toasts()).some((x) => /^Running "Office purchase list daily price check" now\./.test(x)));
+      await js(`(() => { document.getElementById('fake-missed').remove(); delete window.__stub.routes['GET /api/cron/jobs']; return 0; })()`);
+    }
+
     // ---- the accent under every theme, and the AionDX theme kept through AionUi's light/dark switch (2026-11-26) ----
     {
       const sc = 'themekeep';
@@ -2272,7 +2296,7 @@ async function pageTarget() {
       await putStore('aiondx.theme', { dividers: true, accent: '#e63333', at: Date.now() + 1000 });
       await js('window.__aionDx.pullNow()');
       await sleep(400);
-      // K's machine: AionUi's own Dark theme, a red accent that showed nowhere
+      // as on one machine: AionUi's own Dark theme, a red accent that showed nowhere
       const p6 = await js(`getComputedStyle(document.body).getPropertyValue('--primary-6').trim()`);
       check(sc, 'under AionUi\'s own Dark theme the accent is the main colour (Arco primary-6 230, 51, 51)', p6.replace(/\s/g, '') === '230,51,51', p6);
       const prim = await js(`getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()`);
@@ -2618,7 +2642,21 @@ async function pageTarget() {
       await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
       await sleep(300);
       items = await menuItems();
-      check(sc, 'a member offers only the Claude agents to switch to in place (and, apart, the swap list)', items.filter((i) => i.group === 'here').length === 2 && items.every((i) => i.group === 'here' || i.group === 'swap'), JSON.stringify(items));
+      check(sc, 'a member offers only the Claude agents to switch to in place (and, apart, the swap list and its next model)', items.filter((i) => i.group === 'here').length === 2 && items.every((i) => i.group === 'here' || i.group === 'swap' || i.group === 'model'), JSON.stringify(items));
+      // November 28th, 2026: a lane that is not running offers the model it starts on (AionUi's own picker has nothing before it starts)
+      const models = items.filter((i) => i.group === 'model').map((i) => i.text.split(/Starts on this|Saved now/)[0]);
+      await clogShot('0.28.7', 'A lane\u2019s model before it starts', '.aiondx-acct-menu');
+      check(sc, 'a Claude lane that is not running lists the model it will start on: Default, Fable, Opus, Sonnet, Haiku', JSON.stringify(models) === JSON.stringify(['Default', 'Fable', 'Opus', 'Sonnet', 'Haiku']), JSON.stringify(models));
+      await js(`(() => { window.__stub.routes['PATCH /api/teams/team1/agents/slotB/model'] = { success: true }; window.__calls.length = 0; return 0; })()`);
+      await humanClick('.aiondx-acct-menu [data-model="fable"]');
+      await sleep(500);
+      const mset = await js(`window.__calls.filter(c => c.method === 'PATCH' && /\\/model$/.test(c.path)).map(c => [c.path, c.body])`);
+      check(sc, 'choosing Fable saves it for the lane, through AionCore\'s roster route, and starts nothing', mset.length === 1 && mset[0][0] === '/api/teams/team1/agents/slotB/model' && mset[0][1] && mset[0][1].model_id === 'fable' &&
+        (await js(`window.__calls.filter(c => /runtime\\/(restart|ensure)|\\/messages$/.test(c.path)).length`)) === 0, JSON.stringify(mset));
+      check(sc, 'and says so', (await toasts()).some((x) => /starts on Fable with its next message\.Nothing was started, so nothing was cached on the old model\./.test(x)), JSON.stringify(await toasts()));
+      await humanClick('[data-slot-id="slotB"] [data-testid="aiondx-account"]');
+      await sleep(300);
+      items = await menuItems();
       await humanClick('.aiondx-acct-menu [data-agent="cc33dd44"]');
       await humanClick('.aiondx-acct-menu .aiondx-acct-move');
       await sleep(400);
@@ -4120,7 +4158,7 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW287 = ['Keep some lanes, leave the rest', 'Ctrl+Z as in other programs', 'The context ring after a compaction', 'Your accent under every theme'];
+      const NEW287 = ['Keep some lanes, leave the rest', 'Ctrl+Z as in other programs', 'The context ring after a compaction', 'Your accent under every theme', 'Answer now in a team lane', 'A lane\u2019s model before it starts', 'Run a missed task'];
       const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'A chat becomes a team, and back', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
@@ -4133,7 +4171,8 @@ async function pageTarget() {
       const c6 = await card();
       check(sc, 'someone updating from 0.28.5 sees 0.28.7’s and 0.28.6’s, each saying how to use it', c6 && JSON.stringify(c6.names) === JSON.stringify(NEW287.concat(NEW286)) &&
         /Ctrl\+Z takes back/.test(c6.hows[1]) && /^Right-click a team member/.test(c6.hows[NEW287.length]) && /More colours/.test(c6.hows[NEW287.length]) && /your own answer/.test(c6.hows[NEW287.length + 1]) && /lightning bolt/.test(c6.hows[NEW287.length + 2]) && /\+ Add account/.test(c6.hows[NEW287.length + 3]) && /Make this a team/.test(c6.hows[NEW287.length + 4]) && /New Chat page/.test(c6.hows[NEW287.length + 5]) && /asleep/.test(c6.hows[NEW287.length + 6]), JSON.stringify(c6));
-      await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
+      await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');
+      await clogShot('0.28.7', 'Answer now in a team lane', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
@@ -4176,7 +4215,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 52, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 55, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }

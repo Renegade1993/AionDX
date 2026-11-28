@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-24.2';
+  var BUILD = '2026-11-28.1';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -581,7 +581,7 @@
   //            assistants: slotId -> assistant id }
   var teamCache = {};
   function readTeam(teamId, data) {
-    var c = { at: Date.now(), ok: false, name: '', map: {}, backend: {}, names: {}, assistants: {}, roles: {}, order: [] };
+    var c = { at: Date.now(), ok: false, name: '', map: {}, backend: {}, names: {}, assistants: {}, roles: {}, models: {}, order: [] };
     var members = data && (data.assistants || data.agents);
     if (Array.isArray(members)) {
       c.ok = true;
@@ -594,6 +594,7 @@
         c.names[m.slot_id] = String(m.name || m.assistant_name || '');
         c.assistants[m.slot_id] = String(m.assistant_id || '');
         c.roles[m.slot_id] = String(m.role || '');
+        c.models[m.slot_id] = String(m.model || '');
         c.order.push(String(m.slot_id));
       }
       c.order.sort(function (a, b) { return (isLeadRole(c.roles[b]) ? 1 : 0) - (isLeadRole(c.roles[a]) ? 1 : 0); });
@@ -2353,8 +2354,8 @@
       var strong = rgb.map(function (c) { return Math.round(c * 0.7); });
       css += 'html:root{--aiondx-accent:' + p.accent.toLowerCase() + ' !important;--aiondx-accent-rgb:' + rgb.join(', ') +
         ' !important;--aiondx-accent-strong-rgb:' + strong.join(', ') + ' !important;--aiondx-accent-ink:' + onColour(p.accent) + ' !important}';
-      // The accent you chose colours AionUi's own main colour under every theme (November 26th, 2026: K, "my accent color is set to
-      // red...where is the accent color?"). Only the AionDX themes wired it in, and AionUi's light/dark switch puts its own Light or
+      // The accent you chose colours AionUi's own main colour under every theme (a request of 2026-11-26: a chosen accent that showed
+      // nowhere). Only the AionDX themes wired it in, and AionUi's light/dark switch puts its own Light or
       // Dark in their place (themeKeep, below), under which the accent reached nothing but AionDX's few own controls.
       css += "html body[arco-theme='dark']{--primary-5:var(--aiondx-accent-rgb) !important;--primary-6:var(--aiondx-accent-rgb) !important;" +
           '--primary-7:var(--aiondx-accent-rgb) !important;--arcoblue-6:var(--aiondx-accent-rgb) !important}' +
@@ -6132,6 +6133,7 @@
         : 'A new chat starts fresh with the conversation so far; this chat stays as it is.';
     } else {
       note.textContent = 'The member restarts between turns and carries on with its memory of this chat, on the other account from its next turn.';
+      if (info.backend === 'claude') addNextModel(m, t);
       // A request of 2026-10-20: any agent type in any slot, the lead's included. AionCore's replace route (patch core-0006) keeps the slot, the name and the
       // role, gives the slot a new conversation on the new agent, and stops the team's running agents; they start again on the next message.
       var cache = teamCache[t.teamId];
@@ -6177,6 +6179,55 @@
       closeAcctMenu();
       switchAgent(t, convId, info, a).catch(function (e) { console.log('[dx] agent switch error', e); });
     });
+  }
+  // The model a lane starts on, chosen before it starts (a request of 2026-11-28: three team leads could not be moved to another model
+  // before they started, and starting them first would cache the conversation on the old model only to throw it away). AionUi's model picker in a lane's header reads its list from the running agent; before the lane starts,
+  // AionCore answers TEAM_RUNTIME_NOT_READY (409) and the picker has nothing, so the only way to a model was to start the lane on the old
+  // one first (a cache written on it, then thrown away). AionCore saves a lane's model without starting it (PATCH .../agents/{slot}/model,
+  // into the roster and the lane's own chat state; read at its next start). So a Claude lane's agent menu lists the Claude models while
+  // the lane is not running, with the roster's one ticked.
+  var NEXT_MODELS = [['default', 'Default'], ['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']];
+  function nextModelName(id, name) { var v = modelLabels[name]; return v && v !== name ? v : name; }
+  function addNextModel(m, t) {
+    var live = agentLive[t.key];
+    if (live && (live.state === 'working' || live.state === 'queued')) return;   // a running lane has AionUi's own picker
+    var more = m.querySelector('.aiondx-acct-more');
+    var grp = document.createElement('div');
+    grp.className = 'aiondx-acct-nextmodel';
+    grp.setAttribute('data-testid', 'aiondx-next-model');
+    grp.innerHTML = '<div class="arco-dropdown-menu-group-title">Model for its next start</div><div class="aiondx-acct-items" data-group="model"></div>';
+    more.parentNode.insertBefore(grp, more);
+    var box = grp.querySelector('[data-group="model"]');
+    var paint = function (cur) {
+      box.innerHTML = '';
+      NEXT_MODELS.forEach(function (x) {
+        var it = menuItem(nextModelName(x[0], x[1]), x[0] === cur ? 'Starts on this' : 'Saved now; nothing starts until its next message', 'data-model', x[0]);
+        markCurrent(it, x[0] === cur);
+        it.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (x[0] === cur) { closeAcctMenu(); return; }
+          closeAcctMenu();
+          setNextModel(t, x[0], nextModelName(x[0], x[1])).catch(function (e) { console.log('[dx] next model', e); });
+        });
+        box.appendChild(it);
+      });
+      placeAcctMenu(acctEls[t.key]);
+    };
+    var c = teamCache[t.teamId];
+    paint(c && c.models ? String(c.models[t.slotId] || '').toLowerCase() : '');
+    getJson('/api/teams/' + t.teamId).then(function (g) {
+      if (!g || g.err || !g.data) return;
+      var cc = readTeam(t.teamId, g.data);
+      if (acctMenu && acctMenu._key === t.key && !acctMenu._confirming && cc && cc.models) paint(String(cc.models[t.slotId] || '').toLowerCase());
+    }, function () {});
+  }
+  async function setNextModel(t, model, name) {
+    var r = await sendJson('PATCH', '/api/teams/' + encodeURIComponent(t.teamId) + '/agents/' + encodeURIComponent(t.slotId) + '/model', { model_id: model });
+    if (!r || !r.ok) { notify(t, 'The model was not saved (' + (r ? r.status : 'no answer') + ').', ''); return; }
+    var c = teamCache[t.teamId];
+    if (c && c.models) c.models[t.slotId] = model;
+    notify(t, '{who} starts on ' + name + ' with its next message.', 'Nothing was started, so nothing was cached on the old model.');
   }
   var pendingMoves = {};     // target key -> { t, convId, name, at }: restart once the agent is idle
   async function switchAgent(t, convId, info, a, byAgent) {
@@ -6476,8 +6527,8 @@
   // The size after a compaction (R-103, 2026-11-12): the launcher writes aiondx.ctx.conv.<chat> = { at, pre, post, fixed, tokens } when Claude
   // reports a finished compaction (claude-stream-proxy.js, readShare). AionCore keeps the size from before until the next reply measures the new
   // one, so the meter used to show the old size. The meter shows the estimate until a reply after the compaction is measured.
-  // November 26th, 2026 (K: "not seeing an updated context meter after compactions ... it looks like the agent is reloading with near-full
-  // contexts"): the estimate used to be dropped after 24 hours, and whenever AionCore's count was more than 2% away from the size before, so a
+  // November 26th, 2026 (a request: the meter did not change after compactions, and chats looked as if they reloaded nearly full): the
+  // estimate used to be dropped after 24 hours, and whenever AionCore's count was more than 2% away from the size before, so a
   // chat opened the next day, or one whose count the compaction call itself had moved up, showed nearly full again (measured: 880K, 912K and
   // 420K of 1,000K in chats compacted the day before). Now the estimate stands while no call after the compaction has been measured (the
   // launcher's cache record, aiondx.cache.conv.<chat>.at).
@@ -7365,8 +7416,8 @@
 
   // AionUi's light/dark switch (the sidebar's button, and the Light/Dark choice) always selects AionUi's own built-in Light or Dark
   // theme (ThemeContext: appearance === 'dark' ? DARK_THEME_ID : LIGHT_THEME_ID). So one press took a machine out of AionDX Dark for
-  // good, and with it the accent, the backdrop and the dividers: K's machine had been on the built-in Dark since November 16th, 2026,
-  // with a red accent that showed nowhere. Now, when the active theme goes from an AionDX theme to a built-in Light, Dark or System,
+  // good, and with it the accent, the backdrop and the dividers: one machine had been on the built-in Dark for ten days, with a chosen
+  // accent that showed nowhere. Now, when the active theme goes from an AionDX theme to a built-in Light, Dark or System,
   // AionDX selects the AionDX theme of that mode instead, the way AionUi itself switches (the main process's theme:set-active relay,
   // which every window applies at once), and saves it. A theme picked in the Appearance page's gallery (a click on a card, or in a
   // dialog over that page, such as deleting a theme) is left as chosen. The light/dark button shows on every Settings page, the
@@ -9614,6 +9665,7 @@
     '.aiondx-acct-menu .arco-dropdown-menu{max-height:min(420px,70vh);overflow-y:auto}',
     '.aiondx-acct-confirm{padding:2px 12px 10px;font-size:13px;line-height:19px;color:var(--color-text-1)}',
     '.aiondx-acct-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}',
+    '.aiondx-runtask-row{display:flex;justify-content:flex-end;margin-top:6px}',
     // The Antigravity sign-in panel (patch 0008): stays until the sign-in lands or gives up.
     '.aiondx-signin{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:10061;display:flex;gap:10px;',
     '  align-items:flex-start;width:440px;max-width:calc(100vw - 32px);margin:0;padding:12px 16px;text-align:left;line-height:20px}',
@@ -10773,6 +10825,8 @@
             var work = null, ws = runs[t.teamId] || [];
             for (var j = 0; j < ws.length; j++) if (ws[j] && ws[j].slot_id === t.slotId) { work = ws[j]; break; }
             setLive(t, runs[t.teamId] ? liveFromWork(work) : { state: 'unknown' });
+            if (work && work.active_turn_id) { try { await readLaneWaiting(t, work); } catch (e) { /* the next pulse reads again */ } }
+            else delete laneWaiting[t.key];
             if (work) {
               var waiting = (Number(work.queued_foreground_count) || 0) + (Number(work.queued_background_count) || 0);
               if (waiting >= QUEUE_WARN && !queueWarned[t.key]) {
@@ -10789,6 +10843,7 @@
         }
       }
       for (var k in pills) if (Object.prototype.hasOwnProperty.call(pills, k)) paintPill(pills[k]);
+      try { renderLaneBolts(); } catch (e) { console.log('[dx] lane bolts', e); }
       applyPendingMoves();
       renderSched();   // also places the fallback Stop (paintStop), which waits on this state
     } finally {
@@ -11069,9 +11124,9 @@
   var soloBoltEls = {};   // target key -> the bolt button
   function paintSoloBolt(t, wrap) {
     var a = agentLive[t.key];
-    var box = t.kind === 'conv' ? draftBox(t) : null;
+    var box = t.kind === 'conv' || t.kind === 'team' ? draftBox(t) : null;
     var text = box ? String(box.value || '') : '';
-    var show = t.kind === 'conv' && !!a && a.state === 'working' && !!text.trim() && !/^\s*\//.test(text);
+    var show = (t.kind === 'conv' || t.kind === 'team') && !!a && a.state === 'working' && !!text.trim() && !/^\s*\//.test(text);
     var el = soloBoltEls[t.key];
     if (!show) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
     if (!el) {
@@ -11096,7 +11151,10 @@
     toast('Interrupting the agent to send your message…', '"' + quoteOf(text) + '"');
     try { await interruptAndSendSoloNow(t, box, text); } finally { delete soloBoltBusy[t.key]; }
   }
+  /** A team lane's own chat. */
+  function laneConv(t) { return t.convId || (teamCache[t.teamId] && teamCache[t.teamId].map[t.slotId]) || null; }
   async function interruptAndSendSoloNow(t, box, text) {
+    if (t.kind === 'team') { await interruptAndSendLane(t, box, text); return; }
     var convId = t.convId;
     setComposerValue(box, '');
     var back = function (why) { setComposerValue(box, text); toast(why, 'Your message is back in the box.'); };
@@ -11117,6 +11175,98 @@
     if (!r || !r.ok) { back('Could not send it (HTTP ' + (r && r.status) + ').'); return; }
     applyUserSent(t, text);
     toast('Interrupted, and your message was sent first.', '"' + quoteOf(text) + '"');
+  }
+  // A team lane (a request of 2026-11-28: a team lead working with a message waiting, and no bolt). Measured in
+  // the real app (tools\test-live-lane-bolt.js): a message sent to a working lane, lead or member, is handed into its running turn at once
+  // (the server marks it finish, not pending, and nothing waits in the team's queue), and Claude reads it only after the step it is on.
+  // Cancelling the turn then has the agent read it straight away ("I'm pausing here since the user has interrupted to send a second
+  // message"). So in a lane the bolt sends first, through the team's own route, then stops the running step.
+  async function interruptAndSendLane(t, box, text) {
+    var convId = laneConv(t);
+    if (!convId) { toast('This lane\u2019s chat is not known yet; try again in a moment.', ''); return; }
+    setComposerValue(box, '');
+    var r = await sendAsUsual(t, text);
+    if (!r || !r.ok) { setComposerValue(box, text); toast('Could not send it (HTTP ' + (r && r.status) + ').', 'Your message is back in the box.'); return; }
+    var stopped = await stopLaneStep(convId);
+    notify(t, stopped ? '{who} stopped its step and is reading your message now.' : '{who} has your message and reads it at its next step.', '"' + quoteOf(text) + '"');
+  }
+  /** Cancel the lane's running turn; true when one was running and the cancel was taken. */
+  async function stopLaneStep(convId) {
+    var g = await getJson('/api/conversations/' + convId);
+    var turn = g.data && g.data.runtime && convBusy(g.data) ? g.data.runtime.turn_id : null;
+    if (!turn) return false;
+    var c = await postJson('/api/conversations/' + convId + '/cancel', { turn_id: turn });
+    return !!(c && c.ok);
+  }
+  // The bolt on a message of yours that a working lane has but has not reached: sent after its turn began, so Claude reads it only after
+  // the step it is on. The 0.28.6 bolt for this hung off AionUi's "Unread" badge, which AionUi does not draw in a team lane, so a lane
+  // never had one. Here the server says which: the lane's user messages written after its running turn started.
+  var laneWaiting = {};      // target key -> { convId, turn, texts: [normalised text], at }
+  async function readLaneWaiting(t, work) {
+    var convId = laneConv(t);
+    if (!convId || !work || !work.active_turn_id || !(Number(work.active_turn_started_at_ms) > 0)) { delete laneWaiting[t.key]; return; }
+    var list = await getMessages(convId, 20);
+    if (!list) return;
+    var since = Number(work.active_turn_started_at_ms) + 1000;
+    var texts = list.filter(function (m) { return m && m.position === 'right' && m.type === 'text' && Number(m.created_at) > since; })
+      .map(function (m) { var c = m.content; if (c && typeof c === 'object') c = c.content; return normText(c); }).filter(Boolean);
+    if (texts.length) laneWaiting[t.key] = { convId: convId, turn: work.active_turn_id, texts: texts, at: Date.now() };
+    else delete laneWaiting[t.key];
+  }
+  var laneBolts = [];
+  function renderLaneBolts() {
+    var live = [];
+    var r = route();
+    if (r && r.kind === 'team' && !disabled()) {
+      Object.keys(laneWaiting).forEach(function (key) {
+        var w = laneWaiting[key];
+        var a = agentLive[key];
+        if (!a || a.state !== 'working') return;
+        var parts = key.split(':');
+        var t = { kind: 'team', key: key, teamId: parts[1], slotId: parts.slice(2).join(':') };
+        var scope = rnContainer(t);
+        if (!scope) return;
+        var rows = [].slice.call(scope.querySelectorAll('[data-testid="message-text-right"]'));
+        var used = {};
+        w.texts.forEach(function (want) {
+          for (var i = rows.length - 1; i >= 0; i--) {
+            if (used[i]) continue;
+            var c = rows[i].querySelector('[data-testid="message-text-content"]');
+            if (!sameMessage(normText(c ? c.textContent : ''), want)) continue;
+            used[i] = true;
+            var host = c.parentElement;
+            var b = host.querySelector(':scope > .aiondx-lane-bolt');
+            if (!b) {
+              b = document.createElement('button');
+              b.type = 'button';
+              b.className = 'aiondx-rn-bolt aiondx-lane-bolt';
+              b.setAttribute('data-testid', 'aiondx-lane-answer-now');
+              b.innerHTML = ICON_BOLT;
+              b.title = 'Answer this now: the agent has this message and reads it after the step it is running. Press to stop that step; it reads your message at once.';
+              b.setAttribute('aria-label', 'Answer this now');
+              onPress(b, function () { laneAnswerNow(b); });
+              host.appendChild(b);
+            }
+            if (!host.classList.contains('aiondx-rn-host')) host.classList.add('aiondx-rn-host');
+            b._t = t; b._conv = w.convId;
+            live.push(b);
+            return;
+          }
+        });
+      });
+    }
+    laneBolts.forEach(function (b) { if (live.indexOf(b) < 0 && b.parentNode) b.parentNode.removeChild(b); });
+    laneBolts = live;
+  }
+  async function laneAnswerNow(b) {
+    if (b.disabled) return;
+    b.disabled = true;
+    try {
+      var stopped = await stopLaneStep(b._conv);
+      notify(b._t, stopped ? '{who} stopped its step and is reading your message now.' : '{who} is not in the middle of a step; it reads your message as it is.', '');
+      delete laneWaiting[b._t.key];
+      renderLaneBolts();
+    } finally { b.disabled = false; }
   }
   // The context meter is always there, and a snowflake in it says the prompt cache has gone cold (2026-11-01).
   // AionUi draws the ring only while its page holds a token count for the chat: after a restart, a switch of chats or a long
@@ -11339,7 +11489,50 @@
     return { ok: false, why: 'HTTP ' + (r && r.status) };
   }
 
+  // ---- a missed scheduled task can be run from its notice (November 28th, 2026)
+
+  // AionCore writes 'Scheduled task "<name>" was missed while the system was unavailable. It was not run automatically.' into the task's
+  // chat (aionui-cron service.rs, insert_missed_job_tips) and offers nothing to do about it (a request of 2026-11-28: run it from
+  // there). The notice gets a button that runs the task through AionCore's own run-now route
+  // (POST /api/cron/jobs/{id}/run), the task found by its name, the one belonging to this chat first.
+  var MISSED_RE = /Scheduled task "([^"]+)" was missed while the system was unavailable/;
+  function paintMissedTasks() {
+    if (disabled()) return;
+    var rows = document.querySelectorAll('.bg-message-tips');
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (row.querySelector('.aiondx-runtask')) continue;
+      var m = MISSED_RE.exec(row.textContent || '');
+      if (!m) continue;
+      var bar = document.createElement('div');
+      bar.className = 'aiondx-runtask-row';
+      bar.innerHTML = '<button type="button" class="arco-btn arco-btn-secondary arco-btn-size-small aiondx-runtask" data-testid="aiondx-run-task">Run the task now</button>';
+      var btn = bar.firstChild;
+      btn._name = m[1];
+      btn.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); runMissedTask(ev.currentTarget).catch(function (e) { console.log('[dx] run task', e); }); });
+      row.appendChild(bar);
+    }
+  }
+  async function runMissedTask(btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+    var r = route();
+    var here = r && r.kind === 'conv' ? r.id : '';
+    if (!here && r && r.kind === 'team') { var col = btn.closest('[data-slot-id]'); var c = teamCache[r.id]; here = col && c ? c.map[col.getAttribute('data-slot-id')] || '' : ''; }
+    var g = await getJson('/api/cron/jobs');
+    var list = g && Array.isArray(g.data) ? g.data : [];
+    var named = list.filter(function (j) { return j && String(j.name || '') === btn._name; });
+    var job = named.filter(function (j) { return here && (j.conversation_id === here || (j.metadata && j.metadata.conversation_id === here)); })[0] || named[0];
+    if (!job) { btn.disabled = false; btn.textContent = 'Run the task now'; toast('The task "' + btn._name + '" was not found.', 'It may have been renamed or deleted: Scheduled Tasks lists them all.'); return; }
+    var res = await sendJson('POST', '/api/cron/jobs/' + encodeURIComponent(job.id) + '/run');
+    if (res && res.ok) { btn.textContent = 'Started'; toast('Running "' + btn._name + '" now.', 'Its result comes into its chat as usual.'); return; }
+    btn.disabled = false;
+    btn.textContent = 'Run the task now';
+    toast('The task did not start (' + (res ? res.status : 'no answer') + ').', 'Scheduled Tasks can run it too.');
+  }
   function renderSched() {
+    try { paintMissedTasks(); } catch (e) { console.log('[dx] missed tasks', e); }
     var live = {};
     targets().forEach(function (t) {
       var anchor = t.actions && (t.actions.querySelector('.sendbox-draft-tooltip-anchor:not(.aiondx-sched-wrap)') || t.actions.querySelector('.sendbox-send-tooltip-anchor'));
@@ -12227,8 +12420,7 @@
     if (dissolveDlg && dissolveDlg.parentNode) dissolveDlg.parentNode.removeChild(dissolveDlg);
     var el = document.createElement('div');
     el.className = 'aiondx-welcome-backdrop aiondx-accdlg-backdrop';
-    // November 24th, 2026 (K): "the user should have an option about which lanes they want retained (turned into a standalone chat) and which
-    // they want to abandon/leave behind with the team". One Keep box per lane, the lead's too; the lanes left behind are archived (Settings >
+    // A request of 2026-11-24: choose which lanes become chats of their own and which are left behind with the team. One Keep box per lane, the lead's too; the lanes left behind are archived (Settings >
     // Archived brings one back) or, if chosen, deleted.
     el.innerHTML = '<div class="aiondx-welcome aiondx-accdlg" role="dialog" aria-modal="true" data-testid="aiondx-dissolve-dlg">' +
       '<h2 class="aiondx-accdlg-h"></h2><p class="aiondx-accdlg-p">Tick the lanes to keep: each becomes a chat of its own, with its history and folder. The ones you untick are left behind with the team. What each lane had waiting (its queue, its messages and the team\u2019s tasks) is written to a DX Doc in a kept chat first.</p>' +
@@ -14326,12 +14518,15 @@
   // opens on the Welcome screen, marks it seen without showing it.
   var WHATS_NEW = {
     // the release being built: its date is set the day it is released (the Changelog shows it)
-    release: '0.28.7', date: '',
+    release: '0.28.7', date: '2026-11-28',
     items: [
       ['Keep some lanes, leave the rest', 'In a team’s menu, Turn back into separate chats has a Keep box for every lane, the lead’s too. Ticked lanes become chats of their own; the ones you untick are left behind with the team, archived (Settings > Archived brings one back) or, if you choose, deleted. Agents can do it for you on your word.'],
       ['Ctrl+Z as in other programs', 'In the message box, Ctrl+Z takes back the last word you typed, a paste, or text put in by voice or an @@ name, and brings deleted text back selected; Ctrl+Y or Ctrl+Shift+Z puts it back. Right-click the box for Undo and Redo too. Each chat keeps its own history until you send.'],
       ['The context ring after a compaction', 'When a chat compacts, a notice says how big it is now and how big it was, and the context ring shows the new size at once. A Claude chat’s ring now shows the size AionDX measures on every reply: after a compaction it no longer sticks at the size before, and a chat is no longer compacted again because of that old number. Agents read the same number (aiondx context) and say it in their first reply after a compaction.'],
       ['Your accent under every theme', 'The accent you choose in Settings > Appearance now colours links, buttons and switches under every theme, AionUi’s own Light and Dark too. The light/dark button on the Settings pages keeps the AionDX theme: it used to put AionUi’s own Light or Dark in its place, which hid the accent. Where that happened, the AionDX theme comes back once by itself.'],
+      ['Answer now in a team lane', 'In a team, a lane that is working shows a lightning bolt on each message of yours it has not reached yet: press it to stop the step the agent is on, and it reads your message at once. While a lane works and its box has text, a bolt beside Send sends it and stops the step, as in a solo chat.'],
+      ['A lane\u2019s model before it starts', 'Click the agent button in a team lane\u2019s header: a lane that is not running lists the model it will start on (Default, Fable, Opus, Sonnet, Haiku). Pick one and it is saved without starting anything, so nothing is cached on the old model first.'],
+      ['Run a missed task', 'When a scheduled task was missed while the PC was off or asleep, its notice in the chat has a Run the task now button.'],
     ],
     // earlier releases' items, shown to anyone who has not seen them (someone updating from 0.27.4 sees 0.27.5's too)
     earlier: [{ release: '0.28.6', date: '2026-11-24', items: [
@@ -18302,8 +18497,8 @@
   // In AionUi's box Chromium records one undo step per character: the page changes the DOM beside the box on every keystroke (React
   // redraws the highlight layer, and rewrites the textarea's own child text), and Chromium ends its typing command whenever the DOM
   // changes under it (measured in the built app, tools\probe-undo*.js: 43 presses for 43 characters; 1 for a bare textarea). So the two
-  // message boxes (a chat's, the new-chat page's) keep their own history, built to do what Ctrl+Z does in other programs (K, November
-  // 24th, 2026: "ctrl+z should do everything it does in every other application"):
+  // message boxes (a chat's, the new-chat page's) keep their own history, built to do what Ctrl+Z does in other programs (a request of
+  // 2026-11-24):
   //   - typing is undone a word at a time (a word and the spaces after it, as in VS Code); a pause over a second, a switch between typing
   //     and deleting, or a caret moved by a click or the arrow keys also starts a new step;
   //   - a paste, a cut, a drag, a spelling fix, a line break, and text the page writes in itself (AionUi takes every text paste over and
