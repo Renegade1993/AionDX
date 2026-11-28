@@ -51,7 +51,7 @@ if (!args.includes('--no-whats-new')) {
     // comment lines may come before release:, and date: follows it on the same line (0.28.5's check found no list, November 20th, 2026)
     const wn = /var WHATS_NEW = \{\s*(?:\/\/[^\n]*\n\s*)*release: '([^']+)',[^\n]*\n\s*items: \[([\s\S]*?)\n\s*\],/.exec(ui);
     const version = tag.replace(/^v/, '').replace(/-.*$/, '');
-    const names = wn ? [...wn[2].matchAll(/\[\s*'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1].toLowerCase()) : [];
+    const names = wn ? [...wn[2].matchAll(/\[\s*'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\(.)/g, '$1').toLowerCase()) : [];   // the source writes ’ as ’ (0.28.7)
     const missing = wanted.filter((w) => !names.some((n) => n.length > 2 && (w.toLowerCase().includes(n) || n.includes(w.toLowerCase().split(':')[0]))));
     if (!wn || wn[1] !== version || missing.length) {
       console.error('github-release: every new feature needs its what\'s-new pop-up (WHATS_NEW in aiondx-ui.js) for this version.\n' +
