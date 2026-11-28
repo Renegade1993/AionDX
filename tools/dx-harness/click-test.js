@@ -5954,7 +5954,7 @@ async function pageTarget() {
         rg && Math.abs(1 - Number(rg.off) / Number(rg.dash) - 0.115) < 0.01 && /^Compacted at \d\d:\d\d: about 23K now \(11\.5% of 200K\), down from 84K\. An estimate until the next reply measures it\./.test(rg.title), JSON.stringify(rg));
       // November 26th, 2026: the compaction is said once where the chat is on screen, from the launcher's numbers (no agent turn)
       let ctxT = (await toasts()).filter((x) => /compacted: about/.test(x));
-      await clogShot('0.28.7', 'The context ring after a compaction', '.aiondx-toasts .aiondx-toast');
+      await clogShot('0.28.7', 'The context ring after a compaction', '#solo [data-testid="aiondx-ctx"]', { text: 'The ring shows the size after a compaction at once.' });
       check(sc, 'a compaction that just finished is said once: the size now and the size before', ctxT.length === 1 && /^this chat compacted: about 23K tokens now, down from 84K\./.test(ctxT[0]), JSON.stringify(ctxT));
       await js('window.__aionDx.pullNow()');
       await sleep(300);
@@ -7056,6 +7056,7 @@ async function pageTarget() {
       await shot('click-test-dissolve-dark');
       await js(`(() => { document.documentElement.setAttribute('data-theme', 'light'); document.body.setAttribute('arco-theme', 'light'); return 0; })()`);
       await clogShot('0.28.7', 'Keep some lanes, leave the rest', '[data-testid="aiondx-dissolve-dlg"]');
+      await clogShot('0.28.6', 'A chat becomes a team, and back', '[data-testid="aiondx-dissolve-dlg"]', { text: 'Turn back into separate chats, in a team’s menu.' });
       await humanClick('[data-testid="aiondx-dissolve-dlg"] .aiondx-dissolve-rows label:nth-child(1) input');
       dl = await dlg();
       check(sc, 'with no lane kept the button is off and says why', dl.goOff && /^Keep at least one lane\./.test(dl.err) && dl.leftH === 'The 2 lanes left behind:', JSON.stringify(dl));
