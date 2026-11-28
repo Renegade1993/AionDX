@@ -256,7 +256,7 @@
     '"Delivery retry limit reached" notice; those can be stale.';
 
   // Shared with agents; see the header.
-  var BUILD = '2026-11-28.1';
+  var BUILD = '2026-11-28.2';
   var PAGE_LOADED_AT = /[?&]dxopen=0(&|$)/.test(String(location.search || '')) ? 0 : Date.now();   // (the test harness passes dxopen=0) 2026-10-31: nothing the Loop does starts within a minute of the page opening, and a resume time that passed before it opened is dropped
   var SHARED_PREFIX = 'aiondx.loop.';
   var STATUS_PREFIX = 'aiondx.loopstatus.';
@@ -1706,6 +1706,7 @@
     takeSched(g.data);
     provision(g.data).catch(function () {});
     try { themeKeep(g.data); } catch (e) { console.log('[dx] theme keep', e); }
+    try { takeDead(g.data); } catch (e) { console.log('[dx] stopped chats', e); }
     takeWelcome(g.data);
     if (!sharedReady) { sharedReady = true; migrate(); }
     Object.keys(shared).forEach(function (k) { var t = targetOfKey(k); if (t) applyShared(t, shared[k]); });
@@ -3840,6 +3841,7 @@
   /** Shared by both kinds once the chat is known to be idle: quiet time, no-reply
    *  count, fire, record. `send` performs the actual POST. */
   async function fireIfDue(t, s, convId, send, historyInterrupt) {
+    if (isDead(convId)) { if (s.on) setOn(t, false, 'you stopped this chat'); return; }
     var msgs = await getMessages(convId, 40);
     if (!msgs) return;
     var lastAny = msgs[msgs.length - 1];
@@ -4181,6 +4183,7 @@
   async function resumeIfDue(t, s, work, slotList, convId, backend) {
     var lane = sendLane(t, backend);
     var now = Date.now();
+    if (isDead(convId)) { why(t, s, 'Stopped by you: nothing wakes it until you send it a message.'); return; }
     if (!s.pausedSeen) { s.pausedSeen = now; s.resumeAttempts = 0; }
     var n = s.resumeAttempts || 0;
     if (n >= RETRY_MAX) {
@@ -4271,6 +4274,7 @@
    *  (every saved team loop read "Off: you sent a message", 0 sends). Off is now only the
    *  menu's choice, or 3 sends with no reply. */
   function userSent(node, text) {
+    userActAt = Date.now();
     var t = targetOf(node);
     if (!t) return;
     // AionUi empties the box through React, which fires no input event: forget the saved copies of the
@@ -4355,6 +4359,7 @@
     document.addEventListener('click', function (ev) {
       var b = ev.target && ev.target.closest ? ev.target.closest('[data-testid="sendbox-send-btn"]') : null;
       if (b && !b.disabled && takePluginCommand(ev, composerInput(b), composerText(b))) return;
+      if (b && !b.disabled && wakeFirst(ev, b)) return;
       if (b && !b.disabled) userSent(b, composerText(b));
     }, true);
     // AionUi's draft-queue button (and Ctrl+Enter, below) keep a message to send later: "/plugin" opens the panel instead.
@@ -4397,6 +4402,7 @@
       if (ev.ctrlKey || ev.metaKey) return;
       var panel = box.closest('.sendbox-panel');
       if (panel && panel.classList.contains('overflow-visible')) return;   // a slash or @ menu is open
+      if (val.trim() && wakeFirst(ev, el)) return;
       if (val.trim()) userSent(el, val);
     }, true);
   }
@@ -5421,6 +5427,85 @@
   // member is paused again, and a chat still working stop.force seconds after the press has its agent process ended and started again
   // (runtime/restart: whatever it was running ends; the chat keeps its history and session). A message you send after the press is
   // yours: the watch lets that turn run. One watch per chat; a second press starts the escalation over from the end step.
+  // ---- a Stop is dead: nothing wakes the agent but you (a request of 2026-11-28: a stopped agent must stay stopped, and messages from
+  // other agents or systems must not wake it). Measured that day: after a Stop in a team lane (a pause,
+  // "Stopped by the user"), the Loop's resume read the pause as a provider limit and woke the lane four minutes later ("[Loop] Resuming
+  // you after a pause"), then a queued /compact and a Loop nudge ran it again; another chat's message had woken leads the same way.
+  // Now a Stop marks the chat stopped (aiondx.dead.<chat> in the settings store) and, once its turn has ended, holds it in AionCore
+  // (core-0020, runtime/hold: its process ended, and no task is built for it, so a send from another chat, its team, a schedule or a
+  // Loop cannot start it). The Loop goes off; Loop nudges, resumes, scheduled sends and the automatic compaction skip it, and AionDX's
+  // own sends to it are refused. Only you wake it: a message you send from its box, a bolt you press or an answer you give in a DX
+  // Doc releases the hold first. The hold is put back whenever this page finds it missing (an AionCore restart releases holds).
+  var DEAD_PREFIX = 'aiondx.dead.';
+  var deadStops = {};          // conversation id -> { at, key }
+  var deadHeldAt = {};         // conversation id -> when this page last made sure AionCore holds it
+  var userActAt = 0;           // when you last sent, pressed a bolt or answered in a doc: a send soon after is yours
+  function isDead(convId) { return !!(convId && deadStops[convId]); }
+  function takeDead(data) {
+    var d = {};
+    Object.keys(data).forEach(function (k) { if (k.indexOf(DEAD_PREFIX) === 0 && data[k] && data[k].at) d[k.slice(DEAD_PREFIX.length)] = data[k]; });
+    deadStops = d;
+    Object.keys(d).forEach(function (id) {
+      if (Date.now() - (deadHeldAt[id] || 0) < 60000) return;
+      deadHeldAt[id] = Date.now();
+      holdConv(id, true, false).catch(function () {});
+    });
+  }
+  async function markDead(t, convId) {
+    var rec = { at: Date.now(), key: t.key };
+    deadStops[convId] = rec;
+    var b = {};
+    b[DEAD_PREFIX + convId] = rec;
+    await putPrefs(b);
+  }
+  async function holdDead(convId) {
+    if (!isDead(convId)) return;
+    var h = await holdConv(convId, true, true);
+    deadHeldAt[convId] = Date.now();
+    if (h && !h.ok && !h.working) console.log('[dx] stop: the hold was not taken', h.status || h.error);
+  }
+  async function releaseDead(convId, t) {
+    if (!isDead(convId)) return;
+    delete deadStops[convId];
+    delete deadHeldAt[convId];
+    var b = {};
+    b[DEAD_PREFIX + convId] = null;
+    await putPrefs(b);
+    await holdConv(convId, false, false);
+    // a wake refused while it was held leaves a lane marked failed to start; AionCore's own retry-start (attach) clears that
+    if (t && t.kind === 'team' && t.teamId && t.slotId) await postJson('/api/teams/' + t.teamId + '/agents/' + encodeURIComponent(t.slotId) + '/attach', {}).catch(function () {});
+  }
+  /** Your send to a stopped chat: held back while the chat is released, then sent as you sent it. A team lane sends through the app's
+   *  own channel (not fetch), so the release has to come before AionUi sees the press. */
+  function wakeFirst(ev, node) {
+    var t = targetOf(node);
+    var convId = t ? laneConv(t) : null;
+    if (!convId || !isDead(convId)) return false;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    userActAt = Date.now();
+    var panel = node.closest && node.closest('.sendbox-panel');
+    releaseDead(convId, t).catch(function () {}).then(function () {
+      var send = panel && panel.querySelector('[data-testid="sendbox-send-btn"]');
+      if (send && !send.disabled) send.click();
+    });
+    return true;
+  }
+  /** The chat a send goes to, from its URL: a chat's own, a team lead's or a lane's. */
+  function sendConv(input) {
+    var url = String(typeof input === 'string' ? input : (input && input.url) || '').replace(/^https?:\/\/[^/]+/, '');
+    var m = /\/api\/conversations\/([^/?#]+)\/messages/.exec(url);
+    if (m) return decodeURIComponent(m[1]);
+    m = /\/api\/teams\/([^/?#]+)\/agents\/([^/?#]+)\/messages/.exec(url);
+    if (m) { var c = teamCache[decodeURIComponent(m[1])]; return c ? c.map[decodeURIComponent(m[2])] || null : null; }
+    m = /\/api\/teams\/([^/?#]+)\/messages/.exec(url);
+    if (m) {
+      var tc = teamCache[decodeURIComponent(m[1])];
+      if (!tc) return null;
+      for (var sl in tc.roles) if (Object.prototype.hasOwnProperty.call(tc.roles, sl) && isLeadRole(tc.roles[sl])) return tc.map[sl] || null;
+    }
+    return null;
+  }
   var haltWatch = {};          // target key -> { at, token }
   var userSendAt = {};         // target key -> when you last sent something from this page
   function haltNote(text, sub) { toast(text, sub || ''); }
@@ -5429,6 +5514,8 @@
     if (!convId && t.kind === 'team') { var m = await memberConversation(t); convId = m && m.convId; }
     if (!convId) return;
     var key = t.key, start = Date.now(), token = (haltWatch[key] && haltWatch[key].token || 0) + 1;
+    try { if (state(t).on) setOn(t, false, 'you pressed Stop', true); } catch (e) { /* no Loop here */ }
+    await markDead(t, convId).catch(function () {});
     var again = !!haltWatch[key];
     haltWatch[key] = { at: start, token: token };
     var live = function () { return haltWatch[key] && haltWatch[key].token === token; };
@@ -5447,7 +5534,9 @@
         if (!g.data) continue;
         var busy = convBusy(g.data), rt = g.data.runtime || {};
         if (!busy) {
-          if (restarted) haltNote('Stopped.', 'The agent did not stop on its own, so it was ended and started again. The chat keeps its history.');
+          if ((userSendAt[key] || 0) > start) return;
+          await holdDead(convId);
+          haltNote('Stopped.', 'Nothing wakes it now but you: not the Loop, its team, another chat or a schedule. Send it a message to start it again.');
           return;
         }
         var waited = Date.now() - start;
@@ -11034,6 +11123,8 @@
   }
   async function schedSend(rec) {
     if (schedBusy[rec.id]) return;
+    var schedT = schedTarget(rec.scope);
+    if (schedT && isDead(laneConv(schedT))) return;   // you stopped that chat: the message waits until you start it again
     schedBusy[rec.id] = true;
     try {
       // 2026-10-31: opening AionDX never starts an agent. A message that came due more than SCHED_LATE_MS ago (AionDX was closed,
@@ -11182,6 +11273,7 @@
   // Cancelling the turn then has the agent read it straight away ("I'm pausing here since the user has interrupted to send a second
   // message"). So in a lane the bolt sends first, through the team's own route, then stops the running step.
   async function interruptAndSendLane(t, box, text) {
+    userActAt = Date.now();
     var convId = laneConv(t);
     if (!convId) { toast('This lane\u2019s chat is not known yet; try again in a moment.', ''); return; }
     setComposerValue(box, '');
@@ -12273,7 +12365,8 @@
       var t = ts[i];
       if (!t.convId) continue;
       var g = await getJson('/api/conversations/' + t.convId).catch(function () { return {}; });
-      if (!(g && g.data && convBusy(g.data))) continue;
+      // an idle member is stopped too (a request of 2026-11-28): marked and held, so its lead or the Loop cannot wake it
+      if (!(g && g.data && convBusy(g.data))) { try { if (state(t).on) setOn(t, false, 'you pressed Stop', true); } catch (e) {} markDead(t, t.convId).then(function (cid) { return function () { return holdDead(cid); }; }(t.convId)).catch(function () {}); continue; }
       n++;
       hardStop(t).catch(function () {});
       deadHalt(t, t.convId).catch(function () {});
@@ -14163,6 +14256,14 @@
             if (attached) return attached.then(function (a) { return window.fetch(a[0], a[1]); });
           }
           if ((id = callId(TEAM_SESSION_RE, input, init, ['POST']))) return holdTeamWake(id, args);
+          if (callId(ANY_SEND_RE, input, init, ['POST'])) {
+            var deadId = sendConv(input);
+            if (deadId && isDead(deadId)) {
+              if (Date.now() - userActAt < 6000) return releaseDead(deadId, null).then(function () { return nativeFetch.apply(window, args); }, function () { return nativeFetch.apply(window, args); });
+              return Promise.resolve(new Response(JSON.stringify({ success: false, error: 'Stopped by the user: nothing wakes this chat until they send it a message.' }),
+                { status: 409, headers: { 'Content-Type': 'application/json' } }));
+            }
+          }
           if (pendingAccount && String((init && init.method) || (input && input.method) || 'GET').toUpperCase() === 'POST' &&
               CREATE_RE.test(String(typeof input === 'string' ? input : (input && input.url) || '').replace(/^https?:\/\/[^/]+/, ''))) {
             return nativeFetch.apply(window, args).then(tagNewChat);
@@ -14520,6 +14621,7 @@
     // the release being built: its date is set the day it is released (the Changelog shows it)
     release: '0.28.7', date: '2026-11-28',
     items: [
+      ['Stop means stop', 'When you press Stop, that chat or team member stays stopped: the Loop goes off, and nothing wakes it again but you. Not its team lead, another chat, a scheduled message, a resume after a limit or the automatic compaction. Send it a message from its box and it starts as usual.'],
       ['Keep some lanes, leave the rest', 'In a team’s menu, Turn back into separate chats has a Keep box for every lane, the lead’s too. Ticked lanes become chats of their own; the ones you untick are left behind with the team, archived (Settings > Archived brings one back) or, if you choose, deleted. Agents can do it for you on your word.'],
       ['Ctrl+Z as in other programs', 'In the message box, Ctrl+Z takes back the last word you typed, a paste, or text put in by voice or an @@ name, and brings deleted text back selected; Ctrl+Y or Ctrl+Shift+Z puts it back. Right-click the box for Undo and Redo too. Each chat keeps its own history until you send.'],
       ['The context ring after a compaction', 'When a chat compacts, a notice says how big it is now and how big it was, and the context ring shows the new size at once. A Claude chat’s ring now shows the size AionDX measures on every reply: after a compaction it no longer sticks at the size before, and a chat is no longer compacted again because of that old number. Agents read the same number (aiondx context) and say it in their first reply after a compaction.'],
@@ -15085,6 +15187,7 @@
         var long = len.ttl === '1h' ? (Number(rec.longUntil) > 0 ? Number(rec.longUntil) : Number(rec.until)) : tailOf(rec);
         if (!(long > now) || long - now > AUTO_LEAD_MS[len.ttl]) continue; // gone already, or not due yet
         if (autoAsked[convId] === Number(rec.at)) continue;              // asked already for this reply
+        if (isDead(convId)) continue;                                     // you stopped it: nothing starts it
         var t = { kind: 'conv', key: 'conv:' + convId, convId: convId };
         var s = state(t);
         if (s.on || compactPending(s)) continue;                          // the Loop has it, or a compaction is already waiting
@@ -16374,6 +16477,7 @@
   // ---- chips, questions, approvals, callouts (DX Docs mirror, step 4): the user's picks are saved in the doc at once and the agent is told
   /** Tell this chat's agent (a team's lead on a team page), or a named team member, something about the doc. Resolves true when it went. */
   async function dxTell(text, to) {
+    userActAt = Date.now();
     var path = dx.sendPath || '/api/conversations/' + dx.conv + '/messages';
     if (to && to.path) path = to.path;
     var r = await postJson(path, { content: text }).catch(function () { return null; });
@@ -18713,6 +18817,8 @@
     // the right-click menu (patch 0009): the message box's own Undo and Redo
     undoMenu: function () { return undoMenuState(); },
     themeUnpick: function () { themePickedAt = 0; },
+    dead: function () { return JSON.parse(JSON.stringify(deadStops)); },
+    userAct: function () { userActAt = Date.now(); },
     undoStep: function (dir) { return undoStepIn(document.activeElement, dir < 0 ? -1 : 1); },
     clearTeamOps: function () { teamOps.length = 0; if (teamOps.timer) { clearInterval(teamOps.timer); teamOps.timer = null; } },
     moves: function (age) { return Object.keys(pendingMoves).map(function (k) { var m = pendingMoves[k]; if (age === 'retry') m.tried = 0; else if (age) m.at -= age; return k; }); },

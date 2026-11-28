@@ -38,6 +38,12 @@ echo ==== theme and accent >> "%OUT%"
 node tools\test-live-theme.js >> "%OUT%" 2>&1
 echo ==== undo >> "%OUT%"
 node tools\test-live-undo.js >> "%OUT%" 2>&1
+echo ==== team lane bolts (Haiku) >> "%OUT%"
+node tools\test-live-lane-bolt.js >> "%OUT%" 2>&1
+type .tmp\test-live-lane-bolt.out >> "%OUT%"
+echo ==== dead stop (Haiku) >> "%OUT%"
+node tools\test-live-dead-stop.js >> "%OUT%" 2>&1
+type .tmp\test-live-dead-stop.out >> "%OUT%"
 echo ==== click >> "%OUT%"
 node tools\dx-harness\click-test.js >> "%OUT%" 2>&1
 echo ==== cleanup >> "%OUT%"

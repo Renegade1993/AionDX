@@ -1238,6 +1238,9 @@ async function pageTarget() {
       await js('document.querySelectorAll(".aiondx-toast").forEach(t => t.remove()); document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 0');
       await sleep(1500);
       await js(`(() => { delete window.__stub.routes['GET /api/conversations/harness1'].data.runtime; document.querySelector('#solo .sendbox-stop-button').remove(); return 0; })()`);
+      // the presses above stopped this chat for good (2026-11-28); the checks below are about the Loop on a chat that is not stopped
+      await js(`(() => { delete window.__stub.store['aiondx.dead.harness1']; return 0; })()`);
+      await js('window.__aionDx.pullNow()');
       // Your words in the chat's history.
       await pickForever('');
       await js(`(() => { window.__stub.histories.harness1.push({ id: 'f-off', position: 'right', type: 'text', hidden: false, created_at: Date.now() + 1000, content: { content: 'ok, turn off your loop' } }); return 0; })()`);
@@ -1669,6 +1672,42 @@ async function pageTarget() {
       const st = await saved('aionui.dx.harness1');
       check(sc, 'counts it as a retry, not a stall', st && st.errAttempts === 1 && !st.stalls, st && JSON.stringify({ e: st.errAttempts, s: st.stalls }));
       check(sc, 'loop stays on', (await label('')) === 'Loop · On');
+    }
+
+    // ---- a Stop is dead: nothing wakes the agent but you (2026-11-28) ----
+    {
+      const sc = 'deadstop';
+      await load('theme=dark');
+      await sleep(500);
+      await js(`(() => { window.__stub.routes['POST /api/conversations/harness1/runtime/hold'] = { success: true }; window.__stub.routes['POST /api/conversations/harness1/messages'] = { success: true };
+        delete window.__stub.routes['GET /api/conversations/harness1'].data.runtime; window.__stub.routes['GET /api/conversations/harness1'].data.status = 'finished';
+        const a = document.querySelector('#solo .sendbox-actions'); const b = document.createElement('button'); b.type = 'button';
+        b.className = 'arco-btn arco-btn-secondary arco-btn-shape-circle sendbox-stop-button'; b.textContent = 'stop'; a.appendChild(b); window.__calls.length = 0; return 0; })()`);
+      await humanClick('#solo .sendbox-stop-button');
+      await sleep(2000);
+      const holds = () => js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/runtime/hold').map(c => c.body)`);
+      let hs = await holds();
+      check(sc, 'Stop marks the chat stopped and holds it in AionCore once its turn has ended (hold, with stop)', hs.length === 1 && hs[0].hold === true && hs[0].stop === true && !!(await store())['aiondx.dead.harness1'], JSON.stringify([hs, (await store())['aiondx.dead.harness1']]));
+      await clogShot('0.28.7', 'Stop means stop', '#solo .sendbox-stop-button');
+      check(sc, 'and says nothing wakes it but you', (await toasts()).some((x) => /^Stopped\.Nothing wakes it now but you: not the Loop, its team, another chat or a schedule\./.test(x)), JSON.stringify(await toasts()));
+      // a send by AionDX itself (a Loop nudge, a resume, a scheduled send) to the stopped chat is refused before it leaves the page
+      await js('window.__calls.length = 0; 0');
+      const sys = await js(`(async () => { const r = await fetch('http://127.0.0.1:' + (window.__backendPort || 1) + '/api/conversations/harness1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'CONTINUE WORKING' }) }); return [r.status, (await r.json()).error || '']; })()`);
+      check(sc, 'a send that is not yours (the Loop, a resume, a schedule) is refused: nothing reaches the agent', sys[0] === 409 && /Stopped by the user/.test(sys[1]) &&
+        (await js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/messages').length`)) === 0, JSON.stringify(sys));
+      // the Loop switched on again does not fire at a stopped chat, and goes off
+      await putStore(SOLO_KEY, { v: 1, on: true, msg: 'CONTINUE WORKING', at: Date.now() + 2000, rev: 400, by: 'agent', who: 'Harness agent' });
+      await js('window.__aionDx.pullNow()');
+      await js('window.__aionDx.tickNow()');
+      await sleep(800);
+      const woke = await js(`window.__calls.filter(c => c.method === 'POST' && c.path === '/api/conversations/harness1/messages').map(c => String(c.body && c.body.content).slice(0, 80))`);
+      check(sc, 'a Loop switched on by an agent does not wake it', woke.length === 0, JSON.stringify(woke));
+      // your own message releases the hold first, then goes
+      await js('window.__calls.length = 0; window.__aionDx.userAct(); 0');
+      const mine = await js(`(async () => { const r = await fetch('http://127.0.0.1:' + (window.__backendPort || 1) + '/api/conversations/harness1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'go on' }) }); return r.status; })()`);
+      const order = await js(`window.__calls.filter(c => /harness1\\/(runtime\\/hold|messages)$/.test(c.path)).map(c => c.path.split('/').pop() + (c.body && c.body.hold === false ? ':release' : ''))`);
+      check(sc, 'a message you send releases the hold first, then goes to the agent', mine === 200 && JSON.stringify(order) === JSON.stringify(['hold:release', 'messages']) && !(await store())['aiondx.dead.harness1'], JSON.stringify([mine, order]));
+      await js(`(() => { const b = document.querySelector('#solo .sendbox-stop-button'); if (b) b.remove(); return 0; })()`);
     }
 
     // ---- limits (2026-10-01): the Loop pauses while the account is at its limit, and resumes at the reset ----
@@ -4158,19 +4197,19 @@ async function pageTarget() {
       const c = await card();
       const NEW28 = ['Tabs in your docs', 'Comments, the Claude Docs way', 'Suggest edits yourself', 'Questions, approvals, dates and statuses', 'Richer writing and tables', 'More charts, and drawings', 'Docs you can find', '@@ and @@@ in every chat', 'Chats where you choose', 'Skills in every chat', 'One set of skills for every agent', 'DX Skills', 'Skills that improve themselves', 'Agents plan before they build'];
       const NEW281 = ['Install Claude Code from AionDX', 'Docs stay as you left them', 'Skill changes your way', 'Projects are optional', 'Your messages go out as you type them', 'Fixes'];
-      const NEW287 = ['Keep some lanes, leave the rest', 'Ctrl+Z as in other programs', 'The context ring after a compaction', 'Your accent under every theme', 'Answer now in a team lane', 'A lane\u2019s model before it starts', 'Run a missed task'];
+      const NEW287 = ['Stop means stop', 'Keep some lanes, leave the rest', 'Ctrl+Z as in other programs', 'The context ring after a compaction', 'Your accent under every theme', 'Answer now in a team lane', 'A lane\u2019s model before it starts', 'Run a missed task'];
       const NEW286 = ['Any colour for a lane', 'Write your own answer', 'Answer a message now', 'More than one Claude account', 'A chat becomes a team, and back', 'New Chat keeps your draft', 'Fixes'];
       const NEW285 = ['Lane colours', 'Pictures of any size', 'What changed in your docs', 'Big files go in as links', 'Folders go in as links', 'Archived chats stay where they are kept', 'Chats on a drive work on another PC', 'Usage alerts go off once', 'Claude Code installs with a meter', 'Fixes'];
       const NEW284 = ['Settings, made over', 'The Changelog', 'Tab colours in your docs', 'Pictures full screen', 'Fixes'];
       const NEW283 = ['AionDX settings', 'Chats that share a folder move together', 'Docs go where the chat goes', 'Request notes you can check', 'Ask-first chats are guarded', 'Fixes'];
       check(sc, 'after an update the card names each new thing and says how to use it', c && c.title === 'New in AionDX 0.28.7' && JSON.stringify(c.names) === JSON.stringify(NEW287) &&
-        /Keep box for every lane/.test(c.hows[0]) && /left behind with the team/.test(c.hows[0]), JSON.stringify(c));
+        /nothing wakes it again but you/.test(c.hows[0]) && /Keep box for every lane/.test(c.hows[1]) && /left behind with the team/.test(c.hows[1]), JSON.stringify(c));
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.28.5'); return 0; })()`);
       await load('theme=light&keepls=1');
       await sleep(3600);
       const c6 = await card();
       check(sc, 'someone updating from 0.28.5 sees 0.28.7’s and 0.28.6’s, each saying how to use it', c6 && JSON.stringify(c6.names) === JSON.stringify(NEW287.concat(NEW286)) &&
-        /Ctrl\+Z takes back/.test(c6.hows[1]) && /^Right-click a team member/.test(c6.hows[NEW287.length]) && /More colours/.test(c6.hows[NEW287.length]) && /your own answer/.test(c6.hows[NEW287.length + 1]) && /lightning bolt/.test(c6.hows[NEW287.length + 2]) && /\+ Add account/.test(c6.hows[NEW287.length + 3]) && /Make this a team/.test(c6.hows[NEW287.length + 4]) && /New Chat page/.test(c6.hows[NEW287.length + 5]) && /asleep/.test(c6.hows[NEW287.length + 6]), JSON.stringify(c6));
+        c6.hows.some((h) => /Ctrl\+Z takes back/.test(h)) &&/^Right-click a team member/.test(c6.hows[NEW287.length]) && /More colours/.test(c6.hows[NEW287.length]) && /your own answer/.test(c6.hows[NEW287.length + 1]) && /lightning bolt/.test(c6.hows[NEW287.length + 2]) && /\+ Add account/.test(c6.hows[NEW287.length + 3]) && /Make this a team/.test(c6.hows[NEW287.length + 4]) && /New Chat page/.test(c6.hows[NEW287.length + 5]) && /asleep/.test(c6.hows[NEW287.length + 6]), JSON.stringify(c6));
       await clogShot('0.28.6', 'Fixes', '[data-testid="aiondx-whatsnew"]');
       await clogShot('0.28.7', 'Answer now in a team lane', '[data-testid="aiondx-whatsnew"]');   // a fix in AionCore, with no control of its own
       await js(`(() => { localStorage.setItem('aionui.dx.whatsnew.seen', '0.27.4'); return 0; })()`);
@@ -4215,7 +4254,7 @@ async function pageTarget() {
       await load('theme=dark&keepls=1');
       await sleep(3600);
       const fd = await js(`(() => { const c = document.querySelector('[data-testid="aiondx-whatsnew"]'); if (!c) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), n: c.querySelectorAll('.aiondx-whatsnew-item').length }; })()`);
-      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 55, JSON.stringify(fd));
+      check(sc, 'at 1720 x 1392, dark: the 0.28.7 card (with 0.28.6\'s, 0.28.5\'s, 0.28.4\'s, 0.28.3\'s, 0.28.2\'s and 0.28.0\'s) is on screen, at most 520 high', fd && fd.top >= 16 && fd.h <= 520 && fd.n === 56, JSON.stringify(fd));
       await shot('whatsnew-dark');
       await send('Emulation.clearDeviceMetricsOverride', {});
     }
@@ -6375,7 +6414,7 @@ async function pageTarget() {
           date: c ? (c.querySelector('.aiondx-clog-date') || {}).textContent : '', hidAgents: getComputedStyle(document.getElementById('aionui-agents')).display }; })()`);
       check(sc, 'Settings > About > Changelog: the group renamed About, Changelog after About and marked, every release newest first with all its items, each asking for its picture',
         cl.group === 'About' && cl.next && cl.on && cl.page && JSON.stringify(cl.rels) === JSON.stringify(cl.want) && cl.items === cl.wantItems && cl.items >= 30 &&
-        cl.firstName === 'Keep some lanes, leave the rest' && /^\.\/aiondx-changelog\/v0-28-7-keep-some-lanes-leave-the-rest-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
+        cl.firstName === 'Stop means stop' && /^\.\/aiondx-changelog\/v0-28-7-stop-means-stop-(light|dark)\.png$/.test(cl.pic) && /^November \d+(st|nd|rd|th), 2026$/.test(cl.date), JSON.stringify(cl));
       await shot('changelog-light');
       await clogShot("0.28.4", "The Changelog", '[data-testid="aiondx-setnav-changelog"]');
       await page('agents');
